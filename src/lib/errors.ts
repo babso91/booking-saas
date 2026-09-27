@@ -1,0 +1,94 @@
+import type { ZodError } from "zod";
+
+// Stable error codes shared by Server Actions and Route Handlers. The code is
+// the contract with the frontend; the message is a French default for display.
+export const appErrorMessages = {
+  validation_error: "Certaines informations sont invalides.",
+  unauthenticated: "Vous devez être connectée pour effectuer cette action.",
+  no_business: "Aucune activité n’est associée à ce compte.",
+  forbidden: "Vous n’avez pas accès à cette ressource.",
+  not_found: "Élément introuvable.",
+  business_not_found: "Cette activité n’existe pas.",
+  service_not_found: "Cette prestation n’est pas disponible.",
+  slot_unavailable:
+    "Ce créneau n’est plus disponible. Merci d’en choisir un autre.",
+  conflict: "Cette modification entre en conflit avec des données existantes.",
+  in_use: "Cet élément est utilisé et ne peut pas être supprimé.",
+  internal: "Une erreur inattendue est survenue. Merci de réessayer.",
+} as const;
+
+export type AppErrorCode = keyof typeof appErrorMessages;
+
+export type AppError = {
+  code: AppErrorCode;
+  message: string;
+  fieldErrors?: Record<string, string[]>;
+};
+
+export type ActionResult<T> =
+  { ok: true; data: T } | { ok: false; error: AppError };
+
+export class AppException extends Error {
+  readonly code: AppErrorCode;
+  readonly fieldErrors?: Record<string, string[]>;
+
+  constructor(
+    code: AppErrorCode,
+    options?: {
+      message?: string;
+      fieldErrors?: Record<string, string[]>;
+      cause?: unknown;
+    },
+  ) {
+    super(options?.message ?? appErrorMessages[code], {
+      cause: options?.cause,
+    });
+    this.name = "AppException";
+    this.code = code;
+    this.fieldErrors = options?.fieldErrors;
+  }
+
+  toAppError(): AppError {
+    return {
+      code: this.code,
+      message: this.message,
+      ...(this.fieldErrors ? { fieldErrors: this.fieldErrors } : {}),
+    };
+  }
+}
+
+export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
+  validation_error: 400,
+  unauthenticated: 401,
+  no_business: 403,
+  forbidden: 403,
+  not_found: 404,
+  business_not_found: 404,
+  service_not_found: 404,
+  slot_unavailable: 409,
+  conflict: 409,
+  in_use: 409,
+  internal: 500,
+};
+
+export function validationException(error: ZodError) {
+  const fieldErrors: Record<string, string[]> = {};
+
+  for (const issue of error.issues) {
+    const key = issue.path.length > 0 ? issue.path.join(".") : "_root";
+    (fieldErrors[key] ??= []).push(issue.message);
+  }
+
+  return new AppException("validation_error", { fieldErrors, cause: error });
+}
+
+// Converts anything thrown by the domain layer into a serialisable error. Only
+// AppException carries a user-facing message; everything else is reported as
+// `internal` so database or runtime details never reach the client.
+export function toAppError(error: unknown): AppError {
+  if (error instanceof AppException && error.code !== "internal") {
+    return error.toAppError();
+  }
+
+  return { code: "internal", message: appErrorMessages.internal };
+}
