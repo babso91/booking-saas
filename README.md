@@ -2,7 +2,7 @@
 
 Fondation d'un SaaS de réservation, gestion clientes et fidélisation pour les indépendantes beauté.
 
-Cette branche contient volontairement le socle technique, pas encore la V1 fonctionnelle. Le périmètre produit complet est dans [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) et les décisions techniques dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Le socle technique et le backend de la réservation (prestations, horaires, disponibilités, réservation publique) sont en place ; les écrans et les autres verticales de la V1 restent à construire. Le périmètre produit complet est dans [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) et les décisions techniques dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Prérequis
 
@@ -37,11 +37,24 @@ Le seed de démonstration est intentionnellement désactivé dans cette étape d
 | `npm run dev`      | serveur Next.js local                                |
 | `npm run build`    | build de production                                  |
 | `npm run check`    | format, lint, types et tests                         |
-| `npm run test`     | tests Vitest                                         |
+| `npm run test`     | tests unitaires Vitest (sans base)                   |
+| `npm run test:db`  | tests d'intégration contre Supabase local            |
 | `npm run db:start` | démarre Supabase local                               |
 | `npm run db:stop`  | arrête Supabase local                                |
 | `npm run db:reset` | rejoue les migrations locales                        |
 | `npm run db:types` | régénère les types TypeScript depuis le schéma local |
+
+## Tests de base de données
+
+Les tests de `tests/integration` s'exécutent contre la pile Supabase locale entièrement migrée (PostgreSQL, Auth, PostgREST) : migrations, RLS entre deux businesses, calcul des créneaux, réservation publique, double réservation concurrente et Route Handlers.
+
+```bash
+npm run db:start   # une fois
+npm run db:reset   # rejoue toutes les migrations
+npm run test:db
+```
+
+Les clés sont lues via `supabase status` ; elles peuvent aussi être fournies par `SUPABASE_TEST_API_URL`, `SUPABASE_TEST_DB_URL`, `SUPABASE_TEST_ANON_KEY` et `SUPABASE_TEST_SERVICE_ROLE_KEY`. Les tests refusent de s'exécuter contre un hôte non local. La CI (`.github/workflows/ci.yml`) exécute les mêmes étapes et vérifie que `src/types/database.generated.ts` correspond au schéma.
 
 ## Variables d'environnement
 
@@ -53,21 +66,22 @@ Le seed de démonstration est intentionnellement désactivé dans cette étape d
 
 Les secrets ne doivent jamais utiliser le préfixe `NEXT_PUBLIC_` ni être importés hors des modules `server-only`.
 
-## État de la fondation
+## État actuel
 
 Inclus :
 
 - Next.js App Router, TypeScript strict, Tailwind CSS ;
-- routes réservées pour connexion, dashboard et page publique ;
-- clients Supabase navigateur, serveur, admin et rafraîchissement SSR ;
-- validation Zod de l'environnement ;
-- migration initiale multi-tenant avec RLS ;
-- clés étrangères composites anti-mélange de tenants ;
-- contrainte GiST empêchant les rendez-vous confirmés qui se chevauchent ;
-- ledger fidélité et outbox email au niveau du schéma ;
-- lint, format, typecheck, test et build.
+- clients Supabase navigateur, serveur, public (sans session) et admin ;
+- schéma multi-tenant avec RLS, privilèges « deny by default » et clés étrangères composites ;
+- contrainte d'exclusion GiST empêchant tout chevauchement de rendez-vous non annulés, buffer compris ;
+- prestations : création, lecture, modification, activation, ordre d'affichage, suppression si jamais réservée ;
+- horaires hebdomadaires à plages multiples, réglages de réservation, exceptions (fermeture, vacances, blocage, ouverture exceptionnelle) ;
+- calcul des créneaux disponibles dans le fuseau IANA du business ;
+- réservation publique transactionnelle avec création/rapprochement de la cliente et email de confirmation mis en outbox ;
+- API publique : `GET /api/public/businesses/[slug]`, `GET /api/public/businesses/[slug]/availability?serviceId=…&date=AAAA-MM-JJ`, `POST /api/bookings` ;
+- Server Actions professionnelles dans `src/features/*/actions`.
 
-Non inclus à cette étape : onboarding, authentification utilisable, CRUD, disponibilités, réservation, agenda, fidélité fonctionnelle, emails, relance, statistiques et seed.
+Non inclus : authentification utilisable et onboarding, écrans métier, agenda, CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
 
 ## Règles d'architecture
 
@@ -77,6 +91,13 @@ Non inclus à cette étape : onboarding, authentification utilisable, CRUD, disp
 - Les rendez-vous, transitions de statut, événements fidélité et emails ne sont pas directement modifiables par le rôle `authenticated` : des fonctions transactionnelles dédiées seront ajoutées avec les verticales concernées.
 - RLS reste la dernière ligne de défense ; un filtre frontend n'est jamais une autorisation.
 
-## Première migration
+## Migrations
 
-La migration [`supabase/migrations/20260927193000_initial_foundation.sql`](supabase/migrations/20260927193000_initial_foundation.sql) crée le modèle initial et ses politiques. Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.
+| Migration                                            | Contenu                                                                                        |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `20260927193000_initial_foundation.sql`              | modèle initial, RLS et politiques                                                              |
+| `20260927200000_harden_api_privileges.sql`           | retrait de `TRUNCATE`, privilèges anonymes et `EXECUTE` implicites ; schéma `private`          |
+| `20260927200100_scheduling_invariants.sql`           | fuseau validé, réglages par défaut, plages sans chevauchement, contrainte avec buffer          |
+| `20260927200200_availability_and_public_booking.sql` | calcul des créneaux, RPC publiques de réservation, fonctions horaires et ordre des prestations |
+
+Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.
