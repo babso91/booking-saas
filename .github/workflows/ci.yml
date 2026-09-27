@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Format, lint, types, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  database:
+    name: Migrations and database tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Applies every migration from scratch on a real Supabase stack
+      # (PostgreSQL, Auth, PostgREST).
+      - name: Start local Supabase
+        run: >-
+          npx supabase start
+          -x studio,imgproxy,vector,logflare,realtime,storage-api,edge-runtime,supavisor,mailpit,postgres-meta
+      - name: Generated types match the migrated schema
+        run: |
+          npm run db:types
+          git diff --exit-code src/types/database.generated.ts
+      - run: npm run test:db
+      - name: Stop local Supabase
+        if: always()
+        run: npx supabase stop --no-backup
