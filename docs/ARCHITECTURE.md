@@ -1,8 +1,10 @@
 # Architecture technique — V1
 
-**Statut :** décision initiale  
-**Date :** 27 septembre 2026  
-**Portée :** architecture cible et fondation, sans implémentation des parcours métier
+**Statut :** architecture cible et état du socle livré
+
+**Mise à jour :** 28 septembre 2026
+
+**Portée :** moteur de réservation sécurisé livré ; intégration calendrier décrite ci-dessous uniquement à l'état de conception
 
 ## 1. Décision synthétique
 
@@ -255,6 +257,63 @@ Changements d'heure (règle identique à `timestamp AT TIME ZONE` de PostgreSQL 
 
 Le serveur reçoit une date locale et renvoie des instants UTC accompagnés du fuseau du business. Côté professionnel, les exceptions sont saisies en heure murale locale et converties en UTC côté serveur avec le fuseau du business (`src/lib/time/zoned.ts`, aligné sur le comportement de PostgreSQL pour les heures ambiguës ou inexistantes). Aucun code ne suppose `Europe/Paris`, qui n'est qu'une valeur par défaut de colonne ; les fuseaux invalides sont refusés par trigger.
 
+## 8 bis. Intégration des calendriers externes — architecture prévue
+
+Cette section décrit une évolution future, sans table, migration, connecteur ni worker déjà implémenté. Le moteur intégré au commit `3a424e5807f7277a98cfe1ca939c8dd13821a30e` reste le socle officiel.
+
+### Sources de vérité et abstraction provider
+
+- Rendez-vous clientes : Booking SaaS est la source de vérité, y compris pour leurs déplacements et annulations.
+- Événements personnels/externes : le provider externe est la source de vérité.
+- Rendez-vous Booking exportés : représentations secondaires, jamais des commandes métier entrantes en V1.
+
+Un adaptateur serveur par `calendar_provider` traduira les opérations de connexion, lecture des changements et export vers un modèle local commun. Google Calendar sera le premier provider ; Microsoft Outlook / Microsoft 365 et éventuellement Apple Calendar pourront être ajoutés sans modifier les invariants du moteur. Les capacités et protocoles exacts seront validés au moment de chaque intégration.
+
+### Modèle conceptuel, à préciser avant migration
+
+Les noms suivants sont indicatifs :
+
+- `calendar_connections` : `id`, `business_id`, `provider`, identifiant stable du compte connecté, état de connexion, référence vers les credentials serveur sécurisés, `last_synced_at` et dernière erreur ;
+- `calendar_sources` : `id`, `business_id`, connexion, identifiant externe du calendrier, fuseau, sélection explicite pour l'import des indisponibilités et/ou comme destination d'export, curseur de synchronisation, dernière synchronisation réussie et informations de renouvellement des notifications ;
+- `external_calendar_events` : `id`, `business_id`, source, identifiant externe d'événement/occurrence, `starts_at`, `ends_at`, statut occupé/libre/annulé, version externe et date de synchronisation. Les récurrences, exceptions et événements journée entière seront normalisés en intervalles locaux exploitables en UTC, avec conservation du fuseau pertinent ;
+- une association d'export : `business_id`, `appointment_id`, calendrier de destination, identifiant de l'événement externe, origine `booking`, version métier exportée et état de synchronisation.
+
+Les relations seront tenant-aware, avec clés étrangères composites, contraintes d'unicité par source/identifiant externe et RLS adaptée. Les titres, descriptions et participants externes ne seront pas collectés s'ils ne sont pas nécessaires ; l'API publique ne recevra que des créneaux disponibles, jamais les détails privés des événements.
+
+### Disponibilités calculées localement
+
+Le calcul cible étendra le moteur PostgreSQL existant : plages de `business_hours` et ouvertures exceptionnelles, moins fermetures/blocages de `availability_exceptions`, rendez-vous occupants de `appointments` et événements externes occupés des sources sélectionnées, puis application des règles de durée, buffer, grille, délai et horizon.
+
+```text
+Provider externe (Google en premier)
+  → synchronisation serveur, notifications/webhooks et renouvellement
+  → événements normalisés stockés localement
+  → calcul et validation des disponibilités PostgreSQL
+```
+
+Aucun appel à Google ne sera effectué à chaque consultation ou réservation publique. Les notifications déclencheront une récupération serveur ; une synchronisation périodique de rattrapage, le renouvellement des abonnements et une reprise complète en cas de curseur invalide seront prévus selon les capacités du provider. Créations, mises à jour et suppressions seront appliquées de façon idempotente ; le curseur n'avancera qu'après persistance réussie.
+
+Les imports devront être coordonnés avec le verrou de planning par business, l'ordre des verrous et le niveau `READ COMMITTED` du moteur. Aucun appel réseau externe ne devra être effectué pendant la transaction de réservation ou pendant la détention de ce verrou. L'application d'un import et la validation d'une réservation devront lire un état local cohérent.
+
+Un import peut révéler un conflit avec un rendez-vous déjà confirmé : le provider n'est pas partie à la transaction PostgreSQL. Ne pas insérer aveuglément ces événements dans `availability_exceptions`, dont les guards refusent ces chevauchements, ni abandonner silencieusement l'import. Prévoir une représentation locale du conflit et une alerte professionnelle sans déplacer/annuler automatiquement le rendez-vous. La politique de réservation lorsque la synchronisation est périmée, ainsi que le traitement détaillé des conflits, seront arrêtés avant implémentation ; aucune garantie de cohérence instantanée avec le provider n'est annoncée.
+
+### Export, reprise et prévention des boucles
+
+Une intention d'export sera enregistrée transactionnellement avec la création, le déplacement ou l'annulation du rendez-vous, puis traitée par un worker serveur avec reprise et déduplication. Cette outbox calendrier sera distincte conceptuellement de `email_events` ; sa forme définitive reste à choisir. Une panne du provider ne remettra pas en cause le rendez-vous enregistré dans Booking.
+
+L'association stable entre rendez-vous et événement externe, accompagnée d'un marqueur d'origine lorsque le provider le permet, évitera les boucles. Un événement exporté puis relu dans un calendrier sélectionné sera reconnu comme représentation Booking et ne sera pas compté une seconde fois comme indisponibilité externe. Les mises à jour exportées devront respecter la dernière version métier, même après une reprise dans le désordre.
+
+Un déplacement ou une suppression manuelle de cette représentation chez Google ne déclenchera ni modification du rendez-vous Booking, ni email cliente, ni événement de fidélité. La divergence sera signalée puis réconciliée à partir de Booking selon une politique explicitée à la professionnelle. Seules les périodes des calendriers explicitement sélectionnés participeront à l'import, notamment pour les anniversaires et jours fériés.
+
+### Sécurité et cycle de vie de la connexion
+
+- OAuth avec consentement explicite, callback serveur et protection de la liaison au business contre CSRF/substitution de compte ; vérifier à nouveau le membre autorisé lors de la connexion, du choix des calendriers et de la déconnexion.
+- Tokens d'accès et de renouvellement exclusivement côté serveur ; aucun refresh token dans le navigateur, les DTO, les logs ou une variable `NEXT_PUBLIC_*`.
+- Stockage chiffré approprié (coffre de secrets ou chiffrement applicatif avec clés séparées des données et rotation) ; accès limité aux workers autorisés. Les métadonnées de connexion accessibles à la professionnelle ne doivent jamais exposer les credentials.
+- Permissions OAuth Google minimales pour les calendriers sélectionnés et les opérations nécessaires ; scopes exacts à valider lors de l'implémentation, sans accès élargi par défaut.
+- Notifications vérifiées et rattachées à une connexion connue côté serveur ; ne jamais faire confiance à un `business_id` fourni dans un webhook. Traitement idempotent des notifications répétées.
+- Déconnexion : arrêter les jobs et renouvellements, révoquer l'autorisation lorsque possible, supprimer les tokens locaux et désactiver les sources. Expliquer l'effet sur les disponibilités ; conserver les rendez-vous Booking et définir explicitement la conservation/suppression des représentations exportées et des données locales.
+
 ## 9. Emails et tâches planifiées
 
 Resend est appelé uniquement côté serveur. Les emails immédiats et différés passent par l'outbox.
@@ -315,19 +374,20 @@ Pipeline cible :
 7. **Statistiques.** Les métriques doivent reposer sur les rendez-vous terminés et une définition stable ; pas de table d'agrégats en V1 tant que le volume ne le justifie pas.
 8. **Données personnelles.** Email, téléphone et notes imposent minimisation, politique de conservation et procédure de suppression/export avant ouverture publique.
 
-## 15. Ordre d'implémentation après la fondation
+## 15. Roadmap technique indicative
 
-1. Supabase local, authentification et onboarding transactionnel ;
-2. prestations et horaires ;
-3. verticale réservation publique complète, avec contrainte de chevauchement ;
-4. agenda et changements de statut ;
+1. moteur de réservation sécurisé — **TERMINÉ**, intégré sur `main` au commit `3a424e5807f7277a98cfe1ca939c8dd13821a30e` ;
+2. authentification et onboarding professionnelle ;
+3. agenda professionnel et changements de statut ;
+4. intégration Google Calendar ;
 5. CRM clientes ;
 6. ledger fidélité et récompenses ;
 7. outbox Resend, rappels et modifications ;
 8. réactivation opt-in ;
-9. statistiques utiles ;
-10. durcissement sécurité, tests E2E et production.
+9. statistiques utiles.
+
+Cet ordre reflète la direction actuelle, pas une obligation architecturale absolue. Sécurité, tests de concurrence/multi-tenant, E2E et préparation de production restent transverses à chaque étape. L'intégration Google n'implique pas que les intégrations Outlook ou Apple soient incluses dans ce lot.
 
 ## 16. Ce que la fondation actuelle ne prétend pas faire
 
-La fondation crée le projet, les frontières de code, la validation d'environnement, les clients Supabase et le schéma initial sécurisé. La verticale suivante livre le backend des prestations, des horaires et exceptions, du calcul de créneaux et de la réservation publique (RPC, DAL, Server Actions et Route Handlers). Ne sont pas encore livrés : authentification utilisable et onboarding, écrans, agenda, CRM, fidélité, envoi des emails, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables dans l'ordre ci-dessus.
+La fondation et le moteur de réservation sécurisé sont livrés : backend des prestations, horaires et exceptions, calcul des créneaux et réservation publique (RPC, DAL, Server Actions et Route Handlers), avec outbox de confirmation et tests. Ne sont pas encore livrés : authentification utilisable et onboarding, écrans, agenda, synchronisation des calendriers externes, CRM, fidélité, envoi des emails, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables selon la roadmap indicative ci-dessus.

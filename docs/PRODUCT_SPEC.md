@@ -147,6 +147,42 @@ La professionnelle peut :
 
 Une modification ou annulation déclenche l'email approprié.
 
+## 10 bis. Synchronisation avec les agendas externes — prévue
+
+### Vision et sources de vérité
+
+Le SaaS possède son propre moteur de réservation et reste la source de vérité pour les rendez-vous clientes. Les calendriers externes servent à importer les indisponibilités personnelles/professionnelles et à afficher automatiquement les rendez-vous pris via le SaaS. La professionnelle ne doit pas avoir à gérer manuellement deux agendas.
+
+Les événements personnels/externes restent sous l'autorité de leur provider. Un rendez-vous Booking SaaS exporté est une représentation secondaire du rendez-vous métier, pas une deuxième source de vérité.
+
+### Première intégration : Google Calendar
+
+La V1 de cette intégration est prévue après l'agenda professionnel ; elle n'est pas encore implémentée.
+
+**Google → Booking SaaS :**
+
+- la professionnelle connecte son compte Google et choisit explicitement les calendriers à prendre en compte ;
+- les événements occupés de ces calendriers rendent les périodes correspondantes indisponibles dans le moteur de réservation ;
+- les créations, modifications et suppressions d'événements doivent finir par être reflétées dans les disponibilités locales ;
+- les calendriers d'anniversaires et de jours fériés ne bloquent pas les disponibilités sauf sélection explicite.
+
+**Booking SaaS → Google :**
+
+- la professionnelle choisit un calendrier de destination pour les rendez-vous clientes ;
+- une réservation crée automatiquement l'événement correspondant ;
+- un déplacement ou une annulation depuis Booking SaaS met à jour ou supprime/annule la représentation Google correspondante ;
+- la synchronisation est asynchrone : un retard ou un échec est visible et peut être repris sans dupliquer les événements.
+
+### Limites et conflits
+
+Déplacer manuellement dans Google un rendez-vous exporté ne modifie pas automatiquement le rendez-vous métier en V1. Les modifications métier restent effectuées depuis Booking SaaS pour préserver la validation des disponibilités, la gestion des conflits, les emails cliente, la fidélité et l'historique. Une divergence doit être signalée et réconciliée depuis la source Booking, sans modification silencieuse du rendez-vous cliente.
+
+Un événement externe découvert après une réservation peut révéler un conflit : il ne doit pas annuler ni déplacer automatiquement le rendez-vous cliente. Le conflit doit être signalé à la professionnelle ; la politique de traitement des données périmées et des conflits sera précisée avant implémentation. La synchronisation ne garantit pas une visibilité instantanée des changements effectués chez Google.
+
+### Évolution multi-provider
+
+Le concept de `calendar_provider` reste générique : Google Calendar en premier, Microsoft Outlook / Microsoft 365 ensuite, et Apple Calendar uniquement si une intégration fiable est retenue. Les règles métier ne doivent pas dépendre exclusivement de Google.
+
 ## 11. Clientes et mini-CRM
 
 La liste clientes affiche prénom, nom, email, téléphone, nombre de rendez-vous, dernière visite, prochaine visite, points et récompenses disponibles.
@@ -223,6 +259,8 @@ Le taux de retour est défini comme : clientes ayant au moins une visite termin�
 
 Les dates sont persistées en UTC ; l'affichage et le calcul des horaires utilisent le fuseau IANA du business.
 
+Lors de la future intégration calendrier, les périodes occupées importées des sources sélectionnées seront également prises en compte, à partir de données synchronisées localement et non d'un appel au provider à chaque consultation publique.
+
 ## 17. Modèle de données attendu
 
 Le modèle couvre au minimum :
@@ -279,13 +317,17 @@ Un seed crée « Studio Mila Lashes », ses quatre prestations (cil à cil, volu
 
 ## 22. Priorités de livraison
 
-1. réservation fonctionnelle ;
-2. agenda ;
-3. clientes ;
-4. fidélité ;
-5. emails ;
-6. relance ;
-7. statistiques.
+1. moteur de réservation sécurisé — **TERMINÉ**, intégré sur `main` au commit `3a424e5807f7277a98cfe1ca939c8dd13821a30e` ;
+2. authentification et onboarding professionnelle ;
+3. agenda professionnel ;
+4. intégration Google Calendar ;
+5. CRM clientes ;
+6. fidélité ;
+7. emails automatiques ;
+8. réactivation ;
+9. statistiques.
+
+Cet ordre indique la direction actuelle, sans imposer un découpage architectural absolu. Le moteur terminé ne signifie pas que les écrans, l'envoi des emails ou la V1 de bout en bout sont déjà livrés.
 
 Une réservation réellement fonctionnelle vaut mieux que dix écrans fictifs.
 
