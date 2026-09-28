@@ -93,11 +93,12 @@ Non inclus : authentification utilisable et onboarding, écrans métier, agenda,
 
 ## Migrations
 
-| Migration                                            | Contenu                                                                                        |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `20260927193000_initial_foundation.sql`              | modèle initial, RLS et politiques                                                              |
-| `20260927200000_harden_api_privileges.sql`           | retrait de `TRUNCATE`, privilèges anonymes et `EXECUTE` implicites ; schéma `private`          |
-| `20260927200100_scheduling_invariants.sql`           | fuseau validé, réglages par défaut, plages sans chevauchement, contrainte avec buffer          |
-| `20260927200200_availability_and_public_booking.sql` | calcul des créneaux, RPC publiques de réservation, fonctions horaires et ordre des prestations |
+| Migration                                            | Contenu                                                                                                       |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `20260927193000_initial_foundation.sql`              | modèle initial, RLS et politiques                                                                             |
+| `20260927200000_harden_api_privileges.sql`           | retrait de `TRUNCATE`, privilèges anonymes et `EXECUTE` implicites ; schéma `private`                         |
+| `20260927200100_scheduling_invariants.sql`           | fuseau validé, réglages par défaut, plages sans chevauchement, contrainte avec buffer                         |
+| `20260927200200_availability_and_public_booking.sql` | calcul des créneaux, RPC publiques de réservation, fonctions horaires et ordre des prestations                |
+| `20260928090000_schedule_coordination.sql`           | verrou de planning commun, blocages refusés sur un rendez-vous, valeurs de réservation cohérentes, plages DST |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.

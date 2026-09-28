@@ -15,6 +15,9 @@ describe("databaseErrorCode", () => {
     expect(databaseErrorCode({ code: "22023", message: "invalid_email" })).toBe(
       "validation_error",
     );
+    expect(
+      databaseErrorCode({ code: "P0001", message: "schedule_conflict" }),
+    ).toBe("schedule_conflict");
   });
 
   it("maps constraint and RLS SQLSTATEs", () => {

@@ -10,6 +10,7 @@ const domainMessages: Record<string, AppErrorCode> = {
   business_not_found: "business_not_found",
   service_not_found: "service_not_found",
   slot_unavailable: "slot_unavailable",
+  schedule_conflict: "schedule_conflict",
   forbidden: "forbidden",
   invalid_timezone: "validation_error",
   invalid_first_name: "validation_error",

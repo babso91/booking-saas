@@ -12,6 +12,8 @@ export const appErrorMessages = {
   service_not_found: "Cette prestation n’est pas disponible.",
   slot_unavailable:
     "Ce créneau n’est plus disponible. Merci d’en choisir un autre.",
+  schedule_conflict:
+    "Cette période chevauche un rendez-vous existant. Déplacez ou annulez d’abord le rendez-vous.",
   conflict: "Cette modification entre en conflit avec des données existantes.",
   in_use: "Cet élément est utilisé et ne peut pas être supprimé.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
@@ -66,6 +68,7 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   business_not_found: 404,
   service_not_found: 404,
   slot_unavailable: 409,
+  schedule_conflict: 409,
   conflict: 409,
   in_use: 409,
   internal: 500,

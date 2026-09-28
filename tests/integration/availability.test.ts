@@ -444,6 +444,96 @@ describe("time zones", () => {
     ]);
   });
 
+  describe("local times made invalid by a DST change (Europe/Paris)", () => {
+    // Rule: a nonexistent local time is shifted forward by the gap (PostgreSQL
+    // `AT TIME ZONE`), an ambiguous one takes the later instant (standard
+    // time), and a range left empty or inverted is ignored for that day only.
+    const utcSlots = async (date: string, now: string) => {
+      const { rows } = await db.query<{ starts_at: Date }>(
+        `select starts_at from private.available_slots($1, $2, $3::date, $4::timestamptz)`,
+        [business.id, service, date, now],
+      );
+      return rows.map((row) => row.starts_at.toISOString());
+    };
+
+    it("ignores a range inside the spring gap and keeps the other ranges", async () => {
+      // 2027-03-28 (Sunday): 02:00 → 03:00; 02:30–03:00 does not exist.
+      await setWeeklyHours(business.id, [
+        [0, "02:30", "03:00"],
+        [0, "09:00", "11:00"],
+      ]);
+
+      expect(
+        await slots({ date: "2027-03-28", now: "2027-03-01T00:00Z" }),
+      ).toEqual(["09:00", "09:30", "10:00"]);
+    });
+
+    it("never fails the day, even if every range is inside the gap", async () => {
+      await setWeeklyHours(business.id, [
+        [0, "02:00", "02:30"],
+        [0, "02:30", "03:00"],
+      ]);
+
+      expect(
+        await slots({ date: "2027-03-28", now: "2027-03-01T00:00Z" }),
+      ).toEqual([]);
+    });
+
+    it("shifts a nonexistent start forward by the gap", async () => {
+      const short = await createService(business.id, { durationMinutes: 30 });
+      await setWeeklyHours(business.id, [[0, "02:30", "04:00"]]);
+
+      // 02:30 does not exist → 03:30 CEST; the range is 03:30–04:00.
+      const { rows } = await db.query<{ local: string }>(
+        `select to_char(starts_at at time zone 'Europe/Paris', 'HH24:MI') as local
+         from private.available_slots($1, $2, '2027-03-28', '2027-03-01T00:00Z')`,
+        [business.id, short],
+      );
+      expect(rows.map((row) => row.local)).toEqual(["03:30"]);
+    });
+
+    it("uses the later occurrence of an ambiguous autumn time", async () => {
+      await updateSettings(business.id, { slot_interval_minutes: 30 });
+      const short = await createService(business.id, { durationMinutes: 30 });
+      // 2027-10-31 (Sunday): 03:00 CEST → 02:00 CET; 02:xx happens twice.
+      await setWeeklyHours(business.id, [
+        [0, "02:00", "03:00"],
+        [0, "09:00", "10:00"],
+      ]);
+
+      const { rows } = await db.query<{ starts_at: Date }>(
+        `select starts_at from private.available_slots($1, $2, '2027-10-31', '2027-10-01T00:00Z')`,
+        [business.id, short],
+      );
+
+      expect(rows.map((row) => row.starts_at.toISOString())).toEqual([
+        "2027-10-31T01:00:00.000Z", // 02:00 CET (second occurrence)
+        "2027-10-31T01:30:00.000Z", // 02:30 CET
+        "2027-10-31T08:00:00.000Z", // 09:00 CET
+        "2027-10-31T08:30:00.000Z", // 09:30 CET
+      ]);
+    });
+
+    it("lets the booking transaction validate slots on a DST day", async () => {
+      await setWeeklyHours(business.id, [
+        [0, "02:30", "03:00"],
+        [0, "09:00", "10:00"],
+      ]);
+
+      const { rows } = await db.query<{ count: number }>(
+        `select count(*)::int as count
+         from private.compute_available_slots(
+           $1, '2027-03-28', '2027-03-01T00:00Z', 'Europe/Paris', 60, 30, 0, 0, 365)`,
+        [business.id],
+      );
+
+      expect(rows[0]).toEqual({ count: 1 });
+      expect(await utcSlots("2027-03-28", "2027-03-01T00:00Z")).toEqual([
+        "2027-03-28T07:00:00.000Z", // 09:00 CEST
+      ]);
+    });
+  });
+
   it("rejects an unknown IANA time zone", async () => {
     await expect(
       db.query(

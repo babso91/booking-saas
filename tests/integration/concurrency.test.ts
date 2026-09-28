@@ -18,11 +18,13 @@ import {
   type Professional,
   type TestBusiness,
 } from "./support/fixtures";
+import { openTransaction, waitUntilBlocked } from "./support/transactions";
 
-// Double booking must be impossible even when the availability re-check of
-// two transactions runs before either inserts. These tests create exactly that
-// interleaving and verify that PostgreSQL (exclusion constraint
-// `appointments_no_overlap`) lets only one of them commit.
+// Double booking must be impossible under concurrency. Bookings of one
+// business are serialised by the schedule lock (a second booking waits, then
+// re-validates on a fresh snapshot), and the exclusion constraint
+// `appointments_no_overlap` remains the final guarantee for every write path,
+// including raw inserts that never call the booking RPC (tested below).
 
 const DATE = dateInDays(21);
 
@@ -35,15 +37,7 @@ function local(time: string) {
 }
 
 async function openAnonTransaction() {
-  const connection = await db.connect();
-  const { rows } = await connection.query<{ pid: number }>(
-    "select pg_backend_pid() as pid",
-  );
-
-  await connection.query("begin");
-  await connection.query("set local role anon");
-
-  return { connection, pid: rows[0]!.pid };
+  return openTransaction({ role: "anon" });
 }
 
 function book(connection: pg.PoolClient, startsAt: string, email: string) {
@@ -55,21 +49,6 @@ function book(connection: pg.PoolClient, startsAt: string, email: string) {
      )`,
     [business.slug, service, startsAt, email],
   );
-}
-
-/** Resolves once backend `pid` is waiting on a lock held by another transaction. */
-async function waitUntilBlocked(pid: number) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const { rows } = await db.query(
-      `select 1 from pg_stat_activity where pid = $1 and wait_event_type = 'Lock'`,
-      [pid],
-    );
-
-    if (rows.length > 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-
-  throw new Error(`Backend ${pid} never blocked on a lock`);
 }
 
 async function countAppointments() {
@@ -103,10 +82,8 @@ describe("concurrent public bookings", () => {
       // T1 books 10:00–11:00 and keeps its transaction open.
       await book(first.connection, local("10:00"), "first@x.test");
 
-      // T2 wants 10:30–11:30. Its snapshot cannot see T1's row, so the
-      // availability re-check inside the function passes: a plain
-      // "check then insert" would create a double booking here. The insert
-      // instead waits on the exclusion constraint.
+      // T2 wants 10:30–11:30 and waits for T1 (schedule lock). A plain
+      // "check then insert" without coordination would let both commit.
       const secondResult = book(
         second.connection,
         local("10:30"),

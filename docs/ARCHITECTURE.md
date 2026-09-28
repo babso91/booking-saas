@@ -163,7 +163,22 @@ PostgreSQL applique la contrainte d'exclusion GiST `appointments_no_overlap` sur
 
 La contrainte initiale (`[starts_at, ends_at)`, statut `confirmed` uniquement) ignorait le buffer et libérait le créneau d'un rendez-vous terminé ; elle est remplacée par la migration `20260927200100`.
 
-La RPC `create_public_booking` effectue dans une transaction : validation du business et du service actif, recalcul de disponibilité par la même fonction que l'affichage, recherche ou création de la cliente (email insensible à la casse, au sein du business uniquement, sans jamais modifier une fiche existante), insertion du rendez-vous avec snapshots, puis insertion de l'email de confirmation dans l'outbox. Le recalcul donne des erreurs précises ; il ne suffit pas seul face à deux transactions simultanées (chacune voit le créneau libre), c'est la contrainte qui tranche et un test reproduit cet entrelacement. L'interface n'est jamais la source d'autorité du créneau.
+### Coordination du planning
+
+Toutes les écritures qui modifient l'occupation d'un planning prennent le même verrou transactionnel par business (`pg_advisory_xact_lock` sur `business_schedule:<id>`, migration `20260928090000`). Il est pris par des triggers sur `appointments`, `availability_exceptions` et `business_hours`, et en premier par la RPC de réservation. Quel que soit le chemin d'écriture (RPC, PostgREST, service role, futur agenda), deux écritures concurrentes sur le planning d'un même business sont donc sérialisées. La vérification qui suit le verrou s'exécute sur un snapshot `READ COMMITTED` récent, qui voit l'autre écriture.
+
+L'invariant est symétrique et porté par des triggers, pas par les appelants :
+
+- une période `closed` ou `blocked` ne peut pas chevaucher `[starts_at, ends_at)` d'un rendez-vous non annulé ;
+- un rendez-vous non annulé ne peut pas chevaucher une période `closed` ou `blocked`.
+
+Règle métier V1 : un blocage (création, déplacement ou changement de type) en conflit avec un rendez-vous existant est refusé avec `schedule_conflict`. Un rendez-vous n'est jamais déplacé ni annulé automatiquement. Les périodes adjacentes sont autorisées. Les triggers sont `SECURITY INVOKER` : la vérification ne voit que les lignes lisibles sous RLS et ne révèle donc rien d'un autre tenant.
+
+### Cohérence des valeurs d'une réservation
+
+La RPC `create_public_booking` lit une seule fois le business, les réglages et la prestation, avec `FOR SHARE` après le verrou de planning. Elle passe ces valeurs explicitement à `private.compute_available_slots`, puis les réutilise pour la fenêtre occupée et l'insertion. Une modification concurrente est soit validée avant et lue, soit mise en attente jusqu'au commit de la réservation. Validation et rendez-vous stocké utilisent donc toujours exactement les mêmes durée, buffer et grille.
+
+La RPC `create_public_booking` effectue dans une transaction : validation du business et du service actif, recalcul de disponibilité par la même fonction que l'affichage, recherche ou création de la cliente (email insensible à la casse, au sein du business uniquement, sans jamais modifier une fiche existante), insertion du rendez-vous avec snapshots, puis insertion de l'email de confirmation dans l'outbox. Grâce au verrou de planning, une seconde réservation concurrente attend la première puis revalide sur un snapshot à jour ; la contrainte d'exclusion reste la garantie finale pour tout chemin d'écriture, y compris hors RPC. L'interface n'est jamais la source d'autorité du créneau.
 
 ### Fidélité idempotente
 
@@ -197,6 +212,12 @@ Pour un jour calendaire `D` du fuseau du business :
 4. un candidat est retenu si `[début, début + durée)` tient dans une plage utilisable, si `[début, début + durée + buffer)` ne touche la plage occupée d'aucun rendez-vous non annulé, si `début ≥ now + délai minimal`, et si `début` tombe au plus tard le jour local `aujourd'hui + horizon` (le dernier jour est réservable en entier).
 
 Le buffer n'est exigé qu'entre deux rendez-vous : une prestation peut finir à la fermeture ou au début d'un blocage.
+
+Changements d'heure (règle identique à `timestamp AT TIME ZONE` de PostgreSQL et à `src/lib/time/zoned.ts`) :
+
+- une heure locale inexistante (passage à l'heure d'été) est décalée de la durée du saut : 02:30 devient 03:30 à Paris ;
+- une heure ambiguë (passage à l'heure d'hiver) prend l'instant le plus tardif, en heure standard ;
+- une plage rendue vide ou inversée ce jour-là (par exemple 02:30–03:00 le 28 mars 2027) est ignorée pour ce jour uniquement ; les autres plages de la journée restent calculées.
 
 Le serveur reçoit une date locale et renvoie des instants UTC accompagnés du fuseau du business. Côté professionnel, les exceptions sont saisies en heure murale locale et converties en UTC côté serveur avec le fuseau du business (`src/lib/time/zoned.ts`, aligné sur le comportement de PostgreSQL pour les heures ambiguës ou inexistantes). Aucun code ne suppose `Europe/Paris`, qui n'est qu'une valeur par défaut de colonne ; les fuseaux invalides sont refusés par trigger.
 
