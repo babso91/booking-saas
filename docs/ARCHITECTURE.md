@@ -85,22 +85,24 @@ Les pages et layouts sont des Server Components par défaut. `'use client'` est 
 
 ## 4. Routage cible
 
-| URL                    | Accès              | Rôle                                        |
-| ---------------------- | ------------------ | ------------------------------------------- |
-| `/`                    | public             | présentation produit minimale               |
-| `/login`               | public             | authentification professionnelle            |
-| `/auth/callback`       | public contrôlé    | échange du code Supabase Auth               |
-| `/app`                 | authentifié        | dashboard                                   |
-| `/app/calendar`        | authentifié        | agenda                                      |
-| `/app/clients`         | authentifié        | mini-CRM                                    |
-| `/app/services`        | authentifié        | prestations                                 |
-| `/app/loyalty`         | authentifié        | programme et récompenses                    |
-| `/app/settings`        | authentifié        | business et disponibilités                  |
-| `/b/[slug]`            | public             | page business et réservation                |
-| `/loyalty/[token]`     | public signé       | vue fidélité d'une cliente                  |
-| `/api/bookings`        | public, limité     | création transactionnelle d'une réservation |
-| `/api/cron/*`          | secret machine     | rappels, réactivation et outbox email       |
-| `/api/webhooks/resend` | signature vérifiée | événements de livraison email               |
+| URL                                          | Accès              | Rôle                                        |
+| -------------------------------------------- | ------------------ | ------------------------------------------- |
+| `/`                                          | public             | présentation produit minimale               |
+| `/login`                                     | public             | authentification professionnelle            |
+| `/auth/callback`                             | public contrôlé    | échange du code Supabase Auth               |
+| `/app`                                       | authentifié        | dashboard                                   |
+| `/app/calendar`                              | authentifié        | agenda                                      |
+| `/app/clients`                               | authentifié        | mini-CRM                                    |
+| `/app/services`                              | authentifié        | prestations                                 |
+| `/app/loyalty`                               | authentifié        | programme et récompenses                    |
+| `/app/settings`                              | authentifié        | business et disponibilités                  |
+| `/b/[slug]`                                  | public             | page business et réservation                |
+| `/loyalty/[token]`                           | public signé       | vue fidélité d'une cliente                  |
+| `/api/bookings`                              | public, limité     | création transactionnelle d'une réservation |
+| `/api/public/businesses/[slug]`              | public             | profil public et prestations actives        |
+| `/api/public/businesses/[slug]/availability` | public             | créneaux disponibles d'un jour local        |
+| `/api/cron/*`                                | secret machine     | rappels, réactivation et outbox email       |
+| `/api/webhooks/resend`                       | signature vérifiée | événements de livraison email               |
 
 Le Proxy Next.js rafraîchit la session Supabase et peut effectuer une redirection optimiste. Il ne remplace jamais l'autorisation dans la DAL et les politiques RLS.
 
@@ -152,12 +154,65 @@ L'événement métier et l'email à envoyer sont créés dans la même transacti
 3. La DAL filtre aussi explicitement par `business_id`.
 4. Les relations métier utilisent des clés étrangères composites.
 5. La clé service-role est réservée aux workers serveur ; elle n'est jamais utilisée pour les requêtes ordinaires d'un utilisateur.
+6. Privilèges « deny by default » (migration `20260927200000`) : `anon` n'a aucun privilège de table, `authenticated` n'a que le DML filtré par RLS (jamais `TRUNCATE`, qui contourne RLS ; aucun DML direct sur `business_hours`, modifiable uniquement par `replace_business_hours`), et toute fonction doit recevoir un `GRANT EXECUTE` explicite. Les helpers internes vivent dans le schéma `private`, non exposé par PostgREST.
+7. Les opérations publiques passent exclusivement par quatre RPC `SECURITY DEFINER` (`get_public_business`, `get_public_services`, `get_available_slots`, `create_public_booking`) à `search_path` vide, qui revalident toutes leurs entrées et renvoient des DTO minimaux. Elles sont appelées avec la clé publishable ; aucun secret n'est nécessaire au parcours public.
 
 ### Double réservation
 
-PostgreSQL applique une contrainte d'exclusion GiST sur `business_id` et la plage `[starts_at, ends_at)` pour les rendez-vous `confirmed`. Deux transactions concurrentes ne peuvent donc pas créer de chevauchement. Le code traduit l'erreur de contrainte en réponse métier compréhensible.
+PostgreSQL applique la contrainte d'exclusion GiST `appointments_no_overlap` sur `business_id` et la plage occupée `occupied_window = [starts_at, ends_at + buffer)` de tout rendez-vous non annulé. Le buffer est figé dans `buffer_minutes_snapshot` au moment de la réservation et `occupied_window` est dérivée par trigger (jamais fournie par l'appelant). Seule une annulation libère un créneau : `completed` et `no_show` restent occupants. Deux transactions concurrentes ne peuvent donc pas créer de chevauchement, buffer compris. Le code traduit l'erreur de contrainte en `slot_unavailable`.
 
-La future RPC de réservation publique effectuera dans une transaction : validation du business/service actif, recalcul de disponibilité, upsert de la cliente, insertion du rendez-vous et insertion de l'email de confirmation. L'interface ne sera jamais la source d'autorité du créneau.
+La contrainte initiale (`[starts_at, ends_at)`, statut `confirmed` uniquement) ignorait le buffer et libérait le créneau d'un rendez-vous terminé ; elle est remplacée par la migration `20260927200100`.
+
+### Coordination du planning
+
+Un verrou transactionnel par business (`pg_advisory_xact_lock` sur `business_schedule:<id>`, migrations `20260928090000` et `20260928190000`) sérialise les écritures qui **ajoutent** de l'occupation ou **remplacent** un ensemble. Toutes les écritures ne le prennent pas.
+
+| Opération                                                                                                     | Verrou de planning | Moment                                            |
+| ------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------- |
+| `create_public_booking`                                                                                       | oui                | en premier, avant toute lecture                   |
+| `replace_business_hours`                                                                                      | oui                | en premier, avant le `DELETE`                     |
+| `reorder_services`                                                                                            | oui                | en premier, avant la validation de la permutation |
+| insertion ou modification d'un `closed`/`blocked`/`open_override` (création, déplacement, changement de type) | oui                | trigger `BEFORE`                                  |
+| insertion d'un rendez-vous non annulé, déplacement, ré-activation d'un rendez-vous annulé                     | oui                | trigger `BEFORE`                                  |
+| écriture privilégiée (postgres, service role) sur `business_hours`                                            | oui                | trigger `BEFORE` (filet de sécurité)              |
+| annulation d'un rendez-vous, suppression d'une exception                                                      | non                | —                                                 |
+| changement de statut sans changement d'horaire (`completed`, `no_show`), notes                                | non                | —                                                 |
+| modification d'une prestation ou des réglages                                                                 | non                | protégée par le `FOR SHARE` de la réservation     |
+| lectures, calcul des créneaux affichés                                                                        | non                | —                                                 |
+
+Annuler un rendez-vous ou supprimer un blocage ne fait que libérer du temps. Une écriture concurrente validée sur l'état précédent n'a vu que moins de disponibilité : elle peut être refusée à tort, jamais produire un état incohérent. Ces opérations restent donc hors verrou.
+
+L'invariant est symétrique et porté par des triggers, pas par les appelants :
+
+- une période `closed` ou `blocked` ne peut pas chevaucher `[starts_at, ends_at)` d'un rendez-vous non annulé ;
+- un rendez-vous non annulé ne peut pas chevaucher une période `closed` ou `blocked`.
+
+Règle métier V1 : un blocage (création, déplacement ou changement de type) en conflit avec un rendez-vous existant est refusé avec `schedule_conflict`. Un rendez-vous n'est jamais déplacé ni annulé automatiquement. Les périodes adjacentes sont autorisées. Les triggers sont `SECURITY INVOKER` : la vérification ne voit que les lignes lisibles sous RLS et ne révèle donc rien d'un autre tenant.
+
+Les horaires hebdomadaires ne sont modifiables par les rôles API qu'au travers de `replace_business_hours` : le DML direct sur `business_hours` est retiré à `authenticated`. Un remplacement est atomique : après commit, les horaires correspondent exactement au dernier appel sérialisé, jamais à une fusion de deux appels concurrents.
+
+#### Niveau d'isolation supporté
+
+La garantie repose sur `READ COMMITTED`. Après avoir attendu le verrou, chaque requête suivante prend un nouveau snapshot qui inclut l'écriture concurrente commitée. Sous `REPEATABLE READ` ou `SERIALIZABLE`, le snapshot est figé à la première requête de la transaction, et le verrou ne le rafraîchit pas.
+
+Toute écriture qui prend le verrou de planning refuse donc un autre niveau d'isolation, avec l'erreur `unsupported_isolation_level` (SQLSTATE `0A000`), avant d'attendre le verrou et avant d'écrire quoi que ce soit. L'application, PostgREST et Supabase utilisent `READ COMMITTED` par défaut. Les écritures qui libèrent seulement du temps restent autorisées à tout niveau.
+
+#### Ordre des verrous
+
+Convention : **verrou de planning d'abord, puis verrous de lignes métier** (`businesses`, `business_settings`, `services`, `business_hours`). Les trois RPC ci-dessus la respectent. La réservation prend le verrou de planning, puis `FOR SHARE` sur le business, les réglages et la prestation.
+
+Une modification isolée d'une prestation ou des réglages (une seule instruction) ne prend pas le verrou de planning. Elle ne peut donc pas former de cycle : elle attend la réservation, ou la réservation l'attend.
+
+Risques restants, documentés plutôt que sur-architecturés :
+
+- pour un `UPDATE` d'une exception ou d'un rendez-vous existant, PostgreSQL verrouille la ligne visée avant d'exécuter le trigger qui prend le verrou de planning. C'est sans risque aujourd'hui : aucun détenteur du verrou de planning ne verrouille ces lignes. Les futures RPC d'agenda qui déplaceront des rendez-vous devront appeler `private.lock_business_schedule` avant de toucher ces lignes ;
+- une transaction à plusieurs instructions qui modifierait une prestation ou les réglages, puis écrirait dans le planning, inverserait l'ordre et pourrait entrer en deadlock avec une réservation. PostgreSQL annulerait alors l'une des deux transactions. Aucun chemin applicatif ne fait cela aujourd'hui ; une future opération de ce type devra prendre le verrou de planning en premier.
+
+### Cohérence des valeurs d'une réservation
+
+La RPC `create_public_booking` lit une seule fois le business, les réglages et la prestation, avec `FOR SHARE` après le verrou de planning. Elle passe ces valeurs explicitement à `private.compute_available_slots`, puis les réutilise pour la fenêtre occupée et l'insertion. Une modification concurrente est soit validée avant et lue, soit mise en attente jusqu'au commit de la réservation. Validation et rendez-vous stocké utilisent donc toujours exactement les mêmes durée, buffer et grille.
+
+La RPC `create_public_booking` effectue dans une transaction : validation du business et du service actif, recalcul de disponibilité par la même fonction que l'affichage, recherche ou création de la cliente (email insensible à la casse, au sein du business uniquement, sans jamais modifier une fiche existante), insertion du rendez-vous avec snapshots, puis insertion de l'email de confirmation dans l'outbox. Grâce au verrou de planning, une seconde réservation concurrente attend la première puis revalide sur un snapshot à jour. La contrainte d'exclusion reste la garantie finale entre rendez-vous, quel que soit le chemin d'écriture et le niveau d'isolation. L'interface n'est jamais la source d'autorité du créneau.
 
 ### Fidélité idempotente
 
@@ -181,16 +236,24 @@ Le lien contient au moins 32 octets aléatoires encodés en base64url. Seul un h
 
 ## 8. Disponibilités
 
-Le calcul cible produit des intervalles candidats selon :
+Le calcul est implémenté une seule fois, en PostgreSQL (`private.available_slots(business, service, date locale, now)`). La RPC publique d'affichage et la transaction de réservation appellent la même fonction : l'affichage ne peut pas être plus permissif que l'insertion. La conversion des horaires locaux utilise la base IANA de PostgreSQL et gère les changements d'heure.
 
-1. plages hebdomadaires du business dans son fuseau ;
-2. exceptions d'ouverture/fermeture/blocage ;
-3. durée de la prestation et buffer ;
-4. rendez-vous `confirmed` existants ;
-5. délai minimal et horizon maximal ;
-6. intervalle de grille configurable, 15 minutes par défaut.
+Pour un jour calendaire `D` du fuseau du business :
 
-Le serveur renvoie des instants UTC. La base réévalue la validité lors de l'insertion ; un créneau affiché peut devenir indisponible avant la confirmation et doit alors être signalé sans créer de doublon.
+1. plages ouvertes = plages hebdomadaires du jour de semaine de `D` (`0` = dimanche, `24:00` autorisé en fin de plage) + exceptions `open_override` ;
+2. plages utilisables = plages ouvertes − exceptions `closed` (fermeture, vacances) et `blocked` (créneau bloqué, rendez-vous personnel) ; une fermeture l'emporte sur une ouverture exceptionnelle ;
+3. candidats = grille de `slot_interval_minutes` ancrée sur le début de chaque plage ouverte ;
+4. un candidat est retenu si `[début, début + durée)` tient dans une plage utilisable, si `[début, début + durée + buffer)` ne touche la plage occupée d'aucun rendez-vous non annulé, si `début ≥ now + délai minimal`, et si `début` tombe au plus tard le jour local `aujourd'hui + horizon` (le dernier jour est réservable en entier).
+
+Le buffer n'est exigé qu'entre deux rendez-vous : une prestation peut finir à la fermeture ou au début d'un blocage.
+
+Changements d'heure (règle identique à `timestamp AT TIME ZONE` de PostgreSQL et à `src/lib/time/zoned.ts`) :
+
+- une heure locale inexistante (passage à l'heure d'été) est décalée de la durée du saut : 02:30 devient 03:30 à Paris ;
+- une heure ambiguë (passage à l'heure d'hiver) prend l'instant le plus tardif, en heure standard ;
+- une plage rendue vide ou inversée ce jour-là (par exemple 02:30–03:00 le 28 mars 2027) est ignorée pour ce jour uniquement ; les autres plages de la journée restent calculées.
+
+Le serveur reçoit une date locale et renvoie des instants UTC accompagnés du fuseau du business. Côté professionnel, les exceptions sont saisies en heure murale locale et converties en UTC côté serveur avec le fuseau du business (`src/lib/time/zoned.ts`, aligné sur le comportement de PostgreSQL pour les heures ambiguës ou inexistantes). Aucun code ne suppose `Europe/Paris`, qui n'est qu'une valeur par défaut de colonne ; les fuseaux invalides sont refusés par trigger.
 
 ## 9. Emails et tâches planifiées
 
@@ -220,7 +283,7 @@ Un bucket Supabase Storage privé stockera les logos/photos. Le chemin inclut le
 ## 12. Stratégie de tests
 
 - **unitaires :** calcul de créneaux, métriques, règles de réactivation, schémas Zod ;
-- **base locale Supabase :** contraintes de chevauchement, RLS A/B, clés composites et fonctions transactionnelles ;
+- **base locale Supabase :** contraintes de chevauchement, RLS A/B, clés composites et fonctions transactionnelles (`npm run test:db`, dossier `tests/integration`, contre la pile Supabase locale entièrement migrée) ;
 - **intégration :** réservation et completion/idempotence sur une base locale ;
 - **E2E :** scénario critique mobile avec Playwright une fois la verticale réservation disponible ;
 - **contrat email :** snapshot sémantique des données et test de déduplication, sans appeler Resend.
@@ -267,4 +330,4 @@ Pipeline cible :
 
 ## 16. Ce que la fondation actuelle ne prétend pas faire
 
-La fondation crée le projet, les frontières de code, la validation d'environnement, les clients Supabase et le schéma initial sécurisé. Elle ne livre pas encore : authentification utilisable, onboarding, CRUD, calcul de créneaux, réservation, agenda, fidélité, emails, seed de démonstration ou statistiques. Ces éléments doivent être ajoutés en verticales testables dans l'ordre ci-dessus.
+La fondation crée le projet, les frontières de code, la validation d'environnement, les clients Supabase et le schéma initial sécurisé. La verticale suivante livre le backend des prestations, des horaires et exceptions, du calcul de créneaux et de la réservation publique (RPC, DAL, Server Actions et Route Handlers). Ne sont pas encore livrés : authentification utilisable et onboarding, écrans, agenda, CRM, fidélité, envoi des emails, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables dans l'ordre ci-dessus.

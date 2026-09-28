@@ -2,6 +2,8 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "vitest/config";
 
+// Database integration tests. They require the local Supabase stack
+// (`npm run db:start`) with all migrations applied (`npm run db:reset`).
 export default defineConfig({
   resolve: {
     alias: {
@@ -13,6 +15,10 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["tests/integration/**/*.test.ts"],
+    globalSetup: ["tests/integration/support/global-setup.ts"],
+    fileParallelism: false,
+    testTimeout: 30_000,
+    hookTimeout: 60_000,
   },
 });
