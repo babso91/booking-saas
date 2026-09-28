@@ -154,7 +154,7 @@ L'événement métier et l'email à envoyer sont créés dans la même transacti
 3. La DAL filtre aussi explicitement par `business_id`.
 4. Les relations métier utilisent des clés étrangères composites.
 5. La clé service-role est réservée aux workers serveur ; elle n'est jamais utilisée pour les requêtes ordinaires d'un utilisateur.
-6. Privilèges « deny by default » (migration `20260927200000`) : `anon` n'a aucun privilège de table, `authenticated` n'a que le DML filtré par RLS (jamais `TRUNCATE`, qui contourne RLS), et toute fonction doit recevoir un `GRANT EXECUTE` explicite. Les helpers internes vivent dans le schéma `private`, non exposé par PostgREST.
+6. Privilèges « deny by default » (migration `20260927200000`) : `anon` n'a aucun privilège de table, `authenticated` n'a que le DML filtré par RLS (jamais `TRUNCATE`, qui contourne RLS ; aucun DML direct sur `business_hours`, modifiable uniquement par `replace_business_hours`), et toute fonction doit recevoir un `GRANT EXECUTE` explicite. Les helpers internes vivent dans le schéma `private`, non exposé par PostgREST.
 7. Les opérations publiques passent exclusivement par quatre RPC `SECURITY DEFINER` (`get_public_business`, `get_public_services`, `get_available_slots`, `create_public_booking`) à `search_path` vide, qui revalident toutes leurs entrées et renvoient des DTO minimaux. Elles sont appelées avec la clé publishable ; aucun secret n'est nécessaire au parcours public.
 
 ### Double réservation
@@ -165,7 +165,22 @@ La contrainte initiale (`[starts_at, ends_at)`, statut `confirmed` uniquement) i
 
 ### Coordination du planning
 
-Toutes les écritures qui modifient l'occupation d'un planning prennent le même verrou transactionnel par business (`pg_advisory_xact_lock` sur `business_schedule:<id>`, migration `20260928090000`). Il est pris par des triggers sur `appointments`, `availability_exceptions` et `business_hours`, et en premier par la RPC de réservation. Quel que soit le chemin d'écriture (RPC, PostgREST, service role, futur agenda), deux écritures concurrentes sur le planning d'un même business sont donc sérialisées. La vérification qui suit le verrou s'exécute sur un snapshot `READ COMMITTED` récent, qui voit l'autre écriture.
+Un verrou transactionnel par business (`pg_advisory_xact_lock` sur `business_schedule:<id>`, migrations `20260928090000` et `20260928190000`) sérialise les écritures qui **ajoutent** de l'occupation ou **remplacent** un ensemble. Toutes les écritures ne le prennent pas.
+
+| Opération                                                                                                     | Verrou de planning | Moment                                            |
+| ------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------- |
+| `create_public_booking`                                                                                       | oui                | en premier, avant toute lecture                   |
+| `replace_business_hours`                                                                                      | oui                | en premier, avant le `DELETE`                     |
+| `reorder_services`                                                                                            | oui                | en premier, avant la validation de la permutation |
+| insertion ou modification d'un `closed`/`blocked`/`open_override` (création, déplacement, changement de type) | oui                | trigger `BEFORE`                                  |
+| insertion d'un rendez-vous non annulé, déplacement, ré-activation d'un rendez-vous annulé                     | oui                | trigger `BEFORE`                                  |
+| écriture privilégiée (postgres, service role) sur `business_hours`                                            | oui                | trigger `BEFORE` (filet de sécurité)              |
+| annulation d'un rendez-vous, suppression d'une exception                                                      | non                | —                                                 |
+| changement de statut sans changement d'horaire (`completed`, `no_show`), notes                                | non                | —                                                 |
+| modification d'une prestation ou des réglages                                                                 | non                | protégée par le `FOR SHARE` de la réservation     |
+| lectures, calcul des créneaux affichés                                                                        | non                | —                                                 |
+
+Annuler un rendez-vous ou supprimer un blocage ne fait que libérer du temps. Une écriture concurrente validée sur l'état précédent n'a vu que moins de disponibilité : elle peut être refusée à tort, jamais produire un état incohérent. Ces opérations restent donc hors verrou.
 
 L'invariant est symétrique et porté par des triggers, pas par les appelants :
 
@@ -174,11 +189,30 @@ L'invariant est symétrique et porté par des triggers, pas par les appelants :
 
 Règle métier V1 : un blocage (création, déplacement ou changement de type) en conflit avec un rendez-vous existant est refusé avec `schedule_conflict`. Un rendez-vous n'est jamais déplacé ni annulé automatiquement. Les périodes adjacentes sont autorisées. Les triggers sont `SECURITY INVOKER` : la vérification ne voit que les lignes lisibles sous RLS et ne révèle donc rien d'un autre tenant.
 
+Les horaires hebdomadaires ne sont modifiables par les rôles API qu'au travers de `replace_business_hours` : le DML direct sur `business_hours` est retiré à `authenticated`. Un remplacement est atomique : après commit, les horaires correspondent exactement au dernier appel sérialisé, jamais à une fusion de deux appels concurrents.
+
+#### Niveau d'isolation supporté
+
+La garantie repose sur `READ COMMITTED`. Après avoir attendu le verrou, chaque requête suivante prend un nouveau snapshot qui inclut l'écriture concurrente commitée. Sous `REPEATABLE READ` ou `SERIALIZABLE`, le snapshot est figé à la première requête de la transaction, et le verrou ne le rafraîchit pas.
+
+Toute écriture qui prend le verrou de planning refuse donc un autre niveau d'isolation, avec l'erreur `unsupported_isolation_level` (SQLSTATE `0A000`), avant d'attendre le verrou et avant d'écrire quoi que ce soit. L'application, PostgREST et Supabase utilisent `READ COMMITTED` par défaut. Les écritures qui libèrent seulement du temps restent autorisées à tout niveau.
+
+#### Ordre des verrous
+
+Convention : **verrou de planning d'abord, puis verrous de lignes métier** (`businesses`, `business_settings`, `services`, `business_hours`). Les trois RPC ci-dessus la respectent. La réservation prend le verrou de planning, puis `FOR SHARE` sur le business, les réglages et la prestation.
+
+Une modification isolée d'une prestation ou des réglages (une seule instruction) ne prend pas le verrou de planning. Elle ne peut donc pas former de cycle : elle attend la réservation, ou la réservation l'attend.
+
+Risques restants, documentés plutôt que sur-architecturés :
+
+- pour un `UPDATE` d'une exception ou d'un rendez-vous existant, PostgreSQL verrouille la ligne visée avant d'exécuter le trigger qui prend le verrou de planning. C'est sans risque aujourd'hui : aucun détenteur du verrou de planning ne verrouille ces lignes. Les futures RPC d'agenda qui déplaceront des rendez-vous devront appeler `private.lock_business_schedule` avant de toucher ces lignes ;
+- une transaction à plusieurs instructions qui modifierait une prestation ou les réglages, puis écrirait dans le planning, inverserait l'ordre et pourrait entrer en deadlock avec une réservation. PostgreSQL annulerait alors l'une des deux transactions. Aucun chemin applicatif ne fait cela aujourd'hui ; une future opération de ce type devra prendre le verrou de planning en premier.
+
 ### Cohérence des valeurs d'une réservation
 
 La RPC `create_public_booking` lit une seule fois le business, les réglages et la prestation, avec `FOR SHARE` après le verrou de planning. Elle passe ces valeurs explicitement à `private.compute_available_slots`, puis les réutilise pour la fenêtre occupée et l'insertion. Une modification concurrente est soit validée avant et lue, soit mise en attente jusqu'au commit de la réservation. Validation et rendez-vous stocké utilisent donc toujours exactement les mêmes durée, buffer et grille.
 
-La RPC `create_public_booking` effectue dans une transaction : validation du business et du service actif, recalcul de disponibilité par la même fonction que l'affichage, recherche ou création de la cliente (email insensible à la casse, au sein du business uniquement, sans jamais modifier une fiche existante), insertion du rendez-vous avec snapshots, puis insertion de l'email de confirmation dans l'outbox. Grâce au verrou de planning, une seconde réservation concurrente attend la première puis revalide sur un snapshot à jour ; la contrainte d'exclusion reste la garantie finale pour tout chemin d'écriture, y compris hors RPC. L'interface n'est jamais la source d'autorité du créneau.
+La RPC `create_public_booking` effectue dans une transaction : validation du business et du service actif, recalcul de disponibilité par la même fonction que l'affichage, recherche ou création de la cliente (email insensible à la casse, au sein du business uniquement, sans jamais modifier une fiche existante), insertion du rendez-vous avec snapshots, puis insertion de l'email de confirmation dans l'outbox. Grâce au verrou de planning, une seconde réservation concurrente attend la première puis revalide sur un snapshot à jour. La contrainte d'exclusion reste la garantie finale entre rendez-vous, quel que soit le chemin d'écriture et le niveau d'isolation. L'interface n'est jamais la source d'autorité du créneau.
 
 ### Fidélité idempotente
 

@@ -7,19 +7,26 @@ import { db } from "./fixtures";
 export type OpenTransaction = { connection: pg.PoolClient; pid: number };
 
 /**
- * Opens a transaction on its own connection. `role` switches to an API role
+ * Opens a transaction on its own connection (READ COMMITTED unless
+ * `isolation` says otherwise). `role` switches to an API role
  * for the rest of the transaction; `userId` sets the JWT subject so that
  * auth.uid() and RLS behave as for a signed-in professional.
  */
 export async function openTransaction(
-  options: { role?: "anon" | "authenticated"; userId?: string } = {},
+  options: {
+    role?: "anon" | "authenticated";
+    userId?: string;
+    isolation?: "read committed" | "repeatable read" | "serializable";
+  } = {},
 ): Promise<OpenTransaction> {
   const connection = await db.connect();
   const { rows } = await connection.query<{ pid: number }>(
     "select pg_backend_pid() as pid",
   );
 
-  await connection.query("begin");
+  await connection.query(
+    `begin isolation level ${options.isolation ?? "read committed"}`,
+  );
 
   if (options.userId) {
     await connection.query(
