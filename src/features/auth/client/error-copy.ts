@@ -80,7 +80,47 @@ export const errorCopy: Record<
   },
   schedule_conflict: {
     title: "Conflit",
-    message: "Cette période chevauche un rendez-vous existant.",
+    message: "Ce créneau chevauche un rendez-vous ou une période bloquée.",
+  },
+  appointment_not_found: {
+    title: "Introuvable",
+    message: "Ce rendez-vous est introuvable.",
+  },
+  block_not_found: {
+    title: "Introuvable",
+    message: "Cette période bloquée est introuvable.",
+  },
+  client_not_found: {
+    title: "Introuvable",
+    message: "Cette cliente est introuvable.",
+  },
+  service_unavailable: {
+    title: "Prestation indisponible",
+    message: "Cette prestation n’est pas disponible.",
+  },
+  stale_appointment: {
+    title: "Modifié entre-temps",
+    message: "Ce rendez-vous a changé. Recharge-le avant de réessayer.",
+  },
+  stale_block: {
+    title: "Modifié entre-temps",
+    message: "Cette période a changé. Recharge-la avant de réessayer.",
+  },
+  invalid_status_transition: {
+    title: "Action impossible",
+    message: "Ce changement de statut n’est pas possible.",
+  },
+  appointment_not_editable: {
+    title: "Action impossible",
+    message: "Seul un rendez-vous confirmé peut être modifié.",
+  },
+  idempotency_conflict: {
+    title: "Demande déjà utilisée",
+    message: "Recharge le formulaire avant de réessayer.",
+  },
+  ambiguous_local_time: {
+    title: "Heure en double",
+    message: "Cette heure existe deux fois ce jour-là. Précise laquelle.",
   },
   conflict: {
     title: "Conflit",

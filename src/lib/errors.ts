@@ -13,7 +13,22 @@ export const appErrorMessages = {
   slot_unavailable:
     "Ce créneau n’est plus disponible. Merci d’en choisir un autre.",
   schedule_conflict:
-    "Cette période chevauche un rendez-vous existant. Déplacez ou annulez d’abord le rendez-vous.",
+    "Ce créneau chevauche un rendez-vous ou une période bloquée. Choisissez un autre horaire ou libérez d’abord la période.",
+  appointment_not_found: "Ce rendez-vous est introuvable.",
+  block_not_found: "Cette période bloquée est introuvable.",
+  client_not_found: "Cette cliente est introuvable.",
+  service_unavailable: "Cette prestation n’est pas disponible.",
+  stale_appointment:
+    "Ce rendez-vous a été modifié entre-temps. Rechargez-le avant de réessayer.",
+  stale_block:
+    "Cette période bloquée a été modifiée entre-temps. Rechargez-la avant de réessayer.",
+  invalid_status_transition: "Ce changement de statut n’est pas possible.",
+  appointment_not_editable:
+    "Seul un rendez-vous confirmé peut être déplacé ou modifié.",
+  idempotency_conflict:
+    "Cette demande a déjà été utilisée pour un autre rendez-vous. Rechargez le formulaire.",
+  ambiguous_local_time:
+    "Cette heure existe deux fois ce jour-là (changement d’heure). Précisez laquelle.",
   conflict: "Cette modification entre en conflit avec des données existantes.",
   in_use: "Cet élément est utilisé et ne peut pas être supprimé.",
   invalid_credentials: "Email ou mot de passe incorrect.",
@@ -78,6 +93,16 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   service_not_found: 404,
   slot_unavailable: 409,
   schedule_conflict: 409,
+  appointment_not_found: 404,
+  block_not_found: 404,
+  client_not_found: 404,
+  service_unavailable: 409,
+  stale_appointment: 409,
+  stale_block: 409,
+  invalid_status_transition: 409,
+  appointment_not_editable: 409,
+  idempotency_conflict: 409,
+  ambiguous_local_time: 400,
   conflict: 409,
   in_use: 409,
   invalid_credentials: 401,
