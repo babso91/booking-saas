@@ -46,6 +46,7 @@ export function Sheet({
   const titleId = useId();
   const descriptionId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
 
   useEffect(() => {
@@ -65,6 +66,15 @@ export function Sheet({
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
+    // Everything outside this dialog becomes inert (not focusable, not
+    // clickable, hidden from assistive technologies) until it closes. Only
+    // what this sheet made inert is restored, so stacked sheets nest.
+    const root = rootRef.current;
+    const madeInert = [...document.body.children].filter(
+      (element) => element !== root && !element.hasAttribute("inert"),
+    );
+    madeInert.forEach((element) => element.setAttribute("inert", ""));
+
     const onKeyDown = (event: KeyboardEvent) => {
       // Only the top-most sheet reacts (a confirmation opened over a panel).
       const sheets = document.querySelectorAll("[data-sheet]");
@@ -77,21 +87,51 @@ export function Sheet({
       }
       if (event.key !== "Tab" || !panel) return;
       const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)];
-      if (items.length === 0) return;
+      const active = document.activeElement;
+      if (items.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
       const first = items[0]!;
       const last = items[items.length - 1]!;
-      if (event.shiftKey && document.activeElement === first) {
+      // The panel itself (initial focus) or anything outside counts as the
+      // edge: focus wraps inside the dialog in both directions.
+      const atStart =
+        active === first || active === panel || !panel.contains(active);
+      const atEnd =
+        active === last || active === panel || !panel.contains(active);
+      if (event.shiftKey && atStart) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && atEnd) {
         event.preventDefault();
         first.focus();
       }
     };
 
+    // Mobile keyboard: when the visible viewport shrinks, keep the focused
+    // field in view instead of leaving it under the keyboard.
+    const keepFocusedVisible = () => {
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLElement &&
+        active !== panel &&
+        panel?.contains(active)
+      ) {
+        active.scrollIntoView({ block: "center" });
+      }
+    };
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", keepFocusedVisible);
+    window.addEventListener("resize", keepFocusedVisible);
+
     document.addEventListener("keydown", onKeyDown);
     return () => {
+      viewport?.removeEventListener("resize", keepFocusedVisible);
+      window.removeEventListener("resize", keepFocusedVisible);
       document.removeEventListener("keydown", onKeyDown);
+      madeInert.forEach((element) => element.removeAttribute("inert"));
       document.body.style.overflow = previousOverflow;
       opener?.focus?.({ preventScroll: true });
     };
@@ -100,7 +140,7 @@ export function Sheet({
   if (!open || typeof document === "undefined") return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50">
+    <div ref={rootRef} className="fixed inset-0 z-50">
       <div
         aria-hidden="true"
         onClick={() => onCloseRef.current()}

@@ -253,15 +253,12 @@ describe("rendering", () => {
       ok(
         agenda(TODAY, TODAY, {
           blocks: [
-            block({
-              localStartsAt: `${TODAY}T12:30`,
-              localEndsAt: `${TODAY}T15:00`,
-            }),
+            block({ from: `${TODAY}T12:30`, to: `${TODAY}T15:00` }),
             block({
               kind: "closed",
               reason: "Congés",
-              localStartsAt: `${TODAY}T00:00`,
-              localEndsAt: "2026-09-30T00:00",
+              from: `${TODAY}T00:00`,
+              to: "2026-09-30T00:00",
             }),
           ],
         }),
@@ -525,8 +522,7 @@ describe("creating an appointment", () => {
       ok({
         appointment: appointment({
           local: "2026-10-25T02:30",
-          startOccurrence: "second",
-          startsAt: "2026-10-25T01:30:00.000Z",
+          occurrence: "second",
         }),
         created: true,
       }),
@@ -629,8 +625,7 @@ describe("existing appointment", () => {
     const user = userEvent.setup();
     const repeated = appointment({
       local: "2026-10-25T02:30",
-      startOccurrence: "first",
-      startsAt: "2026-10-25T00:30:00.000Z",
+      occurrence: "first",
     });
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
       ok(agenda(startDate, endDate, { appointments: [repeated] })),
@@ -824,8 +819,8 @@ describe("existing appointment", () => {
 
 describe("blocks", () => {
   const formation = block({
-    localStartsAt: "2026-09-30T12:30",
-    localEndsAt: "2026-09-30T15:00",
+    from: "2026-09-30T12:30",
+    to: "2026-09-30T15:00",
     version: 4,
   });
 
@@ -924,41 +919,79 @@ describe("blocks", () => {
     );
   });
 
-  it("stale_block: offers to reload the period", async () => {
-    const user = userEvent.setup();
+  async function staleBlockForm(user: ReturnType<typeof userEvent.setup>) {
     renderAgenda();
     await user.click(
       await screen.findByRole("button", { name: /Bloqué · Formation/ }),
     );
     actions.updateBlockAction.mockResolvedValue(fail("stale_block"));
     const form = within(panel());
-
     await user.click(form.getByRole("button", { name: "Enregistrer" }));
     expect(
       await form.findByText(
         "Cette période a été modifiée depuis son ouverture.",
       ),
     ).toBeTruthy();
+    return form;
+  }
 
+  it("stale_block: reloads the visible range and finds the block even on another day", async () => {
+    const user = userEvent.setup();
+    const form = await staleBlockForm(user);
+    // Moved elsewhere to Friday by another device, reason changed too.
+    const moved = {
+      ...block({
+        from: "2026-10-02T16:00",
+        to: "2026-10-02T17:00",
+        reason: "Déplacé",
+      }),
+      id: formation.id,
+      version: 7,
+    };
     actions.getAgendaAction.mockResolvedValueOnce(
-      ok(
-        agenda("2026-09-30", "2026-09-30", {
-          blocks: [{ ...formation, version: 7, reason: "Nouveau motif" }],
-        }),
-      ),
+      ok(agenda("2026-09-28", "2026-10-04", { blocks: [moved] })),
     );
+
     await user.click(
       form.getByRole("button", { name: "Actualiser la période" }),
     );
+
+    expect(actions.getAgendaAction).toHaveBeenLastCalledWith({
+      startDate: "2026-09-28",
+      endDate: "2026-10-04",
+      includeCancelled: false,
+    });
     await waitFor(() =>
       expect(
         (within(panel()).getByLabelText(/Motif/) as HTMLInputElement).value,
-      ).toBe("Nouveau motif"),
+      ).toBe("Déplacé"),
     );
-    expect(actions.getAgendaAction).toHaveBeenCalledWith({
-      startDate: "2026-09-30",
-      endDate: "2026-09-30",
-    });
+    expect(
+      (within(panel()).getByLabelText("Début — date") as HTMLInputElement)
+        .value,
+    ).toBe("2026-10-02");
+    expect(
+      screen.getByRole("button", { name: /Bloqué · Déplacé, 16:00 – 17:00/ }),
+    ).toBeTruthy();
+  });
+
+  it("stale_block: a block gone from the visible range is not announced as deleted", async () => {
+    const user = userEvent.setup();
+    const form = await staleBlockForm(user);
+    actions.getAgendaAction.mockResolvedValueOnce(
+      ok(agenda("2026-09-28", "2026-10-04")),
+    );
+
+    await user.click(
+      form.getByRole("button", { name: "Actualiser la période" }),
+    );
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const notice = await screen.findByText(
+      /n’apparaît plus dans la période affichée/,
+    );
+    expect(notice.textContent).toMatch(/déplacé ou supprimé/);
+    expect(screen.queryByText(/n’existe plus/)).toBeNull();
   });
 
   it("block overlapping an appointment: schedule_conflict worded for blocks", async () => {
@@ -1008,12 +1041,10 @@ describe("blocks", () => {
   it("DST: a 02:30 → 02:30 block is valid and edits without any client-side refusal", async () => {
     const user = userEvent.setup();
     const repeated = block({
-      localStartsAt: "2026-10-25T02:30",
-      localEndsAt: "2026-10-25T02:30",
-      startsAt: "2026-10-25T00:30:00.000Z",
-      endsAt: "2026-10-25T01:30:00.000Z",
-      startOccurrence: "first",
-      endOccurrence: "second",
+      from: "2026-10-25T02:30",
+      fromOccurrence: "first",
+      to: "2026-10-25T02:30",
+      toOccurrence: "second",
       reason: "Heure en double",
     });
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
@@ -1051,5 +1082,127 @@ describe("blocks", () => {
         },
       }),
     );
+  });
+});
+
+describe("defaults and retries", () => {
+  beforeEach(() => {
+    useViewport(true);
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate)),
+    );
+  });
+
+  it("Nouveau rendez-vous opens on today when visible, otherwise inside the week on screen", async () => {
+    const user = userEvent.setup();
+    renderAgenda();
+    await waitFor(() =>
+      expect(actions.getAgendaAction).toHaveBeenCalledTimes(1),
+    );
+
+    await user.click(buttons(/Nouveau rendez-vous/)[0]!);
+    expect(
+      (within(panel()).getByLabelText("Date") as HTMLInputElement).value,
+    ).toBe(TODAY);
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "Semaine suivante" }));
+    await waitFor(() =>
+      expect(lastCall(actions.getAgendaAction)).toMatchObject({
+        startDate: "2026-10-05",
+      }),
+    );
+    await screen.findByText("Ta semaine est encore libre.");
+
+    await user.click(buttons(/Nouveau rendez-vous/)[0]!);
+    expect(
+      (within(panel()).getByLabelText("Date") as HTMLInputElement).value,
+    ).toBe("2026-10-05");
+    await user.keyboard("{Escape}");
+
+    await user.click(buttons(/Bloquer un créneau/)[0]!);
+    expect(
+      (within(panel()).getByLabelText("Début — date") as HTMLInputElement)
+        .value,
+    ).toBe("2026-10-05");
+  });
+
+  it("skips non-working days when choosing the default day of another week", async () => {
+    const user = userEvent.setup();
+    actions.getAgendaAction.mockImplementation(
+      async ({ startDate, endDate }) => {
+        const data = agenda(startDate, endDate);
+        // Monday and Tuesday closed: the first working day is Wednesday.
+        data.workingHours.days
+          .slice(0, 2)
+          .forEach((day) => (day.openRanges = []));
+        return ok(data);
+      },
+    );
+    renderAgenda();
+    await user.click(
+      await screen.findByRole("button", { name: "Semaine suivante" }),
+    );
+    await screen.findByText("Ta semaine est encore libre.");
+
+    await user.click(buttons(/Nouveau rendez-vous/)[0]!);
+    expect(
+      (within(panel()).getByLabelText("Date") as HTMLInputElement).value,
+    ).toBe("2026-10-07");
+  });
+
+  it("client search: a failed term can be retried with the very same query", async () => {
+    const user = userEvent.setup();
+    renderAgenda();
+    await waitFor(() =>
+      expect(actions.getAgendaAction).toHaveBeenCalledTimes(1),
+    );
+    await user.click(buttons(/Nouveau rendez-vous/)[0]!);
+    const form = within(panel());
+
+    actions.searchAgendaClientsAction.mockResolvedValueOnce(fail("internal"));
+    await user.type(form.getByLabelText("Rechercher une cliente"), "camille");
+    expect(await form.findByText("La recherche n’a pas abouti.")).toBeTruthy();
+    expect(actions.searchAgendaClientsAction).toHaveBeenCalledTimes(1);
+
+    actions.searchAgendaClientsAction.mockResolvedValueOnce(
+      ok([
+        { id: CLIENT_A, displayName: "Camille Roux", email: null, phone: null },
+      ]),
+    );
+    await user.click(form.getByRole("button", { name: "Réessayer" }));
+
+    expect(
+      await form.findByRole("button", { name: /Camille Roux/ }),
+    ).toBeTruthy();
+    expect(actions.searchAgendaClientsAction).toHaveBeenCalledTimes(2);
+    expect(actions.searchAgendaClientsAction).toHaveBeenLastCalledWith({
+      query: "camille",
+    });
+  });
+
+  it("client search: typing the same term again after a failure retries too", async () => {
+    const user = userEvent.setup();
+    renderAgenda();
+    await waitFor(() =>
+      expect(actions.getAgendaAction).toHaveBeenCalledTimes(1),
+    );
+    await user.click(buttons(/Nouveau rendez-vous/)[0]!);
+    const form = within(panel());
+    const field = form.getByLabelText("Rechercher une cliente");
+
+    actions.searchAgendaClientsAction.mockRejectedValueOnce(
+      new TypeError("Failed to fetch"),
+    );
+    await user.type(field, "camille");
+    expect(await form.findByText("La recherche n’a pas abouti.")).toBeTruthy();
+
+    actions.searchAgendaClientsAction.mockResolvedValueOnce(ok([]));
+    await user.type(field, "{Backspace}e");
+    expect(await form.findByText(/Aucune cliente trouvée/)).toBeTruthy();
+    expect(actions.searchAgendaClientsAction).toHaveBeenCalledTimes(2);
+    expect(actions.searchAgendaClientsAction).toHaveBeenLastCalledWith({
+      query: "camille",
+    });
   });
 });

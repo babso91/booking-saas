@@ -337,6 +337,7 @@ export function BlockForm({
             size="md"
             fullWidth
             onClick={onCancel}
+            className="[@media(max-height:520px)]:hidden"
             disabled={submitState !== "idle"}
           >
             Retour

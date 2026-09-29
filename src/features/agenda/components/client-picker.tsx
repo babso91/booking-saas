@@ -16,12 +16,13 @@ const MIN_QUERY = 2;
 export type PickedClient = Pick<AgendaClientDto, "id" | "displayName"> &
   Partial<Pick<AgendaClientDto, "email" | "phone">>;
 
-type SearchResult = { clients: AgendaClientDto[] } | { error: UiError };
+type Failure = { term: string; error: UiError };
 
 /**
  * Search among this business's clients (tenant-scoped on the server). One
  * request per pause in typing, never per keystroke; answers for an older
- * query are ignored.
+ * query are ignored. Only successful answers are cached: a failed search
+ * can be retried with the very same term (button, or typing again).
  */
 export function ClientPicker({
   selected,
@@ -35,30 +36,31 @@ export function ClientPicker({
   disabled?: boolean;
 }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Record<string, SearchResult>>({});
+  const [results, setResults] = useState<Record<string, AgendaClientDto[]>>({});
+  const [failure, setFailure] = useState<Failure | null>(null);
   const listId = useId();
   const term = query.trim();
   const searchable = term.length >= MIN_QUERY;
-  const current = searchable ? results[term] : undefined;
+  const found = searchable ? results[term] : undefined;
+  const failed = searchable && failure?.term === term ? failure.error : null;
 
   useEffect(() => {
-    if (!searchable || term in results) return;
+    if (!searchable || term in results || failed) return;
     let active = true;
     const timer = window.setTimeout(async () => {
       const result = await callAction(() =>
         searchAgendaClientsAction({ query: term }),
       );
       if (!active) return;
-      setResults((previous) => ({
-        ...previous,
-        [term]: result.ok ? { clients: result.data } : { error: result.error },
-      }));
+      if (result.ok)
+        setResults((previous) => ({ ...previous, [term]: result.data }));
+      else setFailure({ term, error: result.error });
     }, DEBOUNCE_MS);
     return () => {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [term, searchable, results]);
+  }, [term, searchable, results, failed]);
 
   if (selected) {
     return (
@@ -96,7 +98,10 @@ export function ClientPicker({
         placeholder="Nom, email ou téléphone"
         leadingIcon={<SearchIcon size={18} />}
         value={query}
-        onChange={(event) => setQuery(event.target.value)}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setFailure(null); // typing again retries, even the same term
+        }}
         error={error}
         disabled={disabled}
         aria-controls={listId}
@@ -105,18 +110,27 @@ export function ClientPicker({
         }
       />
       <div id={listId} aria-live="polite">
-        {searchable && !current ? (
+        {searchable && !found && !failed ? (
           <p className="flex items-center gap-2 px-1 text-[13.5px] text-ink-muted">
             <Spinner size={14} /> Recherche…
           </p>
         ) : null}
-        {current && "error" in current ? (
-          <p className="px-1 text-[13.5px] text-danger">
-            La recherche n’a pas abouti. Modifie ta saisie pour réessayer.
+        {failed ? (
+          <p className="flex flex-wrap items-center gap-x-2 px-1 text-[13.5px] text-danger">
+            {failed.code === "unauthenticated"
+              ? "Session expirée : reconnecte-toi pour chercher."
+              : "La recherche n’a pas abouti."}
+            <button
+              type="button"
+              onClick={() => setFailure(null)}
+              className="cursor-pointer font-semibold text-ink underline decoration-line-strong underline-offset-4"
+            >
+              Réessayer
+            </button>
           </p>
         ) : null}
-        {current && "clients" in current ? (
-          current.clients.length === 0 ? (
+        {found ? (
+          found.length === 0 ? (
             <p className="px-1 text-[13.5px] text-ink-muted">
               Aucune cliente trouvée. Crée une nouvelle fiche.
             </p>
@@ -125,7 +139,7 @@ export function ClientPicker({
               className="flex flex-col gap-1.5"
               aria-label="Clientes trouvées"
             >
-              {current.clients.map((client) => (
+              {found.map((client) => (
                 <li key={client.id}>
                   <button
                     type="button"

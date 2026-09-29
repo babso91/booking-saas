@@ -9,6 +9,7 @@ import {
   ChevronRightIcon,
   PlusIcon,
 } from "@/components/ui/icons";
+import { Notice } from "@/components/ui/notice";
 import { Sheet } from "@/components/ui/sheet";
 import {
   getAgendaAction,
@@ -89,6 +90,7 @@ export function AgendaView({
   const [failed, setFailed] = useState<Failed | null>(null);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [services, setServices] = useState<ServicesState | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const range = visibleRange(view, anchor);
   const key = `${range.startDate}:${range.endDate}:${includeCancelled}:${reloadToken}`;
@@ -135,10 +137,25 @@ export function AgendaView({
     );
   }
 
-  function openCreateAppointment(
-    date = view === "day" ? anchor : today,
-    time = DEFAULT_TIME,
-  ) {
+  /**
+   * Default day of a new appointment or block: always inside the period on
+   * screen — the selected day, today when visible, otherwise the first
+   * visible working day.
+   */
+  function defaultDate() {
+    if (view === "day") return anchor;
+    if (range.days.includes(today)) return today;
+    return (
+      data?.workingHours.days.find((day) => day.openRanges.length > 0)?.date ??
+      range.startDate
+    );
+  }
+
+  function openCreateBlock(date = defaultDate(), time = DEFAULT_TIME) {
+    setPanel({ kind: "createBlock", date, time });
+  }
+
+  function openCreateAppointment(date = defaultDate(), time = DEFAULT_TIME) {
     ensureServices();
     setPanel({ kind: "createAppointment", date, time });
   }
@@ -171,16 +188,28 @@ export function AgendaView({
     return null;
   }
 
+  // After stale_block, reload the whole visible range: the block may have
+  // been moved to another day meanwhile. Absent from the range is not proof
+  // of deletion, so the message says what is known.
   async function refreshBlock(block: AgendaBlockDto) {
-    const date = block.localStartsAt.slice(0, 10);
     const result = await callAction(() =>
-      getAgendaAction({ startDate: date, endDate: date }),
+      getAgendaAction({
+        startDate: range.startDate,
+        endDate: range.endDate,
+        includeCancelled,
+      }),
     );
-    reload();
     if (!result.ok) return result.error;
+    setLoaded({ key, data: result.data });
     const fresh = result.data.blocks.find((item) => item.id === block.id);
-    if (!fresh) return { code: "block_not_found" } satisfies UiError;
-    setPanel({ kind: "block", block: fresh });
+    if (fresh) {
+      setPanel({ kind: "block", block: fresh });
+    } else {
+      setPanel(null);
+      setNotice(
+        "Ce créneau bloqué n’apparaît plus dans la période affichée : il a pu être déplacé ou supprimé depuis un autre appareil.",
+      );
+    }
     return null;
   }
 
@@ -241,13 +270,7 @@ export function AgendaView({
               variant="secondary"
               size="md"
               icon={<BanIcon size={17} />}
-              onClick={() =>
-                setPanel({
-                  kind: "createBlock",
-                  date: view === "day" ? anchor : today,
-                  time: DEFAULT_TIME,
-                })
-              }
+              onClick={() => openCreateBlock()}
             >
               Bloquer un créneau
             </Button>
@@ -287,6 +310,19 @@ export function AgendaView({
           </div>
         ) : null}
 
+        {notice ? (
+          <div className="p-4 pb-0 sm:px-6 lg:px-8">
+            <Notice
+              tone="info"
+              action={
+                <TextAction onClick={() => setNotice(null)}>Compris</TextAction>
+              }
+            >
+              {notice}
+            </Notice>
+          </div>
+        ) : null}
+
         {error ? (
           <div className="p-4 sm:px-6 lg:px-8">
             <AgendaError
@@ -306,7 +342,7 @@ export function AgendaView({
           data={data}
           timezone={timezone}
           today={today}
-          now={now}
+          nowMs={clock ? clock * 30_000 : null}
           hourHeight={view === "day" ? 64 : 56}
           onOpenAppointment={(appointment) =>
             setPanel({ kind: "appointment", appointment })
@@ -359,9 +395,7 @@ export function AgendaView({
         <Button
           variant="secondary"
           size="md"
-          onClick={() =>
-            setPanel({ kind: "createBlock", date: anchor, time: DEFAULT_TIME })
-          }
+          onClick={() => openCreateBlock()}
           aria-label="Bloquer un créneau"
         >
           <BanIcon size={18} />

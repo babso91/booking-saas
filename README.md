@@ -99,14 +99,14 @@ Les écrans `/login`, `/signup`, `/onboarding` (4 étapes, aperçu en direct de 
 
 La validation côté navigateur reprend les limites des schémas backend (vérifié par `src/features/onboarding/contract-alignment.test.ts`). Le brouillon d'onboarding est gardé dans l'onglet (`sessionStorage`), rattaché au compte, et effacé après succès ou déconnexion.
 
-Si une action échoue au niveau du transport sur une page privée, `callAction` vérifie si la page redirige désormais (session expirée, le proxy renvoyant vers `/login`) avant de conclure à une erreur réseau.
+Si une action échoue au niveau du transport, `callAction` interroge la page courante (requête `HEAD` suivant les redirections, 5 s maximum) : elle ne conclut à une session expirée que si le serveur mène à `/login`, seule destination de l'état `unauthenticated`. Une autre redirection (par exemple `/onboarding` → `/app` après un onboarding dont la réponse a été perdue) reste une erreur réseau à réessayer, et une réponse 5xx une erreur interne.
 
 ## Interface de l'agenda professionnel
 
 `/app` est l'espace professionnel : barre latérale sur ordinateur, barre d'onglets en bas sur téléphone. L'agenda (`src/features/agenda/components`) n'utilise que les Server Actions de [docs/PROFESSIONAL_AGENDA_CONTRACT.md](docs/PROFESSIONAL_AGENDA_CONTRACT.md) :
 
 - une semaine est lue à partir de 768 px, une journée sur téléphone, en une seule requête agrégée ;
-- positions, heures et prix viennent du DTO (`local*`, `priceCents`) : aucune conversion de fuseau ni aucun calcul flottant côté navigateur ;
+- la grille place chaque élément d'après ses instants UTC réels et les minuits locaux réels de chaque jour (23, 24 ou 25 h), calculés avec les mêmes helpers que le serveur (`src/lib/time/zoned.ts`) ; l'heure répétée d'automne a sa propre bande, un élément ne change jamais de jour ni de durée ; les heures affichées et les prix viennent du DTO (`local*`, `priceCents`), sans calcul flottant ;
 - aucune écriture optimiste : la réponse du serveur met à jour le panneau et la plage visible est rechargée ;
 - les versions (`stale_*`), l'idempotence de création (`requestId` lié à l'empreinte de la commande), les conflits de planning et les deux occurrences de l'heure répétée à l'automne sont gérés explicitement.
 

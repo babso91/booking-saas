@@ -314,6 +314,16 @@ input[type="search"]::-webkit-search-cancel-button {
   );
 }
 
+/* Wall-clock strip holding no time on that day (DST): lighter, denser. */
+.agenda-gap {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(201, 182, 162, 0.45) 0 2px,
+    transparent 2px 7px
+  );
+  background-color: rgba(236, 226, 213, 0.6);
+}
+
 /* Paper grain — extremely light, adds warmth to flat surfaces. */
 .grain::after {
   content: "";

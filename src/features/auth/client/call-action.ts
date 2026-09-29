@@ -34,35 +34,56 @@ export async function callAction<T>(
         : { code: result.error.code },
     };
   } catch {
-    return {
-      ok: false,
-      error: { code: (await sessionExpired()) ? "unauthenticated" : "network" },
-    };
+    return { ok: false, error: { code: await classifyTransportFailure() } };
   }
 }
 
+/** Longest wait for the probe: the UI never hangs on it. */
+export const PROBE_TIMEOUT_MS = 5_000;
+
 /**
- * Actions post to the current page. On a private page (/app, /onboarding)
- * the proxy redirects that request to /login once the session is gone, so
- * the call fails in transport instead of answering `unauthenticated`. Asking
- * the server whether the page still answers without a redirect tells an
- * expired session apart from a network problem.
+ * Why did a Server Action request fail in transport?
+ *
+ * Actions post to the current page. On a private page the proxy answers a
+ * request without session with a redirect to /login, which the action call
+ * cannot parse. The guards and the proxy send to /login for one state only,
+ * `unauthenticated` (docs/AUTH_ONBOARDING_CONTRACT.md, Routage), so the probe
+ * asks the server for the current page, follows redirects, and concludes:
+ * - landed on /login → the session is gone (`unauthenticated`);
+ * - redirected elsewhere (e.g. /onboarding → /app after a completed
+ *   onboarding whose response was lost) → a legitimate new destination,
+ *   the session is fine: reported as `network`, the caller retries;
+ * - 5xx → `internal`; no answer or timeout → `network`.
  */
-async function sessionExpired(): Promise<boolean> {
+async function classifyTransportFailure(): Promise<
+  "unauthenticated" | "internal" | "network"
+> {
   if (typeof window === "undefined" || typeof fetch !== "function")
-    return false;
+    return "network";
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
-    const response = await fetch(window.location.pathname, {
-      method: "HEAD",
-      redirect: "manual",
-      cache: "no-store",
-      credentials: "same-origin",
-    });
-    return (
-      response.type === "opaqueredirect" ||
-      (response.status >= 300 && response.status < 400)
+    const response = await fetch(
+      `${window.location.pathname}${window.location.search}`,
+      {
+        method: "HEAD",
+        redirect: "follow",
+        cache: "no-store",
+        credentials: "same-origin",
+        signal: controller.signal,
+      },
     );
+    if (
+      response.redirected &&
+      new URL(response.url, window.location.href).pathname === "/login"
+    ) {
+      return "unauthenticated";
+    }
+    return response.status >= 500 ? "internal" : "network";
   } catch {
-    return false;
+    return "network";
+  } finally {
+    clearTimeout(timer);
   }
 }

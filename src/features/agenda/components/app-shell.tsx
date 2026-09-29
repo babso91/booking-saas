@@ -99,12 +99,12 @@ export function AppShell({
           <span
             key={label}
             aria-disabled="true"
-            className="flex h-16 flex-col items-center justify-center gap-1 text-[11.5px] text-ink-muted/80"
+            className="flex h-16 cursor-default flex-col items-center justify-center gap-0.5 text-[11.5px] text-ink-muted/70"
           >
-            <Icon size={21} />
-            <span>
-              {label}
-              <span className="sr-only"> (bientôt)</span>
+            <Icon size={20} className="opacity-70" />
+            <span>{label}</span>
+            <span className="rounded-full bg-sand px-1.5 text-[9.5px] leading-[1.35] font-medium text-ink-soft">
+              Bientôt
             </span>
           </span>
         ))}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, type MouseEvent } from "react";
 
 import type {
   AgendaAppointmentDto,
@@ -14,16 +14,18 @@ import {
   formatDuration,
   formatFullDate,
   formatWeekdayShort,
-  minutesOf,
-  timeFromMinutes,
   timeOf,
 } from "../client/dates";
 import {
   allDayBlocks,
+  buildAxis,
   openSegments,
   placeAppointments,
   placeBlocks,
-  visibleHours,
+  timeAt,
+  visibleWindow,
+  yOf,
+  type Interval,
 } from "../client/layout";
 import { formatPrice } from "../client/money";
 import { timeWithOccurrence } from "../client/occurrence";
@@ -34,7 +36,8 @@ type TimeGridProps = {
   data: AgendaDto | null;
   timezone: string;
   today: string;
-  now: string;
+  /** Current instant (ms), or null before the client clock is known. */
+  nowMs: number | null;
   hourHeight: number;
   onOpenAppointment: (appointment: AgendaAppointmentDto) => void;
   onOpenBlock: (block: AgendaBlockDto) => void;
@@ -48,15 +51,17 @@ export function blockLabel(block: AgendaBlockDto) {
 
 /**
  * Day columns on a vertical time axis (7 for the week, 1 for the day view).
- * Items are real buttons: every appointment and block is reachable with the
- * keyboard. Clicking an empty slot (pointer) proposes a new appointment.
+ * Placement comes from real instants (see ../client/layout.ts): an item
+ * never changes day, duration, disappears or repeats across DST changes.
+ * Items are real buttons; clicking an empty slot (pointer) proposes a new
+ * appointment at that time.
  */
 export function TimeGrid({
   days,
   data,
   timezone,
   today,
-  now,
+  nowMs,
   hourHeight,
   onOpenAppointment,
   onOpenBlock,
@@ -66,17 +71,21 @@ export function TimeGrid({
   const appointments = data?.appointments ?? [];
   const blocks = data?.blocks ?? [];
   const workingDays = data?.workingHours.days ?? [];
-  const { startHour, endHour } = visibleHours(
+  const axis = useMemo(() => buildAxis(days, timezone), [days, timezone]);
+  const { startY, endY } = visibleWindow(
+    axis,
     days,
     appointments,
     blocks,
     workingDays,
   );
-  const gridMinutes = (endHour - startHour) * 60;
   const pxPerMinute = hourHeight / 60;
   const single = days.length === 1;
-  const hasAllDay = days.some((date) => allDayBlocks(blocks, date).length > 0);
+  const hasAllDay = days.some(
+    (date) => allDayBlocks(axis, blocks, date).length > 0,
+  );
   const scrollKey = `${days[0]}:${data ? "ready" : "empty"}`;
+  const marks = axis.marks.filter((mark) => mark.y > startY && mark.y < endY);
 
   // Bring the start of the working day into view once data is there.
   useEffect(() => {
@@ -85,26 +94,26 @@ export function TimeGrid({
     const firstOpen = Math.min(
       ...days.flatMap((date) =>
         openSegments(
+          axis,
           workingDays.find((day) => day.date === date),
           date,
         ).map((segment) => segment.top),
       ),
       9 * 60,
     );
-    container.scrollTop = Math.max(
-      0,
-      (firstOpen - startHour * 60 - 30) * pxPerMinute,
-    );
+    container.scrollTop = Math.max(0, (firstOpen - startY - 30) * pxPerMinute);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per period
   }, [scrollKey]);
 
-  const top = (minutes: number) => (minutes - startHour * 60) * pxPerMinute;
+  const top = (y: number) => (y - startY) * pxPerMinute;
+  const height = (piece: Interval) => (piece.bottom - piece.top) * pxPerMinute;
 
   function createFromClick(event: MouseEvent<HTMLDivElement>, date: string) {
     if (event.target !== event.currentTarget) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const minutes = startHour * 60 + (event.clientY - rect.top) / pxPerMinute;
-    onCreateAt(date, timeFromMinutes(Math.floor(minutes / 15) * 15));
+    const y = startY + (event.clientY - rect.top) / pxPerMinute;
+    const time = timeAt(axis, date, Math.floor(y / 15) * 15);
+    if (time) onCreateAt(date, time);
   }
 
   const columns = single
@@ -147,7 +156,7 @@ export function TimeGrid({
                     </span>
                   </p>
                 ) : null}
-                {allDayBlocks(blocks, date).map((block) => (
+                {allDayBlocks(axis, blocks, date).map((block) => (
                   <button
                     key={block.id}
                     type="button"
@@ -170,29 +179,46 @@ export function TimeGrid({
       >
         <div
           className={cn("grid", columns)}
-          style={{ height: gridMinutes * pxPerMinute }}
+          style={{ height: (endY - startY) * pxPerMinute }}
         >
-          {/* Hour axis */}
+          {/* Hour axis: wall-clock marks; the repeated autumn hour has its own band. */}
           <div className="relative" aria-hidden="true">
-            {Array.from({ length: endHour - startHour }, (_, index) => (
+            {marks.map((mark) => (
               <span
-                key={index}
-                className="absolute right-2 -translate-y-1/2 text-[11.5px] text-ink-muted tabular-nums"
-                style={{ top: index * hourHeight }}
+                key={`${mark.y}:${mark.label}`}
+                className="absolute right-2 flex -translate-y-1/2 flex-col items-end text-[11.5px] leading-none text-ink-muted tabular-nums"
+                style={{ top: top(mark.y) }}
               >
-                {index === 0
-                  ? ""
-                  : `${String(startHour + index).padStart(2, "0")}:00`}
+                {mark.label}
+                {mark.repeated ? (
+                  <span className="mt-0.5 text-[9.5px] text-accent">
+                    2ᵉ fois
+                  </span>
+                ) : null}
               </span>
             ))}
           </div>
 
           {days.map((date) => {
+            const frame = axis.frames.get(date);
             const isToday = date === today;
-            const nowMinutes = isToday ? minutesOf(now) : null;
-            const placedBlocks = placeBlocks(blocks, date);
-            const placedAppointments = placeAppointments(appointments, date);
+            const nowY =
+              isToday &&
+              nowMs !== null &&
+              frame &&
+              nowMs >= frame.startMs &&
+              nowMs < frame.endMs
+                ? yOf(axis, date, nowMs)
+                : null;
+            const closedAllDay = allDayBlocks(axis, blocks, date).length > 0;
+            const placedBlocks = placeBlocks(axis, blocks, date);
+            const placedAppointments = placeAppointments(
+              axis,
+              appointments,
+              date,
+            );
             const opens = openSegments(
+              axis,
               workingDays.find((day) => day.date === date),
               date,
             );
@@ -204,92 +230,133 @@ export function TimeGrid({
                 aria-label={formatFullDate(date)}
                 onClick={(event) => createFromClick(event, date)}
                 className="relative cursor-copy border-l border-line/70 bg-sand/35"
-                style={{
-                  backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent ${hourHeight - 1}px, rgba(201,182,162,0.35) ${hourHeight - 1}px, rgba(201,182,162,0.35) ${hourHeight}px)`,
-                }}
               >
-                {/* Working hours: lighter background */}
-                {allDayBlocks(blocks, date).length > 0 ? (
+                {/* Hour lines */}
+                {marks.map((mark) => (
+                  <div
+                    key={`${mark.y}:${mark.label}`}
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-x-0 border-t border-line-strong/35"
+                    style={{ top: top(mark.y) }}
+                  />
+                ))}
+
+                {closedAllDay ? (
                   <div
                     aria-hidden="true"
                     className="agenda-hatch pointer-events-none absolute inset-0 opacity-60"
                   />
-                ) : null}
-                {allDayBlocks(blocks, date).length === 0 &&
-                  opens.map((segment, index) => (
-                    <div
-                      key={index}
-                      aria-hidden="true"
-                      className="pointer-events-none absolute inset-x-0 bg-paper-raised/85"
-                      style={{
-                        top: top(segment.top),
-                        height: segment.height * pxPerMinute,
-                      }}
-                    />
-                  ))}
-
-                {placedBlocks.map(
-                  ({
-                    block,
-                    top: start,
-                    height,
-                    continuesBefore,
-                    continuesAfter,
-                  }) => (
-                    <button
-                      key={block.id}
-                      type="button"
-                      onClick={() => onOpenBlock(block)}
-                      aria-label={`${blockLabel(block)}, ${timeOf(block.localStartsAt)} – ${timeOf(block.localEndsAt)}`}
-                      className={cn(
-                        "agenda-hatch absolute inset-x-0.5 z-10 cursor-pointer overflow-hidden rounded-lg border border-line-strong/70 px-2 py-1 text-left transition-colors hover:border-ink",
-                        continuesBefore && "rounded-t-none",
-                        continuesAfter && "rounded-b-none",
-                      )}
-                      style={{
-                        top: top(start),
-                        height: Math.max(height * pxPerMinute, 18),
-                      }}
-                    >
-                      <span className="block truncate text-[12px] font-semibold text-ink-soft">
-                        {blockLabel(block)}
-                      </span>
-                      {height >= 40 ? (
-                        <span className="block text-[11px] text-ink-muted tabular-nums">
-                          {timeOf(block.localStartsAt)} –{" "}
-                          {timeOf(block.localEndsAt)}
-                        </span>
-                      ) : null}
-                    </button>
-                  ),
+                ) : (
+                  opens.flatMap((segment, index) =>
+                    segment.pieces.map((piece, part) => (
+                      <div
+                        key={`${index}:${part}`}
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-x-0 bg-paper-raised/85"
+                        style={{ top: top(piece.top), height: height(piece) }}
+                      />
+                    )),
+                  )
                 )}
 
-                {placedAppointments.map(
-                  ({ appointment, top: start, height, lane, lanes }) => (
-                    <AppointmentCard
-                      key={appointment.id}
-                      appointment={appointment}
-                      timezone={timezone}
-                      heightPx={Math.max(height * pxPerMinute, 22)}
-                      roomy={single}
-                      onOpen={() => onOpenAppointment(appointment)}
-                      style={{
-                        top: top(start),
-                        height: Math.max(height * pxPerMinute, 22),
+                {/* Strips holding no time on this day (DST). */}
+                {frame?.gaps.map((gap) => (
+                  <div
+                    key={gap.top}
+                    title={
+                      frame.skipped?.top === gap.top
+                        ? "Heure inexistante ce jour-là (passage à l’heure d’été)"
+                        : "Heure répétée un autre jour de la semaine"
+                    }
+                    aria-hidden="true"
+                    className="agenda-gap pointer-events-none absolute inset-x-0 z-[5]"
+                    style={{ top: top(gap.top), height: height(gap) }}
+                  />
+                ))}
+
+                {placedBlocks.flatMap(
+                  ({ block, pieces, continuesBefore, continuesAfter }) =>
+                    pieces.map((piece, part) => (
+                      <button
+                        key={`${block.id}:${part}`}
+                        type="button"
+                        tabIndex={part === 0 ? undefined : -1}
+                        aria-hidden={part === 0 ? undefined : true}
+                        onClick={() => onOpenBlock(block)}
+                        aria-label={
+                          part === 0
+                            ? `${blockLabel(block)}, ${timeOf(block.localStartsAt)} – ${timeOf(block.localEndsAt)}`
+                            : undefined
+                        }
+                        className={cn(
+                          "agenda-hatch absolute inset-x-0.5 z-10 flex cursor-pointer flex-col items-start justify-start overflow-hidden rounded-lg border border-line-strong/70 px-2 py-1 text-left transition-colors hover:border-ink",
+                          (continuesBefore || part > 0) && "rounded-t-none",
+                          (continuesAfter || part < pieces.length - 1) &&
+                            "rounded-b-none",
+                        )}
+                        style={{
+                          top: top(piece.top),
+                          height: Math.max(height(piece), 18),
+                        }}
+                      >
+                        {part === 0 ? (
+                          <>
+                            <span className="block truncate text-[12px] font-semibold text-ink-soft">
+                              {blockLabel(block)}
+                            </span>
+                            {height(piece) >= 40 ? (
+                              <span className="block text-[11px] text-ink-muted tabular-nums">
+                                {timeOf(block.localStartsAt)} –{" "}
+                                {timeOf(block.localEndsAt)}
+                              </span>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </button>
+                    )),
+                )}
+
+                {placedAppointments.flatMap(
+                  ({ appointment, pieces, lane, lanes }) =>
+                    pieces.map((piece, part) => {
+                      const style = {
+                        top: top(piece.top),
+                        height: Math.max(height(piece), 22),
                         left: `calc(${(lane / lanes) * 100}% + 2px)`,
                         width: `calc(${100 / lanes}% - 4px)`,
-                      }}
-                    />
-                  ),
+                      };
+                      return part === 0 ? (
+                        <AppointmentCard
+                          key={appointment.id}
+                          appointment={appointment}
+                          timezone={timezone}
+                          heightPx={style.height}
+                          roomy={single}
+                          onOpen={() => onOpenAppointment(appointment)}
+                          style={style}
+                        />
+                      ) : (
+                        <button
+                          key={`${appointment.id}:${part}`}
+                          type="button"
+                          tabIndex={-1}
+                          aria-hidden="true"
+                          onClick={() => onOpenAppointment(appointment)}
+                          className={cn(
+                            "absolute z-20 cursor-pointer rounded-b-lg border border-t-0 border-l-[3px] border-line/80",
+                            statusMeta[appointment.status].card,
+                          )}
+                          style={style}
+                        />
+                      );
+                    }),
                 )}
 
-                {nowMinutes !== null &&
-                nowMinutes >= startHour * 60 &&
-                nowMinutes <= endHour * 60 ? (
+                {nowY !== null && nowY >= startY && nowY <= endY ? (
                   <div
                     aria-hidden="true"
                     className="pointer-events-none absolute inset-x-0 z-30 flex items-center"
-                    style={{ top: top(nowMinutes) }}
+                    style={{ top: top(nowY) }}
                   >
                     <span className="-ml-1 size-2 rounded-full bg-accent" />
                     <span className="h-px flex-1 bg-accent" />

@@ -22,4 +22,9 @@ if (typeof window !== "undefined") {
   window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
   Element.prototype.animate =
     vi.fn() as unknown as typeof Element.prototype.animate;
+  // No real network in component tests: the transport probe of callAction
+  // sees an unreachable server unless a test stubs fetch itself.
+  globalThis.fetch = vi.fn(() =>
+    Promise.reject(new TypeError("No network in tests")),
+  ) as unknown as typeof fetch;
 }

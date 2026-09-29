@@ -4,7 +4,13 @@ import type {
   AgendaDto,
 } from "@/features/agenda/data/agenda";
 import type { AgendaServicesDto } from "@/features/agenda/data/lookups";
-import { addDaysToLocalDate, zonedLocalToUtc } from "@/lib/time/zoned";
+import {
+  addDaysToLocalDate,
+  resolveZonedLocal,
+  utcToZonedLocal,
+  zonedLocalToUtc,
+  zonedOccurrenceOf,
+} from "@/lib/time/zoned";
 
 // Test data shaped exactly like the agenda contract's DTOs.
 
@@ -40,27 +46,52 @@ export const services: AgendaServicesDto = {
 
 const iso = (local: string) => zonedLocalToUtc(local, TZ).toISOString();
 
+/**
+ * Real UTC instant of a wall-clock time. An ambiguous time (repeated autumn
+ * hour) must say which occurrence it means; a skipped one is refused.
+ */
+export function instantOf(
+  local: string,
+  occurrence?: "first" | "second",
+  timeZone = TZ,
+) {
+  const resolved = resolveZonedLocal(local, timeZone);
+  if (resolved.status === "nonexistent")
+    throw new Error(`${local} does not exist in ${timeZone}`);
+  if (resolved.status === "exact") return resolved.instant.toISOString();
+  if (!occurrence)
+    throw new Error(`${local} is ambiguous in ${timeZone}: pass an occurrence`);
+  return resolved[occurrence].toISOString();
+}
+
+/** DTO fields of a real period, every local value derived from the instants. */
+export function period(startsAt: string, endsAt: string, timeZone = TZ) {
+  return {
+    startsAt,
+    endsAt,
+    localStartsAt: utcToZonedLocal(startsAt, timeZone),
+    localEndsAt: utcToZonedLocal(endsAt, timeZone),
+    startOccurrence: zonedOccurrenceOf(startsAt, timeZone),
+  };
+}
+
 export function appointment(
-  overrides: Partial<AgendaAppointmentDto> & { local?: string } = {},
+  overrides: Partial<AgendaAppointmentDto> & {
+    local?: string;
+    occurrence?: "first" | "second";
+  } = {},
 ): AgendaAppointmentDto {
-  const { local = "2026-09-29T10:00", ...rest } = overrides;
+  const { local = "2026-09-29T10:00", occurrence, ...rest } = overrides;
   const duration = rest.durationMinutes ?? 75;
-  const startsAt = rest.startsAt ?? iso(local);
+  const startsAt = rest.startsAt ?? instantOf(local, occurrence);
   const endsAt =
     rest.endsAt ??
     new Date(Date.parse(startsAt) + duration * 60_000).toISOString();
-  const endLocal =
-    rest.localEndsAt ??
-    `${local.slice(0, 11)}${new Date(Date.parse(`${local}:00Z`) + duration * 60_000).toISOString().slice(11, 16)}`;
   return {
     id: uuid(),
     version: 1,
     status: "confirmed",
-    startsAt,
-    endsAt,
-    localStartsAt: local,
-    localEndsAt: endLocal,
-    startOccurrence: null,
+    ...period(startsAt, endsAt),
     durationMinutes: duration,
     bufferMinutes: 10,
     priceCents: 6500,
@@ -76,21 +107,34 @@ export function appointment(
   };
 }
 
-export function block(overrides: Partial<AgendaBlockDto> = {}): AgendaBlockDto {
-  const localStartsAt = overrides.localStartsAt ?? "2026-09-30T12:30";
-  const localEndsAt = overrides.localEndsAt ?? "2026-09-30T15:00";
+export function block(
+  overrides: Partial<AgendaBlockDto> & {
+    from?: string;
+    to?: string;
+    fromOccurrence?: "first" | "second";
+    toOccurrence?: "first" | "second";
+    timeZone?: string;
+  } = {},
+): AgendaBlockDto {
+  const {
+    from = "2026-09-30T12:30",
+    to = "2026-09-30T15:00",
+    fromOccurrence,
+    toOccurrence,
+    timeZone = TZ,
+    ...rest
+  } = overrides;
+  const startsAt = rest.startsAt ?? instantOf(from, fromOccurrence, timeZone);
+  const endsAt = rest.endsAt ?? instantOf(to, toOccurrence, timeZone);
+  const real = period(startsAt, endsAt, timeZone);
   return {
     id: uuid(),
     version: 1,
     kind: "blocked",
-    startsAt: iso(localStartsAt),
-    endsAt: iso(localEndsAt),
-    localStartsAt,
-    localEndsAt,
-    startOccurrence: null,
-    endOccurrence: null,
+    ...real,
+    endOccurrence: zonedOccurrenceOf(endsAt, timeZone),
     reason: "Formation",
-    ...overrides,
+    ...rest,
   };
 }
 
