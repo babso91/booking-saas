@@ -285,6 +285,29 @@ Changements d'heure (règle identique à `timestamp AT TIME ZONE` de PostgreSQL 
 
 Le serveur reçoit une date locale et renvoie des instants UTC accompagnés du fuseau du business. Côté professionnel, les exceptions sont saisies en heure murale locale et converties en UTC côté serveur avec le fuseau du business (`src/lib/time/zoned.ts`, aligné sur le comportement de PostgreSQL pour les heures ambiguës ou inexistantes). Aucun code ne suppose `Europe/Paris`, qui n'est qu'une valeur par défaut de colonne ; les fuseaux invalides sont refusés par trigger.
 
+### Agenda professionnel (V1, backend)
+
+L'agenda n'est pas un second moteur de planning : il lit et modifie les mêmes tables que la réservation publique, avec les mêmes garanties. Il n'existe aucune table d'événements propre à l'agenda. Les événements externes (Google Calendar) auront leur propre modèle (§8 bis).
+
+- **Rendez-vous.** Ils restent dans `appointments`, qu'ils viennent de la page publique (`created_by` nul) ou soient ajoutés par la professionnelle.
+- **Blocs.** Ce sont des `availability_exceptions` de type `blocked` ou `closed`.
+- **Horaires.** Ils viennent de `business_hours` et `open_override`.
+- **Écritures des rendez-vous** (migration `20260930090000`). Trois RPC `SECURITY DEFINER` : `agenda_create_appointment`, `agenda_update_appointment` et `agenda_set_appointment_status`. Chacune :
+  - vérifie `auth.uid()` et le membership du business avant toute lecture ;
+  - adresse chaque ligne par `(id, business_id)` ;
+  - calcule côté serveur la durée, la fin, le buffer et les snapshots ;
+  - prend le verrou de planning en premier pour tout ce qui ajoute de l'occupation, selon la convention d'ordre des verrous.
+- **Garanties finales.** La contrainte d'exclusion et les triggers rendez-vous ↔ blocs restent les garanties finales. Ils refusent toujours un niveau d'isolation autre que READ COMMITTED.
+- **Placement libre.** La professionnelle peut placer un rendez-vous hors horaires, sans délai minimal ni horizon, mais jamais en chevauchement.
+- **Écritures des blocs.** Elles gardent le chemin existant : DML filtré par RLS, dont les triggers prennent le verrou et refusent les chevauchements. L'agenda y ajoute seulement une condition de version.
+- **Versions optimistes.** `appointments.version` et `availability_exceptions.version` sont incrémentés par trigger à chaque UPDATE, quel que soit le chemin. Une édition faite depuis un écran périmé renvoie `stale_appointment` ou `stale_block` au lieu d'écraser la modification la plus récente. Le choix d'un entier plutôt que `updated_at` évite toute perte de précision (microsecondes) dans les allers-retours JSON et JavaScript.
+- **Double soumission.** À la création, la clé facultative `creation_request_id` est unique par business, et un double clic ne crée qu'un rendez-vous. Pour un changement de statut, redemander le statut courant est sans effet.
+- **Statuts.** Les transitions V1 sont bornées en SQL (`agenda_set_appointment_status`). Seule l'annulation libère le créneau. `completed` et `no_show` exigent que le rendez-vous ait commencé. Revenir de `completed` est refusé dès que des points de fidélité ont été attribués.
+- **Clientes.** `clients.email` devient facultatif, pour une cliente connue par son nom ou son téléphone. `unique (business_id, email)` continue de dédupliquer les emails, et la réservation publique exige toujours un email. La recherche (`search_clients`) est limitée au business, sous RLS, et échappe les jokers `LIKE`.
+- **Lecture.** Elle passe par les Server Actions, sous RLS. Une plage est limitée à 42 jours et à 800 rendez-vous. Au-delà, l'action refuse plutôt que de tronquer silencieusement, car PostgREST plafonne à 1000 lignes.
+- **Plages d'ouverture.** Celles de chaque jour sont calculées côté serveur avec les règles DST du §8.
+- **Contrat UI.** Il est décrit dans `docs/PROFESSIONAL_AGENDA_CONTRACT.md`.
+
 ## 8 bis. Intégration des calendriers externes — architecture prévue
 
 Cette section décrit une évolution future, sans table, migration, connecteur ni worker déjà implémenté. Le moteur intégré au commit `3a424e5807f7277a98cfe1ca939c8dd13821a30e` reste le socle officiel.
@@ -418,4 +441,4 @@ Cet ordre reflète la direction actuelle, pas une obligation architecturale abso
 
 ## 16. Ce que la fondation actuelle ne prétend pas faire
 
-La fondation et le moteur de réservation sécurisé sont livrés : backend des prestations, horaires et exceptions, calcul des créneaux et réservation publique (RPC, DAL, Server Actions et Route Handlers), avec outbox de confirmation et tests. L'authentification professionnelle et l'onboarding transactionnel sont livrés côté backend (actions, gardes, RPC). Ne sont pas encore livrés : écrans, agenda, synchronisation des calendriers externes, CRM, fidélité, envoi des emails, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables selon la roadmap indicative ci-dessus.
+La fondation et le moteur de réservation sécurisé sont livrés : backend des prestations, horaires et exceptions, calcul des créneaux et réservation publique (RPC, DAL, Server Actions et Route Handlers), avec outbox de confirmation et tests. L'authentification professionnelle et l'onboarding transactionnel sont livrés (backend et écrans). Le backend de l'agenda professionnel V1 est livré (lecture d'une plage, rendez-vous manuels, déplacements, statuts, blocs, versions optimistes). Ne sont pas encore livrés : écrans métier dont l'agenda, synchronisation des calendriers externes, CRM, fidélité, envoi des emails, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables selon la roadmap indicative ci-dessus.

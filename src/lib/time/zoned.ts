@@ -120,3 +120,63 @@ export function utcToZonedLocal(instant: Date | string, timeZone: string) {
 export function zonedDateOf(instant: Date | string, timeZone: string) {
   return utcToZonedLocal(instant, timeZone).slice(0, 10);
 }
+
+// ---------------------------------------------------------------------------
+// Local calendar dates (`YYYY-MM-DD`, no time zone attached)
+// ---------------------------------------------------------------------------
+
+const LOCAL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function localDateAsUtcMidnight(localDate: string) {
+  const match = LOCAL_DATE.exec(localDate);
+
+  if (!match) {
+    throw new RangeError(`Invalid local date: ${localDate}`);
+  }
+
+  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+/** `localDate` shifted by `days` calendar days (DST never matters here). */
+export function addDaysToLocalDate(localDate: string, days: number) {
+  return new Date(localDateAsUtcMidnight(localDate) + days * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+/** Calendar days from `from` to `to` (0 when equal, negative if `to` < `from`). */
+export function daysBetweenLocalDates(from: string, to: string) {
+  return Math.round(
+    (localDateAsUtcMidnight(to) - localDateAsUtcMidnight(from)) / 86_400_000,
+  );
+}
+
+/** 0 = Sunday … 6 = Saturday, as business_hours.weekday and `extract(dow)`. */
+export function weekdayOfLocalDate(localDate: string) {
+  return new Date(localDateAsUtcMidnight(localDate)).getUTCDay();
+}
+
+/**
+ * UTC instant of a local wall-clock `HH:MM` on `localDate`, where `24:00`
+ * means the following midnight. Same rules as zonedLocalToUtc.
+ */
+export function zonedTimeOnDateToUtc(
+  localDate: string,
+  time: string,
+  timeZone: string,
+) {
+  return time === "24:00"
+    ? zonedLocalToUtc(`${addDaysToLocalDate(localDate, 1)}T00:00`, timeZone)
+    : zonedLocalToUtc(`${localDate}T${time}`, timeZone);
+}
+
+/**
+ * True when `YYYY-MM-DDTHH:MM` exists as written in `timeZone`, i.e. is not
+ * skipped by a spring-forward transition (02:30 on the spring day in Paris).
+ */
+export function isExistingLocalTime(localDateTime: string, timeZone: string) {
+  return (
+    utcToZonedLocal(zonedLocalToUtc(localDateTime, timeZone), timeZone) ===
+    localDateTime
+  );
+}

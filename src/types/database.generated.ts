@@ -7,13 +7,13 @@ export type Database = {
           Tables: {
             "appointments": {
                   Row: {
-                    "booking_window": unknown,"buffer_minutes_snapshot": number,"business_id": string,"cancellation_reason": string | null,"client_id": string,"completed_at": string | null,"created_at": string,"created_by": string | null,"currency": string,"duration_minutes_snapshot": number,"ends_at": string,"id": string,"internal_notes": string | null,"occupied_window": unknown,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status": Database["public"]['Enums']["appointment_status"],"updated_at": string
+                    "booking_window": unknown,"buffer_minutes_snapshot": number,"business_id": string,"cancellation_reason": string | null,"client_id": string,"completed_at": string | null,"created_at": string,"created_by": string | null,"creation_request_id": string | null,"currency": string,"duration_minutes_snapshot": number,"ends_at": string,"id": string,"internal_notes": string | null,"occupied_window": unknown,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status": Database["public"]['Enums']["appointment_status"],"updated_at": string,"version": number
                   }
                   Insert: {
-                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id": string,"cancellation_reason"?: string | null,"client_id": string,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"currency"?: string,"duration_minutes_snapshot": number,"ends_at": string,"id"?: string,"internal_notes"?: string | null,"occupied_window": unknown,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string
+                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id": string,"cancellation_reason"?: string | null,"client_id": string,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot": number,"ends_at": string,"id"?: string,"internal_notes"?: string | null,"occupied_window": unknown,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id"?: string,"cancellation_reason"?: string | null,"client_id"?: string,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"currency"?: string,"duration_minutes_snapshot"?: number,"ends_at"?: string,"id"?: string,"internal_notes"?: string | null,"occupied_window"?: unknown,"price_cents_snapshot"?: number,"service_id"?: string,"service_name_snapshot"?: string,"starts_at"?: string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string
+                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id"?: string,"cancellation_reason"?: string | null,"client_id"?: string,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot"?: number,"ends_at"?: string,"id"?: string,"internal_notes"?: string | null,"occupied_window"?: unknown,"price_cents_snapshot"?: number,"service_id"?: string,"service_name_snapshot"?: string,"starts_at"?: string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -44,13 +44,13 @@ isOneToOne: false
                   ]
                 },"availability_exceptions": {
                   Row: {
-                    "business_id": string,"created_at": string,"ends_at": string,"id": string,"kind": Database["public"]['Enums']["availability_exception_kind"],"reason": string | null,"starts_at": string,"updated_at": string
+                    "business_id": string,"created_at": string,"ends_at": string,"id": string,"kind": Database["public"]['Enums']["availability_exception_kind"],"reason": string | null,"starts_at": string,"updated_at": string,"version": number
                   }
                   Insert: {
-                    "business_id": string,"created_at"?: string,"ends_at": string,"id"?: string,"kind": Database["public"]['Enums']["availability_exception_kind"],"reason"?: string | null,"starts_at": string,"updated_at"?: string
+                    "business_id": string,"created_at"?: string,"ends_at": string,"id"?: string,"kind": Database["public"]['Enums']["availability_exception_kind"],"reason"?: string | null,"starts_at": string,"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "business_id"?: string,"created_at"?: string,"ends_at"?: string,"id"?: string,"kind"?: Database["public"]['Enums']["availability_exception_kind"],"reason"?: string | null,"starts_at"?: string,"updated_at"?: string
+                    "business_id"?: string,"created_at"?: string,"ends_at"?: string,"id"?: string,"kind"?: Database["public"]['Enums']["availability_exception_kind"],"reason"?: string | null,"starts_at"?: string,"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -170,13 +170,13 @@ isOneToOne: false
                   ]
                 },"clients": {
                   Row: {
-                    "business_id": string,"created_at": string,"email": string,"first_name": string,"id": string,"internal_notes": string | null,"last_name": string | null,"loyalty_token_hash": string | null,"phone": string | null,"updated_at": string
+                    "business_id": string,"created_at": string,"email": string | null,"first_name": string,"id": string,"internal_notes": string | null,"last_name": string | null,"loyalty_token_hash": string | null,"phone": string | null,"updated_at": string
                   }
                   Insert: {
-                    "business_id": string,"created_at"?: string,"email": string,"first_name": string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string
+                    "business_id": string,"created_at"?: string,"email"?: string | null,"first_name": string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string
                   }
                   Update: {
-                    "business_id"?: string,"created_at"?: string,"email"?: string,"first_name"?: string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string
+                    "business_id"?: string,"created_at"?: string,"email"?: string | null,"first_name"?: string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -380,7 +380,18 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "check_slug_availability":
+            "agenda_create_appointment":
+{ Args: { "p_business_id": string,"p_client_email"?: string,"p_client_first_name"?: string,"p_client_id"?: string,"p_client_last_name"?: string,"p_client_phone"?: string,"p_internal_notes"?: string,"p_request_id"?: string,"p_service_id": string,"p_starts_at": string }; Returns: {
+              "appointment_id": string,"created": boolean
+            }[]
+                           },
+"agenda_set_appointment_status":
+{ Args: { "p_appointment_id": string,"p_business_id": string,"p_cancellation_reason"?: string,"p_expected_version": number,"p_status": Database["public"]['Enums']["appointment_status"] }; Returns: string
+                           },
+"agenda_update_appointment":
+{ Args: { "p_appointment_id": string,"p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_internal_notes"?: string,"p_service_id": string,"p_starts_at": string }; Returns: string
+                           },
+"check_slug_availability":
 { Args: { "p_slug": string }; Returns: {
               "available": boolean,"reason": string,"slug": string
             }[]
@@ -434,7 +445,12 @@ isOneToOne: false
         to: "business_hours"
         isOneToOne: false
         isSetofReturn: true
-      } }
+      } },
+"search_clients":
+{ Args: { "p_business_id": string,"p_limit"?: number,"p_query": string }; Returns: {
+              "email": string,"first_name": string,"id": string,"last_name": string,"phone": string
+            }[]
+                           }
           }
           Enums: {
             "appointment_status": "confirmed"|"completed"|"cancelled"|"no_show","availability_exception_kind": "closed"|"blocked"|"open_override","business_member_role": "owner"|"admin","email_event_status": "pending"|"processing"|"sent"|"failed"|"cancelled","email_event_type": "booking_confirmation"|"appointment_reminder"|"appointment_changed"|"appointment_cancelled"|"points_earned"|"reward_unlocked"|"reactivation","loyalty_accrual_mode": "appointment"|"spend","loyalty_event_type": "appointment_completed"|"manual_adjustment"|"reward_redeemed"|"correction","reward_type": "percentage_discount"|"fixed_discount"|"free_service"

@@ -89,8 +89,9 @@ Inclus :
 - API publique : `GET /api/public/businesses/[slug]`, `GET /api/public/businesses/[slug]/availability?serviceId=…&date=AAAA-MM-JJ`, `POST /api/bookings` ;
 - Server Actions professionnelles dans `src/features/*/actions` ;
 - authentification professionnelle (email + mot de passe), gardes de routage serveur et onboarding transactionnel : contrat UI dans [docs/AUTH_ONBOARDING_CONTRACT.md](docs/AUTH_ONBOARDING_CONTRACT.md).
+- backend de l'agenda professionnel V1 (lecture d'une plage, rendez-vous manuels, déplacements, statuts, blocs, concurrence) : contrat UI dans [docs/PROFESSIONAL_AGENDA_CONTRACT.md](docs/PROFESSIONAL_AGENDA_CONTRACT.md).
 
-Non inclus : écrans métier, agenda, CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
+Non inclus : écrans métier (dont l'écran d'agenda), CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
 
 ## Interface d'authentification et d'onboarding
 
