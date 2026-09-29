@@ -35,8 +35,13 @@ function localBounds(input: BlockInput) {
     : { start: input.startsAt, end: input.endsAt };
 }
 
+/**
+ * The only ordering check of a block: on resolved UTC instants, never on
+ * wall-clock strings. Refuses empty and inverted periods, including a short
+ * period collapsed by the spring gap (02:00 → 02:30), and accepts a period
+ * whose two bounds read the same during the repeated autumn hour.
+ */
 function blockRow(startsAt: Date, endsAt: Date, reason: string | null) {
-  // A short period can collapse across a DST gap (02:00 → 02:30 in spring).
   if (startsAt >= endsAt) {
     throw new AppException("validation_error", {
       fieldErrors: { endsAt: ["La fin doit être après le début."] },

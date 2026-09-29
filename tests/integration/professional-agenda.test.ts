@@ -2351,3 +2351,199 @@ describe("DST guarantees across paths", () => {
     expect([once.startsAt, twice.startsAt]).toEqual([SECOND, SECOND]);
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("block validation on resolved instants (Europe/Paris, 2026-10-25)", () => {
+  const DAY = "2026-10-25";
+  // 02:30 CEST → 02:30 CET: one real hour, both bounds read 02:30.
+  const FIRST_0230 = "2026-10-25T00:30:00.000Z";
+  const SECOND_0230 = "2026-10-25T01:30:00.000Z";
+
+  async function crossingBlock(agenda: Agenda) {
+    await db.query(
+      `insert into public.availability_exceptions (business_id, kind, starts_at, ends_at, reason)
+       values ($1, 'blocked', $2, $3, 'Initial')`,
+      [agenda.business.id, FIRST_0230, SECOND_0230],
+    );
+    return ok(await getAgendaAction({ startDate: DAY, endDate: DAY }))
+      .blocks[0]!;
+  }
+
+  function edit(
+    block: {
+      id: string;
+      version: number;
+      localStartsAt: string;
+      localEndsAt: string;
+    },
+    changes: {
+      startsAt?: string;
+      endsAt?: string;
+      reason?: string | null;
+    } = {},
+  ) {
+    return updateBlockAction({
+      blockId: block.id,
+      expectedVersion: block.version,
+      block: {
+        allDay: false,
+        startsAt: changes.startsAt ?? block.localStartsAt,
+        endsAt: changes.endsAt ?? block.localEndsAt,
+        reason: "reason" in changes ? changes.reason : "Initial",
+      },
+    });
+  }
+
+  async function stored(blockId: string) {
+    const { rows } = await db.query(
+      "select starts_at, ends_at, version, reason from public.availability_exceptions where id = $1",
+      [blockId],
+    );
+    return {
+      startsAt: (rows[0].starts_at as Date).toISOString(),
+      endsAt: (rows[0].ends_at as Date).toISOString(),
+      version: rows[0].version as number,
+      reason: rows[0].reason as string | null,
+    };
+  }
+
+  it("shows a one-hour block across the repeated hour as 02:30 → 02:30", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const block = await crossingBlock(a);
+
+    expect(block).toMatchObject({
+      startsAt: FIRST_0230,
+      endsAt: SECOND_0230,
+      localStartsAt: `${DAY}T02:30`,
+      localEndsAt: `${DAY}T02:30`,
+      startOccurrence: "first",
+      endOccurrence: "second",
+    });
+  });
+
+  it("accepts a reason-only edit and keeps both UTC instants", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const block = await crossingBlock(a);
+
+    const edited = ok(await edit(block, { reason: "Pause" }));
+
+    expect(edited).toMatchObject({
+      startsAt: FIRST_0230,
+      endsAt: SECOND_0230,
+      version: 2,
+    });
+    expect(await stored(block.id)).toEqual({
+      startsAt: FIRST_0230,
+      endsAt: SECOND_0230,
+      version: 2,
+      reason: "Pause",
+    });
+  });
+
+  it("still answers stale_block to an old version, writing nothing", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const block = await crossingBlock(a);
+    ok(await edit(block, { reason: "Ailleurs" }));
+
+    failure(await edit(block, { reason: "Trop tard" }), "stale_block");
+    expect(await stored(block.id)).toMatchObject({
+      version: 2,
+      reason: "Ailleurs",
+    });
+  });
+
+  it("refuses a really empty period, on creation and on edit", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+
+    // Same repeated time typed twice: both resolve to the second occurrence.
+    failure(
+      await createBlockAction({
+        allDay: false,
+        startsAt: `${DAY}T02:30`,
+        endsAt: `${DAY}T02:30`,
+      }),
+      "validation_error",
+    );
+    failure(
+      await createBlockAction({
+        allDay: false,
+        startsAt: `${FUTURE}T10:00`,
+        endsAt: `${FUTURE}T10:00`,
+      }),
+      "validation_error",
+    );
+
+    const normal = ok(await block(a, "10:00", "11:00"));
+    failure(
+      await edit(normal, { endsAt: `${FUTURE}T10:00` }),
+      "validation_error",
+    );
+    expect(await stored(normal.id)).toMatchObject({ version: 1 });
+  });
+
+  it("refuses a really inverted period, on creation and on edit", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+
+    failure(
+      await createBlockAction({
+        allDay: false,
+        startsAt: `${FUTURE}T11:00`,
+        endsAt: `${FUTURE}T10:00`,
+      }),
+      "validation_error",
+    );
+
+    const crossing = await crossingBlock(a);
+    // New end 01:00 (23:00Z the day before) is really before the start.
+    failure(
+      await edit(crossing, { endsAt: `${DAY}T01:00` }),
+      "validation_error",
+    );
+    expect(await stored(crossing.id)).toMatchObject({
+      startsAt: FIRST_0230,
+      endsAt: SECOND_0230,
+      version: 1,
+    });
+  });
+
+  it("behaves as before outside DST transitions", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const created = ok(await block(a, "10:00", "11:00"));
+
+    const moved = ok(
+      await edit(created, {
+        startsAt: `${FUTURE}T12:00`,
+        endsAt: `${FUTURE}T13:30`,
+      }),
+    );
+    expect(moved).toMatchObject({
+      startsAt: utc(a, FUTURE, "12:00"),
+      endsAt: utc(a, FUTURE, "13:30"),
+      version: 2,
+    });
+
+    // Scheduling protection untouched: a block still never covers an appointment.
+    await createOk(a, "15:00");
+    failure(
+      await edit(moved, { endsAt: `${FUTURE}T15:30` }),
+      "schedule_conflict",
+    );
+  });
+
+  it("keeps first- and second-occurrence bounds on a round trip", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const crossing = await crossingBlock(a);
+
+    // Resend unchanged, then change only the end (outside the repeated hour).
+    const same = ok(await edit(crossing, { reason: "Même" }));
+    expect(same).toMatchObject({ startsAt: FIRST_0230, endsAt: SECOND_0230 });
+
+    const longer = ok(await edit(same, { endsAt: `${DAY}T04:00` }));
+    expect(longer).toMatchObject({
+      startsAt: FIRST_0230, // first occurrence kept
+      endsAt: "2026-10-25T03:00:00.000Z",
+      startOccurrence: "first",
+    });
+  });
+});

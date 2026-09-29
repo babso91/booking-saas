@@ -154,14 +154,26 @@ describe("blockInputSchema", () => {
     ).toBe(true);
   });
 
-  it("refuses inverted periods and days", () => {
+  it("leaves the order of a period to the resolved instants", () => {
+    // 02:30 → 02:30 is a valid hour on 2026-10-25 in Paris (first → second
+    // occurrence): only the server, after resolution, can judge the order.
     expect(
       blockInputSchema.safeParse({
         allDay: false,
-        startsAt: "2026-10-20T14:00",
-        endsAt: "2026-10-20T12:00",
+        startsAt: "2026-10-25T02:30",
+        endsAt: "2026-10-25T02:30",
+      }).success,
+    ).toBe(true);
+    expect(
+      blockInputSchema.safeParse({
+        allDay: false,
+        startsAt: "2026-10-25T02:30",
+        endsAt: "2026-10-25T2:30",
       }).success,
     ).toBe(false);
+  });
+
+  it("refuses inverted days", () => {
     expect(
       blockInputSchema.safeParse({
         allDay: true,

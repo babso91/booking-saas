@@ -168,17 +168,16 @@ export const cancelAppointmentSchema = z.object({
 });
 
 // Blocks: a period (local date-times) or whole local days (inclusive).
-const blockPeriodSchema = z
-  .object({
-    allDay: z.literal(false),
-    startsAt: localDateTimeSchema,
-    endsAt: localDateTimeSchema,
-    reason: optionalText(500),
-  })
-  .refine((block) => block.startsAt < block.endsAt, {
-    message: "La fin doit être après le début.",
-    path: ["endsAt"],
-  });
+// No ordering check on the wall-clock strings here: during the repeated
+// autumn hour a valid block shows "02:30 → 02:30" (00:30Z → 01:30Z in Paris).
+// Order and duration are validated on the resolved UTC instants
+// (src/features/agenda/data/blocks.ts), after unchanged bounds kept theirs.
+const blockPeriodSchema = z.object({
+  allDay: z.literal(false),
+  startsAt: localDateTimeSchema,
+  endsAt: localDateTimeSchema,
+  reason: optionalText(500),
+});
 
 const blockDaysSchema = z
   .object({
