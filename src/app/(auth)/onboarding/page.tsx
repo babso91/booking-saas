@@ -1,17 +1,17 @@
 import type { Metadata } from "next";
 
+import { requirePendingOnboarding } from "@/features/auth/data/guards";
+import { OnboardingFlow } from "@/features/onboarding/components/onboarding-flow";
+
 export const metadata: Metadata = {
   title: "Configurer mon activité",
 };
 
-// Placeholder owned by the UI branch: the form calls completeOnboardingAction
-// and checkSlugAction (src/features/onboarding/actions/onboarding.ts).
-export default function OnboardingFoundationPage() {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center px-6">
-      <h1 className="text-3xl font-semibold text-stone-950">
-        Configurer mon activité
-      </h1>
-    </main>
-  );
+// The layout guard alone does not stop this page from rendering (segments
+// render in parallel and would still reach the RSC payload of the redirect),
+// so the page checks too. Same cached session state, no extra request.
+export default async function OnboardingPage() {
+  const state = await requirePendingOnboarding();
+
+  return <OnboardingFlow owner={state.user.id} />;
 }

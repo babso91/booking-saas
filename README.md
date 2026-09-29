@@ -92,6 +92,12 @@ Inclus :
 
 Non inclus : écrans métier, agenda, CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
 
+## Interface d'authentification et d'onboarding
+
+Les écrans `/login`, `/signup`, `/onboarding` (4 étapes, aperçu en direct de la page publique) et `/app/welcome` (fin d'onboarding) appellent directement les Server Actions du contrat [docs/AUTH_ONBOARDING_CONTRACT.md](docs/AUTH_ONBOARDING_CONTRACT.md), via `callAction` (`src/features/auth/client/call-action.ts`), qui ajoute seulement le cas `network` quand la requête n'aboutit pas. Chaque code d'erreur a son texte d'interface (`src/features/auth/client/error-copy.ts`) ; aucun message backend, Supabase ou PostgreSQL n'est affiché. Les gardes serveur restent l'autorité : l'écran de succès vit sous `/app` parce que, une fois l'activité créée, la garde de `/onboarding` redirige.
+
+La validation côté navigateur reprend les limites des schémas backend (vérifié par `src/features/onboarding/contract-alignment.test.ts`). Le brouillon d'onboarding est gardé dans l'onglet (`sessionStorage`), rattaché au compte, et effacé après succès ou déconnexion.
+
 ## Règles d'architecture
 
 - Les lectures privées passent par des Server Components et une DAL `server-only`.

@@ -1,25 +1,294 @@
 @import "tailwindcss";
 
+/*
+ * Visual identity — "atelier" palette.
+ * Warm ivory paper, deep espresso ink and a single rosewood accent. Colours
+ * are defined once here and exposed to Tailwind through @theme so components
+ * use semantic names (bg-paper, text-ink-soft, border-line…).
+ */
 :root {
-  --background: #faf9f7;
-  --foreground: #1c1917;
+  --paper: #f6f1ea;
+  --paper-raised: #fffcf8;
+  --sand: #ece2d5;
+  --sand-deep: #e1d3c2;
+  --line: #e0d4c6;
+  --line-strong: #c9b6a2;
+  --ink: #231c18;
+  --ink-soft: #594e47;
+  --ink-muted: #756960;
+  --accent: #97493a;
+  --accent-strong: #7c3a2d;
+  --accent-soft: #f2e2d8;
+  --success: #3d6a4c;
+  --success-soft: #e2ece3;
+  --danger: #9c3d2e;
+  --danger-soft: #f7e3dc;
+  --warning: #8a5a1c;
+  --warning-soft: #f6ead4;
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-soft: cubic-bezier(0.55, 0, 0.75, 0.2);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-sand: var(--sand);
+  --color-sand-deep: var(--sand-deep);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-muted: var(--ink-muted);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+
+  --font-sans:
+    var(--font-body), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-serif), ui-serif, Georgia, serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --ease-soft: var(--ease-out-soft);
+
+  --animate-rise: rise 420ms var(--ease-out-soft) both;
+  --animate-fade: fade 320ms var(--ease-out-soft) both;
+  --animate-step-in-forward: step-in-forward 300ms var(--ease-out-soft) both;
+  --animate-step-in-back: step-in-back 300ms var(--ease-out-soft) both;
+  --animate-step-out-forward: step-out-forward 150ms var(--ease-in-soft) both;
+  --animate-step-out-back: step-out-back 150ms var(--ease-in-soft) both;
+  --animate-message: message 220ms var(--ease-out-soft) both;
+  --animate-shake: shake 360ms var(--ease-out-soft);
+  --animate-pop: pop 360ms var(--ease-out-soft) both;
+  --animate-float: float 9s ease-in-out infinite;
+  --animate-drift: drift 22s ease-in-out infinite;
+  --animate-spin-slow: spin 900ms linear infinite;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes step-in-forward {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes step-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes step-out-forward {
+  to {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+}
+
+@keyframes step-out-back {
+  to {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+@keyframes message {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: none;
+  }
+  20% {
+    transform: translateX(-5px);
+  }
+  40% {
+    transform: translateX(4px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+@keyframes pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(var(--tilt, 0deg));
+  }
+  50% {
+    transform: translate3d(0, -10px, 0) rotate(var(--tilt, 0deg));
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(4%, -3%, 0) scale(1.06);
+  }
+}
+
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes petal {
+  0% {
+    opacity: 0;
+    transform: rotate(var(--angle)) translateY(0) scale(0.4);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(var(--angle)) translateY(-64px) scale(1);
+  }
+}
+
+/* Base styles live in the base layer so Tailwind utilities can override them. */
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--ink);
+  }
+
+  /* A single, consistent focus ring for every interactive element. */
+  :where(a, button, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 10px;
+  }
+
+  /* Inputs draw their own focus treatment on the wrapper. */
+  :where(.field-control):focus-visible {
+    outline: none;
+  }
+}
+
+.draw-check {
+  stroke-dasharray: 32;
+  stroke-dashoffset: 32;
+  animation: draw 420ms var(--ease-out-soft) 120ms forwards;
+}
+
+.draw-ring {
+  stroke-dasharray: 160;
+  stroke-dashoffset: 160;
+  animation: draw 620ms var(--ease-out-soft) forwards;
+}
+
+.petal {
+  animation: petal 900ms var(--ease-out-soft) both;
+}
+
+/* Paper grain — extremely light, adds warmth to flat surfaces. */
+.grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.45 0 0 0 0 0.36 0 0 0 0 0.3 0 0 0 0.08 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .draw-check,
+  .draw-ring {
+    stroke-dashoffset: 0;
+  }
 }

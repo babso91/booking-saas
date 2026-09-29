@@ -1,20 +1,18 @@
 import type { Metadata } from "next";
 
+import { AuthShell } from "@/features/auth/components/auth-shell";
+import { LoginForm } from "@/features/auth/components/login-form";
+
 export const metadata: Metadata = {
   title: "Connexion",
 };
 
-export default function LoginFoundationPage() {
+export default async function LoginPage({ searchParams }: PageProps<"/login">) {
+  const { error } = await searchParams;
+
   return (
-    <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center px-6">
-      <p className="text-sm font-semibold tracking-wide text-rose-700 uppercase">
-        Espace professionnel
-      </p>
-      <h1 className="mt-3 text-3xl font-semibold text-stone-950">Connexion</h1>
-      <p className="mt-4 leading-7 text-stone-600">
-        L’authentification Supabase sera branchée dans la prochaine verticale.
-        Cette route réserve dès maintenant la frontière publique de connexion.
-      </p>
-    </main>
+    <AuthShell>
+      <LoginForm callbackFailed={error === "auth_callback_failed"} />
+    </AuthShell>
   );
 }
