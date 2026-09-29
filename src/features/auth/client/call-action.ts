@@ -34,6 +34,35 @@ export async function callAction<T>(
         : { code: result.error.code },
     };
   } catch {
-    return { ok: false, error: { code: "network" } };
+    return {
+      ok: false,
+      error: { code: (await sessionExpired()) ? "unauthenticated" : "network" },
+    };
+  }
+}
+
+/**
+ * Actions post to the current page. On a private page (/app, /onboarding)
+ * the proxy redirects that request to /login once the session is gone, so
+ * the call fails in transport instead of answering `unauthenticated`. Asking
+ * the server whether the page still answers without a redirect tells an
+ * expired session apart from a network problem.
+ */
+async function sessionExpired(): Promise<boolean> {
+  if (typeof window === "undefined" || typeof fetch !== "function")
+    return false;
+  try {
+    const response = await fetch(window.location.pathname, {
+      method: "HEAD",
+      redirect: "manual",
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    return (
+      response.type === "opaqueredirect" ||
+      (response.status >= 300 && response.status < 400)
+    );
+  } catch {
+    return false;
   }
 }

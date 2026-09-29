@@ -77,7 +77,7 @@ async function signedInBrowser() {
 // Text that only exists in the body of each private page (titles live in
 // <head> metadata and are not private).
 const PRIVATE_BODIES = [
-  "Ton espace est configuré", // /app
+  "Chargement de l’agenda", // /app
   "Chargement de ton espace", // /onboarding
   "Ton espace est prêt.", // /app/welcome
 ];
@@ -146,7 +146,7 @@ describe("UI routes against the real backend", () => {
 
     const app = await browser.get("/app");
     expect(app.status).toBe(200);
-    expect(app.html).toContain("Ton espace est configuré");
+    expect(app.html).toContain("Chargement de l’agenda");
     expect((await browser.get("/app/welcome")).html).toContain(
       "Ton espace est prêt.",
     );

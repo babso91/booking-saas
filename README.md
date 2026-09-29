@@ -99,6 +99,17 @@ Les écrans `/login`, `/signup`, `/onboarding` (4 étapes, aperçu en direct de 
 
 La validation côté navigateur reprend les limites des schémas backend (vérifié par `src/features/onboarding/contract-alignment.test.ts`). Le brouillon d'onboarding est gardé dans l'onglet (`sessionStorage`), rattaché au compte, et effacé après succès ou déconnexion.
 
+Si une action échoue au niveau du transport sur une page privée, `callAction` vérifie si la page redirige désormais (session expirée, le proxy renvoyant vers `/login`) avant de conclure à une erreur réseau.
+
+## Interface de l'agenda professionnel
+
+`/app` est l'espace professionnel : barre latérale sur ordinateur, barre d'onglets en bas sur téléphone. L'agenda (`src/features/agenda/components`) n'utilise que les Server Actions de [docs/PROFESSIONAL_AGENDA_CONTRACT.md](docs/PROFESSIONAL_AGENDA_CONTRACT.md) :
+
+- une semaine est lue à partir de 768 px, une journée sur téléphone, en une seule requête agrégée ;
+- positions, heures et prix viennent du DTO (`local*`, `priceCents`) : aucune conversion de fuseau ni aucun calcul flottant côté navigateur ;
+- aucune écriture optimiste : la réponse du serveur met à jour le panneau et la plage visible est rechargée ;
+- les versions (`stale_*`), l'idempotence de création (`requestId` lié à l'empreinte de la commande), les conflits de planning et les deux occurrences de l'heure répétée à l'automne sont gérés explicitement.
+
 ## Règles d'architecture
 
 - Les lectures privées passent par des Server Components et une DAL `server-only`.

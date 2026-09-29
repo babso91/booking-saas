@@ -37,6 +37,8 @@ export const emptyDraft: OnboardingDraft = {
 // can neither read nor overwrite another's answers. Cleared on success and
 // on sign-out.
 const PREFIX = "onboarding:draft:";
+// Single shared slot used before drafts were scoped per account.
+const LEGACY_KEY = "onboarding:draft";
 
 const keyFor = (owner: string) => `${PREFIX}${owner}`;
 
@@ -85,13 +87,14 @@ export function clearDraft(owner: string) {
   }
 }
 
-/** Removes every onboarding draft of this tab (sign-out). */
+/** Removes every onboarding draft of this tab (sign-out), legacy slot included. */
 export function clearAllDrafts() {
   try {
     const storage = window.sessionStorage;
     for (let index = storage.length - 1; index >= 0; index -= 1) {
       const key = storage.key(index);
-      if (key?.startsWith(PREFIX)) storage.removeItem(key);
+      if (key === LEGACY_KEY || key?.startsWith(PREFIX))
+        storage.removeItem(key);
     }
   } catch {
     // Ignore.
