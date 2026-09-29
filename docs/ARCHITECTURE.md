@@ -91,6 +91,7 @@ Les pages et layouts sont des Server Components par défaut. `'use client'` est 
 | -------------------------------------------- | ------------------ | ------------------------------------------- |
 | `/`                                          | public             | présentation produit minimale               |
 | `/login`                                     | public             | authentification professionnelle            |
+| `/onboarding`                                | authentifié        | création du business (sans business)        |
 | `/auth/callback`                             | public contrôlé    | échange du code Supabase Auth               |
 | `/app`                                       | authentifié        | dashboard                                   |
 | `/app/calendar`                              | authentifié        | agenda                                      |
@@ -229,12 +230,39 @@ Le lien contient au moins 32 octets aléatoires encodés en base64url. Seul un h
 
 ## 7. Authentification et autorisation
 
-- Supabase Auth par email/magic link ou mot de passe, décision UX à prendre lors du lot Auth.
-- `@supabase/ssr` maintient les cookies dans `src/proxy.ts`.
-- chaque Server Action revalide l'utilisateur, son membership et l'objet ciblé ; une protection de page n'est pas héritée par l'action ;
-- RLS reste active avec le client utilisateur ;
-- aucun identifiant fourni par le client ne suffit à déterminer le tenant ; le tenant autorisé vient de la session/membership ;
-- les endpoints machine vérifient un secret constant-time ou une signature fournisseur.
+- Supabase Auth, email et mot de passe en V1. Magic link, Google et reset de mot de passe s'ajouteront sans changer le modèle : ils aboutissent tous à `/auth/callback` (échange PKCE ou `verifyOtp`), puis aux mêmes gardes.
+- `@supabase/ssr` maintient et rafraîchit les cookies dans `src/proxy.ts`. Le Proxy fait aussi une redirection optimiste des visiteurs sans session hors de `/app` et `/onboarding`.
+- État serveur d'un visiteur (`src/features/auth/data/session.ts`) : `unauthenticated`, `onboarding_required` ou `ready`. Il est calculé à partir de `auth.getUser()` (validé par le serveur Auth) et de `business_members` lu sous RLS. Des gardes de layout (`src/features/auth/data/guards.ts`) redirigent chaque état vers l'unique route qui l'accepte : pas de boucle possible.
+- Chaque Server Action revalide l'utilisateur, son membership et l'objet ciblé ; une protection de page n'est pas héritée par l'action.
+- RLS reste active avec le client utilisateur. Aucun identifiant fourni par le client ne suffit à déterminer le tenant : il vient de la session et du membership.
+- Les endpoints machine vérifient un secret constant-time ou une signature fournisseur.
+
+### Onboarding
+
+`public.complete_onboarding` (migration `20260929090000`) est la seule voie de création d'un business par un utilisateur. C'est une RPC `SECURITY DEFINER`, exécutable uniquement par `authenticated`, à `search_path` vide, sans aucun paramètre d'identité : le propriétaire est `auth.uid()`.
+
+Elle crée dans une seule transaction :
+
+1. le profil (upsert du prénom et du nom) ;
+2. le business ;
+3. les réglages de réservation (créés par trigger, puis mis à jour) ;
+4. le membership `owner` ;
+5. le programme de fidélité par défaut ;
+6. l'enregistrement `business_onboardings`.
+
+Toute erreur annule l'ensemble.
+
+- **Idempotence** : `business_onboardings.user_id` est une clé primaire, donc au plus un onboarding par utilisateur, quel que soit le niveau d'isolation. Un verrou consultatif par utilisateur transforme une double soumission en `already_onboarded` propre plutôt qu'en erreur de contrainte. Un utilisateur déjà membre d'un business reçoit aussi `already_onboarded`. Le nombre de businesses par utilisateur n'est pas contraint par ailleurs.
+- **Slug** : normalisé uniquement côté base (`private.normalize_slug`, avec `unaccent`). Les contraintes `CHECK` garantissent le format, 3 à 63 caractères et les mots réservés ; la contrainte d'unicité existante tranche la concurrence (`slug_taken`). `check_slug_availability` n'est qu'une aide UX.
+- **Contrat UI** : `docs/AUTH_ONBOARDING_CONTRACT.md`.
+- **Migration et slugs existants** : les contraintes `businesses_slug_length` et `businesses_slug_not_reserved` sont ajoutées validées (sans `NOT VALID`). Aucun environnement ne contient de données réelles (pas de projet hébergé, pas de seed) : la migration est sûre. Sur une base contenant un slug trop court ou réservé, elle échouerait explicitement plutôt que de modifier des données ; il faudrait alors renommer ces slugs avant de la rejouer.
+- **État futur non traité** : un `business_onboardings` existe mais le membership `owner` a été supprimé. L'utilisateur est alors `onboarding_required` et la RPC répond `already_onboarded`. Aucune suppression de membership n'existe en V1 ; une procédure de reprise (support ou RPC dédiée) sera définie avec la gestion d'équipe.
+
+### Hôte canonique, confirmation email et déconnexion
+
+- **Hôte canonique** : `NEXT_PUBLIC_APP_URL` est la seule origine de l'app (`http://localhost:3000` en local). `signUpAction` en dérive `emailRedirectTo` (`authCallbackUrl`), sans hôte codé en dur. `supabase/config.toml` aligne `site_url` et `additional_redirect_urls = ["http://localhost:3000/auth/callback"]`. Le cookie `code-verifier` PKCE est lié à l'hôte : une redirection vers un autre hôte (ex. `127.0.0.1` au lieu de `localhost`) fait échouer l'échange. En production : Site URL, Redirect URLs (`<origine>/auth/callback`) et `NEXT_PUBLIC_APP_URL` doivent désigner la même origine.
+- **Confirmation email** activée en local comme en production ; emails lisibles dans Mailpit (http://127.0.0.1:54324). Le parcours complet est testé de bout en bout (`npm run test:e2e`).
+- **Déconnexion** : révocation de la session et du refresh token côté Auth ; `getUser` (proxy, gardes, actions) refuse immédiatement l'ancien jeton. PostgREST ne vérifie que la signature et l'expiration du JWT : un jeton d'accès copié reste utilisable sur l'API de données, sous RLS, jusqu'à `jwt_expiry` (3600 s). Pas de liste noire maison ; réduire `jwt_expiry` en production si cette fenêtre est jugée trop longue.
 
 ## 8. Disponibilités
 
@@ -344,7 +372,7 @@ Un bucket Supabase Storage privé stockera les logos/photos. Le chemin inclut le
 - **unitaires :** calcul de créneaux, métriques, règles de réactivation, schémas Zod ;
 - **base locale Supabase :** contraintes de chevauchement, RLS A/B, clés composites et fonctions transactionnelles (`npm run test:db`, dossier `tests/integration`, contre la pile Supabase locale entièrement migrée) ;
 - **intégration :** réservation et completion/idempotence sur une base locale ;
-- **E2E :** scénario critique mobile avec Playwright une fois la verticale réservation disponible ;
+- **E2E :** inscription → email de confirmation (Mailpit) → `/auth/callback` → session → `/onboarding`, contre `next start` (`npm run test:e2e`, dossier `tests/e2e`) ; scénario critique mobile avec Playwright une fois l'UI disponible ;
 - **contrat email :** snapshot sémantique des données et test de déduplication, sans appeler Resend.
 
 Les tests de sécurité de base sont obligatoires avant toute mise en production, pas reportés à une phase de finition.
@@ -390,4 +418,4 @@ Cet ordre reflète la direction actuelle, pas une obligation architecturale abso
 
 ## 16. Ce que la fondation actuelle ne prétend pas faire
 
-La fondation et le moteur de réservation sécurisé sont livrés : backend des prestations, horaires et exceptions, calcul des créneaux et réservation publique (RPC, DAL, Server Actions et Route Handlers), avec outbox de confirmation et tests. Ne sont pas encore livrés : authentification utilisable et onboarding, écrans, agenda, synchronisation des calendriers externes, CRM, fidélité, envoi des emails, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables selon la roadmap indicative ci-dessus.
+La fondation et le moteur de réservation sécurisé sont livrés : backend des prestations, horaires et exceptions, calcul des créneaux et réservation publique (RPC, DAL, Server Actions et Route Handlers), avec outbox de confirmation et tests. L'authentification professionnelle et l'onboarding transactionnel sont livrés côté backend (actions, gardes, RPC). Ne sont pas encore livrés : écrans, agenda, synchronisation des calendriers externes, CRM, fidélité, envoi des emails, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables selon la roadmap indicative ci-dessus.

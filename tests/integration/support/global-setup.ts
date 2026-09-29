@@ -22,7 +22,7 @@ const MIGRATIONS_DIR = fileURLToPath(
   new URL("../../../supabase/migrations", import.meta.url),
 );
 
-function resolveEnv(): SupabaseTestEnv {
+export function resolveEnv(): SupabaseTestEnv {
   const fromEnv = {
     apiUrl: process.env.SUPABASE_TEST_API_URL,
     dbUrl: process.env.SUPABASE_TEST_DB_URL,
@@ -64,7 +64,7 @@ function resolveEnv(): SupabaseTestEnv {
   };
 }
 
-function assertLocal(url: string) {
+export function assertLocal(url: string) {
   const host = new URL(url).hostname;
 
   if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
