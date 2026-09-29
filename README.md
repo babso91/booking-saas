@@ -39,6 +39,7 @@ Le seed de démonstration est intentionnellement désactivé dans cette étape d
 | `npm run check`    | format, lint, types et tests                         |
 | `npm run test`     | tests unitaires Vitest (sans base)                   |
 | `npm run test:db`  | tests d'intégration contre Supabase local            |
+| `npm run test:e2e` | parcours de confirmation email contre `next start`   |
 | `npm run db:start` | démarre Supabase local                               |
 | `npm run db:stop`  | arrête Supabase local                                |
 | `npm run db:reset` | rejoue les migrations locales                        |
@@ -54,12 +55,19 @@ npm run db:reset   # rejoue toutes les migrations
 npm run test:db
 ```
 
+Le test E2E `tests/e2e` vérifie l'inscription avec confirmation email : lien reçu dans Mailpit (http://127.0.0.1:54324), `/auth/callback`, session puis `/onboarding`. Il démarre lui-même `next start` sur `http://localhost:3000` (port libre requis) :
+
+```bash
+npm run build
+npm run test:e2e
+```
+
 Les clés sont lues via `supabase status` ; elles peuvent aussi être fournies par `SUPABASE_TEST_API_URL`, `SUPABASE_TEST_DB_URL`, `SUPABASE_TEST_ANON_KEY` et `SUPABASE_TEST_SERVICE_ROLE_KEY`. Les tests refusent de s'exécuter contre un hôte non local. La CI (`.github/workflows/ci.yml`) exécute les mêmes étapes et vérifie que `src/types/database.generated.ts` correspond au schéma.
 
 ## Variables d'environnement
 
 - `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` : configuration publique Supabase ;
-- `NEXT_PUBLIC_APP_URL` : URL canonique utilisée dans les liens ;
+- `NEXT_PUBLIC_APP_URL` : origine canonique de l'app (`http://localhost:3000` en local, jamais `127.0.0.1`). Elle doit correspondre au `site_url` et aux URL de redirection de Supabase Auth, sinon la confirmation email échoue ;
 - `SUPABASE_SERVICE_ROLE_KEY` : secret serveur qui contourne RLS, réservé aux workers ;
 - `RESEND_API_KEY` et `RESEND_FROM_EMAIL` : envoi d'emails, non utilisés avant la verticale email ;
 - `CRON_SECRET` : authentification des routes de traitements programmés.
@@ -79,9 +87,10 @@ Inclus :
 - calcul des créneaux disponibles dans le fuseau IANA du business ;
 - réservation publique transactionnelle avec création/rapprochement de la cliente et email de confirmation mis en outbox ;
 - API publique : `GET /api/public/businesses/[slug]`, `GET /api/public/businesses/[slug]/availability?serviceId=…&date=AAAA-MM-JJ`, `POST /api/bookings` ;
-- Server Actions professionnelles dans `src/features/*/actions`.
+- Server Actions professionnelles dans `src/features/*/actions` ;
+- authentification professionnelle (email + mot de passe), gardes de routage serveur et onboarding transactionnel : contrat UI dans [docs/AUTH_ONBOARDING_CONTRACT.md](docs/AUTH_ONBOARDING_CONTRACT.md).
 
-Non inclus : authentification utilisable et onboarding, écrans métier, agenda, CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
+Non inclus : écrans métier, agenda, CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
 
 ## Règles d'architecture
 
@@ -101,5 +110,6 @@ Non inclus : authentification utilisable et onboarding, écrans métier, agenda,
 | `20260927200200_availability_and_public_booking.sql`   | calcul des créneaux, RPC publiques de réservation, fonctions horaires et ordre des prestations                                                   |
 | `20260928090000_schedule_coordination.sql`             | verrou de planning commun, blocages refusés sur un rendez-vous, valeurs de réservation cohérentes, plages DST                                    |
 | `20260928190000_schedule_lock_order_and_isolation.sql` | remplacements atomiques (`replace_business_hours`, `reorder_services`), `READ COMMITTED` exigé pour les écritures de planning, ordre des verrous |
+| `20260929090000_auth_onboarding.sql`                   | onboarding transactionnel et idempotent, normalisation et réservation des slugs, téléphone du business                                           |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.
