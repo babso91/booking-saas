@@ -16,6 +16,15 @@ export const appErrorMessages = {
     "Cette période chevauche un rendez-vous existant. Déplacez ou annulez d’abord le rendez-vous.",
   conflict: "Cette modification entre en conflit avec des données existantes.",
   in_use: "Cet élément est utilisé et ne peut pas être supprimé.",
+  invalid_credentials: "Email ou mot de passe incorrect.",
+  email_not_confirmed:
+    "Confirmez votre adresse email avant de vous connecter. Vérifiez votre boîte de réception.",
+  email_taken: "Un compte existe déjà avec cette adresse email.",
+  rate_limited: "Trop de tentatives. Merci de réessayer dans quelques minutes.",
+  already_onboarded: "Votre activité est déjà configurée.",
+  slug_taken:
+    "Cette adresse de page est déjà utilisée. Choisissez-en une autre.",
+  slug_reserved: "Cette adresse de page est réservée. Choisissez-en une autre.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -71,6 +80,13 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   schedule_conflict: 409,
   conflict: 409,
   in_use: 409,
+  invalid_credentials: 401,
+  email_not_confirmed: 403,
+  email_taken: 409,
+  rate_limited: 429,
+  already_onboarded: 409,
+  slug_taken: 409,
+  slug_reserved: 409,
   internal: 500,
 };
 

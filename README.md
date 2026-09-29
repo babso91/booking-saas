@@ -79,9 +79,10 @@ Inclus :
 - calcul des créneaux disponibles dans le fuseau IANA du business ;
 - réservation publique transactionnelle avec création/rapprochement de la cliente et email de confirmation mis en outbox ;
 - API publique : `GET /api/public/businesses/[slug]`, `GET /api/public/businesses/[slug]/availability?serviceId=…&date=AAAA-MM-JJ`, `POST /api/bookings` ;
-- Server Actions professionnelles dans `src/features/*/actions`.
+- Server Actions professionnelles dans `src/features/*/actions` ;
+- authentification professionnelle (email + mot de passe), gardes de routage serveur et onboarding transactionnel : contrat UI dans [docs/AUTH_ONBOARDING_CONTRACT.md](docs/AUTH_ONBOARDING_CONTRACT.md).
 
-Non inclus : authentification utilisable et onboarding, écrans métier, agenda, CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
+Non inclus : écrans métier, agenda, CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
 
 ## Règles d'architecture
 
@@ -101,5 +102,6 @@ Non inclus : authentification utilisable et onboarding, écrans métier, agenda,
 | `20260927200200_availability_and_public_booking.sql`   | calcul des créneaux, RPC publiques de réservation, fonctions horaires et ordre des prestations                                                   |
 | `20260928090000_schedule_coordination.sql`             | verrou de planning commun, blocages refusés sur un rendez-vous, valeurs de réservation cohérentes, plages DST                                    |
 | `20260928190000_schedule_lock_order_and_isolation.sql` | remplacements atomiques (`replace_business_hours`, `reorder_services`), `READ COMMITTED` exigé pour les écritures de planning, ordre des verrous |
+| `20260929090000_auth_onboarding.sql`                   | onboarding transactionnel et idempotent, normalisation et réservation des slugs, téléphone du business                                           |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.

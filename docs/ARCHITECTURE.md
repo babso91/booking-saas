@@ -91,6 +91,7 @@ Les pages et layouts sont des Server Components par défaut. `'use client'` est 
 | -------------------------------------------- | ------------------ | ------------------------------------------- |
 | `/`                                          | public             | présentation produit minimale               |
 | `/login`                                     | public             | authentification professionnelle            |
+| `/onboarding`                                | authentifié        | création du business (sans business)        |
 | `/auth/callback`                             | public contrôlé    | échange du code Supabase Auth               |
 | `/app`                                       | authentifié        | dashboard                                   |
 | `/app/calendar`                              | authentifié        | agenda                                      |
@@ -229,12 +230,31 @@ Le lien contient au moins 32 octets aléatoires encodés en base64url. Seul un h
 
 ## 7. Authentification et autorisation
 
-- Supabase Auth par email/magic link ou mot de passe, décision UX à prendre lors du lot Auth.
-- `@supabase/ssr` maintient les cookies dans `src/proxy.ts`.
-- chaque Server Action revalide l'utilisateur, son membership et l'objet ciblé ; une protection de page n'est pas héritée par l'action ;
-- RLS reste active avec le client utilisateur ;
-- aucun identifiant fourni par le client ne suffit à déterminer le tenant ; le tenant autorisé vient de la session/membership ;
-- les endpoints machine vérifient un secret constant-time ou une signature fournisseur.
+- Supabase Auth, email et mot de passe en V1. Magic link, Google et reset de mot de passe s'ajouteront sans changer le modèle : ils aboutissent tous à `/auth/callback` (échange PKCE ou `verifyOtp`), puis aux mêmes gardes.
+- `@supabase/ssr` maintient et rafraîchit les cookies dans `src/proxy.ts`. Le Proxy fait aussi une redirection optimiste des visiteurs sans session hors de `/app` et `/onboarding`.
+- État serveur d'un visiteur (`src/features/auth/data/session.ts`) : `unauthenticated`, `onboarding_required` ou `ready`. Il est calculé à partir de `auth.getUser()` (validé par le serveur Auth) et de `business_members` lu sous RLS. Des gardes de layout (`src/features/auth/data/guards.ts`) redirigent chaque état vers l'unique route qui l'accepte : pas de boucle possible.
+- Chaque Server Action revalide l'utilisateur, son membership et l'objet ciblé ; une protection de page n'est pas héritée par l'action.
+- RLS reste active avec le client utilisateur. Aucun identifiant fourni par le client ne suffit à déterminer le tenant : il vient de la session et du membership.
+- Les endpoints machine vérifient un secret constant-time ou une signature fournisseur.
+
+### Onboarding
+
+`public.complete_onboarding` (migration `20260929090000`) est la seule voie de création d'un business par un utilisateur. C'est une RPC `SECURITY DEFINER`, exécutable uniquement par `authenticated`, à `search_path` vide, sans aucun paramètre d'identité : le propriétaire est `auth.uid()`.
+
+Elle crée dans une seule transaction :
+
+1. le profil (upsert du prénom et du nom) ;
+2. le business ;
+3. les réglages de réservation (créés par trigger, puis mis à jour) ;
+4. le membership `owner` ;
+5. le programme de fidélité par défaut ;
+6. l'enregistrement `business_onboardings`.
+
+Toute erreur annule l'ensemble.
+
+- **Idempotence** : `business_onboardings.user_id` est une clé primaire, donc au plus un onboarding par utilisateur, quel que soit le niveau d'isolation. Un verrou consultatif par utilisateur transforme une double soumission en `already_onboarded` propre plutôt qu'en erreur de contrainte. Un utilisateur déjà membre d'un business reçoit aussi `already_onboarded`. Le nombre de businesses par utilisateur n'est pas contraint par ailleurs.
+- **Slug** : normalisé uniquement côté base (`private.normalize_slug`, avec `unaccent`). Les contraintes `CHECK` garantissent le format, 3 à 63 caractères et les mots réservés ; la contrainte d'unicité existante tranche la concurrence (`slug_taken`). `check_slug_availability` n'est qu'une aide UX.
+- **Contrat UI** : `docs/AUTH_ONBOARDING_CONTRACT.md`.
 
 ## 8. Disponibilités
 
@@ -390,4 +410,4 @@ Cet ordre reflète la direction actuelle, pas une obligation architecturale abso
 
 ## 16. Ce que la fondation actuelle ne prétend pas faire
 
-La fondation et le moteur de réservation sécurisé sont livrés : backend des prestations, horaires et exceptions, calcul des créneaux et réservation publique (RPC, DAL, Server Actions et Route Handlers), avec outbox de confirmation et tests. Ne sont pas encore livrés : authentification utilisable et onboarding, écrans, agenda, synchronisation des calendriers externes, CRM, fidélité, envoi des emails, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables selon la roadmap indicative ci-dessus.
+La fondation et le moteur de réservation sécurisé sont livrés : backend des prestations, horaires et exceptions, calcul des créneaux et réservation publique (RPC, DAL, Server Actions et Route Handlers), avec outbox de confirmation et tests. L'authentification professionnelle et l'onboarding transactionnel sont livrés côté backend (actions, gardes, RPC). Ne sont pas encore livrés : écrans, agenda, synchronisation des calendriers externes, CRM, fidélité, envoi des emails, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables selon la roadmap indicative ci-dessus.

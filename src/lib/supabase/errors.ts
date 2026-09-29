@@ -1,8 +1,13 @@
-import { AppException, type AppErrorCode } from "@/lib/errors";
+import {
+  AppException,
+  appErrorMessages,
+  type AppErrorCode,
+} from "@/lib/errors";
 
 type DatabaseError = {
   code?: string;
   message?: string;
+  hint?: string | null;
 };
 
 // Error messages raised on purpose by our SQL functions (see migrations).
@@ -12,6 +17,11 @@ const domainMessages: Record<string, AppErrorCode> = {
   slot_unavailable: "slot_unavailable",
   schedule_conflict: "schedule_conflict",
   forbidden: "forbidden",
+  unauthenticated: "unauthenticated",
+  already_onboarded: "already_onboarded",
+  slug_taken: "slug_taken",
+  slug_reserved: "slug_reserved",
+  invalid_input: "validation_error",
   invalid_timezone: "validation_error",
   invalid_first_name: "validation_error",
   invalid_last_name: "validation_error",
@@ -53,7 +63,13 @@ export function databaseException(
   error: DatabaseError,
   overrides: Partial<Record<AppErrorCode, AppErrorCode>> = {},
 ) {
-  const code = databaseErrorCode(error);
+  const code = overrides[databaseErrorCode(error)] ?? databaseErrorCode(error);
 
-  return new AppException(overrides[code] ?? code, { cause: error });
+  // Our SQL functions name the offending input field in HINT.
+  const fieldErrors =
+    error.hint && code !== "internal" && /^[a-zA-Z]+$/.test(error.hint)
+      ? { [error.hint]: [appErrorMessages[code]] }
+      : undefined;
+
+  return new AppException(code, { cause: error, fieldErrors });
 }

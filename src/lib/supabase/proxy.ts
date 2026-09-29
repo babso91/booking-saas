@@ -3,6 +3,11 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { hasPublicSupabaseEnv } from "@/lib/env/public";
 
+/** Routes that require a signed-in professional. Everything else is public. */
+export function requiresSession(pathname: string) {
+  return /^\/(app|onboarding)(\/|$)/.test(pathname);
+}
+
 export async function refreshSupabaseSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -33,7 +38,19 @@ export async function refreshSupabaseSession(request: NextRequest) {
 
   // Validates and refreshes the auth token when needed. Authorization remains
   // the responsibility of the DAL and PostgreSQL RLS.
-  await supabase.auth.getClaims();
+  const { data } = await supabase.auth.getClaims();
+
+  // Optimistic check only: private routes also verify the session and the
+  // business state server-side (src/features/auth/data/guards.ts), and every
+  // Server Action re-checks auth itself.
+  if (!data?.claims?.sub && requiresSession(request.nextUrl.pathname)) {
+    const redirect = NextResponse.redirect(new URL("/login", request.url));
+
+    // Keep cookie updates (e.g. clearing an expired session).
+    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
+
+    return redirect;
+  }
 
   return response;
 }

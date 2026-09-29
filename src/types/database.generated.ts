@@ -105,6 +105,31 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"business_onboardings": {
+                  Row: {
+                    "business_id": string,"completed_at": string,"user_id": string
+                  }
+                  Insert: {
+                    "business_id": string,"completed_at"?: string,"user_id": string
+                  }
+                  Update: {
+                    "business_id"?: string,"completed_at"?: string,"user_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "business_onboardings_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: true
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "business_onboardings_user_id_fkey"
+      columns: ["user_id"]
+isOneToOne: true
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"business_settings": {
                   Row: {
                     "automatic_reactivation_enabled": boolean,"buffer_minutes": number,"business_id": string,"created_at": string,"currency": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"reactivation_after_days": number,"slot_interval_minutes": number,"updated_at": string
@@ -126,13 +151,13 @@ isOneToOne: true
                   ]
                 },"businesses": {
                   Row: {
-                    "cancellation_policy": string | null,"contact_email": string,"created_at": string,"created_by": string,"description": string | null,"id": string,"location": string | null,"logo_path": string | null,"name": string,"slug": string,"timezone": string,"updated_at": string
+                    "cancellation_policy": string | null,"contact_email": string,"created_at": string,"created_by": string,"description": string | null,"id": string,"location": string | null,"logo_path": string | null,"name": string,"phone": string | null,"slug": string,"timezone": string,"updated_at": string
                   }
                   Insert: {
-                    "cancellation_policy"?: string | null,"contact_email": string,"created_at"?: string,"created_by": string,"description"?: string | null,"id"?: string,"location"?: string | null,"logo_path"?: string | null,"name": string,"slug": string,"timezone"?: string,"updated_at"?: string
+                    "cancellation_policy"?: string | null,"contact_email": string,"created_at"?: string,"created_by": string,"description"?: string | null,"id"?: string,"location"?: string | null,"logo_path"?: string | null,"name": string,"phone"?: string | null,"slug": string,"timezone"?: string,"updated_at"?: string
                   }
                   Update: {
-                    "cancellation_policy"?: string | null,"contact_email"?: string,"created_at"?: string,"created_by"?: string,"description"?: string | null,"id"?: string,"location"?: string | null,"logo_path"?: string | null,"name"?: string,"slug"?: string,"timezone"?: string,"updated_at"?: string
+                    "cancellation_policy"?: string | null,"contact_email"?: string,"created_at"?: string,"created_by"?: string,"description"?: string | null,"id"?: string,"location"?: string | null,"logo_path"?: string | null,"name"?: string,"phone"?: string | null,"slug"?: string,"timezone"?: string,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -355,7 +380,17 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "create_public_booking":
+            "check_slug_availability":
+{ Args: { "p_slug": string }; Returns: {
+              "available": boolean,"reason": string,"slug": string
+            }[]
+                           },
+"complete_onboarding":
+{ Args: { "p_buffer_minutes"?: number,"p_business_name": string,"p_cancellation_policy"?: string,"p_contact_email"?: string,"p_description"?: string,"p_first_name": string,"p_last_name": string,"p_location"?: string,"p_maximum_booking_advance_days"?: number,"p_minimum_booking_notice_minutes"?: number,"p_phone"?: string,"p_slug": string,"p_timezone"?: string }; Returns: {
+              "business_id": string,"business_name": string,"slug": string,"timezone": string
+            }[]
+                           },
+"create_public_booking":
 { Args: { "p_email": string,"p_first_name": string,"p_last_name"?: string,"p_phone"?: string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
               "appointment_id": string,"business_name": string,"currency": string,"duration_minutes": number,"ends_at": string,"price_cents": number,"service_name": string,"starts_at": string,"timezone": string
             }[]
