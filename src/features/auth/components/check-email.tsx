@@ -33,7 +33,11 @@ export function CheckEmail({
     return () => window.clearTimeout(timer);
   }, [cooldown]);
 
+  const coolingDown = cooldown > 0;
+
   async function resend() {
+    // Real guard, independent of how the button was activated.
+    if (resendState !== "idle" || coolingDown) return;
     setResendState("loading");
     setResendFailed(false);
     const sent = await onResend();
@@ -83,7 +87,7 @@ export function CheckEmail({
             state={resendState}
             loadingLabel="Envoi…"
             successLabel="Renvoyé"
-            disabled={cooldown > 0 && resendState === "idle"}
+            disabled={coolingDown}
             onClick={resend}
           >
             {cooldown > 0 ? `Renvoyer (${cooldown}s)` : "Renvoyer l’email"}

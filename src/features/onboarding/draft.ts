@@ -32,24 +32,28 @@ export const emptyDraft: OnboardingDraft = {
 };
 
 // Tab-scoped persistence so a refresh or an expired session does not lose
-// answers. It holds form answers only (never credentials or tokens), belongs
-// to one account (`owner`) and is cleared on success and on sign-out.
-const KEY = "onboarding:draft";
+// answers. It holds form answers only (never credentials or tokens). Each
+// account has its own slot, keyed by its stable Auth user id, so one account
+// can neither read nor overwrite another's answers. Cleared on success and
+// on sign-out.
+const PREFIX = "onboarding:draft:";
+
+const keyFor = (owner: string) => `${PREFIX}${owner}`;
 
 export function loadDraft(
-  owner: string | null,
+  owner: string,
 ): { draft: OnboardingDraft; step: number } | null {
   try {
-    const raw = window.sessionStorage.getItem(KEY);
+    const raw = window.sessionStorage.getItem(keyFor(owner));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
-      owner?: string | null;
+      owner?: string;
       draft?: Partial<OnboardingDraft>;
       step?: number;
     };
-    // Another account used this tab before: never reuse its answers.
+    // Defence in depth: a slot must describe its own account.
     if (parsed.owner !== owner) {
-      clearDraft();
+      clearDraft(owner);
       return null;
     }
     return {
@@ -61,21 +65,34 @@ export function loadDraft(
   }
 }
 
-export function saveDraft(
-  draft: OnboardingDraft,
-  step: number,
-  owner: string | null,
-) {
+export function saveDraft(draft: OnboardingDraft, step: number, owner: string) {
   try {
-    window.sessionStorage.setItem(KEY, JSON.stringify({ owner, draft, step }));
+    window.sessionStorage.setItem(
+      keyFor(owner),
+      JSON.stringify({ owner, draft, step }),
+    );
   } catch {
     // Storage unavailable (private mode, quota): persistence is best effort.
   }
 }
 
-export function clearDraft() {
+/** Removes one account's draft (after its onboarding succeeded). */
+export function clearDraft(owner: string) {
   try {
-    window.sessionStorage.removeItem(KEY);
+    window.sessionStorage.removeItem(keyFor(owner));
+  } catch {
+    // Ignore.
+  }
+}
+
+/** Removes every onboarding draft of this tab (sign-out). */
+export function clearAllDrafts() {
+  try {
+    const storage = window.sessionStorage;
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(PREFIX)) storage.removeItem(key);
+    }
   } catch {
     // Ignore.
   }

@@ -13,5 +13,5 @@ export const metadata: Metadata = {
 export default async function OnboardingPage() {
   const state = await requirePendingOnboarding();
 
-  return <OnboardingFlow owner={state.user.email} />;
+  return <OnboardingFlow owner={state.user.id} />;
 }

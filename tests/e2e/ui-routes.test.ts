@@ -77,7 +77,7 @@ async function signedInBrowser() {
 // Text that only exists in the body of each private page (titles live in
 // <head> metadata and are not private).
 const PRIVATE_BODIES = [
-  "Aucun écran métier", // /app
+  "Ton espace est configuré", // /app
   "Chargement de ton espace", // /onboarding
   "Ton espace est prêt.", // /app/welcome
 ];
@@ -105,10 +105,12 @@ describe("UI routes against the real backend", () => {
     expect(signup.html).toContain("Créer mon compte");
 
     expectRedirect(await browser.get("/app"), "/login");
+    expectRedirect(await browser.get("/app/welcome"), "/login");
     expectRedirect(await browser.get("/onboarding"), "/login");
 
-    // The public booking page never requires a session.
-    expect((await browser.get("/b/studio-mila")).status).not.toBe(307);
+    // Public booking page for an unknown slug: rendered or "not found",
+    // never a redirect to /login and never a server error.
+    expect([200, 404]).toContain((await browser.get("/b/nobody-here")).status);
   });
 
   it("signed in without business: only /onboarding is reachable", async () => {
@@ -128,11 +130,12 @@ describe("UI routes against the real backend", () => {
     const { browser } = await signedInBrowser();
 
     // Same payload shape as the UI sends through completeOnboardingAction.
+    const slug = `studio-mila-${randomUUID().slice(0, 6)}`;
     const { error } = await browser.supabase().rpc("complete_onboarding", {
       p_first_name: "Mila",
       p_last_name: "Laurent",
       p_business_name: "Studio Mila",
-      p_slug: `studio-mila-${randomUUID().slice(0, 6)}`,
+      p_slug: slug,
       p_timezone: "Europe/Paris",
       p_phone: "06 12 34 56 78",
       p_minimum_booking_notice_minutes: 120,
@@ -143,13 +146,20 @@ describe("UI routes against the real backend", () => {
 
     const app = await browser.get("/app");
     expect(app.status).toBe(200);
-    expect(app.html).toContain("Aucun écran métier");
+    expect(app.html).toContain("Ton espace est configuré");
     expect((await browser.get("/app/welcome")).html).toContain(
       "Ton espace est prêt.",
     );
     expectRedirect(await browser.get("/onboarding"), "/app");
     expectRedirect(await browser.get("/login"), "/app");
     expectRedirect(await browser.get("/signup"), "/app");
+
+    // The business's public page answers 200 to anyone, signed in or not.
+    for (const visitor of [browser, new Browser()]) {
+      const page = await visitor.get(`/b/${slug}`);
+      expect(page.status).toBe(200);
+      expect(page.html).toContain(slug);
+    }
   });
 
   it("explains a failed confirmation link on /login", async () => {

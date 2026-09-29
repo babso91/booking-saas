@@ -15,11 +15,12 @@ export const errorCopy: Record<
     message:
       "Clique sur le lien reçu par email pour activer ton compte, puis reconnecte-toi.",
   },
-  // Neutral on purpose: avoids confirming that an account exists.
+  // Neutral and exact: neither confirms that an account exists nor promises
+  // an email (none is sent when the address is already confirmed).
   email_taken: {
-    title: "Vérifie ta boîte mail",
+    title: "Déjà inscrite ?",
     message:
-      "Si cette adresse peut être utilisée, tu recevras les instructions nécessaires par email. Tu as déjà un compte ? Connecte-toi.",
+      "Si tu as déjà commencé ton inscription avec cette adresse, connecte-toi ou reprends depuis le dernier email reçu.",
   },
   rate_limited: {
     title: "Un instant",

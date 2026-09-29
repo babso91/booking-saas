@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { router } from "../../../../tests/support/next-router";
+import { OnboardingFlow } from "./onboarding-flow";
 import { OnboardingWizard } from "./onboarding-wizard";
 
 const checkSlugAction = vi.fn();
@@ -25,8 +26,11 @@ vi.mock("@/features/auth/actions/auth", () => ({
   signOutAction: () => signOutAction(),
 }));
 
-const OWNER = "mila@studio.fr";
-const DRAFT_KEY = "onboarding:draft";
+// Stable Auth user ids, as passed by the /onboarding page.
+const OWNER = "5f0c6a1e-user-a";
+const OTHER = "9b27d4c3-user-b";
+const draftKey = (owner: string) => `onboarding:draft:${owner}`;
+const DRAFT_KEY = draftKey(OWNER);
 
 /** checkSlugAction double: every slug is free except the listed ones. */
 function slugsTaken(...taken: string[]) {
@@ -286,7 +290,7 @@ describe("OnboardingWizard (real contract shapes)", () => {
       data: {
         status: "ready",
         next: "/app",
-        user: { email: OWNER, emailConfirmed: true },
+        user: { email: "mila@studio.fr", emailConfirmed: true },
         business: {
           slug: "studio-mila",
           name: "Studio Mila",
@@ -340,26 +344,181 @@ describe("OnboardingWizard (real contract shapes)", () => {
     await expectWelcome();
   });
 
-  it("restores the draft of the same account only", async () => {
-    const saved = (owner: string) =>
-      JSON.stringify({
-        owner,
-        step: 0,
-        draft: { firstName: "Camille", businessName: "Écrin de Camille" },
-      });
-
-    window.sessionStorage.setItem(DRAFT_KEY, saved("someone@else.fr"));
-    const { unmount } = render(<OnboardingWizard owner={OWNER} />);
-    expect((screen.getByLabelText("Prénom") as HTMLInputElement).value).toBe(
-      "",
+  it("already_onboarded without a confirmed ready state keeps everything and offers a retry", async () => {
+    const user = userEvent.setup();
+    completeOnboardingAction.mockResolvedValue({
+      ok: false,
+      error: {
+        code: "already_onboarded",
+        message: "Votre activité est déjà configurée.",
+      },
+    });
+    getOnboardingStatusAction.mockRejectedValueOnce(
+      new TypeError("Failed to fetch"),
     );
-    unmount();
-
-    window.sessionStorage.setItem(DRAFT_KEY, saved(OWNER));
     render(<OnboardingWizard owner={OWNER} />);
-    expect((screen.getByLabelText("Prénom") as HTMLInputElement).value).toBe(
-      "Camille",
+
+    await fillIdentity(user);
+    await toDetails(user);
+    await user.type(screen.getByLabelText(/Téléphone/), "06 12 34 56 78");
+    await user.click(finalButton());
+
+    // Status unknown: no success, no redirect, nothing deleted.
+    expect(await screen.findByText("Connexion interrompue")).toBeTruthy();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem(DRAFT_KEY)).toContain(
+      "06 12 34 56 78",
     );
+    expect(finalButton().getAttribute("data-state")).toBe("idle");
+
+    // A status that is not "ready" is not a success either.
+    getOnboardingStatusAction.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        status: "onboarding_required",
+        next: "/onboarding",
+        user: { email: "mila@studio.fr", emailConfirmed: true },
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Réessayer" }));
+    expect(await screen.findByText("Petit contretemps")).toBeTruthy();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem(DRAFT_KEY)).toContain(
+      "06 12 34 56 78",
+    );
+
+    // Once the server confirms "ready": success, draft deleted.
+    getOnboardingStatusAction.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        status: "ready",
+        next: "/app",
+        user: { email: "mila@studio.fr", emailConfirmed: true },
+        business: {
+          slug: "studio-mila",
+          name: "Studio Mila",
+          timezone: "Europe/Paris",
+        },
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Réessayer" }));
+    await expectWelcome();
+    expect(window.sessionStorage.getItem(DRAFT_KEY)).toBeNull();
+  });
+
+  describe("account isolation of the local draft", () => {
+    const saved = (owner: string, draft: Record<string, string>) =>
+      JSON.stringify({ owner, step: 3, draft });
+
+    async function typeAnswersOfA(user: ReturnType<typeof userEvent.setup>) {
+      await fillIdentity(user);
+      await toDetails(user);
+      await user.type(screen.getByLabelText(/Téléphone/), "06 11 11 11 11");
+      await user.type(screen.getByLabelText(/Adresse ou quartier/), "Rue de A");
+      await user.type(
+        screen.getByLabelText(/Présentation courte/),
+        "Présentation de A",
+      );
+      const draftOfA = window.sessionStorage.getItem(draftKey(OWNER))!;
+      expect(draftOfA).toContain("06 11 11 11 11");
+      expect(draftOfA).toContain("Rue de A");
+    }
+
+    const A_VALUES = [
+      "06 11 11 11 11",
+      "Rue de A",
+      "Présentation de A",
+      "Laurent",
+      "Studio Mila",
+    ];
+
+    function expectNoValueOfA() {
+      const shown = [...document.querySelectorAll("input, textarea")].map(
+        (field) => (field as HTMLInputElement).value,
+      );
+      for (const value of A_VALUES) {
+        expect(shown).not.toContain(value);
+        expect(document.body.textContent).not.toContain(value);
+      }
+      const draftOfB = window.sessionStorage.getItem(draftKey(OTHER)) ?? "";
+      for (const value of A_VALUES) expect(draftOfB).not.toContain(value);
+    }
+
+    it("identity A → B without unmounting: B starts blank and nothing of A is written for B", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<OnboardingFlow owner={OWNER} />);
+      await typeAnswersOfA(user);
+
+      rerender(<OnboardingFlow owner={OTHER} />);
+
+      expect(
+        await screen.findByRole("heading", { name: "Faisons connaissance." }),
+      ).toBeTruthy();
+      expect((screen.getByLabelText("Prénom") as HTMLInputElement).value).toBe(
+        "",
+      );
+      expectNoValueOfA();
+      // A's own draft is untouched, in A's slot only.
+      expect(window.sessionStorage.getItem(draftKey(OWNER))).toContain(
+        "Rue de A",
+      );
+    });
+
+    it("identity A → B without unmounting: only B's own draft appears", async () => {
+      const user = userEvent.setup();
+      window.sessionStorage.setItem(
+        draftKey(OTHER),
+        saved(OTHER, {
+          firstName: "Camille",
+          businessName: "Écrin de Camille",
+          phone: "07 22 22 22 22",
+        }),
+      );
+      const { rerender } = render(<OnboardingFlow owner={OWNER} />);
+      await typeAnswersOfA(user);
+
+      rerender(<OnboardingFlow owner={OTHER} />);
+
+      expect(
+        await screen.findByRole("heading", { name: "La touche finale." }),
+      ).toBeTruthy();
+      expect(
+        (screen.getByLabelText(/Téléphone/) as HTMLInputElement).value,
+      ).toBe("07 22 22 22 22");
+      expectNoValueOfA();
+      const draftOfB = JSON.parse(
+        window.sessionStorage.getItem(draftKey(OTHER))!,
+      );
+      expect(draftOfB.owner).toBe(OTHER);
+      expect(draftOfB.draft).toMatchObject({
+        firstName: "Camille",
+        phone: "07 22 22 22 22",
+      });
+    });
+
+    it("a wizard whose owner changes without a key renders and saves nothing", async () => {
+      const user = userEvent.setup();
+      const { rerender, container } = render(
+        <OnboardingWizard owner={OWNER} />,
+      );
+      await user.type(screen.getByLabelText("Prénom"), "Mila");
+
+      rerender(<OnboardingWizard owner={OTHER} />);
+
+      expect(container.textContent).toBe("");
+      expect(window.sessionStorage.getItem(draftKey(OTHER))).toBeNull();
+    });
+
+    it("never restores a slot whose content belongs to another account", () => {
+      window.sessionStorage.setItem(
+        draftKey(OWNER),
+        saved(OTHER, { firstName: "Camille" }),
+      );
+      render(<OnboardingWizard owner={OWNER} />);
+      expect((screen.getByLabelText("Prénom") as HTMLInputElement).value).toBe(
+        "",
+      );
+    });
   });
 
   it("signs out through the backend and clears the draft", async () => {
@@ -372,5 +531,6 @@ describe("OnboardingWizard (real contract shapes)", () => {
 
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
     expect(window.sessionStorage.getItem(DRAFT_KEY)).toBeNull();
+    expect(signOutAction).toHaveBeenCalledTimes(1);
   });
 });

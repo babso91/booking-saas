@@ -48,9 +48,23 @@ export function Button({
   children,
   disabled,
   type = "button",
+  onClick,
   ...props
 }: ButtonProps) {
   const busy = state !== "idle";
+
+  // While busy the button stays focusable (focus is not lost mid-action) but
+  // cannot be activated by pointer or keyboard: the click, and for submit
+  // buttons the form submission, are cancelled.
+  const handleClick: ButtonHTMLAttributes<HTMLButtonElement>["onClick"] = (
+    event,
+  ) => {
+    if (busy) {
+      event.preventDefault();
+      return;
+    }
+    onClick?.(event);
+  };
 
   return (
     <button
@@ -72,6 +86,7 @@ export function Button({
         className,
       )}
       {...props}
+      onClick={handleClick}
     >
       <span
         className={cn(

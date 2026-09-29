@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Button, type ButtonState } from "@/components/ui/button";
 import { signOutAction } from "@/features/auth/actions/auth";
 import { callAction } from "@/features/auth/client/call-action";
-import { clearDraft } from "@/features/onboarding/draft";
+import { clearAllDrafts } from "@/features/onboarding/draft";
 
 /** Ends the session server-side, then hands over to /login. */
 export function SignOutButton() {
@@ -15,6 +15,7 @@ export function SignOutButton() {
   const [failed, setFailed] = useState(false);
 
   async function signOut() {
+    if (state !== "idle") return;
     setState("loading");
     setFailed(false);
     const result = await callAction(() => signOutAction());
@@ -23,7 +24,7 @@ export function SignOutButton() {
       setFailed(true);
       return;
     }
-    clearDraft();
+    clearAllDrafts();
     router.replace(result.data.next);
   }
 

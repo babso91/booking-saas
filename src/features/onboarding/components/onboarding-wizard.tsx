@@ -25,6 +25,7 @@ import { useReducedMotion } from "@/lib/hooks/use-reduced-motion";
 import { cn } from "@/lib/cn";
 
 import {
+  clearAllDrafts,
   clearDraft,
   emptyDraft,
   loadDraft,
@@ -88,7 +89,7 @@ const backendFieldCopy: Errors = {
   cancellationPolicy: "2000 caractères maximum.",
 };
 
-function initialState(owner: string | null) {
+function initialState(owner: string) {
   const saved = loadDraft(owner);
   if (saved) return saved;
   return { draft: { ...emptyDraft, timezone: detectTimezone() }, step: 0 };
@@ -96,12 +97,16 @@ function initialState(owner: string | null) {
 
 /**
  * The four-step onboarding. Rendered only behind the server guard of
- * /onboarding (requirePendingOnboarding); `owner` scopes the local draft to
- * the signed-in account.
+ * /onboarding (requirePendingOnboarding). `owner` is the stable Auth user id:
+ * the state below belongs to that account only. OnboardingFlow remounts the
+ * wizard when it changes (`key`); as a safety net, an instance whose `owner`
+ * changed anyway renders and saves nothing.
  */
-export function OnboardingWizard({ owner }: { owner: string | null }) {
+export function OnboardingWizard({ owner }: { owner: string }) {
   const router = useRouter();
   const reducedMotion = useReducedMotion();
+  const [boundOwner] = useState(owner);
+  const ownerChanged = owner !== boundOwner;
   const [initial] = useState(() => initialState(owner));
   const [draft, setDraft] = useState<OnboardingDraft>(initial.draft);
   const [step, setStep] = useState(initial.step);
@@ -127,8 +132,8 @@ export function OnboardingWizard({ owner }: { owner: string | null }) {
   });
 
   useEffect(() => {
-    if (!finished) saveDraft(draft, step, owner);
-  }, [draft, step, finished, owner]);
+    if (!finished && !ownerChanged) saveDraft(draft, step, boundOwner);
+  }, [draft, step, finished, ownerChanged, boundOwner]);
 
   // Move focus to the new step's heading so screen readers announce it.
   useEffect(() => {
@@ -277,16 +282,23 @@ export function OnboardingWizard({ owner }: { owner: string | null }) {
         if (target !== step) goTo(target);
         return;
       }
-      // Retry after a lost response, or a second tab: the space exists.
-      // Show the real business when the server can tell us which one.
+      // Retry after a lost response, or a second tab. Success is declared
+      // (and the draft deleted) only once the server confirms "ready";
+      // otherwise everything is kept and the user can try again.
       case "already_onboarded": {
         const status = await callAction(() => getOnboardingStatusAction());
         if (status.ok && status.data.status === "ready") {
           finish();
-        } else {
-          clearDraft();
-          router.replace("/app");
+          return;
         }
+        setSubmitState("idle");
+        setFormError(
+          !status.ok
+            ? status.error
+            : status.data.status === "unauthenticated"
+              ? { code: "unauthenticated" }
+              : { code: "internal" },
+        );
         return;
       }
       default:
@@ -302,7 +314,7 @@ export function OnboardingWizard({ owner }: { owner: string | null }) {
   function finish() {
     setFinished(true);
     setSubmitState("success");
-    clearDraft();
+    clearDraft(boundOwner);
     router.replace("/app/welcome");
   }
 
@@ -333,6 +345,7 @@ export function OnboardingWizard({ owner }: { owner: string | null }) {
   }
 
   async function signOut() {
+    if (signingOut) return;
     setSigningOut(true);
     const result = await callAction(() => signOutAction());
     if (!result.ok) {
@@ -340,11 +353,14 @@ export function OnboardingWizard({ owner }: { owner: string | null }) {
       setFormError(result.error);
       return;
     }
-    clearDraft();
+    clearAllDrafts();
     router.replace(result.data.next);
   }
 
   const focus = finished ? "done" : previewFocus[step]!;
+
+  // Never render another account's answers (see the component comment).
+  if (ownerChanged) return null;
 
   const stepProps: StepProps = {
     draft,

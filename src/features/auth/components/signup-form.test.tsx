@@ -97,9 +97,11 @@ describe("SignupForm", () => {
     await submit();
 
     expect(
-      await screen.findByText(/Si cette adresse peut être utilisée/),
+      await screen.findByText(/Si tu as déjà commencé ton inscription/),
     ).toBeTruthy();
     expect(screen.queryByText(/existe déjà/)).toBeNull();
+    // No email is sent in this case: none is promised.
+    expect(screen.queryByText(/tu recevras/)).toBeNull();
     expect(screen.getByRole("link", { name: "Me connecter" })).toBeTruthy();
   });
 
