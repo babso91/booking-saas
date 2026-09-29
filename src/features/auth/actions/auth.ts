@@ -14,6 +14,7 @@ import {
   type SessionDestination,
   type SessionState,
 } from "@/features/auth/data/session";
+import { authCallbackUrl } from "@/features/auth/data/redirects";
 import { signInSchema, signUpSchema } from "@/features/auth/schemas/auth";
 import { getPublicEnv } from "@/lib/env/public";
 import {
@@ -59,7 +60,7 @@ export async function signUpAction(
     const outcome = await signUpWithPassword(
       client,
       parsed.data,
-      new URL("/auth/callback", getPublicEnv().NEXT_PUBLIC_APP_URL).toString(),
+      authCallbackUrl(getPublicEnv().NEXT_PUBLIC_APP_URL),
     );
 
     if (outcome.status === "confirmation_required") {

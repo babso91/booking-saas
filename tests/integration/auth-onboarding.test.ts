@@ -19,6 +19,7 @@ import {
   type CompleteOnboardingInput,
 } from "@/features/onboarding/schemas/onboarding";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
+import type { Database } from "@/types/database.generated";
 
 import { anonClient, db, env } from "./support/fixtures";
 import {
@@ -29,8 +30,10 @@ import {
 } from "./support/transactions";
 
 // Professional authentication and onboarding against the real local stack:
-// Supabase Auth (GoTrue), PostgREST and PostgreSQL. Local config has email
-// confirmation disabled, so sign-up returns a session immediately.
+// Supabase Auth (GoTrue), PostgREST and PostgreSQL. Email confirmation is
+// enabled locally (as on hosted projects): helpers confirm addresses through
+// the Auth admin API. The complete email → /auth/callback flow is covered by
+// tests/e2e/confirmation-flow.test.ts.
 
 const REDIRECT = "http://localhost:3000/auth/callback";
 const PASSWORD = "correct-horse-battery";
@@ -43,6 +46,20 @@ function uniqueSlug(label: string) {
   return `${label}-${randomUUID().slice(0, 8)}`;
 }
 
+const admin = createClient(env.apiUrl, env.serviceRoleKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
+async function userIdOf(email: string) {
+  const { rows } = await db.query<{ id: string }>(
+    "select id from auth.users where email = $1",
+    [email],
+  );
+
+  return rows.map((row) => row.id);
+}
+
+/** Signs up, confirms the email (as the confirmation link would) and signs in. */
 async function signedUpUser(label = "pro") {
   const client = anonClient();
   const email = uniqueEmail(label);
@@ -51,9 +68,11 @@ async function signedUpUser(label = "pro") {
     { email, password: PASSWORD, firstName: "Mila", lastName: "Durand" },
     REDIRECT,
   );
-  const { data } = await client.auth.getUser();
+  const [userId] = await userIdOf(email);
+  await admin.auth.admin.updateUserById(userId!, { email_confirm: true });
+  await signInWithPassword(client, { email, password: PASSWORD });
 
-  return { client, email, userId: data.user!.id };
+  return { client, email, userId: userId! };
 }
 
 function onboardingInput(overrides: Partial<Record<string, unknown>> = {}) {
@@ -104,7 +123,7 @@ const NONE = {
 };
 
 describe("authentication", () => {
-  it("signs up with email and password and starts at onboarding", async () => {
+  it("signs up with email and password, then waits for email confirmation", async () => {
     const client = anonClient();
     const email = uniqueEmail("signup");
 
@@ -114,28 +133,70 @@ describe("authentication", () => {
         { email, password: PASSWORD, firstName: "Léa", lastName: "Martin" },
         REDIRECT,
       ),
-    ).resolves.toEqual({ status: "signed_in" });
+    ).resolves.toEqual({ status: "confirmation_required", email });
 
-    const state = await getSessionState(client);
-    expect(state).toMatchObject({
-      status: "onboarding_required",
-      user: { email, emailConfirmed: true },
+    // No session until the email is confirmed.
+    expect(await getSessionState(client)).toEqual({
+      status: "unauthenticated",
     });
+    await expect(
+      signInWithPassword(client, { email, password: PASSWORD }),
+    ).rejects.toMatchObject({ code: "email_not_confirmed" });
 
     // The existing trigger created the profile from the sign-up metadata.
+    const [userId] = await userIdOf(email);
     const { rows } = await db.query(
       "select first_name, last_name from public.profiles where id = $1",
-      [state.status === "onboarding_required" ? state.user.id : null],
+      [userId],
     );
     expect(rows).toEqual([{ first_name: "Léa", last_name: "Martin" }]);
+
+    // Once confirmed, the account signs in and starts at onboarding.
+    await admin.auth.admin.updateUserById(userId!, { email_confirm: true });
+    await signInWithPassword(client, { email, password: PASSWORD });
+    expect(await getSessionState(client)).toMatchObject({
+      status: "onboarding_required",
+      user: { id: userId, email, emailConfirmed: true },
+    });
   });
 
-  it("refuses a second account with the same email", async () => {
-    const { email } = await signedUpUser("duplicate");
-
+  it("never creates a second account for the same email", async () => {
+    // Pending (unconfirmed) registration: Supabase answers like for a new
+    // account and sends the confirmation email again.
+    const pending = uniqueEmail("pending");
+    await signUpWithPassword(
+      anonClient(),
+      { email: pending, password: PASSWORD },
+      REDIRECT,
+    );
+    const [pendingId] = await userIdOf(pending);
+    await new Promise((resolve) => setTimeout(resolve, 1_200)); // max_frequency
     await expect(
-      signUpWithPassword(anonClient(), { email, password: PASSWORD }, REDIRECT),
+      signUpWithPassword(
+        anonClient(),
+        { email: pending, password: "another-password-123" },
+        REDIRECT,
+      ),
+    ).resolves.toEqual({ status: "confirmation_required", email: pending });
+    expect(await userIdOf(pending)).toEqual([pendingId]);
+
+    // Confirmed account: Supabase refuses with user_already_exists.
+    const { email, userId } = await signedUpUser("duplicate");
+    await expect(
+      signUpWithPassword(
+        anonClient(),
+        { email, password: "another-password-123" },
+        REDIRECT,
+      ),
     ).rejects.toMatchObject({ code: "email_taken" });
+
+    expect(await userIdOf(email)).toEqual([userId]);
+    await expect(
+      signInWithPassword(anonClient(), {
+        email,
+        password: "another-password-123",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_credentials" });
   });
 
   it("signs in, and refuses wrong or unknown credentials the same way", async () => {
@@ -157,9 +218,6 @@ describe("authentication", () => {
   });
 
   it("reports an unconfirmed email explicitly", async () => {
-    const admin = createClient(env.apiUrl, env.serviceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
     const email = uniqueEmail("unconfirmed");
     await admin.auth.admin.createUser({
       email,
@@ -172,25 +230,50 @@ describe("authentication", () => {
     ).rejects.toMatchObject({ code: "email_not_confirmed" });
   });
 
-  it("signs out and invalidates the session server-side", async () => {
-    const { client } = await signedUpUser("signout");
+  it("signs out: session and refresh token revoked, access token valid for PostgREST until expiry", async () => {
+    const { client, email } = await signedUpUser("signout");
+    await completeOnboarding(client, onboardingInput());
     const { data } = await client.auth.getSession();
-    const accessToken = data.session!.access_token;
+    const { access_token: accessToken, refresh_token: refreshToken } =
+      data.session!;
 
     await signOut(client);
 
+    // The client that signed out has no session any more.
     expect(await getSessionState(client)).toEqual({
       status: "unauthenticated",
     });
 
-    // Replaying the old access token: the Auth server no longer knows the session.
-    const replay = createClient(env.apiUrl, env.anonKey, {
+    const replay = createClient<Database>(env.apiUrl, env.anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: { headers: { Authorization: `Bearer ${accessToken}` } },
     });
+
+    // Revoked where the session is checked: the Auth server (used by every
+    // server-side guard and action through getUser) and the refresh token.
     const { data: user, error } = await replay.auth.getUser(accessToken);
     expect(user.user).toBeNull();
     expect(error).not.toBeNull();
+    const refresh = await anonClient().auth.refreshSession({
+      refresh_token: refreshToken,
+    });
+    expect(refresh.error?.code).toBe("refresh_token_not_found");
+
+    // Documented limit: PostgREST only verifies the JWT signature and expiry.
+    // A copied access token keeps working for direct Data API calls until it
+    // expires (auth.jwt_expiry), for reads and RPCs alike. Keep jwt_expiry
+    // short in production; there is no custom token blacklist.
+    const read = await replay.from("business_members").select("user_id");
+    expect(read.error).toBeNull();
+    expect(read.data).toHaveLength(1);
+    const rpc = await replay.rpc("check_slug_availability", {
+      p_slug: "encore-valide",
+    });
+    expect(rpc.error).toBeNull();
+
+    // A fresh sign-in is required for a new session.
+    await signInWithPassword(client, { email, password: PASSWORD });
+    expect((await getSessionState(client)).status).toBe("ready");
   });
 
   it("treats a visitor without session as unauthenticated", async () => {
@@ -297,7 +380,21 @@ describe("onboarding", () => {
 
   it("rolls everything back when a late step fails", async () => {
     const { client, userId } = await signedUpUser("rollback");
-    const input = onboardingInput();
+
+    // State before the transaction, deliberately different from what the
+    // onboarding writes first (the profile upsert).
+    await db.query(
+      `update public.profiles
+          set first_name = 'Avant', last_name = 'Initial',
+              updated_at = '2020-01-01T00:00:00Z'
+        where id = $1`,
+      [userId],
+    );
+    const before = await db.query(
+      "select first_name, last_name, updated_at from public.profiles where id = $1",
+      [userId],
+    );
+    const input = onboardingInput({ firstName: "Après", lastName: "Tenté" });
 
     // Makes the very last write of the transaction fail for this user only.
     await db.query(`
@@ -327,17 +424,27 @@ describe("onboarding", () => {
       [input.slug],
     );
     expect(rows).toEqual([]);
-    const profile = await db.query(
-      "select first_name, last_name from public.profiles where id = $1",
+    // The profile written first in the transaction is back to its prior state.
+    const after = await db.query(
+      "select first_name, last_name, updated_at from public.profiles where id = $1",
       [userId],
     );
-    expect(profile.rows).toEqual([{ first_name: "Mila", last_name: "Durand" }]);
+    expect(after.rows).toEqual(before.rows);
+    expect(after.rows[0]).toMatchObject({
+      first_name: "Avant",
+      last_name: "Initial",
+    });
     expect((await getSessionState(client)).status).toBe("onboarding_required");
 
-    // Nothing left behind: the same request now succeeds.
+    // Nothing left behind: the same request now succeeds and writes the names.
     await expect(completeOnboarding(client, input)).resolves.toMatchObject({
       slug: input.slug,
     });
+    const done = await db.query(
+      "select first_name, last_name from public.profiles where id = $1",
+      [userId],
+    );
+    expect(done.rows).toEqual([{ first_name: "Après", last_name: "Tenté" }]);
   });
 });
 

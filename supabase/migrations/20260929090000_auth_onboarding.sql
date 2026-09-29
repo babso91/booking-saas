@@ -186,7 +186,8 @@ begin
 
   -- Serialises submissions of the same user: a double click or a retry
   -- waits for the first call, then sees its membership (READ COMMITTED) and
-  -- gets `already_onboarded`. The unique owner index stays the final guard.
+  -- gets `already_onboarded`. The business_onboardings primary key stays the
+  -- final guard.
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended('onboarding:' || v_user_id::text, 0)
   );

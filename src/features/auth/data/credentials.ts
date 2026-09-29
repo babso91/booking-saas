@@ -34,9 +34,10 @@ export async function signUpWithPassword(
     throw authException(error);
   }
 
-  // With confirmation enabled, Supabase answers an already-registered email
-  // with a user without identities and no session (anti-enumeration): the
-  // response is deliberately the same as for a new account.
+  // With confirmation enabled, no session is returned until the email is
+  // confirmed. A still-unconfirmed address is answered like a new account
+  // (the email is sent again); a confirmed one fails with user_already_exists
+  // (email_taken) above.
   if (!data.session) {
     return { status: "confirmation_required", email: input.email };
   }

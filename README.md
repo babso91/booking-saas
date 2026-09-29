@@ -39,6 +39,7 @@ Le seed de démonstration est intentionnellement désactivé dans cette étape d
 | `npm run check`    | format, lint, types et tests                         |
 | `npm run test`     | tests unitaires Vitest (sans base)                   |
 | `npm run test:db`  | tests d'intégration contre Supabase local            |
+| `npm run test:e2e` | parcours de confirmation email contre `next start`   |
 | `npm run db:start` | démarre Supabase local                               |
 | `npm run db:stop`  | arrête Supabase local                                |
 | `npm run db:reset` | rejoue les migrations locales                        |
@@ -54,12 +55,19 @@ npm run db:reset   # rejoue toutes les migrations
 npm run test:db
 ```
 
+Le test E2E `tests/e2e` vérifie l'inscription avec confirmation email : lien reçu dans Mailpit (http://127.0.0.1:54324), `/auth/callback`, session puis `/onboarding`. Il démarre lui-même `next start` sur `http://localhost:3000` (port libre requis) :
+
+```bash
+npm run build
+npm run test:e2e
+```
+
 Les clés sont lues via `supabase status` ; elles peuvent aussi être fournies par `SUPABASE_TEST_API_URL`, `SUPABASE_TEST_DB_URL`, `SUPABASE_TEST_ANON_KEY` et `SUPABASE_TEST_SERVICE_ROLE_KEY`. Les tests refusent de s'exécuter contre un hôte non local. La CI (`.github/workflows/ci.yml`) exécute les mêmes étapes et vérifie que `src/types/database.generated.ts` correspond au schéma.
 
 ## Variables d'environnement
 
 - `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` : configuration publique Supabase ;
-- `NEXT_PUBLIC_APP_URL` : URL canonique utilisée dans les liens ;
+- `NEXT_PUBLIC_APP_URL` : origine canonique de l'app (`http://localhost:3000` en local, jamais `127.0.0.1`). Elle doit correspondre au `site_url` et aux URL de redirection de Supabase Auth, sinon la confirmation email échoue ;
 - `SUPABASE_SERVICE_ROLE_KEY` : secret serveur qui contourne RLS, réservé aux workers ;
 - `RESEND_API_KEY` et `RESEND_FROM_EMAIL` : envoi d'emails, non utilisés avant la verticale email ;
 - `CRON_SECRET` : authentification des routes de traitements programmés.

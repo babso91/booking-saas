@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { destinationFor } from "./session";
-import { safeNextPath } from "./redirects";
+import { authCallbackUrl, safeNextPath } from "./redirects";
 
 const user = { id: "u", email: "u@x.fr", emailConfirmed: true };
 
@@ -36,5 +36,22 @@ describe("safeNextPath", () => {
     "/b/x",
   ])("falls back to /app for %s", (value) => {
     expect(safeNextPath(value)).toBe("/app");
+  });
+});
+
+describe("authCallbackUrl", () => {
+  it("builds the callback on the configured origin", () => {
+    expect(authCallbackUrl("http://localhost:3000")).toBe(
+      "http://localhost:3000/auth/callback",
+    );
+    expect(authCallbackUrl("https://app.example.com/")).toBe(
+      "https://app.example.com/auth/callback",
+    );
+  });
+
+  it("keeps only the origin of the configured URL", () => {
+    expect(authCallbackUrl("https://app.example.com/some/path?x=1")).toBe(
+      "https://app.example.com/auth/callback",
+    );
   });
 });

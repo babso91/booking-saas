@@ -92,19 +92,19 @@ Le serveur est la seule implémentation de la normalisation. L'UI affiche le `sl
 
 ## Codes d'erreur
 
-| Code                  | HTTP | Quand                                                                              |
-| --------------------- | ---- | ---------------------------------------------------------------------------------- |
-| `validation_error`    | 400  | entrée invalide (équivalent de `invalid_input`) ; voir `fieldErrors`               |
-| `unauthenticated`     | 401  | pas de session valide (équivalent de `unauthorized`)                               |
-| `invalid_credentials` | 401  | email ou mot de passe incorrect (message identique si le compte n'existe pas)      |
-| `email_not_confirmed` | 403  | connexion avant confirmation de l'email                                            |
-| `email_taken`         | 409  | inscription avec un email déjà utilisé, quand la confirmation email est désactivée |
-| `rate_limited`        | 429  | limite Supabase Auth atteinte                                                      |
-| `already_onboarded`   | 409  | l'onboarding a déjà été réalisé : aller sur `/app`                                 |
-| `slug_taken`          | 409  | slug déjà utilisé (`fieldErrors.slug`)                                             |
-| `slug_reserved`       | 409  | slug réservé (`fieldErrors.slug`)                                                  |
-| `forbidden`           | 403  | action non autorisée                                                               |
-| `internal`            | 500  | erreur inattendue ; détail uniquement dans les logs serveur                        |
+| Code                  | HTTP | Quand                                                                             |
+| --------------------- | ---- | --------------------------------------------------------------------------------- |
+| `validation_error`    | 400  | entrée invalide (équivalent de `invalid_input`) ; voir `fieldErrors`              |
+| `unauthenticated`     | 401  | pas de session valide (équivalent de `unauthorized`)                              |
+| `invalid_credentials` | 401  | email ou mot de passe incorrect (message identique si le compte n'existe pas)     |
+| `email_not_confirmed` | 403  | connexion avant confirmation de l'email                                           |
+| `email_taken`         | 409  | inscription avec un email déjà confirmé (ou déjà utilisé sans confirmation email) |
+| `rate_limited`        | 429  | limite Supabase Auth atteinte                                                     |
+| `already_onboarded`   | 409  | l'onboarding a déjà été réalisé : aller sur `/app`                                |
+| `slug_taken`          | 409  | slug déjà utilisé (`fieldErrors.slug`)                                            |
+| `slug_reserved`       | 409  | slug réservé (`fieldErrors.slug`)                                                 |
+| `forbidden`           | 403  | action non autorisée                                                              |
+| `internal`            | 500  | erreur inattendue ; détail uniquement dans les logs serveur                       |
 
 ## Confirmation email
 
@@ -113,7 +113,30 @@ Le backend ne suppose pas le réglage Supabase `enable_confirmations` :
 - **désactivée** : `signUpAction` renvoie `status: "signed_in"`. La session est active, l'UI va sur `/onboarding` ;
 - **activée** : `signUpAction` renvoie `status: "confirmation_required"`. L'UI affiche « vérifiez votre boîte de réception ». Le lien de l'email mène à `/auth/callback`, qui ouvre la session puis redirige vers `/app`, lequel renvoie vers `/onboarding` tant qu'aucun business n'existe. Une connexion avant confirmation renvoie `email_not_confirmed`.
 
-Avec confirmation activée, un email déjà inscrit renvoie volontairement aussi `confirmation_required`. C'est le comportement anti-énumération de Supabase.
+La confirmation est **activée en local** (`supabase/config.toml`, comme sur un projet hébergé). Les emails arrivent dans Mailpit : http://127.0.0.1:54324.
+
+Inscription avec un email existant (comportement réel de Supabase Auth, testé) :
+
+- compte **non confirmé** : `confirmation_required`, et l'email de confirmation est renvoyé ;
+- compte **confirmé** : `email_taken`. Supabase ne masque pas ce cas ; l'UI doit afficher un message neutre (« Si un compte existe, connectez-vous ») si l'énumération est un souci.
+
+### Hôte canonique et URL de callback
+
+- `NEXT_PUBLIC_APP_URL` est l'unique origine de l'application. En local : `http://localhost:3000`, jamais `127.0.0.1:3000`.
+- `signUpAction` envoie `emailRedirectTo = <NEXT_PUBLIC_APP_URL>/auth/callback`.
+- Supabase Auth doit avoir `site_url = <origine>` et `<origine>/auth/callback` dans les URL de redirection autorisées. Une URL non autorisée est remplacée par `site_url`, et l'échange PKCE échoue.
+- Le cookie `code-verifier` PKCE est posé sur l'hôte de l'app à l'inscription. Il doit être relu sur le **même hôte** par `/auth/callback`. Ouvrir l'app sur un autre hôte fait donc échouer la confirmation (`/login?error=auth_callback_failed`).
+- En production : Site URL = origine publique, Redirect URLs = `<origine>/auth/callback` (tableau de bord Supabase → Authentication → URL Configuration), et `NEXT_PUBLIC_APP_URL` identique.
+
+`/auth/callback` n'accepte comme destination `next` que `/app`, `/onboarding` et `/login`. Toute autre valeur donne `/app`. Un code invalide, déjà utilisé, ou échangé sans le cookie `code-verifier` donne `/login?error=auth_callback_failed`.
+
+## Déconnexion
+
+`signOutAction` révoque la session côté serveur Auth (scope `local`) et efface les cookies. Effets réels, testés :
+
+- `getUser` refuse l'ancien jeton d'accès. Toutes les gardes, le proxy et les actions passent par là, donc `/app` et les actions sont fermés immédiatement ;
+- le refresh token est révoqué (`refresh_token_not_found`) ;
+- **limite** : un jeton d'accès copié avant la déconnexion reste accepté par PostgREST (lectures et RPC, sous RLS) jusqu'à son expiration (`jwt_expiry`, 3600 s par défaut). PostgREST ne vérifie que la signature et la date d'expiration du JWT. Pas de liste noire maison : pour réduire la fenêtre, réduire `jwt_expiry` en production.
 
 ## Routage
 

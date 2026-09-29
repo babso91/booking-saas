@@ -255,6 +255,14 @@ Toute erreur annule l'ensemble.
 - **Idempotence** : `business_onboardings.user_id` est une clé primaire, donc au plus un onboarding par utilisateur, quel que soit le niveau d'isolation. Un verrou consultatif par utilisateur transforme une double soumission en `already_onboarded` propre plutôt qu'en erreur de contrainte. Un utilisateur déjà membre d'un business reçoit aussi `already_onboarded`. Le nombre de businesses par utilisateur n'est pas contraint par ailleurs.
 - **Slug** : normalisé uniquement côté base (`private.normalize_slug`, avec `unaccent`). Les contraintes `CHECK` garantissent le format, 3 à 63 caractères et les mots réservés ; la contrainte d'unicité existante tranche la concurrence (`slug_taken`). `check_slug_availability` n'est qu'une aide UX.
 - **Contrat UI** : `docs/AUTH_ONBOARDING_CONTRACT.md`.
+- **Migration et slugs existants** : les contraintes `businesses_slug_length` et `businesses_slug_not_reserved` sont ajoutées validées (sans `NOT VALID`). Aucun environnement ne contient de données réelles (pas de projet hébergé, pas de seed) : la migration est sûre. Sur une base contenant un slug trop court ou réservé, elle échouerait explicitement plutôt que de modifier des données ; il faudrait alors renommer ces slugs avant de la rejouer.
+- **État futur non traité** : un `business_onboardings` existe mais le membership `owner` a été supprimé. L'utilisateur est alors `onboarding_required` et la RPC répond `already_onboarded`. Aucune suppression de membership n'existe en V1 ; une procédure de reprise (support ou RPC dédiée) sera définie avec la gestion d'équipe.
+
+### Hôte canonique, confirmation email et déconnexion
+
+- **Hôte canonique** : `NEXT_PUBLIC_APP_URL` est la seule origine de l'app (`http://localhost:3000` en local). `signUpAction` en dérive `emailRedirectTo` (`authCallbackUrl`), sans hôte codé en dur. `supabase/config.toml` aligne `site_url` et `additional_redirect_urls = ["http://localhost:3000/auth/callback"]`. Le cookie `code-verifier` PKCE est lié à l'hôte : une redirection vers un autre hôte (ex. `127.0.0.1` au lieu de `localhost`) fait échouer l'échange. En production : Site URL, Redirect URLs (`<origine>/auth/callback`) et `NEXT_PUBLIC_APP_URL` doivent désigner la même origine.
+- **Confirmation email** activée en local comme en production ; emails lisibles dans Mailpit (http://127.0.0.1:54324). Le parcours complet est testé de bout en bout (`npm run test:e2e`).
+- **Déconnexion** : révocation de la session et du refresh token côté Auth ; `getUser` (proxy, gardes, actions) refuse immédiatement l'ancien jeton. PostgREST ne vérifie que la signature et l'expiration du JWT : un jeton d'accès copié reste utilisable sur l'API de données, sous RLS, jusqu'à `jwt_expiry` (3600 s). Pas de liste noire maison ; réduire `jwt_expiry` en production si cette fenêtre est jugée trop longue.
 
 ## 8. Disponibilités
 
@@ -364,7 +372,7 @@ Un bucket Supabase Storage privé stockera les logos/photos. Le chemin inclut le
 - **unitaires :** calcul de créneaux, métriques, règles de réactivation, schémas Zod ;
 - **base locale Supabase :** contraintes de chevauchement, RLS A/B, clés composites et fonctions transactionnelles (`npm run test:db`, dossier `tests/integration`, contre la pile Supabase locale entièrement migrée) ;
 - **intégration :** réservation et completion/idempotence sur une base locale ;
-- **E2E :** scénario critique mobile avec Playwright une fois la verticale réservation disponible ;
+- **E2E :** inscription → email de confirmation (Mailpit) → `/auth/callback` → session → `/onboarding`, contre `next start` (`npm run test:e2e`, dossier `tests/e2e`) ; scénario critique mobile avec Playwright une fois l'UI disponible ;
 - **contrat email :** snapshot sémantique des données et test de déduplication, sans appeler Resend.
 
 Les tests de sécurité de base sont obligatoires avant toute mise en production, pas reportés à une phase de finition.
