@@ -74,15 +74,22 @@ async function signedInBrowser() {
   return { browser, email };
 }
 
+// Text that only exists in the body of each private page (titles live in
+// <head> metadata and are not private).
+const PRIVATE_BODIES = [
+  "Aucun écran métier", // /app
+  "Chargement de ton espace", // /onboarding
+  "Ton espace est prêt.", // /app/welcome
+];
+
 function expectRedirect(
   response: { status: number; location: string | null; html: string },
   to: string,
 ) {
   expect(response.status).toBe(307);
   expect(new URL(response.location!, APP).pathname).toBe(to);
-  // Nothing of the private screens is sent before the redirect.
-  expect(response.html).not.toContain("Configurer mon activité");
-  expect(response.html).not.toContain("Tableau de bord");
+  // Nothing of the private pages is rendered into the redirect response.
+  for (const body of PRIVATE_BODIES) expect(response.html).not.toContain(body);
 }
 
 describe("UI routes against the real backend", () => {
@@ -109,12 +116,12 @@ describe("UI routes against the real backend", () => {
 
     const onboarding = await browser.get("/onboarding");
     expect(onboarding.status).toBe(200);
-    expect(onboarding.html).toContain("Configurer mon activité");
     expect(onboarding.html).toContain("Chargement de ton espace");
 
     expectRedirect(await browser.get("/login"), "/onboarding");
     expectRedirect(await browser.get("/signup"), "/onboarding");
     expectRedirect(await browser.get("/app"), "/onboarding");
+    expectRedirect(await browser.get("/app/welcome"), "/onboarding");
   });
 
   it("onboarded: /app is reachable and auth screens send the user there", async () => {
@@ -134,7 +141,12 @@ describe("UI routes against the real backend", () => {
     });
     expect(error).toBeNull();
 
-    expect((await browser.get("/app")).status).toBe(200);
+    const app = await browser.get("/app");
+    expect(app.status).toBe(200);
+    expect(app.html).toContain("Aucun écran métier");
+    expect((await browser.get("/app/welcome")).html).toContain(
+      "Ton espace est prêt.",
+    );
     expectRedirect(await browser.get("/onboarding"), "/app");
     expectRedirect(await browser.get("/login"), "/app");
     expectRedirect(await browser.get("/signup"), "/app");

@@ -1,18 +1,17 @@
 import type { Metadata } from "next";
 
-import { currentSessionState } from "@/features/auth/data/guards";
+import { requirePendingOnboarding } from "@/features/auth/data/guards";
 import { OnboardingFlow } from "@/features/onboarding/components/onboarding-flow";
 
 export const metadata: Metadata = {
   title: "Configurer mon activité",
 };
 
-// Access control stays in ./layout.tsx (requirePendingOnboarding): this page
-// only renders for a signed-in user without a business.
+// The layout guard alone does not stop this page from rendering (segments
+// render in parallel and would still reach the RSC payload of the redirect),
+// so the page checks too. Same cached session state, no extra request.
 export default async function OnboardingPage() {
-  const state = await currentSessionState();
-  const owner =
-    state.status === "onboarding_required" ? state.user.email : null;
+  const state = await requirePendingOnboarding();
 
-  return <OnboardingFlow owner={owner} />;
+  return <OnboardingFlow owner={state.user.email} />;
 }

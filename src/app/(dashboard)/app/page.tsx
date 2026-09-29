@@ -1,12 +1,17 @@
 import type { Metadata } from "next";
 
 import { SignOutButton } from "@/features/auth/components/sign-out-button";
+import { requireReadyBusiness } from "@/features/auth/data/guards";
 
 export const metadata: Metadata = {
   title: "Tableau de bord",
 };
 
-export default function DashboardFoundationPage() {
+export default async function DashboardFoundationPage() {
+  // Also checked here: the layout guard does not stop the page from being
+  // rendered into the payload of its redirect response.
+  await requireReadyBusiness();
+
   return (
     <main className="mx-auto flex min-h-dvh max-w-3xl flex-col justify-center px-6">
       <p className="text-sm font-semibold tracking-wide text-rose-700 uppercase">
