@@ -86,9 +86,18 @@ export const appointmentClientSchema = z.discriminatedUnion("type", [
   newClientSchema,
 ]);
 
+/**
+ * Which instant is meant when `date` + `time` falls in the repeated autumn
+ * hour (02:00–02:59 on the last Sunday of October in Paris): `first` =
+ * before the clocks go back (summer offset), `second` = after. Required in
+ * that hour only (`ambiguous_local_time` otherwise), ignored elsewhere.
+ */
+export const occurrenceSchema = z.enum(["first", "second"]);
+
 export const createAppointmentSchema = z.object({
   date: localDateSchema,
   time: startTimeSchema,
+  occurrence: occurrenceSchema.optional(),
   serviceId: z.uuid(),
   client: appointmentClientSchema,
   internalNotes: optionalText(2000),
@@ -96,16 +105,31 @@ export const createAppointmentSchema = z.object({
   requestId: z.uuid().optional(),
 });
 
-/** Full editable state of an appointment, as last loaded by the UI. */
-export const updateAppointmentSchema = z.object({
-  appointmentId: z.uuid(),
-  expectedVersion: versionSchema,
-  date: localDateSchema,
-  time: startTimeSchema,
-  serviceId: z.uuid(),
-  clientId: z.uuid(),
-  internalNotes: optionalText(2000),
-});
+/**
+ * Editable state of an appointment, as last loaded by the UI.
+ *
+ * `date` + `time` are optional together: absent, or equal to the loaded
+ * `localStartsAt` (and `startOccurrence`), the stored UTC instant is kept
+ * exactly. Only a real change of time is converted from wall-clock time.
+ */
+export const updateAppointmentSchema = z
+  .object({
+    appointmentId: z.uuid(),
+    expectedVersion: versionSchema,
+    date: localDateSchema.optional(),
+    time: startTimeSchema.optional(),
+    occurrence: occurrenceSchema.optional(),
+    serviceId: z.uuid(),
+    clientId: z.uuid(),
+    internalNotes: optionalText(2000),
+  })
+  .refine(
+    (input) => (input.date === undefined) === (input.time === undefined),
+    {
+      message: "La date et l’heure vont ensemble.",
+      path: ["time"],
+    },
+  );
 
 export const appointmentStatusSchema = z.enum([
   "confirmed",
@@ -184,4 +208,5 @@ export type SetAppointmentStatusInput = z.output<
   typeof setAppointmentStatusSchema
 >;
 export type AppointmentStatus = z.output<typeof appointmentStatusSchema>;
+export type LocalTimeOccurrence = z.output<typeof occurrenceSchema>;
 export type BlockInput = z.output<typeof blockInputSchema>;

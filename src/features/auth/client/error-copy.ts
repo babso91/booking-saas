@@ -114,6 +114,14 @@ export const errorCopy: Record<
     title: "Action impossible",
     message: "Seul un rendez-vous confirmé peut être modifié.",
   },
+  idempotency_conflict: {
+    title: "Demande déjà utilisée",
+    message: "Recharge le formulaire avant de réessayer.",
+  },
+  ambiguous_local_time: {
+    title: "Heure en double",
+    message: "Cette heure existe deux fois ce jour-là. Précise laquelle.",
+  },
   conflict: {
     title: "Conflit",
     message: "Cette modification entre en conflit avec des données existantes.",

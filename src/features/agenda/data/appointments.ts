@@ -31,7 +31,12 @@ export async function createManualAppointment(
   context: AgendaContext,
   input: CreateAppointmentInput,
 ): Promise<CreatedAppointmentDto> {
-  const startsAt = localStartToUtc(input.date, input.time, context.timezone);
+  const startsAt = localStartToUtc(
+    input.date,
+    input.time,
+    context.timezone,
+    input.occurrence,
+  );
   const clientFields =
     input.client.type === "existing"
       ? { p_client_id: input.client.clientId }
@@ -65,18 +70,56 @@ export async function createManualAppointment(
   };
 }
 
+/**
+ * New start requested by an edit, or undefined to keep the stored instant.
+ *
+ * An edit that does not change the time must never convert wall-clock time
+ * back to UTC: in the repeated autumn hour that would move a "first
+ * occurrence" appointment by one hour. The time counts as unchanged when it
+ * is absent, or equal to the loaded `localStartsAt` with no other
+ * occurrence requested. The version check of the RPC guarantees the
+ * appointment compared here is the one being edited.
+ */
+async function requestedStart(
+  client: AppSupabaseClient,
+  context: AgendaContext,
+  input: UpdateAppointmentInput,
+): Promise<string | undefined> {
+  if (input.date === undefined || input.time === undefined) return undefined;
+
+  const current = await getAgendaAppointment(
+    client,
+    context,
+    input.appointmentId,
+  );
+  const unchanged =
+    current.localStartsAt === `${input.date}T${input.time}` &&
+    (input.occurrence === undefined ||
+      input.occurrence === current.startOccurrence ||
+      current.startOccurrence === null);
+
+  if (unchanged) return undefined;
+
+  return localStartToUtc(
+    input.date,
+    input.time,
+    context.timezone,
+    input.occurrence,
+  ).toISOString();
+}
+
 export async function updateAppointment(
   client: AppSupabaseClient,
   context: AgendaContext,
   input: UpdateAppointmentInput,
 ): Promise<AgendaAppointmentDto> {
-  const startsAt = localStartToUtc(input.date, input.time, context.timezone);
+  const startsAt = await requestedStart(client, context, input);
 
   const { error } = await client.rpc("agenda_update_appointment", {
     p_business_id: context.businessId,
     p_appointment_id: input.appointmentId,
     p_expected_version: input.expectedVersion,
-    p_starts_at: startsAt.toISOString(),
+    p_starts_at: startsAt,
     p_service_id: input.serviceId,
     p_client_id: input.clientId,
     p_internal_notes: input.internalNotes ?? undefined,

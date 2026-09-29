@@ -25,6 +25,10 @@ export const appErrorMessages = {
   invalid_status_transition: "Ce changement de statut n’est pas possible.",
   appointment_not_editable:
     "Seul un rendez-vous confirmé peut être déplacé ou modifié.",
+  idempotency_conflict:
+    "Cette demande a déjà été utilisée pour un autre rendez-vous. Rechargez le formulaire.",
+  ambiguous_local_time:
+    "Cette heure existe deux fois ce jour-là (changement d’heure). Précisez laquelle.",
   conflict: "Cette modification entre en conflit avec des données existantes.",
   in_use: "Cet élément est utilisé et ne peut pas être supprimé.",
   invalid_credentials: "Email ou mot de passe incorrect.",
@@ -97,6 +101,8 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   stale_block: 409,
   invalid_status_transition: 409,
   appointment_not_editable: 409,
+  idempotency_conflict: 409,
+  ambiguous_local_time: 400,
   conflict: 409,
   in_use: 409,
   invalid_credentials: 401,

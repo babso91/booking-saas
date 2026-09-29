@@ -180,3 +180,84 @@ export function isExistingLocalTime(localDateTime: string, timeZone: string) {
     localDateTime
   );
 }
+
+// ---------------------------------------------------------------------------
+// Explicit resolution of a wall-clock time (no silent choice)
+// ---------------------------------------------------------------------------
+
+/** Which of the two instants of a repeated (autumn) local time is meant. */
+export type LocalTimeOccurrence = "first" | "second";
+
+export type ResolvedLocalTime =
+  | { status: "exact"; instant: Date }
+  /** Repeated hour: `first` is the earlier instant (before the transition). */
+  | { status: "ambiguous"; first: Date; second: Date }
+  /** Skipped by a spring-forward transition. */
+  | { status: "nonexistent" };
+
+/**
+ * All instants whose wall clock in `timeZone` reads `YYYY-MM-DDTHH:MM`.
+ * Unlike zonedLocalToUtc, which applies PostgreSQL's fixed rule, this never
+ * picks an instant on the caller's behalf.
+ */
+export function resolveZonedLocal(
+  localDateTime: string,
+  timeZone: string,
+): ResolvedLocalTime {
+  const match = LOCAL_DATE_TIME.exec(localDateTime);
+
+  if (!match) {
+    throw new RangeError(`Invalid local date-time: ${localDateTime}`);
+  }
+
+  const [, year, month, day, hour, minute] = match.map(Number) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const wallAsUtc = Date.UTC(year, month - 1, day, hour, minute);
+  const instants = [
+    ...new Set(
+      [
+        wallAsUtc - offsetAt(wallAsUtc - 86_400_000, timeZone),
+        wallAsUtc - offsetAt(wallAsUtc + 86_400_000, timeZone),
+      ].filter(
+        (candidate) => candidate + offsetAt(candidate, timeZone) === wallAsUtc,
+      ),
+    ),
+  ].sort((a, b) => a - b);
+
+  if (instants.length === 0) return { status: "nonexistent" };
+  if (instants.length === 1) {
+    return { status: "exact", instant: new Date(instants[0]!) };
+  }
+  return {
+    status: "ambiguous",
+    first: new Date(instants[0]!),
+    second: new Date(instants[1]!),
+  };
+}
+
+/**
+ * `first` / `second` when the wall clock of `instant` is a repeated local
+ * time, `null` otherwise. Minute precision, like the agenda.
+ */
+export function zonedOccurrenceOf(
+  instant: Date | string,
+  timeZone: string,
+): LocalTimeOccurrence | null {
+  const resolved = resolveZonedLocal(
+    utcToZonedLocal(instant, timeZone),
+    timeZone,
+  );
+
+  if (resolved.status !== "ambiguous") return null;
+
+  const minute = Math.floor(new Date(instant).getTime() / 60_000);
+  return minute === Math.floor(resolved.first.getTime() / 60_000)
+    ? "first"
+    : "second";
+}

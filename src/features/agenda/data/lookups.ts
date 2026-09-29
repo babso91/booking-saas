@@ -9,6 +9,9 @@ import type { AppSupabaseClient } from "@/lib/supabase/types";
 // What the appointment form needs: bookable services and existing clients.
 // Both are scoped to the session's business and read under RLS.
 
+/** Explicit cap: PostgREST would otherwise stop silently at max_rows. */
+export const MAX_AGENDA_SERVICES = 500;
+
 export type AgendaServiceDto = {
   id: string;
   name: string;
@@ -43,7 +46,8 @@ export async function listAgendaServices(
       .eq("active", true)
       .order("display_order")
       .order("name")
-      .order("id"),
+      .order("id")
+      .limit(MAX_AGENDA_SERVICES + 1),
     client
       .from("business_settings")
       .select("buffer_minutes, currency")
@@ -54,6 +58,11 @@ export async function listAgendaServices(
   if (services.error) throw databaseException(services.error);
   if (settings.error) throw databaseException(settings.error);
   if (!settings.data) throw new AppException("not_found");
+  if (services.data.length > MAX_AGENDA_SERVICES) {
+    throw new AppException("internal", {
+      cause: new Error("Active services exceed the agenda read cap"),
+    });
+  }
 
   return {
     services: services.data.map((row) => ({

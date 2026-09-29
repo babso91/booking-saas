@@ -1,10 +1,10 @@
 import "server-only";
 
-import type { AgendaRangeInput } from "@/features/agenda/schemas/agenda";
-import {
-  listBusinessHours,
-  type BusinessHourDto,
-} from "@/features/availability/data/schedule";
+import type {
+  AgendaRangeInput,
+  LocalTimeOccurrence,
+} from "@/features/agenda/schemas/agenda";
+import type { BusinessHourDto } from "@/features/availability/data/schedule";
 import type { BusinessContext } from "@/features/businesses/data/business-context";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
@@ -12,10 +12,11 @@ import type { AppSupabaseClient } from "@/lib/supabase/types";
 import {
   addDaysToLocalDate,
   daysBetweenLocalDates,
-  isExistingLocalTime,
+  resolveZonedLocal,
   utcToZonedLocal,
   weekdayOfLocalDate,
   zonedLocalToUtc,
+  zonedOccurrenceOf,
   zonedTimeOnDateToUtc,
 } from "@/lib/time/zoned";
 import type { Tables } from "@/types/database.generated";
@@ -27,8 +28,16 @@ import type { Tables } from "@/types/database.generated";
 
 export type AgendaContext = Pick<BusinessContext, "businessId" | "timezone">;
 
-/** Above this, a read is refused instead of being silently truncated. */
+// Explicit caps of one agenda read. PostgREST silently stops at max_rows
+// (1000): every list is requested with cap + 1 rows, and a read that exceeds
+// its cap is refused, never truncated.
+
+/** Appointments overlapping the range. */
 export const MAX_AGENDA_APPOINTMENTS = 800;
+/** Exceptions overlapping the range: blocks, closures and openings together. */
+export const MAX_AGENDA_EXCEPTIONS = 500;
+/** Weekly ranges (7 days × 12, the limit of replace_business_hours input). */
+export const MAX_WEEKLY_RANGES = 84;
 
 export type AgendaAppointmentDto = {
   id: string;
@@ -40,8 +49,16 @@ export type AgendaAppointmentDto = {
   localStartsAt: string;
   localEndsAt: string;
   durationMinutes: number;
+  /**
+   * `first` / `second` when the start falls in the repeated autumn hour
+   * (same local time twice), otherwise null. Send it back as `occurrence`.
+   */
+  startOccurrence: LocalTimeOccurrence | null;
   /** Time kept free after the appointment (frozen at booking). */
   bufferMinutes: number;
+  /** Price agreed at booking (snapshot), in minor units (cents). */
+  priceCents: number;
+  currency: string;
   service: { id: string; name: string };
   client: { id: string; displayName: string };
   internalNotes: string | null;
@@ -95,6 +112,7 @@ export type AgendaDto = {
 export const APPOINTMENT_COLUMNS = `
   id, version, status, starts_at, ends_at,
   duration_minutes_snapshot, buffer_minutes_snapshot,
+  price_cents_snapshot, currency,
   service_id, service_name_snapshot, client_id,
   internal_notes, cancellation_reason, created_by, created_at, updated_at,
   clients!inner(first_name, last_name)
@@ -109,6 +127,8 @@ type AppointmentRow = Pick<
   | "ends_at"
   | "duration_minutes_snapshot"
   | "buffer_minutes_snapshot"
+  | "price_cents_snapshot"
+  | "currency"
   | "service_id"
   | "service_name_snapshot"
   | "client_id"
@@ -141,7 +161,10 @@ export function toAppointmentDto(
     localStartsAt: utcToZonedLocal(row.starts_at, timezone),
     localEndsAt: utcToZonedLocal(row.ends_at, timezone),
     durationMinutes: row.duration_minutes_snapshot,
+    startOccurrence: zonedOccurrenceOf(row.starts_at, timezone),
     bufferMinutes: row.buffer_minutes_snapshot,
+    priceCents: row.price_cents_snapshot,
+    currency: row.currency,
     service: { id: row.service_id, name: row.service_name_snapshot },
     client: { id: row.client_id, displayName: clientDisplayName(row.clients) },
     internalNotes: row.internal_notes,
@@ -198,13 +221,20 @@ export function localDaysToUtc(
 
 /**
  * UTC instant of a start chosen by a professional (`date` + `HH:MM`, local).
- * A time skipped by a spring-forward transition does not exist: refused
- * rather than silently shifted.
+ * Nothing is chosen on the professional's behalf:
+ * - a time skipped in spring does not exist → `validation_error`;
+ * - a time of the repeated autumn hour needs `occurrence` (`first` = before
+ *   the clocks go back, `second` = after) → `ambiguous_local_time` without it.
  */
-export function localStartToUtc(date: string, time: string, timezone: string) {
-  const local = `${date}T${time}`;
+export function localStartToUtc(
+  date: string,
+  time: string,
+  timezone: string,
+  occurrence?: LocalTimeOccurrence,
+) {
+  const resolved = resolveZonedLocal(`${date}T${time}`, timezone);
 
-  if (!isExistingLocalTime(local, timezone)) {
+  if (resolved.status === "nonexistent") {
     throw new AppException("validation_error", {
       fieldErrors: {
         time: ["Cette heure n’existe pas ce jour-là (changement d’heure)."],
@@ -212,7 +242,25 @@ export function localStartToUtc(date: string, time: string, timezone: string) {
     });
   }
 
-  return zonedLocalToUtc(local, timezone);
+  if (resolved.status === "exact") return resolved.instant;
+
+  if (!occurrence) {
+    throw new AppException("ambiguous_local_time", {
+      fieldErrors: {
+        occurrence: [
+          "Heure en double ce jour-là : précisez first (avant le changement d’heure) ou second (après).",
+        ],
+      },
+    });
+  }
+
+  return occurrence === "first" ? resolved.first : resolved.second;
+}
+
+function tooMany(message: string): AppException {
+  return new AppException("validation_error", {
+    fieldErrors: { endDate: [message] },
+  });
 }
 
 /**
@@ -297,7 +345,7 @@ export async function getAgenda(
     appointmentsQuery = appointmentsQuery.neq("status", "cancelled");
   }
 
-  const [appointments, exceptions, weekly] = await Promise.all([
+  const [appointments, exceptions, hours] = await Promise.all([
     appointmentsQuery,
     client
       .from("availability_exceptions")
@@ -306,20 +354,42 @@ export async function getAgenda(
       .lt("starts_at", to)
       .gt("ends_at", from)
       .order("starts_at")
-      .order("id"),
-    listBusinessHours(client, businessId),
+      .order("id")
+      .limit(MAX_AGENDA_EXCEPTIONS + 1),
+    client
+      .from("business_hours")
+      .select("id, weekday, starts_at, ends_at")
+      .eq("business_id", businessId)
+      .order("weekday")
+      .order("starts_at")
+      .limit(MAX_WEEKLY_RANGES + 1),
   ]);
 
   if (appointments.error) throw databaseException(appointments.error);
   if (exceptions.error) throw databaseException(exceptions.error);
+  if (hours.error) throw databaseException(hours.error);
 
   if (appointments.data.length > MAX_AGENDA_APPOINTMENTS) {
-    throw new AppException("validation_error", {
-      fieldErrors: {
-        endDate: ["Trop de rendez-vous sur cette période : réduisez-la."],
-      },
+    throw tooMany("Trop de rendez-vous sur cette période : réduisez-la.");
+  }
+  if (exceptions.data.length > MAX_AGENDA_EXCEPTIONS) {
+    throw tooMany(
+      "Trop de périodes bloquées ou d’ouvertures sur cette période : réduisez-la.",
+    );
+  }
+  if (hours.data.length > MAX_WEEKLY_RANGES) {
+    // Not reachable through replace_business_hours input validation.
+    throw new AppException("internal", {
+      cause: new Error("Weekly schedule exceeds the agenda read cap"),
     });
   }
+
+  const weekly: BusinessHourDto[] = hours.data.map((row) => ({
+    id: row.id,
+    weekday: row.weekday,
+    startsAt: row.starts_at.slice(0, 5),
+    endsAt: row.ends_at.slice(0, 5),
+  }));
 
   const blocks = exceptions.data.filter((row) => row.kind !== "open_override");
   const openings = exceptions.data.filter(

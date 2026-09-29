@@ -175,14 +175,18 @@ function createIn(
   agenda: Agenda,
   time: string,
   requestId: string | null = null,
+  serviceId: string = agenda.service,
 ) {
-  return transaction.connection.query(
-    `select appointment_id from public.agenda_create_appointment(
+  return transaction.connection.query<{
+    appointment_id: string;
+    created: boolean;
+  }>(
+    `select appointment_id, created from public.agenda_create_appointment(
        p_business_id => $1, p_service_id => $2, p_starts_at => $3,
        p_client_id => $4, p_request_id => $5)`,
     [
       agenda.business.id,
-      agenda.service,
+      serviceId,
       utc(agenda, FUTURE, time),
       agenda.client,
       requestId,
@@ -439,7 +443,10 @@ describe("reading a range", () => {
         localStartsAt: `${FUTURE}T10:00`,
         localEndsAt: `${FUTURE}T11:00`,
         durationMinutes: 60,
+        startOccurrence: null,
         bufferMinutes: 15,
+        priceCents: 6500,
+        currency: "EUR",
         service: { id: a.service, name: "Pose complète" },
         client: { id: a.client, displayName: "Julie" },
         internalNotes: "Allergie colle",
@@ -1462,5 +1469,541 @@ describe("form lookups", () => {
       await searchAgendaClientsAction({ query: "j" }),
       "validation_error",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("idempotency key", () => {
+  async function clientsWithEmail(businessId: string, email: string) {
+    const { rows } = await db.query<{ count: number }>(
+      "select count(*)::int as count from public.clients where business_id = $1 and email = $2",
+      [businessId, email],
+    );
+    return rows[0]!.count;
+  }
+
+  it("returns the first result to a sequential retry of the same command", async () => {
+    const a = await newAgenda();
+    const requestId = randomUUID();
+    const email = `new-${randomUUID().slice(0, 8)}@x.test`;
+    const payload = {
+      requestId,
+      internalNotes: "Première fois",
+      client: { type: "new", firstName: "Nina", email },
+    };
+
+    const first = ok(await create(a, "10:00", payload));
+    const retry = ok(await create(a, "10:00", payload));
+
+    expect(first.created).toBe(true);
+    expect(retry).toEqual({ created: false, appointment: first.appointment });
+    expect(await countAppointments(a.business.id)).toBe(1);
+    expect(await clientsWithEmail(a.business.id, email)).toBe(1);
+  });
+
+  it("refuses the same key for another command, creating nothing", async () => {
+    const a = await newAgenda();
+    const requestId = randomUUID();
+    const other = await createClientRecord(
+      a.business.id,
+      `b-${randomUUID()}@x.test`,
+      "Bea",
+    );
+    const first = ok(await create(a, "10:00", { requestId }));
+    const email = `ghost-${randomUUID().slice(0, 8)}@x.test`;
+
+    for (const changed of [
+      { time: "14:00" },
+      { date: dateInDays(21) },
+      { serviceId: a.shortService },
+      { client: { type: "existing", clientId: other } },
+      { client: { type: "new", firstName: "Ghost", email } },
+      { internalNotes: "Autre note" },
+    ]) {
+      const error = failure(
+        await create(a, "10:00", { requestId, ...changed }),
+        "idempotency_conflict",
+      );
+      expect(error?.fieldErrors).toHaveProperty("requestId");
+    }
+
+    expect(await countAppointments(a.business.id)).toBe(1);
+    expect((await row(first.appointment.id)).starts_at.toISOString()).toBe(
+      first.appointment.startsAt,
+    );
+    // No partial data: the refused commands created no client either.
+    expect(await clientsWithEmail(a.business.id, email)).toBe(0);
+  });
+
+  it("concurrent retries of the same command: one creation, same answer", async () => {
+    const a = await newAgenda();
+    const requestId = randomUUID();
+    const first = await asOwner(a);
+    const second = await asOwner(a);
+
+    const created = await createIn(first, a, "10:00", requestId);
+    const replay = createIn(second, a, "10:00", requestId);
+    await waitUntilBlocked(second.pid);
+
+    await closeTransaction(first, "commit");
+    const { rows } = await replay;
+    await closeTransaction(second, "commit");
+
+    expect(rows[0]).toEqual({
+      appointment_id: created.rows[0]!.appointment_id,
+      created: false,
+    });
+    expect(await countAppointments(a.business.id)).toBe(1);
+  });
+
+  it("concurrent commands with the same key: one wins, the other conflicts", async () => {
+    const a = await newAgenda();
+    const requestId = randomUUID();
+    const first = await asOwner(a);
+    const second = await asOwner(a);
+
+    await createIn(first, a, "10:00", requestId);
+    const other = outcome(
+      createIn(second, a, "14:00", requestId, a.shortService),
+    );
+    await waitUntilBlocked(second.pid);
+
+    await closeTransaction(first, "commit");
+    expect(await other).toBe("idempotency_conflict");
+    await closeTransaction(second, "rollback");
+
+    const { rows } = await db.query(
+      "select starts_at, service_id from public.appointments where business_id = $1",
+      [a.business.id],
+    );
+    expect(rows).toEqual([
+      { starts_at: new Date(utc(a, FUTURE, "10:00")), service_id: a.service },
+    ]);
+  });
+
+  it("simultaneous actions with one key and two commands: never two successes", async () => {
+    const a = await newAgenda();
+    const requestId = randomUUID();
+
+    const results = await Promise.all([
+      create(a, "10:00", { requestId }),
+      create(a, "15:00", { requestId }),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(
+      results.filter(
+        (result) => !result.ok && result.error.code === "idempotency_conflict",
+      ),
+    ).toHaveLength(1);
+    expect(await countAppointments(a.business.id)).toBe(1);
+  });
+
+  it("binds a key only on success: a failed first attempt leaves it free", async () => {
+    const a = await newAgenda();
+    const requestId = randomUUID();
+    await createOk(a, "10:00");
+
+    failure(await create(a, "10:30", { requestId }), "schedule_conflict");
+    const retry = ok(await create(a, "14:00", { requestId }));
+    expect(retry.created).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("DST: the repeated autumn hour (Europe/Paris, 2026-10-25)", () => {
+  // Clocks go back at 03:00 CEST → 02:00 CET: 02:00–02:59 happens twice.
+  const DAY = "2026-10-25";
+  const FIRST = "2026-10-25T00:30:00.000Z"; // 02:30 CEST (UTC+2)
+  const SECOND = "2026-10-25T01:30:00.000Z"; // 02:30 CET (UTC+1)
+
+  async function paris() {
+    return newAgenda({ timezone: "Europe/Paris", bufferMinutes: 0 });
+  }
+
+  function update(
+    agenda: Agenda,
+    appointment: { id: string; version: number },
+    fields: Record<string, unknown>,
+  ) {
+    return updateAppointmentAction({
+      appointmentId: appointment.id,
+      expectedVersion: appointment.version,
+      serviceId: agenda.service,
+      clientId: agenda.client,
+      ...fields,
+    });
+  }
+
+  it("needs an explicit occurrence to create at 02:30, then keeps it", async () => {
+    const a = await paris();
+
+    failure(await create(a, "02:30", { date: DAY }), "ambiguous_local_time");
+    expect(await countAppointments(a.business.id)).toBe(0);
+
+    const first = await createOk(a, "02:30", {
+      date: DAY,
+      occurrence: "first",
+    });
+    expect(first).toMatchObject({
+      startsAt: FIRST,
+      localStartsAt: `${DAY}T02:30`,
+      startOccurrence: "first",
+      localEndsAt: `${DAY}T02:30`, // 60 min later: the second 02:30
+    });
+
+    const second = await createOk(a, "02:30", {
+      date: DAY,
+      occurrence: "second",
+    });
+    expect(second).toMatchObject({
+      startsAt: SECOND,
+      startOccurrence: "second",
+    });
+  });
+
+  it("keeps the exact UTC instant when only the notes change", async () => {
+    const a = await paris();
+    const appointment = await createOk(a, "02:30", {
+      date: DAY,
+      occurrence: "first",
+    });
+
+    const edited = ok(
+      await update(a, appointment, { internalNotes: "Note seule" }),
+    );
+
+    expect(edited).toMatchObject({
+      startsAt: FIRST,
+      internalNotes: "Note seule",
+    });
+    expect((await row(appointment.id)).starts_at.toISOString()).toBe(FIRST);
+  });
+
+  it("keeps the exact UTC instant when only the client changes", async () => {
+    const a = await paris();
+    const other = await createClientRecord(
+      a.business.id,
+      `o-${randomUUID()}@x.test`,
+      "Olga",
+    );
+    const appointment = await createOk(a, "02:30", {
+      date: DAY,
+      occurrence: "first",
+    });
+
+    const edited = ok(await update(a, appointment, { clientId: other }));
+
+    expect(edited).toMatchObject({ startsAt: FIRST, client: { id: other } });
+  });
+
+  it("round trip: the time read from the agenda, sent back unchanged, moves nothing", async () => {
+    const a = await paris();
+    const created = await createOk(a, "02:30", {
+      date: DAY,
+      occurrence: "first",
+    });
+    const [loaded] = ok(
+      await getAgendaAction({ startDate: DAY, endDate: DAY }),
+    ).appointments;
+    const [date, time] = loaded!.localStartsAt.split("T") as [string, string];
+
+    // Without occurrence (a form that just resends date and time)…
+    const once = ok(
+      await update(a, loaded!, { date, time, internalNotes: "1" }),
+    );
+    expect(once.startsAt).toBe(FIRST);
+    // …and with the occurrence read from the agenda.
+    const twice = ok(
+      await update(a, once, {
+        date,
+        time,
+        occurrence: loaded!.startOccurrence,
+        internalNotes: "2",
+      }),
+    );
+    expect(twice.startsAt).toBe(FIRST);
+    expect(twice.id).toBe(created.id);
+  });
+
+  it("moves to the first or the second 02:30 only when asked explicitly", async () => {
+    const a = await paris();
+    const appointment = await createOk(a, "10:00", { date: DAY });
+
+    failure(
+      await update(a, appointment, { date: DAY, time: "02:30" }),
+      "ambiguous_local_time",
+    );
+    expect((await row(appointment.id)).version).toBe(1);
+
+    const toFirst = ok(
+      await update(a, appointment, {
+        date: DAY,
+        time: "02:30",
+        occurrence: "first",
+      }),
+    );
+    expect(toFirst).toMatchObject({
+      startsAt: FIRST,
+      startOccurrence: "first",
+    });
+
+    // Same wall clock, other occurrence: a real move of one hour.
+    const toSecond = ok(
+      await update(a, toFirst, {
+        date: DAY,
+        time: "02:30",
+        occurrence: "second",
+      }),
+    );
+    expect(toSecond).toMatchObject({
+      startsAt: SECOND,
+      startOccurrence: "second",
+    });
+  });
+
+  it("refuses a time skipped in spring, on creation and on move", async () => {
+    const a = await paris();
+    const appointment = await createOk(a, "10:00", { date: "2027-03-28" });
+
+    const created = failure(
+      await create(a, "02:30", { date: "2027-03-28" }),
+      "validation_error",
+    );
+    expect(created?.fieldErrors).toHaveProperty("time");
+    failure(
+      await update(a, appointment, {
+        date: "2027-03-28",
+        time: "02:30",
+        occurrence: "first",
+      }),
+      "validation_error",
+    );
+    expect((await row(appointment.id)).version).toBe(1);
+  });
+
+  it("keeps an appointment crossing midnight intact on edit and in both days", async () => {
+    const a = await paris();
+    // Saturday 23:30 → Sunday 00:30 (the night of the change).
+    const appointment = await createOk(a, "23:30", { date: "2026-10-24" });
+    expect(appointment).toMatchObject({
+      startsAt: "2026-10-24T21:30:00.000Z",
+      endsAt: "2026-10-24T22:30:00.000Z",
+      localEndsAt: `${DAY}T00:30`,
+    });
+
+    const edited = ok(await update(a, appointment, { internalNotes: "Tard" }));
+    expect(edited).toMatchObject({
+      startsAt: appointment.startsAt,
+      endsAt: appointment.endsAt,
+    });
+
+    for (const date of ["2026-10-24", DAY]) {
+      const agenda = ok(
+        await getAgendaAction({ startDate: date, endDate: date }),
+      );
+      expect(agenda.appointments.map((item) => item.id)).toEqual([
+        appointment.id,
+      ]);
+    }
+  });
+
+  it("agrees with public booking, which only ever exchanges UTC instants", async () => {
+    const a = await paris();
+    await setWeeklyHours(a.business.id, [[0, "00:00", "06:00"]]);
+
+    // The public listing offers 02:30 twice, as two distinct instants.
+    const { rows } = await db.query<{ starts_at: Date }>(
+      "select starts_at from public.get_available_slots($1, $2, $3)",
+      [a.business.slug, a.service, DAY],
+    );
+    const slots = rows.map((slot) => slot.starts_at.toISOString());
+    expect(slots).toContain(FIRST);
+    expect(slots).toContain(SECOND);
+
+    // A client books the first one; the agenda shows it as such.
+    const booking = await createPublicBooking(anonClient(), {
+      slug: a.business.slug,
+      serviceId: a.service,
+      startsAt: FIRST,
+      firstName: "Léa",
+      email: "lea@x.test",
+    });
+    as(a.owner);
+    const shown = ok(
+      await getAgendaAppointmentAction({
+        appointmentId: booking.appointmentId,
+      }),
+    );
+    expect(shown).toMatchObject({
+      startsAt: FIRST,
+      startOccurrence: "first",
+      source: "public",
+    });
+
+    // Editing it from the agenda without touching the time keeps it there.
+    const edited = ok(await update(a, shown, { internalNotes: "Vue" }));
+    expect(edited.startsAt).toBe(FIRST);
+  });
+
+  it("keeps blocks stable across an edit in the repeated hour", async () => {
+    await paris();
+    // Block bounds follow the documented rule (later occurrence), which a
+    // read → resend round trip reproduces exactly.
+    const block = ok(
+      await createBlockAction({
+        allDay: false,
+        startsAt: `${DAY}T02:00`,
+        endsAt: `${DAY}T03:00`,
+      }),
+    );
+    const moved = ok(
+      await updateBlockAction({
+        blockId: block.id,
+        expectedVersion: block.version,
+        block: {
+          allDay: false,
+          startsAt: block.localStartsAt,
+          endsAt: block.localEndsAt,
+          reason: "Même période",
+        },
+      }),
+    );
+
+    expect(block).toMatchObject({
+      // 02:00 = second occurrence (CET), 03:00 CET.
+      startsAt: "2026-10-25T01:00:00.000Z",
+      endsAt: "2026-10-25T02:00:00.000Z",
+    });
+    expect(moved).toMatchObject({
+      startsAt: block.startsAt,
+      endsAt: block.endsAt,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("no silent truncation", () => {
+  it("refuses a range with more exceptions than the cap, beyond PostgREST's 1000 rows", async () => {
+    const a = await newAgenda();
+    const dayStart = utc(a, FUTURE, "00:00");
+    await db.query(
+      `insert into public.availability_exceptions (business_id, kind, starts_at, ends_at)
+       select $1, case when i % 2 = 0 then 'blocked' else 'open_override' end::public.availability_exception_kind,
+              $2::timestamptz + i * interval '1 minute',
+              $2::timestamptz + (i + 1) * interval '1 minute'
+       from generate_series(0, 1000) as i`,
+      [a.business.id, dayStart],
+    );
+
+    const error = failure(
+      await getAgendaAction({ startDate: FUTURE, endDate: FUTURE }),
+      "validation_error",
+    );
+    expect(error?.fieldErrors).toHaveProperty("endDate");
+
+    // At the cap, everything is returned.
+    await db.query(
+      `delete from public.availability_exceptions
+       where business_id = $1 and starts_at >= $2::timestamptz + interval '500 minutes'`,
+      [a.business.id, dayStart],
+    );
+    const agenda = ok(
+      await getAgendaAction({ startDate: FUTURE, endDate: FUTURE }),
+    );
+    expect(agenda.blocks.length).toBe(250);
+    expect(agenda.workingHours.days[0]!.openRanges.length).toBeGreaterThan(1);
+  });
+
+  it("refuses a range with more appointments than the cap", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    await db.query(
+      `insert into public.appointments (
+         business_id, client_id, service_id, starts_at, ends_at,
+         service_name_snapshot, duration_minutes_snapshot, price_cents_snapshot
+       )
+       select $1, $2, $3,
+              $4::timestamptz + i * interval '30 minutes',
+              $4::timestamptz + (i + 1) * interval '30 minutes',
+              'Retouche', 30, 3000
+       from generate_series(0, 800) as i`,
+      [a.business.id, a.client, a.shortService, utc(a, FUTURE, "00:00")],
+    );
+
+    failure(
+      await getAgendaAction({ startDate: FUTURE, endDate: dateInDays(40) }),
+      "validation_error",
+    );
+    expect(
+      ok(await getAgendaAction({ startDate: FUTURE, endDate: FUTURE }))
+        .appointments,
+    ).toHaveLength(48);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("atomic creation", () => {
+  it("leaves no new client behind when the appointment cannot be created", async () => {
+    const a = await newAgenda();
+    await createOk(a, "10:00");
+    const email = `orphan-${randomUUID().slice(0, 8)}@x.test`;
+    const firstName = `Orpheline-${randomUUID().slice(0, 8)}`;
+
+    // The client is inserted, then the appointment hits the schedule.
+    failure(
+      await create(a, "10:30", {
+        client: { type: "new", firstName: "Orpheline", email },
+      }),
+      "schedule_conflict",
+    );
+    failure(
+      await create(a, "10:30", { client: { type: "new", firstName } }),
+      "schedule_conflict",
+    );
+
+    const { rows } = await db.query<{ count: number }>(
+      `select count(*)::int as count from public.clients
+       where business_id = $1 and (email = $2 or first_name = $3)`,
+      [a.business.id, email, firstName],
+    );
+    expect(rows[0]!.count).toBe(0);
+    expect(await countAppointments(a.business.id)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("price", () => {
+  it("shows the price agreed at booking, not the current catalogue price", async () => {
+    const a = await newAgenda();
+    const appointment = await createOk(a, "10:00");
+    expect(appointment).toMatchObject({ priceCents: 6500, currency: "EUR" });
+
+    await db.query(
+      "update public.services set price_cents = 9900 where id = $1",
+      [a.service],
+    );
+    const [shown] = ok(
+      await getAgendaAction({ startDate: FUTURE, endDate: FUTURE }),
+    ).appointments;
+    expect(shown).toMatchObject({ priceCents: 6500 });
+
+    // A change of service takes the price of the new service.
+    const changed = ok(
+      await updateAppointmentAction({
+        appointmentId: appointment.id,
+        expectedVersion: appointment.version,
+        serviceId: a.shortService,
+        clientId: a.client,
+      }),
+    );
+    expect(changed).toMatchObject({
+      priceCents: 3000,
+      startsAt: appointment.startsAt,
+    });
   });
 });

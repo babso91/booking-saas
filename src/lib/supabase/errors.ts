@@ -22,6 +22,7 @@ const domainMessages: Record<string, AppErrorCode> = {
   stale_appointment: "stale_appointment",
   invalid_status_transition: "invalid_status_transition",
   appointment_not_editable: "appointment_not_editable",
+  idempotency_conflict: "idempotency_conflict",
   forbidden: "forbidden",
   unauthenticated: "unauthenticated",
   already_onboarded: "already_onboarded",

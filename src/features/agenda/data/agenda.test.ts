@@ -97,12 +97,40 @@ describe("local bounds", () => {
     expect(endsAt.getTime() - startsAt.getTime()).toBe(25 * 3_600_000);
   });
 
-  it("refuses a start that does not exist, accepts an ambiguous one", () => {
+  it("refuses a start that does not exist", () => {
     expect(() =>
       localStartToUtc("2027-03-28", "02:30", "Europe/Paris"),
-    ).toThrow();
+    ).toThrow(expect.objectContaining({ code: "validation_error" }));
+  });
+
+  it("never picks an occurrence of a repeated time by itself", () => {
+    expect(() =>
+      localStartToUtc("2026-10-25", "02:30", "Europe/Paris"),
+    ).toThrow(expect.objectContaining({ code: "ambiguous_local_time" }));
     expect(
-      localStartToUtc("2026-10-25", "02:30", "Europe/Paris").toISOString(),
+      localStartToUtc(
+        "2026-10-25",
+        "02:30",
+        "Europe/Paris",
+        "first",
+      ).toISOString(),
+    ).toBe("2026-10-25T00:30:00.000Z");
+    expect(
+      localStartToUtc(
+        "2026-10-25",
+        "02:30",
+        "Europe/Paris",
+        "second",
+      ).toISOString(),
     ).toBe("2026-10-25T01:30:00.000Z");
+    // Outside the repeated hour the occurrence is irrelevant.
+    expect(
+      localStartToUtc(
+        "2026-10-25",
+        "10:00",
+        "Europe/Paris",
+        "first",
+      ).toISOString(),
+    ).toBe("2026-10-25T09:00:00.000Z");
   });
 });

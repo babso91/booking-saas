@@ -15,8 +15,12 @@
 --      for edits made from a stale screen (`stale_appointment`,
 --      `stale_block`). An integer rather than updated_at: it survives any
 --      JSON / JavaScript round trip exactly.
---   2. `appointments.creation_request_id`: optional idempotency key of a
---      manual creation, so a double submit creates one appointment.
+--   2. `appointments.creation_request_id` + `creation_request_fingerprint`:
+--      optional idempotency key of a manual creation, bound to a SHA-256 of
+--      the canonical command (service, UTC start, client, notes). A retry of
+--      the same command returns the first result; the same key with another
+--      command is refused (`idempotency_conflict`), never answered with the
+--      first appointment.
 --   3. `clients.email` becomes optional: a professional can add a client
 --      known only by name or phone. Public booking still requires an email and
 --      still deduplicates on (business_id, email).
@@ -72,7 +76,12 @@ comment on column public.availability_exceptions.version is
 -- Idempotent manual creation
 -- ---------------------------------------------------------------------------
 
-alter table public.appointments add column creation_request_id uuid;
+alter table public.appointments
+  add column creation_request_id uuid,
+  add column creation_request_fingerprint text,
+  add constraint appointments_creation_request_fingerprint_present check (
+    (creation_request_id is null) = (creation_request_fingerprint is null)
+  );
 
 create unique index appointments_creation_request_idx
   on public.appointments (business_id, creation_request_id)
@@ -80,6 +89,8 @@ create unique index appointments_creation_request_idx
 
 comment on column public.appointments.creation_request_id is
   'Idempotency key of a manual creation (one per submitted form).';
+comment on column public.appointments.creation_request_fingerprint is
+  'SHA-256 (hex) of the canonical creation command bound to creation_request_id.';
 
 -- ---------------------------------------------------------------------------
 -- Clients known without email
@@ -186,6 +197,8 @@ declare
   v_settings public.business_settings%rowtype;
   v_client_id uuid;
   v_appointment_id uuid;
+  v_fingerprint text;
+  v_existing_fingerprint text;
 begin
   perform private.assert_agenda_access(p_business_id);
 
@@ -209,14 +222,39 @@ begin
   -- 1. Schedule lock first (lock order convention), then fresh snapshots.
   perform private.lock_business_schedule(p_business_id);
 
-  -- 2. Double submit: the same request id returns the first result.
+  -- 2. Idempotency. The key is bound to the canonical command: normalised
+  --    inputs, start as UTC epoch (independent of the session time zone),
+  --    jsonb key order. Under the schedule lock, a concurrent use of the same
+  --    key has either committed (and is compared here) or not started.
   if p_request_id is not null then
-    select a.id into v_appointment_id
+    v_fingerprint := pg_catalog.encode(
+      extensions.digest(
+        pg_catalog.jsonb_build_object(
+          'service_id', p_service_id,
+          'starts_at_epoch', extract(epoch from p_starts_at),
+          'client_id', p_client_id,
+          'client_first_name', v_first_name,
+          'client_last_name', v_last_name,
+          'client_email', v_email,
+          'client_phone', v_phone,
+          'internal_notes', v_notes
+        )::text,
+        'sha256'
+      ),
+      'hex'
+    );
+
+    select a.id, a.creation_request_fingerprint
+    into v_appointment_id, v_existing_fingerprint
     from public.appointments a
     where a.business_id = p_business_id
       and a.creation_request_id = p_request_id;
 
     if found then
+      if v_existing_fingerprint <> v_fingerprint then
+        raise exception using errcode = 'P0001', message = 'idempotency_conflict', hint = 'requestId';
+      end if;
+
       return query select v_appointment_id, false;
       return;
     end if;
@@ -285,7 +323,8 @@ begin
       buffer_minutes_snapshot,
       internal_notes,
       created_by,
-      creation_request_id
+      creation_request_id,
+      creation_request_fingerprint
     )
     values (
       p_business_id,
@@ -301,7 +340,8 @@ begin
       v_settings.buffer_minutes,
       v_notes,
       (select auth.uid()),
-      p_request_id
+      p_request_id,
+      v_fingerprint
     )
     returning id into v_appointment_id;
   exception
@@ -319,6 +359,9 @@ $$;
 
 -- Replaces the editable fields of an appointment with the submitted state.
 --
+-- * p_starts_at null keeps the stored instant exactly: an edit that does
+--   not touch the time never goes through a wall-clock → UTC conversion
+--   (which is ambiguous in the repeated autumn hour).
 -- * p_expected_version must be the version the form was loaded with,
 --   otherwise `stale_appointment` (nothing is overwritten).
 -- * Start, service and client can only change while the appointment is
@@ -333,10 +376,10 @@ create function public.agenda_update_appointment(
   p_business_id uuid,
   p_appointment_id uuid,
   p_expected_version integer,
-  p_starts_at timestamptz,
   p_service_id uuid,
   p_client_id uuid,
-  p_internal_notes text default null
+  p_internal_notes text default null,
+  p_starts_at timestamptz default null
 )
 returns uuid
 language plpgsql
@@ -354,14 +397,12 @@ declare
   v_name text;
   v_buffer integer;
   v_currency text;
+  v_starts_at timestamptz;
 begin
   perform private.assert_agenda_access(p_business_id);
 
   if p_expected_version is null then
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'expectedVersion';
-  end if;
-  if p_starts_at is null then
-    raise exception using errcode = '22023', message = 'invalid_input', hint = 'startsAt';
   end if;
   if p_service_id is null then
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'serviceId';
@@ -386,8 +427,10 @@ begin
     raise exception using errcode = 'P0001', message = 'stale_appointment';
   end if;
 
+  v_starts_at := coalesce(p_starts_at, v_current.starts_at);
+
   if v_current.status <> 'confirmed' and (
-    v_current.starts_at <> p_starts_at
+    v_current.starts_at <> v_starts_at
     or v_current.service_id <> p_service_id
     or v_current.client_id <> p_client_id
   ) then
@@ -436,8 +479,8 @@ begin
   begin
     update public.appointments a
     set
-      starts_at = p_starts_at,
-      ends_at = p_starts_at + pg_catalog.make_interval(mins => v_duration),
+      starts_at = v_starts_at,
+      ends_at = v_starts_at + pg_catalog.make_interval(mins => v_duration),
       service_id = p_service_id,
       client_id = p_client_id,
       service_name_snapshot = v_name,
@@ -606,7 +649,7 @@ revoke all on function public.agenda_create_appointment(
   uuid, uuid, timestamptz, uuid, text, text, text, text, text, uuid
 ) from public, anon;
 revoke all on function public.agenda_update_appointment(
-  uuid, uuid, integer, timestamptz, uuid, uuid, text
+  uuid, uuid, integer, uuid, uuid, text, timestamptz
 ) from public, anon;
 revoke all on function public.agenda_set_appointment_status(
   uuid, uuid, integer, public.appointment_status, text
@@ -617,7 +660,7 @@ grant execute on function public.agenda_create_appointment(
   uuid, uuid, timestamptz, uuid, text, text, text, text, text, uuid
 ) to authenticated;
 grant execute on function public.agenda_update_appointment(
-  uuid, uuid, integer, timestamptz, uuid, uuid, text
+  uuid, uuid, integer, uuid, uuid, text, timestamptz
 ) to authenticated;
 grant execute on function public.agenda_set_appointment_status(
   uuid, uuid, integer, public.appointment_status, text
