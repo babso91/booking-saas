@@ -18,11 +18,16 @@ export const startTimeSchema = z
   .string()
   .regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "Heure invalide (HH:MM).");
 
+/**
+ * Free text: Unicode NFC first (a precomposed "É" and "E" + combining acute
+ * become the same string, as in the database), then trimmed.
+ */
+const nfcTrimmed = () =>
+  z.string().transform((value) => value.normalize("NFC").trim());
+
 const optionalText = (max: number) =>
-  z
-    .string()
-    .trim()
-    .max(max)
+  nfcTrimmed()
+    .pipe(z.string().max(max))
     .nullish()
     .transform((value) => (value ? value : null));
 
@@ -64,14 +69,16 @@ export const appointmentIdSchema = z.object({ appointmentId: z.uuid() });
 
 const newClientSchema = z.object({
   type: z.literal("new"),
-  firstName: z.string().trim().min(1).max(120),
+  firstName: nfcTrimmed().pipe(z.string().min(1).max(120)),
   lastName: optionalText(120),
+  // Trimmed and lower-cased before validation: " Test@Example.com " is
+  // test@example.com. Empty → no email.
   email: z
-    .email("Email invalide.")
-    .max(254)
+    .string()
+    .transform((value) => value.trim().toLowerCase())
+    .pipe(z.union([z.literal(""), z.email("Email invalide.").max(254)]))
     .nullish()
-    .or(z.literal("").transform(() => null))
-    .transform((value) => (value ? value.toLowerCase() : null)),
+    .transform((value) => (value ? value : null)),
   phone: z
     .string()
     .trim()
@@ -94,10 +101,19 @@ export const appointmentClientSchema = z.discriminatedUnion("type", [
  */
 export const occurrenceSchema = z.enum(["first", "second"]);
 
+/**
+ * `occurrence` as sent by the UI. Single rule: send the `startOccurrence`
+ * read from the agenda as is. `null` (the value outside the repeated hour)
+ * and an absent field are the same thing: "no occurrence given".
+ */
+const occurrenceInputSchema = occurrenceSchema
+  .nullish()
+  .transform((value) => value ?? undefined);
+
 export const createAppointmentSchema = z.object({
   date: localDateSchema,
   time: startTimeSchema,
-  occurrence: occurrenceSchema.optional(),
+  occurrence: occurrenceInputSchema,
   serviceId: z.uuid(),
   client: appointmentClientSchema,
   internalNotes: optionalText(2000),
@@ -118,7 +134,7 @@ export const updateAppointmentSchema = z
     expectedVersion: versionSchema,
     date: localDateSchema.optional(),
     time: startTimeSchema.optional(),
-    occurrence: occurrenceSchema.optional(),
+    occurrence: occurrenceInputSchema,
     serviceId: z.uuid(),
     clientId: z.uuid(),
     internalNotes: optionalText(2000),

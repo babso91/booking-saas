@@ -2007,3 +2007,347 @@ describe("price", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("DST: existing blocks keep their instants (Europe/Paris, 2026-10-25)", () => {
+  const DAY = "2026-10-25";
+  // 02:00 and 02:45 happen twice: CEST (first) then CET (second).
+  const FIRST_0200 = "2026-10-25T00:00:00.000Z";
+  const FIRST_0245 = "2026-10-25T00:45:00.000Z";
+  const SECOND_0200 = "2026-10-25T01:00:00.000Z";
+  const SECOND_0245 = "2026-10-25T01:45:00.000Z";
+
+  /** A block stored with exact instants (e.g. created in the first occurrence). */
+  async function storedBlock(agenda: Agenda, startsAt: string, endsAt: string) {
+    await db.query(
+      `insert into public.availability_exceptions (business_id, kind, starts_at, ends_at, reason)
+       values ($1, 'blocked', $2, $3, 'Initial')`,
+      [agenda.business.id, startsAt, endsAt],
+    );
+    const agendaDay = ok(
+      await getAgendaAction({ startDate: DAY, endDate: DAY }),
+    );
+    return agendaDay.blocks[0]!;
+  }
+
+  async function storedRow(blockId: string) {
+    const { rows } = await db.query(
+      "select starts_at, ends_at, version, reason from public.availability_exceptions where id = $1",
+      [blockId],
+    );
+    return {
+      startsAt: (rows[0].starts_at as Date).toISOString(),
+      endsAt: (rows[0].ends_at as Date).toISOString(),
+      version: rows[0].version as number,
+      reason: rows[0].reason as string | null,
+    };
+  }
+
+  function resend(
+    block: {
+      id: string;
+      version: number;
+      localStartsAt: string;
+      localEndsAt: string;
+    },
+    changes: {
+      startsAt?: string;
+      endsAt?: string;
+      reason?: string | null;
+    } = {},
+  ) {
+    return updateBlockAction({
+      blockId: block.id,
+      expectedVersion: block.version,
+      block: {
+        allDay: false,
+        startsAt: changes.startsAt ?? block.localStartsAt,
+        endsAt: changes.endsAt ?? block.localEndsAt,
+        reason: "reason" in changes ? changes.reason : "Initial",
+      },
+    });
+  }
+
+  it("shows a block of the first occurrence as such", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const block = await storedBlock(a, FIRST_0200, FIRST_0245);
+
+    expect(block).toMatchObject({
+      startsAt: FIRST_0200,
+      endsAt: FIRST_0245,
+      localStartsAt: `${DAY}T02:00`,
+      localEndsAt: `${DAY}T02:45`,
+      startOccurrence: "first",
+      endOccurrence: "first",
+    });
+  });
+
+  it("keeps both UTC bounds when only the reason changes", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const block = await storedBlock(a, FIRST_0200, FIRST_0245);
+
+    const edited = ok(await resend(block, { reason: "Nouveau motif" }));
+
+    expect(edited).toMatchObject({
+      startsAt: FIRST_0200,
+      endsAt: FIRST_0245,
+      version: 2,
+    });
+    expect(await storedRow(block.id)).toEqual({
+      startsAt: FIRST_0200,
+      endsAt: FIRST_0245,
+      version: 2,
+      reason: "Nouveau motif",
+    });
+  });
+
+  it("keeps both UTC bounds for any other non-temporal resend", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const block = await storedBlock(a, FIRST_0200, FIRST_0245);
+
+    // Reason cleared, then the exact same state sent again.
+    const cleared = ok(await resend(block, { reason: null }));
+    const same = ok(await resend(cleared, { reason: null }));
+
+    expect(same).toMatchObject({
+      startsAt: FIRST_0200,
+      endsAt: FIRST_0245,
+      reason: null,
+    });
+  });
+
+  it("start unchanged, end changed: only the end is converted", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const block = await storedBlock(a, FIRST_0200, FIRST_0245);
+
+    const edited = ok(await resend(block, { endsAt: `${DAY}T04:00` }));
+
+    expect(edited).toMatchObject({
+      startsAt: FIRST_0200, // still the first 02:00
+      endsAt: "2026-10-25T03:00:00.000Z", // 04:00 CET
+    });
+  });
+
+  it("end unchanged, start changed: only the start is converted", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const block = await storedBlock(a, FIRST_0200, FIRST_0245);
+
+    const edited = ok(await resend(block, { startsAt: `${DAY}T01:00` }));
+
+    expect(edited).toMatchObject({
+      startsAt: "2026-10-24T23:00:00.000Z", // 01:00 CEST
+      endsAt: FIRST_0245, // still the first 02:45
+    });
+  });
+
+  it("keeps a block of the second occurrence on a round trip", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const block = await storedBlock(a, SECOND_0200, SECOND_0245);
+    expect(block).toMatchObject({
+      startOccurrence: "second",
+      endOccurrence: "second",
+    });
+
+    const edited = ok(await resend(block, { reason: "Toujours là" }));
+    expect(edited).toMatchObject({
+      startsAt: SECOND_0200,
+      endsAt: SECOND_0245,
+    });
+  });
+
+  it("writes nothing from a stale version", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    const block = await storedBlock(a, FIRST_0200, FIRST_0245);
+    ok(await resend(block, { reason: "Changé ailleurs" }));
+
+    failure(await resend(block, { endsAt: `${DAY}T05:00` }), "stale_block");
+    expect(await storedRow(block.id)).toEqual({
+      startsAt: FIRST_0200,
+      endsAt: FIRST_0245,
+      version: 2,
+      reason: "Changé ailleurs",
+    });
+  });
+
+  it("rolls back completely when a changed bound hits an appointment", async () => {
+    const a = await newAgenda({ bufferMinutes: 0 });
+    await createOk(a, "03:30", { date: DAY }); // 02:30Z–03:30Z
+    const block = await storedBlock(a, FIRST_0200, FIRST_0245);
+
+    failure(
+      await resend(block, { endsAt: `${DAY}T04:00`, reason: "Trop long" }),
+      "schedule_conflict",
+    );
+    expect(await storedRow(block.id)).toEqual({
+      startsAt: FIRST_0200,
+      endsAt: FIRST_0245,
+      version: 1,
+      reason: "Initial",
+    });
+  });
+
+  it("still reads a newly typed repeated time as the second occurrence", async () => {
+    await newAgenda({ bufferMinutes: 0 });
+
+    const created = ok(
+      await createBlockAction({
+        allDay: false,
+        startsAt: `${DAY}T02:00`,
+        endsAt: `${DAY}T02:45`,
+      }),
+    );
+    expect(created).toMatchObject({
+      startsAt: SECOND_0200,
+      startOccurrence: "second",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("canonical client inputs", () => {
+  it("gives the same fingerprint to composed and decomposed spellings", async () => {
+    const a = await newAgenda();
+    const requestId = randomUUID();
+    const composed = "Émilie";
+    const decomposed = "Émilie";
+
+    const first = ok(
+      await create(a, "10:00", {
+        requestId,
+        client: { type: "new", firstName: decomposed, lastName: decomposed },
+        internalNotes: `Pour ${decomposed}`,
+      }),
+    );
+    const retry = ok(
+      await create(a, "10:00", {
+        requestId,
+        client: { type: "new", firstName: composed, lastName: composed },
+        internalNotes: `Pour ${composed}`,
+      }),
+    );
+
+    expect(retry).toMatchObject({
+      created: false,
+      appointment: { id: first.appointment.id },
+    });
+    const { rows } = await db.query(
+      "select first_name, last_name from public.clients where id = $1",
+      [first.appointment.client.id],
+    );
+    // Stored in NFC too.
+    expect(rows[0]).toEqual({ first_name: composed, last_name: composed });
+    expect(await countAppointments(a.business.id)).toBe(1);
+  });
+
+  it('treats " Test@Example.com " as test@example.com', async () => {
+    const a = await newAgenda();
+    const email = `test-${randomUUID().slice(0, 8)}@example.com`;
+    const existing = await createClientRecord(a.business.id, email, "Tess");
+    const [local, domain] = email.split("@") as [string, string];
+
+    const { appointment } = ok(
+      await create(a, "10:00", {
+        client: {
+          type: "new",
+          firstName: "Autre",
+          email: ` ${local.toUpperCase()}@${domain.replace("example", "Example")} `,
+        },
+      }),
+    );
+
+    expect(appointment.client).toEqual({ id: existing, displayName: "Tess" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("DST guarantees across paths", () => {
+  const DAY = "2026-10-25";
+
+  it("first occurrence + longer service colliding: nothing changes", async () => {
+    const a = await newAgenda({ timezone: "Europe/Paris", bufferMinutes: 0 });
+    const long = await createService(a.business.id, {
+      name: "Longue",
+      durationMinutes: 90,
+    });
+    const first = await createOk(a, "02:30", {
+      date: DAY,
+      occurrence: "first",
+    }); // 00:30Z–01:30Z
+    await createOk(a, "02:30", { date: DAY, occurrence: "second" }); // 01:30Z–02:30Z
+
+    failure(
+      await updateAppointmentAction({
+        appointmentId: first.id,
+        expectedVersion: first.version,
+        date: DAY,
+        time: "02:30",
+        occurrence: first.startOccurrence,
+        serviceId: long,
+        clientId: a.client,
+      }),
+      "schedule_conflict",
+    );
+    expect(await row(first.id)).toMatchObject({
+      starts_at: new Date("2026-10-25T00:30:00.000Z"),
+      ends_at: new Date("2026-10-25T01:30:00.000Z"),
+      service_id: a.service,
+      duration_minutes_snapshot: 60,
+      version: 1,
+    });
+  });
+
+  it("public booking on the second occurrence, then edited from the agenda", async () => {
+    const a = await newAgenda({ timezone: "Europe/Paris", bufferMinutes: 0 });
+    await setWeeklyHours(a.business.id, [[0, "00:00", "06:00"]]);
+    const SECOND = "2026-10-25T01:30:00.000Z";
+
+    const booking = await createPublicBooking(anonClient(), {
+      slug: a.business.slug,
+      serviceId: a.service,
+      startsAt: SECOND,
+      firstName: "Léa",
+      email: "lea2@x.test",
+    });
+    as(a.owner);
+    const shown = ok(
+      await getAgendaAppointmentAction({
+        appointmentId: booking.appointmentId,
+      }),
+    );
+    expect(shown).toMatchObject({
+      startsAt: SECOND,
+      localStartsAt: `${DAY}T02:30`,
+      startOccurrence: "second",
+    });
+
+    // The form sends back what it read, occurrence included (and without).
+    const once = ok(
+      await updateAppointmentAction({
+        appointmentId: shown.id,
+        expectedVersion: shown.version,
+        date: DAY,
+        time: "02:30",
+        occurrence: shown.startOccurrence,
+        serviceId: a.service,
+        clientId: shown.client.id,
+        internalNotes: "Vue",
+      }),
+    );
+    const twice = ok(
+      await updateAppointmentAction({
+        appointmentId: shown.id,
+        expectedVersion: once.version,
+        date: DAY,
+        time: "02:30",
+        occurrence: null,
+        serviceId: a.service,
+        clientId: shown.client.id,
+        internalNotes: "Revue",
+      }),
+    );
+    expect([once.startsAt, twice.startsAt]).toEqual([SECOND, SECOND]);
+  });
+});

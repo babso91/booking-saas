@@ -77,6 +77,9 @@ export type AgendaBlockDto = {
   endsAt: string;
   localStartsAt: string;
   localEndsAt: string;
+  /** `first` / `second` when a bound falls in the repeated autumn hour. */
+  startOccurrence: LocalTimeOccurrence | null;
+  endOccurrence: LocalTimeOccurrence | null;
   reason: string | null;
 };
 
@@ -191,6 +194,8 @@ export function toBlockDto(row: BlockRow, timezone: string): AgendaBlockDto {
     endsAt: iso(row.ends_at),
     localStartsAt: utcToZonedLocal(row.starts_at, timezone),
     localEndsAt: utcToZonedLocal(row.ends_at, timezone),
+    startOccurrence: zonedOccurrenceOf(row.starts_at, timezone),
+    endOccurrence: zonedOccurrenceOf(row.ends_at, timezone),
     reason: row.reason,
   };
 }

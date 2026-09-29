@@ -50,9 +50,11 @@ Le serveur ne choisit jamais un instant à la place de la professionnelle.
   - Sans `occurrence` dans cette heure : `ambiguous_local_time` (`fieldErrors.occurrence`), rien n'est créé ni déplacé. En dehors de cette heure, `occurrence` est ignoré.
 - **Affichage.** Chaque rendez-vous porte `startOccurrence` : `"first"`, `"second"` ou `null` hors heure répétée. L'UI qui l'affiche distingue les deux occurrences, par exemple « 02:30 (heure d'été) » et « 02:30 (heure d'hiver) ». Pour proposer un créneau dans l'heure répétée, elle offre les deux choix et envoie l'`occurrence` choisie.
 - **Édition sans changement d'heure.** L'instant UTC stocké est conservé **exactement**, sans aucune conversion heure murale → UTC. C'est le cas quand `date` et `time` sont absents de `updateAppointmentAction`, ou quand ils valent le `localStartsAt` chargé, avec la même `occurrence` ou sans `occurrence`. Modifier la note, la cliente ou la prestation ne peut donc jamais déplacer un rendez-vous, même situé dans l'heure répétée.
-- **Recommandation UI.** N'envoyer `date` et `time` que si la professionnelle a changé l'horaire ; renvoyer `startOccurrence` tel quel comme `occurrence`.
+- **Règle unique `startOccurrence` → `occurrence`.** L'UI envoie **toujours** `occurrence: appointment.startOccurrence`, tel quel, sans le transformer. `occurrence` accepte `"first"`, `"second"`, `null` ou l'absence ; `null` et l'absence signifient la même chose (« pas d'occurrence précisée »). Pour un nouvel horaire choisi dans l'heure répétée, l'UI envoie le choix de la professionnelle (`"first"` ou `"second"`).
+- **Recommandation UI.** N'envoyer `date` et `time` que si la professionnelle a changé l'horaire. Les renvoyer inchangés reste sans effet.
 - **Cohérence avec la réservation publique.** Elle n'échange que des instants UTC. Les créneaux listés sont générés en UTC : 02:30 apparaît deux fois, comme deux instants distincts, et la cliente réserve l'instant exact. Les deux chemins aboutissent donc au même instant non ambigu ; seule la saisie par heure murale de l'agenda exige `occurrence`.
-- **Blocs.** Leurs bornes suivent la règle documentée du moteur (`timestamp AT TIME ZONE` de PostgreSQL) : une heure répétée désigne la seconde occurrence et une heure sautée est lue avec le décalage d'avant le changement. Un aller-retour lecture → modification reproduit exactement les mêmes instants.
+- **Blocs : bornes existantes.** À la modification d'un bloc, chaque borne est comparée séparément à la valeur affichée (`localStartsAt`, `localEndsAt`, ou pour `allDay` les minuits correspondants). Une borne renvoyée inchangée conserve **exactement** son instant UTC stocké, quelle que soit son occurrence. Seule une borne réellement modifiée est convertie. Changer le motif ne peut donc jamais déplacer un bloc, et changer une seule borne ne touche pas l'autre.
+- **Blocs : nouvelle saisie (asymétrie voulue).** Les blocs n'ont pas de champ `occurrence`. Une heure répétée **nouvellement saisie** désigne la seconde occurrence, selon la règle du moteur (`timestamp AT TIME ZONE` de PostgreSQL, utilisée aussi par les réglages). Une heure sautée est lue avec le décalage d'avant le changement. Les bornes d'un bloc existant ne sont jamais reconverties (point précédent). Chaque bloc expose `startOccurrence` / `endOccurrence` pour l'affichage.
 
 ## Actions
 
@@ -128,6 +130,8 @@ type AgendaBlockDto = {
   endsAt: string;
   localStartsAt: string;
   localEndsAt: string;
+  startOccurrence: "first" | "second" | null; // affichage uniquement
+  endOccurrence: "first" | "second" | null;
   reason: string | null;
 };
 
@@ -177,6 +181,9 @@ type AppointmentClient =
 - **Placement.** Les horaires d'ouverture, le délai minimum et l'horizon maximum sont des règles de réservation pour les clientes. Ils ne s'appliquent pas à la professionnelle, qui peut placer un rendez-vous hors horaires ou dans le passé.
 - **Chevauchements.** Ils sont toujours refusés : avec un autre rendez-vous, buffer compris, et avec un bloc ou une fermeture.
 - **Nouvelle cliente.** Seul le prénom est obligatoire ; l'email et le téléphone sont facultatifs.
+- **Normalisation des saisies.**
+  - Les textes (prénom, nom, note, motif) sont normalisés en Unicode NFC puis débarrassés des espaces autour, côté serveur TypeScript et en SQL. « Émilie » précomposé et « E » + accent combinant sont identiques, dans la base comme dans l'empreinte d'idempotence.
+  - L'email est débarrassé de ses espaces puis passé en minuscules **avant** validation : `" Test@Example.com "` est traité comme `test@example.com`.
 - **Email déjà connu.** Un email déjà connu **dans ce business** réutilise la fiche existante sans la modifier, comme la réservation publique. Il n'y a pas de déduplication par téléphone ni par nom en V1.
 - **`requestId` (idempotence).** C'est un UUID généré une fois par formulaire ; en générer un nouveau dès que le contenu du formulaire change. La clé est liée à l'empreinte SHA-256 de la commande canonique, stockée avec elle dans la même transaction : prestation, instant UTC de début, cliente (`clientId`, ou prénom, nom, email et téléphone normalisés) et note interne.
   - **Même clé, même commande** (retry, double clic) : le rendez-vous initial est renvoyé avec `created: false`, sans rien créer.

@@ -183,3 +183,81 @@ describe("malformed dates", () => {
     ).toBe(false);
   });
 });
+
+describe("canonical inputs", () => {
+  const base = {
+    date: "2026-10-20",
+    time: "10:00",
+    serviceId: SERVICE,
+  };
+
+  it("trims and lower-cases an email before validating it", () => {
+    const parsed = createAppointmentSchema.parse({
+      ...base,
+      client: { type: "new", firstName: "Test", email: " Test@Example.com " },
+    });
+
+    expect(parsed.client).toMatchObject({ email: "test@example.com" });
+    expect(
+      createAppointmentSchema.safeParse({
+        ...base,
+        client: { type: "new", firstName: "Test", email: " pas un email " },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("normalises text to Unicode NFC", () => {
+    const composed = "Émilie";
+    const decomposed = "Émilie";
+    expect(composed).not.toBe(decomposed);
+
+    const parsed = createAppointmentSchema.parse({
+      ...base,
+      client: {
+        type: "new",
+        firstName: decomposed,
+        lastName: ` ${decomposed} `,
+      },
+      internalNotes: `Note ${decomposed}`,
+    });
+
+    expect(parsed.client).toMatchObject({
+      firstName: composed,
+      lastName: composed,
+    });
+    expect(parsed.internalNotes).toBe(`Note ${composed}`);
+  });
+
+  it("accepts startOccurrence sent back as is: first, second, null or absent", () => {
+    const update = {
+      appointmentId: SERVICE,
+      expectedVersion: 1,
+      date: "2026-10-25",
+      time: "02:30",
+      serviceId: SERVICE,
+      clientId: CLIENT,
+    };
+
+    for (const occurrence of ["first", "second"] as const) {
+      expect(
+        updateAppointmentSchema.parse({ ...update, occurrence }).occurrence,
+      ).toBe(occurrence);
+    }
+    // null (outside the repeated hour) means "not given", like absence.
+    expect(
+      updateAppointmentSchema.parse({ ...update, occurrence: null }).occurrence,
+    ).toBe(undefined);
+    expect(updateAppointmentSchema.parse(update).occurrence).toBe(undefined);
+    expect(
+      createAppointmentSchema.parse({
+        ...base,
+        occurrence: null,
+        client: { type: "existing", clientId: CLIENT },
+      }).occurrence,
+    ).toBe(undefined);
+    expect(
+      updateAppointmentSchema.safeParse({ ...update, occurrence: "third" })
+        .success,
+    ).toBe(false);
+  });
+});

@@ -133,7 +133,9 @@ $$;
 
 revoke all on function private.assert_agenda_access(uuid) from public;
 
--- Optional text: trimmed, empty → null, bounded.
+-- Optional text: Unicode NFC, trimmed, empty → null, bounded. NFC makes
+-- canonically equivalent spellings identical ("É" precomposed or "E" +
+-- combining acute), both in stored values and in idempotency fingerprints.
 create function private.optional_text(p_value text, p_max integer, p_field text)
 returns text
 language plpgsql
@@ -141,7 +143,7 @@ immutable
 set search_path = ''
 as $$
 declare
-  v_value text := nullif(pg_catalog.btrim(p_value), '');
+  v_value text := nullif(pg_catalog.btrim(pg_catalog.normalize(p_value, 'NFC')), '');
 begin
   if v_value is not null and pg_catalog.char_length(v_value) > p_max then
     raise exception using errcode = '22023', message = 'invalid_input', hint = p_field;
@@ -223,7 +225,7 @@ begin
   perform private.lock_business_schedule(p_business_id);
 
   -- 2. Idempotency. The key is bound to the canonical command: normalised
-  --    inputs, start as UTC epoch (independent of the session time zone),
+  --    inputs (NFC, trimmed, email lower-cased), start as UTC epoch (independent of the session time zone),
   --    jsonb key order. Under the schedule lock, a concurrent use of the same
   --    key has either committed (and is compared here) or not started.
   if p_request_id is not null then
