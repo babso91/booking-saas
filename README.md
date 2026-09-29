@@ -83,6 +83,12 @@ Inclus :
 
 Non inclus : authentification utilisable et onboarding, écrans métier, agenda, CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
 
+## Interface d'authentification et d'onboarding
+
+Les écrans `/login`, `/signup` et `/onboarding` (4 étapes, aperçu en direct de la page publique) sont construits côté interface. Ils dépendent uniquement du contrat temporaire `src/features/auth/gateway/contract.ts` (`signUp`, `signIn`, `signOut`, `getOnboardingStatus`, `checkSlug`, `completeOnboarding`).
+
+Tant que le backend auth/onboarding n'est pas mergé, `src/features/auth/gateway/index.ts` sélectionne un adapter **mock** (navigateur, `sessionStorage`) sans aucune valeur de sécurité. En développement, la pastille « Mock » permet de forcer les réponses (erreur réseau, lien pris, session expirée…). Le branchement réel consiste à fournir un adapter implémentant ce contrat et à le sélectionner dans `index.ts`.
+
 ## Règles d'architecture
 
 - Les lectures privées passent par des Server Components et une DAL `server-only`.
