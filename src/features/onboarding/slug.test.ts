@@ -3,66 +3,88 @@ import { describe, expect, it } from "vitest";
 import {
   getSlugIssue,
   normalizeSlugInput,
+  RESERVED_SLUGS,
   slugify,
   suggestSlugs,
 } from "./slug";
 
-describe("slugify", () => {
-  it("builds a clean slug from a business name", () => {
-    expect(slugify("Studio Mila Lashes")).toBe("studio-mila-lashes");
-    expect(slugify("  Atelier Lumière & Ongles ")).toBe(
-      "atelier-lumiere-et-ongles",
-    );
-    expect(slugify("L’Instant Beauté")).toBe("linstant-beaute");
-    expect(slugify("!!!")).toBe("");
+describe("slugify mirrors private.normalize_slug", () => {
+  it.each([
+    // Examples documented in docs/AUTH_ONBOARDING_CONTRACT.md and the migration.
+    ["  Écrin de Camille ", "ecrin-de-camille"],
+    ["Straße_Ærø", "strasse-aero"],
+    ["  Studio Mila Lashes ! ", "studio-mila-lashes"],
+    ["Écrin d'Éva", "ecrin-d-eva"],
+    ["L’Instant Beauté", "l-instant-beaute"],
+    ["!!!", ""],
+  ])("%j → %j", (input, expected) => {
+    expect(slugify(input)).toBe(expected);
   });
 
-  it("truncates long names on a word boundary within 63 characters", () => {
+  it("keeps at most 63 characters without a trailing hyphen", () => {
     const slug = slugify("institut ".repeat(12));
     expect(slug.length).toBeLessThanOrEqual(63);
     expect(slug.endsWith("-")).toBe(false);
-    expect(getSlugIssue(slug)).toBeNull();
   });
 });
 
 describe("normalizeSlugInput", () => {
-  it("lowercases, strips accents and turns spaces into hyphens", () => {
+  it("normalises while typing but keeps a trailing hyphen", () => {
     expect(normalizeSlugInput("Mila Beauté")).toBe("mila-beaute");
-    expect(normalizeSlugInput("mila_cils")).toBe("mila-cils");
-  });
-
-  it("keeps invalid characters visible so the error can explain them", () => {
-    expect(normalizeSlugInput("mila!")).toBe("mila!");
+    expect(normalizeSlugInput("studio ")).toBe("studio-");
+    expect(normalizeSlugInput("--mila!!cils")).toBe("mila-cils");
   });
 });
 
 describe("getSlugIssue", () => {
   it.each([
     ["", "empty"],
+    ["!!", "empty"],
     ["ab", "too_short"],
-    ["mila!", "invalid_chars"],
-    ["-mila", "edge_hyphen"],
-    ["mila-", "edge_hyphen"],
-    ["mila--cils", "double_hyphen"],
+    ["é!", "too_short"],
     ["login", "reserved"],
-    ["a".repeat(64), "too_long"],
-  ])("flags %j as %s", (slug, issue) => {
-    expect(getSlugIssue(slug)).toBe(issue);
+    ["Dashboard", "reserved"],
+  ])("flags %j as %s", (input, issue) => {
+    expect(getSlugIssue(input)).toBe(issue);
   });
 
-  it("accepts valid slugs", () => {
+  it("accepts anything the server would normalise to a valid slug", () => {
     expect(getSlugIssue("studio-mila")).toBeNull();
-    expect(getSlugIssue("mila2")).toBeNull();
+    expect(getSlugIssue("Mila Cils!")).toBeNull();
+  });
+
+  it("uses the backend's reserved words", () => {
+    expect([...RESERVED_SLUGS].sort()).toEqual(
+      [
+        "account",
+        "admin",
+        "api",
+        "app",
+        "auth",
+        "b",
+        "dashboard",
+        "help",
+        "login",
+        "logout",
+        "onboarding",
+        "register",
+        "settings",
+        "signin",
+        "signup",
+        "support",
+        "www",
+      ].sort(),
+    );
   });
 });
 
 describe("suggestSlugs", () => {
-  it("returns up to three valid alternatives different from the input", () => {
-    const suggestions = suggestSlugs("studio-mila", { location: "Lyon" });
-    expect(suggestions.length).toBeGreaterThan(0);
-    expect(suggestions.length).toBeLessThanOrEqual(3);
+  it("proposes normalised candidates different from the input", () => {
+    const suggestions = suggestSlugs("studio-mila", {
+      location: "Lyon 6e, France",
+    });
+    expect(suggestions[0]).toBe("studio-mila-lyon-6e");
     expect(suggestions).not.toContain("studio-mila");
-    expect(suggestions[0]).toBe("studio-mila-lyon");
     for (const suggestion of suggestions)
       expect(getSlugIssue(suggestion)).toBeNull();
   });

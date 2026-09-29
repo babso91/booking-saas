@@ -32,17 +32,26 @@ export const emptyDraft: OnboardingDraft = {
 };
 
 // Tab-scoped persistence so a refresh or an expired session does not lose
-// answers. Cleared once onboarding succeeds.
+// answers. It holds form answers only (never credentials or tokens), belongs
+// to one account (`owner`) and is cleared on success and on sign-out.
 const KEY = "onboarding:draft";
 
-export function loadDraft(): { draft: OnboardingDraft; step: number } | null {
+export function loadDraft(
+  owner: string | null,
+): { draft: OnboardingDraft; step: number } | null {
   try {
     const raw = window.sessionStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
+      owner?: string | null;
       draft?: Partial<OnboardingDraft>;
       step?: number;
     };
+    // Another account used this tab before: never reuse its answers.
+    if (parsed.owner !== owner) {
+      clearDraft();
+      return null;
+    }
     return {
       draft: { ...emptyDraft, ...parsed.draft },
       step: Math.min(3, Math.max(0, Number(parsed.step) || 0)),
@@ -52,9 +61,13 @@ export function loadDraft(): { draft: OnboardingDraft; step: number } | null {
   }
 }
 
-export function saveDraft(draft: OnboardingDraft, step: number) {
+export function saveDraft(
+  draft: OnboardingDraft,
+  step: number,
+  owner: string | null,
+) {
   try {
-    window.sessionStorage.setItem(KEY, JSON.stringify({ draft, step }));
+    window.sessionStorage.setItem(KEY, JSON.stringify({ owner, draft, step }));
   } catch {
     // Storage unavailable (private mode, quota): persistence is best effort.
   }

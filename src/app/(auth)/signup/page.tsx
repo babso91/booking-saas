@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { AuthShell } from "@/features/auth/components/auth-shell";
 import { SignupForm } from "@/features/auth/components/signup-form";
 
 export const metadata: Metadata = {
@@ -7,5 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default function SignupPage() {
-  return <SignupForm />;
+  return (
+    <AuthShell>
+      <SignupForm />
+    </AuthShell>
+  );
 }

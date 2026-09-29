@@ -20,3 +20,19 @@ export function bookingHost(): string {
 
   return "booking.app";
 }
+
+// Full public URL of a booking page, for copying and sharing.
+export function bookingUrl(slug: string): string {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  let origin = "https://booking.app";
+
+  if (appUrl) {
+    try {
+      origin = new URL(appUrl).origin;
+    } catch {
+      // Keep the placeholder origin.
+    }
+  }
+
+  return `${origin}/b/${slug}`;
+}

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { SignOutButton } from "@/features/auth/components/sign-out-button";
+
 export const metadata: Metadata = {
   title: "Tableau de bord",
 };
@@ -18,6 +20,9 @@ export default function DashboardFoundationPage() {
         ajoutera l’authentification, l’onboarding et la protection effective de
         cette route.
       </p>
+      <div className="mt-8">
+        <SignOutButton />
+      </div>
     </main>
   );
 }

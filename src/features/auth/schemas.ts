@@ -1,17 +1,26 @@
 import { z } from "zod";
 
-// Client-side validation for instant feedback only. The server revalidates.
-export const PASSWORD_MIN_LENGTH = 8;
+// Client-side validation for instant feedback only, aligned with the backend
+// schemas (src/features/auth/schemas/auth.ts), which remain the authority.
+// Only the copy differs: empty fields get their own, friendlier message.
+export const PASSWORD_MIN_LENGTH = 10;
+export const PASSWORD_MAX_LENGTH = 72;
 
 const email = z
   .string()
   .trim()
+  .toLowerCase()
   .min(1, "Indique ton email.")
+  .max(254, "Cet email est trop long.")
   .pipe(z.email("Cet email semble incomplet."));
 
 export const signInSchema = z.object({
   email,
-  password: z.string().min(1, "Indique ton mot de passe."),
+  // No length rule on sign-in, like the backend: never reveal the policy.
+  password: z
+    .string()
+    .min(1, "Indique ton mot de passe.")
+    .max(PASSWORD_MAX_LENGTH, `${PASSWORD_MAX_LENGTH} caractères maximum.`),
 });
 
 export const signUpSchema = z.object({
@@ -19,7 +28,7 @@ export const signUpSchema = z.object({
   password: z
     .string()
     .min(PASSWORD_MIN_LENGTH, `Au moins ${PASSWORD_MIN_LENGTH} caractères.`)
-    .max(72, "72 caractères maximum."),
+    .max(PASSWORD_MAX_LENGTH, `${PASSWORD_MAX_LENGTH} caractères maximum.`),
 });
 
 export type FieldErrors<K extends string> = Partial<Record<K, string>>;

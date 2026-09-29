@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { getSlugIssue, slugIssueMessages } from "./slug";
+import { getSlugIssue, slugify, slugIssueMessages } from "./slug";
 import { isValidTimezone } from "./settings";
 
 const optionalText = (max: number, message: string) =>
@@ -11,30 +11,44 @@ const optionalText = (max: number, message: string) =>
     .optional()
     .transform((value) => (value ? value : undefined));
 
+// Limits mirror completeOnboardingSchema (src/features/onboarding/schemas/
+// onboarding.ts) and public.complete_onboarding, which remain the authority.
+export const NAME_MAX_LENGTH = 80;
+export const BUSINESS_NAME_MAX_LENGTH = 120;
+export const PHONE_PATTERN = /^\+?[0-9 ().-]{6,30}$/;
+
 export const identityStepSchema = z.object({
   firstName: z
     .string()
     .trim()
     .min(1, "Indique ton prénom.")
-    .max(120, "120 caractères maximum."),
+    .max(NAME_MAX_LENGTH, `${NAME_MAX_LENGTH} caractères maximum.`),
   lastName: z
     .string()
     .trim()
     .min(1, "Indique ton nom.")
-    .max(120, "120 caractères maximum."),
+    .max(NAME_MAX_LENGTH, `${NAME_MAX_LENGTH} caractères maximum.`),
   businessName: z
     .string()
     .trim()
     .min(1, "Indique le nom de ton activité.")
-    .max(120, "120 caractères maximum."),
+    .max(
+      BUSINESS_NAME_MAX_LENGTH,
+      `${BUSINESS_NAME_MAX_LENGTH} caractères maximum.`,
+    ),
 });
 
+// Sends the previewed normalisation; the server normalises again and its
+// result is what gets stored and displayed afterwards.
 export const slugStepSchema = z.object({
-  slug: z.string().superRefine((slug, ctx) => {
-    const issue = getSlugIssue(slug);
-    if (issue)
-      ctx.addIssue({ code: "custom", message: slugIssueMessages[issue] });
-  }),
+  slug: z
+    .string()
+    .superRefine((slug, ctx) => {
+      const issue = getSlugIssue(slug);
+      if (issue)
+        ctx.addIssue({ code: "custom", message: slugIssueMessages[issue] });
+    })
+    .transform(slugify),
 });
 
 export const preferencesStepSchema = z.object({
@@ -44,11 +58,13 @@ export const preferencesStepSchema = z.object({
   bufferMinutes: z.number().int().min(0).max(240),
 });
 
+// Intentionally shorter than the backend limit (1000): onboarding asks for a
+// short presentation; the full description belongs to the settings screen.
 export const DESCRIPTION_MAX_LENGTH = 300;
 
 export const detailsStepSchema = z.object({
-  phone: optionalText(30, "Numéro trop long.").refine(
-    (value) => !value || /^[+\d][\d\s().-]{5,}$/.test(value),
+  phone: optionalText(30, "30 caractères maximum.").refine(
+    (value) => !value || PHONE_PATTERN.test(value),
     "Ce numéro semble incomplet.",
   ),
   location: optionalText(200, "200 caractères maximum."),
@@ -56,7 +72,7 @@ export const detailsStepSchema = z.object({
     DESCRIPTION_MAX_LENGTH,
     `${DESCRIPTION_MAX_LENGTH} caractères maximum.`,
   ),
-  cancellationPolicy: optionalText(1000, "1000 caractères maximum."),
+  cancellationPolicy: optionalText(2000, "2000 caractères maximum."),
 });
 
 export const onboardingSchema = identityStepSchema

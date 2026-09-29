@@ -8,7 +8,8 @@ import { Button, type ButtonState } from "@/components/ui/button";
 import { TextField } from "@/components/ui/field";
 import { ArrowRightIcon, MailIcon } from "@/components/ui/icons";
 import { PasswordField } from "@/components/ui/password-field";
-import { authGateway, type GatewayError } from "@/features/auth/gateway";
+import { signUpAction } from "@/features/auth/actions/auth";
+import { callAction, type UiError } from "@/features/auth/client/call-action";
 import {
   firstFieldErrors,
   PASSWORD_MIN_LENGTH,
@@ -18,7 +19,7 @@ import {
 
 import { AuthHeading } from "./auth-heading";
 import { CheckEmail } from "./check-email";
-import { GatewayNotice } from "./gateway-notice";
+import { ErrorNotice } from "./error-notice";
 
 type Field = "email" | "password";
 
@@ -30,7 +31,7 @@ export function SignupForm() {
   const router = useRouter();
   const [values, setValues] = useState({ email: "", password: "" });
   const [fieldErrors, setFieldErrors] = useState<FieldErrors<Field>>({});
-  const [formError, setFormError] = useState<GatewayError | null>(null);
+  const [formError, setFormError] = useState<UiError | null>(null);
   const [state, setState] = useState<ButtonState>("idle");
   const [shakeKey, setShakeKey] = useState(0);
   const [sentTo, setSentTo] = useState<string | null>(null);
@@ -65,15 +66,23 @@ export function SignupForm() {
     setFormError(null);
     setState("loading");
 
-    const result = await authGateway.signUp(parsed.data);
+    const result = await callAction(() => signUpAction(parsed.data));
 
     if (!result.ok) {
       setState("idle");
-      if (result.error.code === "weak_password") {
+      const rejected = result.error.fieldErrors ?? {};
+      if (
+        result.error.code === "validation_error" &&
+        (rejected.password || rejected.email)
+      ) {
         setFieldErrors({
-          password: `Au moins ${PASSWORD_MIN_LENGTH} caractères, un peu plus variés.`,
+          email: rejected.email ? "Cet email semble invalide." : undefined,
+          password: rejected.password
+            ? `Mot de passe trop simple : au moins ${PASSWORD_MIN_LENGTH} caractères variés.`
+            : undefined,
         });
-        passwordRef.current?.focus();
+        setShakeKey((key) => key + 1);
+        (rejected.email ? emailRef : passwordRef).current?.focus();
         return;
       }
       setFormError(result.error);
@@ -86,8 +95,19 @@ export function SignupForm() {
       return;
     }
 
+    // signed_in: a session exists, onboarding is next.
     setState("success");
-    window.setTimeout(() => router.push("/onboarding"), 450);
+    const destination = result.data.next ?? "/onboarding";
+    window.setTimeout(() => router.replace(destination), 450);
+  }
+
+  // Signing up again with a still-unconfirmed address re-sends the
+  // confirmation email (backend contract). Same credentials, still in memory.
+  async function resend(): Promise<boolean> {
+    const parsed = signUpSchema.safeParse(values);
+    if (!parsed.success) return false;
+    const result = await callAction(() => signUpAction(parsed.data));
+    return result.ok && result.data.status === "confirmation_required";
   }
 
   if (sentTo) {
@@ -95,6 +115,7 @@ export function SignupForm() {
       <CheckEmail
         email={sentTo}
         headingRef={headingRef}
+        onResend={resend}
         onChangeEmail={() => {
           setSentTo(null);
           window.setTimeout(() => emailRef.current?.focus(), 0);
@@ -123,7 +144,7 @@ export function SignupForm() {
         className="flex animate-rise flex-col gap-5 [animation-delay:60ms]"
       >
         {formError ? (
-          <GatewayNotice
+          <ErrorNotice
             error={formError}
             action={
               formError.code === "email_taken" ? (

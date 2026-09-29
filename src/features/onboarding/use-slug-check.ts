@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { onboardingGateway } from "@/features/auth/gateway";
+import { callAction } from "@/features/auth/client/call-action";
+import { checkSlugAction } from "@/features/onboarding/actions/onboarding";
 
 import {
   getSlugIssue,
+  slugify,
   slugIssueMessages,
   suggestSlugs,
   type SlugIssue,
@@ -13,95 +15,109 @@ import {
 
 export type SlugCheckState =
   | { kind: "empty" }
-  | { kind: "invalid"; issue: SlugIssue; message: string }
-  | { kind: "checking" }
-  | { kind: "available" }
-  | { kind: "taken"; suggestions: string[] }
-  | { kind: "reserved"; suggestions: string[] }
-  | { kind: "unverified" };
+  | { kind: "invalid"; issue?: SlugIssue; message: string }
+  | { kind: "checking"; slug: string }
+  | { kind: "available"; slug: string }
+  | { kind: "taken"; slug: string; suggestions: string[] }
+  | { kind: "reserved"; slug: string; suggestions: string[] }
+  | { kind: "unverified"; slug: string };
 
-type RemoteResult =
-  | { kind: "available" }
-  | { kind: "taken" | "reserved"; suggestions: string[] }
-  | { kind: "unverified" };
+type ServerResult =
+  | { kind: "available" | "taken" | "reserved" | "invalid"; slug: string }
+  | { kind: "unverified"; slug: string };
 
 const DEBOUNCE_MS = 400;
+const MAX_SUGGESTIONS = 3;
 
-function toRemoteResult(
-  response: Awaited<ReturnType<typeof onboardingGateway.checkSlug>>,
-): RemoteResult {
-  if (!response.ok) return { kind: "unverified" };
-  if (response.data.availability === "available") return { kind: "available" };
-  return {
-    kind: response.data.availability,
-    suggestions: response.data.suggestions,
-  };
+async function checkOnServer(slug: string): Promise<ServerResult> {
+  const result = await callAction(() => checkSlugAction({ slug }));
+  if (!result.ok) return { kind: "unverified", slug };
+  return { kind: result.data.reason, slug: result.data.slug };
 }
 
 /**
- * Debounced, cancellable availability check. Only the latest slug counts:
- * results for older values are ignored, and "checking" is derived (not set
- * synchronously) so fast typing never flashes stale statuses.
+ * Debounced availability check through checkSlugAction (a UX pre-check: the
+ * unique constraint decides at completion). Results are keyed by the
+ * previewed slug, so answers for older values never show; "checking" is
+ * derived rather than set, so fast typing never flashes stale statuses.
+ * Suggestions are verified with the server before being offered.
  */
 export function useSlugCheck(
-  slug: string,
+  input: string,
   context: { location?: string; firstName?: string },
 ) {
-  const [results, setResults] = useState<Record<string, RemoteResult>>({});
-  const issue = getSlugIssue(slug);
-  const needsCheck = issue === null && !(slug in results);
+  const slug = slugify(input);
+  const issue = getSlugIssue(input);
+  const [results, setResults] = useState<Record<string, ServerResult>>({});
+  const [suggestions, setSuggestions] = useState<Record<string, string[]>>({});
   const contextRef = useRef(context);
+  const needsCheck = issue === null && !(slug in results);
 
   useEffect(() => {
     contextRef.current = context;
   });
 
+  const store = useCallback((key: string, result: ServerResult) => {
+    setResults((current) => ({ ...current, [key]: result }));
+  }, []);
+
+  // Checks candidates in parallel and keeps the ones the server accepts.
+  const loadSuggestions = useCallback(
+    async (key: string) => {
+      const candidates = suggestSlugs(key, contextRef.current).slice(
+        0,
+        MAX_SUGGESTIONS + 1,
+      );
+      const checked = await Promise.all(candidates.map(checkOnServer));
+      checked.forEach((result) => store(result.slug, result));
+      setSuggestions((current) => ({
+        ...current,
+        [key]: checked
+          .filter((result) => result.kind === "available")
+          .map((result) => result.slug)
+          .slice(0, MAX_SUGGESTIONS),
+      }));
+    },
+    [store],
+  );
+
   useEffect(() => {
     if (!needsCheck) return;
 
-    const controller = new AbortController();
+    let active = true;
     const timer = window.setTimeout(async () => {
-      try {
-        const response = await onboardingGateway.checkSlug(slug, {
-          signal: controller.signal,
-        });
-        if (controller.signal.aborted) return;
-
-        const result = toRemoteResult(response);
-        setResults((current) => ({ ...current, [slug]: result }));
-      } catch {
-        // Aborted: a newer value is being checked.
-      }
+      const result = await checkOnServer(slug);
+      if (!active) return;
+      store(slug, result);
+      if (result.kind === "taken" || result.kind === "reserved")
+        void loadSuggestions(slug);
     }, DEBOUNCE_MS);
 
     return () => {
+      active = false;
       window.clearTimeout(timer);
-      controller.abort();
     };
-  }, [slug, needsCheck]);
+  }, [slug, needsCheck, store, loadSuggestions]);
 
-  // Backend said the slug was taken at submit time: trust it over the cache.
-  const markTaken = useCallback((takenSlug: string) => {
-    setResults((current) => ({
-      ...current,
-      [takenSlug]: {
-        kind: "taken",
-        suggestions: suggestSlugs(takenSlug, contextRef.current),
-      },
-    }));
-  }, []);
+  /** Immediate check (no debounce) when the user wants to continue now. */
+  const checkNow = useCallback(async (): Promise<SlugCheckState> => {
+    const result = await checkOnServer(slug);
+    store(slug, result);
+    if (result.kind === "taken" || result.kind === "reserved")
+      void loadSuggestions(slug);
+    return toState(result, []);
+  }, [slug, store, loadSuggestions]);
 
-  // Immediate check (no debounce) when the user wants to continue now.
-  const checkNow = useCallback(
-    async (value: string): Promise<SlugCheckState> => {
-      const result = toRemoteResult(await onboardingGateway.checkSlug(value));
-      setResults((current) => ({ ...current, [value]: result }));
-      return result;
+  /** completeOnboarding answered slug_taken / slug_reserved: trust it. */
+  const markUnavailable = useCallback(
+    (unavailable: string, kind: "taken" | "reserved") => {
+      store(unavailable, { kind, slug: unavailable });
+      void loadSuggestions(unavailable);
     },
-    [],
+    [store, loadSuggestions],
   );
 
-  // Network failure: allow a new attempt for the current value.
+  /** Network failure: allow a new attempt for the current value. */
   const retry = useCallback(() => {
     setResults((current) => {
       const next = { ...current };
@@ -112,11 +128,30 @@ export function useSlugCheck(
 
   let state: SlugCheckState;
   if (issue === "empty") state = { kind: "empty" };
-  else if (issue === "reserved")
-    state = { kind: "reserved", suggestions: suggestSlugs(slug, context) };
   else if (issue)
     state = { kind: "invalid", issue, message: slugIssueMessages[issue] };
-  else state = results[slug] ?? { kind: "checking" };
+  else {
+    const result = results[slug];
+    state = result
+      ? toState(result, suggestions[slug] ?? [])
+      : { kind: "checking", slug };
+  }
 
-  return { state, markTaken, retry, checkNow };
+  return { state, checkNow, markUnavailable, retry };
+}
+
+function toState(result: ServerResult, suggestions: string[]): SlugCheckState {
+  switch (result.kind) {
+    case "available":
+    case "unverified":
+      return { kind: result.kind, slug: result.slug };
+    case "taken":
+    case "reserved":
+      return { kind: result.kind, slug: result.slug, suggestions };
+    case "invalid":
+      return {
+        kind: "invalid",
+        message: "Ce lien n’est pas valide. Essaie une variante.",
+      };
+  }
 }

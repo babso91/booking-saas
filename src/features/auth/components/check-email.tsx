@@ -1,17 +1,48 @@
-import Link from "next/link";
-import type { Ref } from "react";
+"use client";
 
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { useEffect, useState, type Ref } from "react";
+
+import { Button, type ButtonState } from "@/components/ui/button";
+
+// Supabase throttles confirmation emails per address; keep the user from
+// hammering the button.
+const RESEND_COOLDOWN_S = 30;
 
 export function CheckEmail({
   email,
   headingRef,
   onChangeEmail,
+  onResend,
 }: {
   email: string;
   headingRef: Ref<HTMLHeadingElement>;
   onChangeEmail: () => void;
+  onResend: () => Promise<boolean>;
 }) {
+  const [resendState, setResendState] = useState<ButtonState>("idle");
+  const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_S);
+  const [resendFailed, setResendFailed] = useState(false);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = window.setTimeout(
+      () => setCooldown((value) => value - 1),
+      1000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [cooldown]);
+
+  async function resend() {
+    setResendState("loading");
+    setResendFailed(false);
+    const sent = await onResend();
+    setResendState(sent ? "success" : "idle");
+    setResendFailed(!sent);
+    setCooldown(RESEND_COOLDOWN_S);
+    if (sent) window.setTimeout(() => setResendState("idle"), 1800);
+  }
+
   return (
     <div className="flex flex-col items-start gap-8">
       <Envelope />
@@ -45,9 +76,29 @@ export function CheckEmail({
         >
           J’ai confirmé, me connecter
         </Link>
-        <Button variant="ghost" size="md" fullWidth onClick={onChangeEmail}>
-          Modifier l’adresse email
-        </Button>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="secondary"
+            size="md"
+            state={resendState}
+            loadingLabel="Envoi…"
+            successLabel="Renvoyé"
+            disabled={cooldown > 0 && resendState === "idle"}
+            onClick={resend}
+          >
+            {cooldown > 0 ? `Renvoyer (${cooldown}s)` : "Renvoyer l’email"}
+          </Button>
+          <Button variant="ghost" size="md" onClick={onChangeEmail}>
+            Changer d’adresse
+          </Button>
+        </div>
+        <p className="min-h-5 text-[13.5px] text-ink-muted" aria-live="polite">
+          {resendFailed
+            ? "L’envoi n’a pas fonctionné. Réessaie dans un instant."
+            : resendState === "success"
+              ? "Un nouvel email est en route."
+              : ""}
+        </p>
       </div>
 
       <p className="animate-rise text-[14px] leading-relaxed text-ink-muted [animation-delay:200ms]">

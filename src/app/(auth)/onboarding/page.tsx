@@ -1,17 +1,18 @@
 import type { Metadata } from "next";
 
+import { currentSessionState } from "@/features/auth/data/guards";
+import { OnboardingFlow } from "@/features/onboarding/components/onboarding-flow";
+
 export const metadata: Metadata = {
   title: "Configurer mon activité",
 };
 
-// Placeholder owned by the UI branch: the form calls completeOnboardingAction
-// and checkSlugAction (src/features/onboarding/actions/onboarding.ts).
-export default function OnboardingFoundationPage() {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center px-6">
-      <h1 className="text-3xl font-semibold text-stone-950">
-        Configurer mon activité
-      </h1>
-    </main>
-  );
+// Access control stays in ./layout.tsx (requirePendingOnboarding): this page
+// only renders for a signed-in user without a business.
+export default async function OnboardingPage() {
+  const state = await currentSessionState();
+  const owner =
+    state.status === "onboarding_required" ? state.user.email : null;
+
+  return <OnboardingFlow owner={owner} />;
 }

@@ -12,7 +12,7 @@ import type { SlugCheckState } from "../use-slug-check";
 const copy = {
   checking: "Vérification…",
   available: "Disponible pour l’instant",
-  taken: "Déjà utilisé par une autre professionnelle",
+  taken: "Déjà utilisé",
   reserved: "Ce mot est réservé",
   unverified: "Vérification impossible pour le moment",
 } as const;

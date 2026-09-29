@@ -4,21 +4,21 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { ArrowRightIcon, CheckIcon, CopyIcon } from "@/components/ui/icons";
-import { bookingHost } from "@/lib/brand";
+import { bookingHost, bookingUrl } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 const petals = Array.from({ length: 10 }, (_, index) => index * 36);
 
+/** Rendered by /app/welcome with the business read from the server session. */
 export function OnboardingSuccess({
   slug,
-  firstName,
+  businessName,
 }: {
   slug: string;
-  firstName: string;
+  businessName: string;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [copied, setCopied] = useState(false);
-  const link = `${bookingHost()}/b/${slug}`;
 
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
@@ -32,7 +32,7 @@ export function OnboardingSuccess({
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(`https://${link}`);
+      await navigator.clipboard.writeText(bookingUrl(slug));
       setCopied(true);
     } catch {
       // Clipboard can be blocked; the link stays visible and selectable.
@@ -88,7 +88,7 @@ export function OnboardingSuccess({
       </div>
 
       <p className="mt-8 animate-rise text-[12.5px] font-semibold tracking-[0.16em] text-accent uppercase [animation-delay:300ms]">
-        {firstName ? `Bravo ${firstName}` : "Bravo"}
+        {businessName}
       </p>
       <h1
         ref={headingRef}
@@ -102,7 +102,7 @@ export function OnboardingSuccess({
       </p>
 
       <div className="mt-8 flex w-full max-w-[420px] animate-rise items-center gap-2 rounded-2xl border border-line bg-paper-raised p-2 pl-4 [animation-delay:480ms]">
-        <p className="min-w-0 flex-1 truncate text-left text-[15px] text-ink-muted">
+        <p className="min-w-0 flex-1 text-left text-[15px] leading-snug [overflow-wrap:anywhere] text-ink-muted">
           {bookingHost()}/b/
           <span className="font-semibold text-ink">{slug}</span>
         </p>

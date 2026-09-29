@@ -5,7 +5,7 @@ import { LinkIcon } from "@/components/ui/icons";
 import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
-import { normalizeSlugInput } from "../../slug";
+import { normalizeSlugInput, slugify } from "../../slug";
 import type { SlugCheckState } from "../../use-slug-check";
 import { SlugStatus } from "../slug-status";
 import { StepHeader } from "../step-header";
@@ -22,6 +22,9 @@ export function SlugStep({
   onRetryCheck,
 }: StepProps & { slugState: SlugCheckState; onRetryCheck: () => void }) {
   const statusId = useId();
+  // The server's normalised slug once known, the local preview otherwise.
+  const previewSlug =
+    "slug" in slugState ? slugState.slug : slugify(draft.slug);
   const suggestions =
     slugState.kind === "taken" || slugState.kind === "reserved"
       ? slugState.suggestions
@@ -73,7 +76,7 @@ export function SlugStep({
           <p className="min-w-0 text-[15px] leading-snug break-all text-ink-muted sm:text-[17px]">
             {bookingHost()}/b/
             <span className="font-semibold text-ink">
-              {draft.slug || "ton-lien"}
+              {previewSlug || "ton-lien"}
             </span>
           </p>
         </div>
@@ -92,6 +95,11 @@ export function SlugStep({
           placeholder="studio-mila"
           value={draft.slug}
           onChange={(event) => setSlug(normalizeSlugInput(event.target.value))}
+          // A trailing hyphen is kept while typing, dropped when leaving.
+          onBlur={() => {
+            if (slugify(draft.slug) !== draft.slug)
+              update("slug", slugify(draft.slug));
+          }}
           error={errors.slug}
           status={errors.slug ? "error" : fieldStatus}
           shakeKey={shakeKey}
@@ -106,7 +114,7 @@ export function SlugStep({
         {suggestions.length > 0 ? (
           <div className="flex animate-message flex-col gap-2.5">
             <p className="text-[13.5px] text-ink-soft">
-              Ces variantes sont libres :
+              Ces variantes sont libres pour l’instant :
             </p>
             <div className="flex flex-wrap gap-2">
               {suggestions.map((suggestion) => (
@@ -125,8 +133,8 @@ export function SlugStep({
       </div>
 
       <p className="rounded-2xl bg-sand/60 px-4 py-3.5 text-[14px] leading-relaxed text-ink-soft">
-        Astuce : un lien court se retient et se dicte facilement. Lettres,
-        chiffres et tirets uniquement.
+        Astuce : un lien court se retient et se dicte facilement. Les accents et
+        espaces sont convertis automatiquement.
       </p>
     </div>
   );

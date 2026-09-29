@@ -31,10 +31,10 @@ describe("onboardingSchema", () => {
     expect("slugEdited" in result).toBe(false);
   });
 
-  it("rejects an invalid slug and an unknown timezone", () => {
+  it("rejects an unusable slug and an unknown timezone", () => {
     const result = onboardingSchema.safeParse({
       ...valid,
-      slug: "Mila!",
+      slug: "ab",
       timezone: "Mars/Olympus",
     });
     expect(result.success).toBe(false);
@@ -60,7 +60,11 @@ describe("step schemas", () => {
     expect(
       detailsStepSchema.safeParse({ phone: "06 12 34 56 78" }).success,
     ).toBe(true);
+    expect(
+      detailsStepSchema.safeParse({ phone: "+33 (0)6 12-34.56" }).success,
+    ).toBe(true);
     expect(detailsStepSchema.safeParse({ phone: "abc" }).success).toBe(false);
+    expect(detailsStepSchema.safeParse({ phone: "12345" }).success).toBe(false);
     expect(
       detailsStepSchema.safeParse({ description: "x".repeat(301) }).success,
     ).toBe(false);

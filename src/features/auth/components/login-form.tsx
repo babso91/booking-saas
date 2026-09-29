@@ -9,11 +9,8 @@ import { TextField } from "@/components/ui/field";
 import { ArrowRightIcon, MailIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
 import { PasswordField } from "@/components/ui/password-field";
-import {
-  authGateway,
-  onboardingGateway,
-  type GatewayError,
-} from "@/features/auth/gateway";
+import { signInAction } from "@/features/auth/actions/auth";
+import { callAction, type UiError } from "@/features/auth/client/call-action";
 import {
   firstFieldErrors,
   signInSchema,
@@ -21,15 +18,20 @@ import {
 } from "@/features/auth/schemas";
 
 import { AuthHeading } from "./auth-heading";
-import { GatewayNotice } from "./gateway-notice";
+import { ErrorNotice } from "./error-notice";
 
 type Field = "email" | "password";
 
-export function LoginForm() {
+export function LoginForm({
+  callbackFailed = false,
+}: {
+  callbackFailed?: boolean;
+}) {
   const router = useRouter();
   const [values, setValues] = useState({ email: "", password: "" });
   const [fieldErrors, setFieldErrors] = useState<FieldErrors<Field>>({});
-  const [formError, setFormError] = useState<GatewayError | null>(null);
+  const [formError, setFormError] = useState<UiError | null>(null);
+  const [showCallbackError, setShowCallbackError] = useState(callbackFailed);
   const [state, setState] = useState<ButtonState>("idle");
   const [shakeKey, setShakeKey] = useState(0);
   const [showForgot, setShowForgot] = useState(false);
@@ -57,9 +59,10 @@ export function LoginForm() {
     }
 
     setFormError(null);
+    setShowCallbackError(false);
     setState("loading");
 
-    const result = await authGateway.signIn(parsed.data);
+    const result = await callAction(() => signInAction(parsed.data));
 
     if (!result.ok) {
       setState("idle");
@@ -71,13 +74,11 @@ export function LoginForm() {
       return;
     }
 
+    // The server decides where this account goes ("/onboarding" or "/app");
+    // the route guards confirm it on arrival.
     setState("success");
-    const status = await onboardingGateway.getOnboardingStatus();
-    const destination =
-      status.ok && status.data.status === "onboarded" ? "/app" : "/onboarding";
-
-    // Let the success state register before the page changes.
-    window.setTimeout(() => router.push(destination), 450);
+    const destination = result.data.next;
+    window.setTimeout(() => router.replace(destination), 450);
   }
 
   return (
@@ -92,9 +93,16 @@ export function LoginForm() {
         className="flex animate-rise flex-col gap-5 [animation-delay:60ms]"
         aria-describedby={formError ? "login-error" : undefined}
       >
+        {showCallbackError && !formError ? (
+          <Notice tone="warning" title="Lien expiré ou déjà utilisé">
+            Ce lien de confirmation ne fonctionne plus. Connecte-toi : si ton
+            email n’est pas encore confirmé, on te le dira.
+          </Notice>
+        ) : null}
+
         {formError ? (
           <div id="login-error">
-            <GatewayNotice
+            <ErrorNotice
               error={formError}
               action={
                 formError.code === "network" ? (
