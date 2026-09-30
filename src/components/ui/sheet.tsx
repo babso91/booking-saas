@@ -17,6 +17,35 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
+ * Whether Tab can actually reach `element` right now. Matching FOCUSABLE is
+ * not enough: a control hidden by a responsive rule (display: none), made
+ * invisible, `hidden`, inert, disabled (also through a disabled fieldset) or
+ * without a layout box is skipped by the browser, so it must not be treated
+ * as the first or last stop of the focus trap either.
+ */
+function isTabbable(element: HTMLElement) {
+  if (element.matches(":disabled") || element.closest("[inert], [hidden]")) {
+    return false;
+  }
+  if (typeof element.checkVisibility === "function") {
+    return element.checkVisibility({
+      checkVisibilityCSS: true,
+      visibilityProperty: true,
+    });
+  }
+  // Fallback without checkVisibility: no box when an ancestor is not
+  // displayed; `visibility` is inherited, so the element's own value decides.
+  for (
+    let node: HTMLElement | null = element;
+    node;
+    node = node.parentElement
+  ) {
+    if (getComputedStyle(node).display === "none") return false;
+  }
+  return getComputedStyle(element).visibility !== "hidden";
+}
+
+/**
  * Modal surface: a bottom sheet on phones, a side panel from `lg` (or a
  * centred dialog with `placement="center"`). Accessible dialog semantics:
  * labelled, focus moved inside and trapped, Escape closes, focus restored to
@@ -86,7 +115,10 @@ export function Sheet({
         return;
       }
       if (event.key !== "Tab" || !panel) return;
-      const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)];
+      // Evaluated on every Tab: controls shown or hidden since opening count.
+      const items = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+        isTabbable,
+      );
       const active = document.activeElement;
       if (items.length === 0) {
         event.preventDefault();

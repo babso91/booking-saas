@@ -113,7 +113,9 @@ afterEach(() => {
 });
 
 describe("loading", () => {
-  it("desktop: loads exactly one week, in a single aggregated request", async () => {
+  // The request starts one day early (a repeated midnight is read as its
+  // second occurrence by the backend); only the visible days are shown.
+  it("desktop: loads one week, in a single aggregated request", async () => {
     useViewport(true);
     actions.getAgendaAction.mockResolvedValue(
       ok(agenda("2026-09-28", "2026-10-04")),
@@ -122,7 +124,7 @@ describe("loading", () => {
 
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenCalledWith({
-        startDate: "2026-09-28",
+        startDate: "2026-09-27",
         endDate: "2026-10-04",
         includeCancelled: false,
       }),
@@ -146,7 +148,7 @@ describe("loading", () => {
 
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenCalledWith({
-        startDate: TODAY,
+        startDate: "2026-09-28",
         endDate: TODAY,
         includeCancelled: false,
       }),
@@ -169,7 +171,7 @@ describe("loading", () => {
     await user.click(screen.getByRole("button", { name: "Jour suivant" }));
     await waitFor(() =>
       expect(lastCall(actions.getAgendaAction)).toMatchObject({
-        startDate: "2026-09-30",
+        startDate: "2026-09-29",
         endDate: "2026-09-30",
       }),
     );
@@ -177,7 +179,8 @@ describe("loading", () => {
     await user.click(screen.getByRole("button", { name: "Aujourd’hui" }));
     await waitFor(() =>
       expect(lastCall(actions.getAgendaAction)).toMatchObject({
-        startDate: TODAY,
+        startDate: "2026-09-28",
+        endDate: TODAY,
       }),
     );
 
@@ -186,7 +189,8 @@ describe("loading", () => {
     );
     await waitFor(() =>
       expect(lastCall(actions.getAgendaAction)).toMatchObject({
-        startDate: "2026-10-04",
+        startDate: "2026-10-03",
+        endDate: "2026-10-04",
       }),
     );
   });
@@ -205,7 +209,7 @@ describe("loading", () => {
     await user.click(screen.getByRole("button", { name: "Semaine suivante" }));
     await waitFor(() =>
       expect(lastCall(actions.getAgendaAction)).toMatchObject({
-        startDate: "2026-10-05",
+        startDate: "2026-10-04",
         endDate: "2026-10-11",
       }),
     );
@@ -957,7 +961,7 @@ describe("blocks", () => {
     );
 
     expect(actions.getAgendaAction).toHaveBeenLastCalledWith({
-      startDate: "2026-09-28",
+      startDate: "2026-09-27",
       endDate: "2026-10-04",
       includeCancelled: false,
     });
@@ -1109,7 +1113,8 @@ describe("defaults and retries", () => {
     await user.click(screen.getByRole("button", { name: "Semaine suivante" }));
     await waitFor(() =>
       expect(lastCall(actions.getAgendaAction)).toMatchObject({
-        startDate: "2026-10-05",
+        startDate: "2026-10-04",
+        endDate: "2026-10-11",
       }),
     );
     await screen.findByText("Ta semaine est encore libre.");
@@ -1134,7 +1139,7 @@ describe("defaults and retries", () => {
         const data = agenda(startDate, endDate);
         // Monday and Tuesday closed: the first working day is Wednesday.
         data.workingHours.days
-          .slice(0, 2)
+          .filter((day) => ["2026-10-05", "2026-10-06"].includes(day.date))
           .forEach((day) => (day.openRanges = []));
         return ok(data);
       },

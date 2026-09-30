@@ -2,20 +2,22 @@ import type {
   AgendaAppointmentDto,
   AgendaBlockDto,
   AgendaDayDto,
+  AgendaDto,
 } from "@/features/agenda/data/agenda";
 import {
   addDaysToLocalDate,
+  resolveZonedLocal,
   utcToZonedLocal,
-  zonedLocalToUtc,
 } from "@/lib/time/zoned";
 
 // Time grid model of the agenda, driven by real instants.
 //
-// Source of truth: the UTC instants of every item and the UTC instants of
-// each local midnight in the business time zone (the same central helpers as
-// the server, src/lib/time/zoned.ts). A local day is [dayStart, dayEnd) and
-// lasts 23, 24 or 25 hours; an item is shown on a day only when its real
-// period intersects that interval.
+// Source of truth: the UTC instants of every item and the real bounds of
+// each local day in the business time zone (localDayBounds, built on the
+// IANA rules of the runtime through src/lib/time/zoned.ts). A local day is
+// the half-open interval [first instant of the date, first instant of the
+// next date) and may last any length (23, 24, 25 h, 23.5 h, 26 h…); an item
+// is shown on a day if and only if its real period intersects that interval.
 //
 // Vertical axis ("y", in minutes): wall-clock time, aligned across the
 // visible days. A fall-back transition inserts a band after the repeated
@@ -105,15 +107,85 @@ function transitionBetween(from: number, to: number, timeZone: string) {
   return high;
 }
 
+const localDateOf = (instant: number, timeZone: string) =>
+  utcToZonedLocal(new Date(instant), timeZone).slice(0, 10);
+
+/**
+ * First real instant (ms) whose wall-clock date in `timeZone` is `date`.
+ *
+ * Never the generic wall-clock → UTC rule, which picks one occurrence
+ * arbitrarily: a repeated midnight (Havana, 1 Nov: 00:00 happens at 04:00Z
+ * and again at 05:00Z) starts the day at its FIRST occurrence; a skipped
+ * midnight (Havana, 8 Mar: 23:59 → 01:00) starts it at the transition. A
+ * date that does not exist at all (Apia, 30 Dec 2011) yields the first
+ * instant of the next date, i.e. an empty day.
+ */
+export function localDayStart(date: string, timeZone: string): number {
+  const midnight = resolveZonedLocal(`${date}T00:00`, timeZone);
+  if (midnight.status === "exact") return midnight.instant.getTime();
+  if (midnight.status === "ambiguous") return midnight.first.getTime();
+
+  // Skipped midnight: search the first minute whose local date is ≥ `date`.
+  // UTC offsets stay within ±14 h, so these bounds bracket it.
+  const utcMidnight = Date.parse(`${date}T00:00:00Z`);
+  let before = utcMidnight - 26 * 60 * MINUTE; // local date < date
+  let after = utcMidnight + 26 * 60 * MINUTE; // local date ≥ date
+  while (after - before > MINUTE) {
+    const middle = before + Math.floor((after - before) / 2 / MINUTE) * MINUTE;
+    if (localDateOf(middle, timeZone) >= date) after = middle;
+    else before = middle;
+  }
+  return after;
+}
+
+/** Real bounds of a local day: [first instant of date, first instant of next date). */
+export function localDayBounds(date: string, timeZone: string) {
+  return {
+    startMs: localDayStart(date, timeZone),
+    endMs: localDayStart(addDaysToLocalDate(date, 1), timeZone),
+  };
+}
+
+/**
+ * Dates to request for the visible days. The backend reads a range from
+ * local midnight with the PostgreSQL rule, which picks the SECOND occurrence
+ * of a repeated midnight: the first real hour of such a day (Havana, 1 Nov
+ * 04:00Z–05:00Z) would be missing. The previous day is requested as well and
+ * the answer is trimmed back to the real bounds by `restrictToDays`.
+ */
+export function agendaRequestRange(days: string[]) {
+  return {
+    startDate: addDaysToLocalDate(days[0]!, -1),
+    endDate: days[days.length - 1]!,
+  };
+}
+
+/** The agenda restricted to the real interval of the visible days. */
+export function restrictToDays(data: AgendaDto, days: string[]): AgendaDto {
+  const timeZone = data.timezone;
+  const startMs = localDayStart(days[0]!, timeZone);
+  const endMs = localDayStart(
+    addDaysToLocalDate(days[days.length - 1]!, 1),
+    timeZone,
+  );
+  const inside = (item: Timed) =>
+    Date.parse(item.startsAt) < endMs && Date.parse(item.endsAt) > startMs;
+  return {
+    ...data,
+    appointments: data.appointments.filter(inside),
+    blocks: data.blocks.filter(inside),
+    workingHours: {
+      ...data.workingHours,
+      days: data.workingHours.days.filter((day) => days.includes(day.date)),
+    },
+  };
+}
+
 /** Builds the axis of the visible days (at most one fall-back per week). */
 export function buildAxis(days: string[], timeZone: string): Axis {
   const bounds = days.map((date) => ({
     date,
-    startMs: zonedLocalToUtc(`${date}T00:00`, timeZone).getTime(),
-    endMs: zonedLocalToUtc(
-      `${addDaysToLocalDate(date, 1)}T00:00`,
-      timeZone,
-    ).getTime(),
+    ...localDayBounds(date, timeZone),
   }));
 
   let band: Band | null = null;
@@ -142,10 +214,16 @@ export function buildAxis(days: string[], timeZone: string): Axis {
       const size = DAY - length;
       const firstWall = wallMinutes(startMs, date, timeZone);
       const transition = transitionBetween(startMs, endMs, timeZone);
+      // Where the skipped wall-clock time sits: at the start when midnight
+      // itself is skipped (Havana 00:00 → 01:00), at the end when the jump
+      // lands on the next midnight (Nuuk 23:00 → 00:00: the transition is
+      // the day's end), otherwise just before the transition.
       const start =
-        firstWall > 0 || transition === null
+        firstWall > 0
           ? 0
-          : wallMinutes(transition, date, timeZone) - size;
+          : transition === null
+            ? DAY - size
+            : wallMinutes(transition, date, timeZone) - size;
       skipped = {
         top: start + shiftOf(start),
         bottom: start + size + shiftOf(start),
@@ -169,8 +247,11 @@ export function buildAxis(days: string[], timeZone: string): Axis {
     });
   }
 
+  // Hour marks label the start of each row; the next midnight is the end of
+  // the day, not a row, so it gets no mark (with a repeated hour at the very
+  // end of a day, as in Cairo, it would share its y with "23:00 · 2e fois").
   const marks: HourMark[] = [];
-  for (let hour = 0; hour <= 24; hour += 1) {
+  for (let hour = 0; hour < 24; hour += 1) {
     marks.push({
       y: hour * 60 + shiftOf(hour * 60),
       label: label(hour * 60),
@@ -186,9 +267,13 @@ export function buildAxis(days: string[], timeZone: string): Axis {
       });
     }
   }
-  marks.sort((a, b) => a.y - b.y);
+  marks.sort((a, b) => a.y - b.y || Number(a.repeated) - Number(b.repeated));
+  // Never two labels at the same place.
+  const distinct = marks.filter(
+    (mark, index) => index === 0 || marks[index - 1]!.y !== mark.y,
+  );
 
-  return { timeZone, band, frames, marks };
+  return { timeZone, band, frames, marks: distinct };
 }
 
 /** y of an instant inside the day `date` (clamped to the day). */

@@ -37,6 +37,7 @@ import {
   visibleRange,
   type AgendaView as View,
 } from "../client/dates";
+import { agendaRequestRange, restrictToDays } from "../client/layout";
 import { AgendaError, TextAction } from "./agenda-error";
 import { AppointmentDetails } from "./appointment-details";
 import { AppointmentForm, type ServicesState } from "./appointment-form";
@@ -100,14 +101,11 @@ export function AgendaView({
     if (wide === null) return;
     let active = true;
     callAction(() =>
-      getAgendaAction({
-        startDate: range.startDate,
-        endDate: range.endDate,
-        includeCancelled,
-      }),
+      getAgendaAction({ ...agendaRequestRange(range.days), includeCancelled }),
     ).then((result) => {
       if (!active) return;
-      if (result.ok) setLoaded({ key, data: result.data });
+      if (result.ok)
+        setLoaded({ key, data: restrictToDays(result.data, range.days) });
       else setFailed({ key, error: result.error });
     });
     return () => {
@@ -193,15 +191,12 @@ export function AgendaView({
   // of deletion, so the message says what is known.
   async function refreshBlock(block: AgendaBlockDto) {
     const result = await callAction(() =>
-      getAgendaAction({
-        startDate: range.startDate,
-        endDate: range.endDate,
-        includeCancelled,
-      }),
+      getAgendaAction({ ...agendaRequestRange(range.days), includeCancelled }),
     );
     if (!result.ok) return result.error;
-    setLoaded({ key, data: result.data });
-    const fresh = result.data.blocks.find((item) => item.id === block.id);
+    const data = restrictToDays(result.data, range.days);
+    setLoaded({ key, data });
+    const fresh = data.blocks.find((item) => item.id === block.id);
     if (fresh) {
       setPanel({ kind: "block", block: fresh });
     } else {

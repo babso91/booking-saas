@@ -8,14 +8,22 @@ const lost = async () => {
   throw new TypeError("An unexpected response was received from the server.");
 };
 
-type ProbeAnswer = { status: number; redirected: boolean; url: string };
+type ProbeAnswer = {
+  status: number;
+  redirected: boolean;
+  url: string;
+  ok?: boolean;
+};
 
 function visiting(path: string) {
   window.history.replaceState(null, "", path);
 }
 
 function probeAnswers(answer: ProbeAnswer) {
-  const fetchMock = vi.fn().mockResolvedValue(answer);
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: answer.status >= 200 && answer.status < 300,
+    ...answer,
+  });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
@@ -126,6 +134,110 @@ describe("callAction transport failure classification", () => {
     const pending = callAction(lost);
     await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
     expect(await pending).toEqual({ ok: false, error: { code: "network" } });
+  });
+
+  describe("priority: 5xx, then a valid landing on /login, then network", () => {
+    const cases: [string, string, ProbeAnswer, string][] = [
+      [
+        "redirected to /login but answered 500",
+        "/app",
+        { status: 500, redirected: true, url: at("/login") },
+        "internal",
+      ],
+      [
+        "redirected to /login?next=/app but answered 503",
+        "/app",
+        { status: 503, redirected: true, url: at("/login?next=%2Fapp") },
+        "internal",
+      ],
+      [
+        "redirected to /login with 200",
+        "/app",
+        { status: 200, redirected: true, url: at("/login") },
+        "unauthenticated",
+      ],
+      [
+        "redirected to /login/ (trailing slash) with 200",
+        "/app",
+        { status: 200, redirected: true, url: at("/login/") },
+        "unauthenticated",
+      ],
+      [
+        "redirected to /login but answered 404",
+        "/app",
+        { status: 404, redirected: true, url: at("/login") },
+        "network",
+      ],
+      [
+        "already on /login, 200 without redirect",
+        "/login",
+        { status: 200, redirected: false, url: at("/login") },
+        "network",
+      ],
+      [
+        "/app with 200",
+        "/app",
+        { status: 200, redirected: false, url: at("/app") },
+        "network",
+      ],
+      [
+        "/onboarding with 200",
+        "/onboarding",
+        { status: 200, redirected: false, url: at("/onboarding") },
+        "network",
+      ],
+      [
+        "500 without redirect",
+        "/app",
+        { status: 500, redirected: false, url: at("/app") },
+        "internal",
+      ],
+      [
+        "redirected to /loginx (not the login page)",
+        "/app",
+        { status: 200, redirected: true, url: at("/loginx") },
+        "network",
+      ],
+    ];
+
+    it.each(cases)("%s → %s", async (_label, page, answer, expected) => {
+      visiting(page);
+      probeAnswers(answer);
+      expect(await callAction(lost)).toEqual({
+        ok: false,
+        error: { code: expected },
+      });
+    });
+
+    it("timeout while a redirect to /login is pending → network", async () => {
+      vi.useFakeTimers();
+      visiting("/app");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          (_url: string, init: RequestInit) =>
+            new Promise((resolve, reject) => {
+              const late = setTimeout(
+                () =>
+                  resolve({
+                    ok: true,
+                    status: 200,
+                    redirected: true,
+                    url: at("/login"),
+                  }),
+                PROBE_TIMEOUT_MS + 1_000,
+              );
+              init.signal!.addEventListener("abort", () => {
+                clearTimeout(late);
+                reject(new DOMException("Aborted", "AbortError"));
+              });
+            }),
+        ),
+      );
+      const pending = callAction(lost);
+      await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS + 1_000);
+      expect(await pending).toEqual({ ok: false, error: { code: "network" } });
+    });
   });
 
   it("does not probe when the action answers (even with an error)", async () => {

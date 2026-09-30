@@ -48,12 +48,16 @@ export const PROBE_TIMEOUT_MS = 5_000;
  * request without session with a redirect to /login, which the action call
  * cannot parse. The guards and the proxy send to /login for one state only,
  * `unauthenticated` (docs/AUTH_ONBOARDING_CONTRACT.md, Routage), so the probe
- * asks the server for the current page, follows redirects, and concludes:
- * - landed on /login → the session is gone (`unauthenticated`);
- * - redirected elsewhere (e.g. /onboarding → /app after a completed
- *   onboarding whose response was lost) → a legitimate new destination,
- *   the session is fine: reported as `network`, the caller retries;
- * - 5xx → `internal`; no answer or timeout → `network`.
+ * asks the server for the current page, follows redirects, and concludes,
+ * in this order:
+ * 1. 5xx → `internal`, wherever it ended (a failing /login page proves
+ *    nothing about the session);
+ * 2. redirected to /login and answered successfully → the session is gone
+ *    (`unauthenticated`);
+ * 3. anything else — redirected elsewhere (e.g. /onboarding → /app after a
+ *    completed onboarding whose response was lost), still on the page, an
+ *    unexpected status — says nothing about the session: `network`, the
+ *    caller retries; no answer, timeout or abort → `network` too.
  */
 async function classifyTransportFailure(): Promise<
   "unauthenticated" | "internal" | "network"
@@ -74,13 +78,16 @@ async function classifyTransportFailure(): Promise<
         signal: controller.signal,
       },
     );
+    if (response.status >= 500) return "internal";
+    const landedOn = new URL(response.url, window.location.href).pathname;
     if (
+      response.ok &&
       response.redirected &&
-      new URL(response.url, window.location.href).pathname === "/login"
+      landedOn.replace(/\/+$/, "") === "/login"
     ) {
       return "unauthenticated";
     }
-    return response.status >= 500 ? "internal" : "network";
+    return "network";
   } catch {
     return "network";
   } finally {
