@@ -151,3 +151,88 @@ export const LockIcon = (props: IconProps) => (
     <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" />
   </Icon>
 );
+
+export const PlusIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M12 5v14M5 12h14" />
+  </Icon>
+);
+
+export const ChevronLeftIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M15 5l-7 7 7 7" />
+  </Icon>
+);
+
+export const ChevronRightIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M9 5l7 7-7 7" />
+  </Icon>
+);
+
+export const CloseIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </Icon>
+);
+
+export const UsersIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <circle cx="9" cy="8.5" r="3.5" />
+    <path d="M2.5 19.5a6.5 6.5 0 0 1 13 0M16 5.2a3.5 3.5 0 0 1 0 6.6M18 14a6 6 0 0 1 3.5 5.5" />
+  </Icon>
+);
+
+export const GiftIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <rect x="3.5" y="8.5" width="17" height="4" rx="1.2" />
+    <path d="M5 12.5v7h14v-7M12 8.5v11M12 8.5c-1.5-3.5-5.5-4-5.5-1.5S10 8.5 12 8.5zm0 0c1.5-3.5 5.5-4 5.5-1.5S14 8.5 12 8.5z" />
+  </Icon>
+);
+
+export const BanIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M6 6l12 12" />
+  </Icon>
+);
+
+export const UserIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+  </Icon>
+);
+
+export const NoteIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M6 3.5h9l3.5 3.5v13.5H6z" />
+    <path d="M14.5 3.5V7.5h4M9 12h6M9 15.5h4" />
+  </Icon>
+);
+
+export const ExternalIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M13.5 4.5h6v6M19.5 4.5l-8 8M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10" />
+  </Icon>
+);
+
+export const MenuIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </Icon>
+);
+
+export const UserOffIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <circle cx="10" cy="8" r="4" />
+    <path d="M2.5 20a7.5 7.5 0 0 1 12.2-5.8M16.5 15.5l5 5M21.5 15.5l-5 5" />
+  </Icon>
+);
+
+export const SearchIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="M16 16l4.5 4.5" />
+  </Icon>
+);

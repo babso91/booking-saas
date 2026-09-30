@@ -8,7 +8,7 @@ import { Spinner } from "./spinner";
 export type ButtonState = "idle" | "loading" | "success";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "secondary" | "ghost";
+  variant?: "primary" | "secondary" | "ghost" | "danger";
   size?: "md" | "lg";
   state?: ButtonState;
   // Labels announced and shown while loading / after success.
@@ -25,6 +25,8 @@ const variants = {
     "bg-paper-raised text-ink border border-line hover:border-line-strong hover:bg-white disabled:text-ink-muted",
   ghost:
     "bg-transparent text-ink-soft hover:text-ink hover:bg-sand/60 disabled:text-ink-muted",
+  danger:
+    "bg-danger text-paper-raised hover:bg-[#86342a] disabled:bg-danger/40 shadow-[0_10px_24px_-14px_rgba(156,61,46,0.6)]",
 } as const;
 
 const sizes = {
