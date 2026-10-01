@@ -92,6 +92,9 @@ describe("GET /api/public/businesses/:slug/availability", () => {
     expect(body.data.slots[0]).toEqual({
       startsAt: zonedLocalToUtc(`${DATE}T09:00`, "Europe/Paris").toISOString(),
       endsAt: zonedLocalToUtc(`${DATE}T10:00`, "Europe/Paris").toISOString(),
+      // Wall clocks read by PostgreSQL, the calendar authority.
+      localStartsAt: `${DATE}T09:00`,
+      localEndsAt: `${DATE}T10:00`,
     });
   });
 

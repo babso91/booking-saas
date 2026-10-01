@@ -7,11 +7,14 @@ import {
   instantOf,
 } from "../../../../tests/support/agenda-fixtures";
 import {
+  intlDayBounds,
+  intlZone,
+} from "../../../../tests/support/zone-fixture";
+import {
   allDayBlocks,
   buildAxis,
   coversWholeDay,
   isAllDayBlock,
-  localDayBounds,
   placeAppointments,
   placeBlocks,
   restrictToDays,
@@ -32,7 +35,7 @@ const real = (startsAt: string, endsAt: string) => ({ startsAt, endsAt });
 describe("normal 24 h days", () => {
   const axis = buildAxis(
     ["2026-09-28", "2026-09-29", "2026-09-30"],
-    "Europe/Paris",
+    intlZone("Europe/Paris", ["2026-09-28", "2026-09-29", "2026-09-30"]),
   );
 
   it("places items from their real instants", () => {
@@ -118,7 +121,7 @@ describe("normal 24 h days", () => {
 describe("Europe/Paris — back to winter time (25 h day, 25 Oct 2026)", () => {
   // 02:00–02:59 happens twice: 00:00Z–00:59Z (UTC+2), then 01:00Z–01:59Z (UTC+1).
   const days = ["2026-10-24", "2026-10-25", "2026-10-26"];
-  const axis = buildAxis(days, "Europe/Paris");
+  const axis = buildAxis(days, intlZone("Europe/Paris", days));
   const DST = "2026-10-25";
 
   const onlyOn = (item: { startsAt: string; endsAt: string }, date: string) => {
@@ -241,7 +244,7 @@ describe("Europe/Paris — back to winter time (25 h day, 25 Oct 2026)", () => {
 
 describe("Europe/Paris — spring forward (23 h day, 29 Mar 2026)", () => {
   const days = ["2026-03-28", "2026-03-29", "2026-03-30"];
-  const axis = buildAxis(days, "Europe/Paris");
+  const axis = buildAxis(days, intlZone("Europe/Paris", days));
   const DST = "2026-03-29";
 
   it("7. a 23 h day shows its skipped hour as a strip without time", () => {
@@ -279,7 +282,7 @@ describe("Africa/Cairo — Codex counterexample (clocks back at 24:00 on 29 Oct 
     "2026-10-31",
     "2026-11-01",
   ];
-  const axis = buildAxis(days, "Africa/Cairo");
+  const axis = buildAxis(days, intlZone("Africa/Cairo", days));
   const repeated = block({
     timeZone: "Africa/Cairo",
     startsAt: "2026-10-29T20:30:00.000Z",
@@ -322,7 +325,7 @@ describe("Africa/Cairo — Codex counterexample (clocks back at 24:00 on 29 Oct 
 describe("Africa/Cairo — axis labels", () => {
   const axis = buildAxis(
     ["2026-10-28", "2026-10-29", "2026-10-30"],
-    "Africa/Cairo",
+    intlZone("Africa/Cairo", ["2026-10-28", "2026-10-29", "2026-10-30"]),
   );
 
   it("never draws two labels at the same height", () => {
@@ -348,7 +351,7 @@ describe("Africa/Cairo — axis labels", () => {
 describe("America/Havana — repeated midnight (1 Nov 2026)", () => {
   const TZ_HAVANA = "America/Havana";
   const days = ["2026-10-31", "2026-11-01", "2026-11-02"];
-  const axis = buildAxis(days, TZ_HAVANA);
+  const axis = buildAxis(days, intlZone(TZ_HAVANA, days));
   const DST = "2026-11-01";
   const at = (startsAt: string, endsAt: string) =>
     block({ timeZone: TZ_HAVANA, startsAt, endsAt });
@@ -359,11 +362,11 @@ describe("America/Havana — repeated midnight (1 Nov 2026)", () => {
   };
 
   it("starts the day at the FIRST midnight and ends it at the next one", () => {
-    expect(localDayBounds(DST, TZ_HAVANA)).toEqual({
+    expect(intlDayBounds(DST, TZ_HAVANA)).toEqual({
       startMs: Date.parse("2026-11-01T04:00:00Z"),
       endMs: Date.parse("2026-11-02T05:00:00Z"),
     });
-    expect(localDayBounds("2026-10-31", TZ_HAVANA)).toEqual({
+    expect(intlDayBounds("2026-10-31", TZ_HAVANA)).toEqual({
       startMs: Date.parse("2026-10-31T04:00:00Z"),
       endMs: Date.parse("2026-11-01T04:00:00Z"),
     });
@@ -467,10 +470,10 @@ describe("America/Havana — repeated midnight (1 Nov 2026)", () => {
 describe("America/Havana — skipped midnight (8 Mar 2026)", () => {
   const TZ_HAVANA = "America/Havana";
   const days = ["2026-03-07", "2026-03-08", "2026-03-09"];
-  const axis = buildAxis(days, TZ_HAVANA);
+  const axis = buildAxis(days, intlZone(TZ_HAVANA, days));
 
   it("starts the day at the transition (01:00 EDT) and shows 00:00–01:00 as a strip", () => {
-    expect(localDayBounds("2026-03-08", TZ_HAVANA)).toEqual({
+    expect(intlDayBounds("2026-03-08", TZ_HAVANA)).toEqual({
       startMs: Date.parse("2026-03-08T05:00:00Z"),
       endMs: Date.parse("2026-03-09T04:00:00Z"),
     });
@@ -651,7 +654,7 @@ const boundaryCases: {
 describe("America/Nuuk — clocks jump from 23:00 to 00:00 (28 Mar 2026)", () => {
   const TZ_NUUK = "America/Nuuk";
   const days = ["2026-03-27", "2026-03-28", "2026-03-29"];
-  const axis = buildAxis(days, TZ_NUUK);
+  const axis = buildAxis(days, intlZone(TZ_NUUK, days));
 
   it("shows the skipped 23:00–24:00 at the end of the day, not at midnight", () => {
     expect(axis.frames.get("2026-03-28")).toMatchObject({
@@ -685,7 +688,7 @@ describe("localDayBounds — explicit UTC bounds in many IANA zones", () => {
   it.each(boundaryCases)(
     "$zone $date: [$start, $end) = $hours h",
     ({ zone, date, start, end, hours }) => {
-      const bounds = localDayBounds(date, zone);
+      const bounds = intlDayBounds(date, zone);
       expect(new Date(bounds.startMs).toISOString()).toBe(
         new Date(start).toISOString(),
       );
@@ -709,7 +712,7 @@ describe("grid invariant — shown on a day if and only if the real periods inte
         base.setUTCDate(base.getUTCDate() + Number(shift));
         return base.toISOString().slice(0, 10);
       });
-      const axis = buildAxis(window, zone);
+      const axis = buildAxis(window, intlZone(zone, window));
       // Expected bounds come from the explicit table when present.
       const bound = (day: string) => {
         const entry = boundaryCases.find(
@@ -717,7 +720,7 @@ describe("grid invariant — shown on a day if and only if the real periods inte
         );
         return entry
           ? { startMs: Date.parse(entry.start), endMs: Date.parse(entry.end) }
-          : localDayBounds(day, zone);
+          : intlDayBounds(day, zone);
       };
       const first = bound(window[0]!).startMs;
       const last = bound(window[2]!).endMs;
@@ -770,7 +773,9 @@ describe("grid invariant — shown on a day if and only if the real periods inte
         day.setUTCDate(day.getUTCDate() + shift);
         return day.toISOString().slice(0, 10);
       });
-      const ys = buildAxis(week, zone).marks.map((mark) => mark.y);
+      const ys = buildAxis(week, intlZone(zone, week)).marks.map(
+        (mark) => mark.y,
+      );
       expect(new Set(ys).size, `${zone} ${date}`).toBe(ys.length);
       expect(ys, `${zone} ${date}`).toEqual([...ys].sort((a, b) => a - b));
     }
@@ -790,10 +795,10 @@ describe("restrictToDays — the extra day requested is never shown", () => {
       startsAt: "2026-11-01T03:00:00.000Z",
       endsAt: "2026-11-01T04:00:00.000Z",
     });
-    const data = {
-      ...agenda("2026-10-31", "2026-11-01", { blocks: [first, previous] }),
-      timezone: TZ_HAVANA,
-    };
+    const data = agenda("2026-10-31", "2026-11-01", {
+      blocks: [first, previous],
+      timeZone: TZ_HAVANA,
+    });
     const visible = restrictToDays(data, ["2026-11-01"]);
     expect(visible.blocks.map((item) => item.id)).toEqual([first.id]);
     expect(visible.workingHours.days.map((day) => day.date)).toEqual([

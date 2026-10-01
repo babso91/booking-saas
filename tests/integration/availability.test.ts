@@ -479,20 +479,21 @@ describe("time zones", () => {
       ).toEqual([]);
     });
 
-    it("shifts a nonexistent start forward by the gap", async () => {
+    it("opens what exists of a range starting in the spring gap", async () => {
       const short = await createService(business.id, { durationMinutes: 30 });
       await setWeeklyHours(business.id, [[0, "02:30", "04:00"]]);
 
-      // 02:30 does not exist → 03:30 CEST; the range is 03:30–04:00.
+      // Wall-clock policy: the instants whose wall clock is in [02:30, 04:00).
+      // 02:00–03:00 does not exist, so the range is 03:00–04:00 CEST.
       const { rows } = await db.query<{ local: string }>(
         `select to_char(starts_at at time zone 'Europe/Paris', 'HH24:MI') as local
          from private.available_slots($1, $2, '2027-03-28', '2027-03-01T00:00Z')`,
         [business.id, short],
       );
-      expect(rows.map((row) => row.local)).toEqual(["03:30"]);
+      expect(rows.map((row) => row.local)).toEqual(["03:00", "03:30"]);
     });
 
-    it("uses the later occurrence of an ambiguous autumn time", async () => {
+    it("opens both occurrences of a repeated autumn hour", async () => {
       await updateSettings(business.id, { slot_interval_minutes: 30 });
       const short = await createService(business.id, { durationMinutes: 30 });
       // 2027-10-31 (Sunday): 03:00 CEST → 02:00 CET; 02:xx happens twice.
@@ -506,7 +507,10 @@ describe("time zones", () => {
         [business.id, short],
       );
 
+      // Wall-clock policy: every instant whose wall clock is in [02:00, 03:00).
       expect(rows.map((row) => row.starts_at.toISOString())).toEqual([
+        "2027-10-31T00:00:00.000Z", // 02:00 CEST (first occurrence)
+        "2027-10-31T00:30:00.000Z", // 02:30 CEST
         "2027-10-31T01:00:00.000Z", // 02:00 CET (second occurrence)
         "2027-10-31T01:30:00.000Z", // 02:30 CET
         "2027-10-31T08:00:00.000Z", // 09:00 CET

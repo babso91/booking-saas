@@ -266,24 +266,65 @@ Toute erreur annule l'ensemble.
 
 ## 8. Disponibilités
 
-Le calcul est implémenté une seule fois, en PostgreSQL (`private.available_slots(business, service, date locale, now)`). La RPC publique d'affichage et la transaction de réservation appellent la même fonction : l'affichage ne peut pas être plus permissif que l'insertion. La conversion des horaires locaux utilise la base IANA de PostgreSQL et gère les changements d'heure.
+### Autorité calendaire : PostgreSQL
+
+Toute conversion qui a une conséquence sur le planning est calculée par PostgreSQL, avec **sa** base IANA (migration `20261001090000`). Node et le navigateur embarquent chacun leur propre tzdata, qui peut différer : en CI, Node 24 (tzdata 2026c) lit America/Vancouver en UTC−7 le 14 mars 2027 alors que PostgreSQL (tzdata 2025b) y lit encore UTC−8. Avec trois calculs « équivalents », l'agenda montrait alors une ouverture `00:00 → 01:00` à 07:00Z–08:00Z pendant que la réservation publique la plaçait à 08:00Z–09:00Z. Il n'y a donc plus qu'une autorité :
+
+| Conversion                                                                                 | Calculée par                                               |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| date civile → instant, bornes d'un jour (`local_day_start`, `local_date_of`)               | PostgreSQL                                                 |
+| plages d'ouverture réelles d'un jour (`private.opening_ranges`)                            | PostgreSQL, pour la disponibilité publique **et** l'agenda |
+| disponibilité, horizon, délai minimal, validation de réservation                           | PostgreSQL                                                 |
+| heure murale et occurrence (`first`/`second`) d'un instant stocké                          | PostgreSQL (`wall_clock`, `wall_occurrence`)               |
+| heure murale saisie → instant(s) : `exact` / `ambiguous` / `nonexistent`, borne de période | PostgreSQL (`resolve_local`, `local_bound`)                |
+| heure murale des créneaux publics, du payload d'email                                      | PostgreSQL (`get_available_slots`, outbox)                 |
+| date du jour du business                                                                   | PostgreSQL                                                 |
+
+Le serveur Next.js obtient ces valeurs en un appel par lecture ou écriture : `public.business_time` (membres uniquement, entrées bornées), encapsulée par `src/lib/time/business-time.ts`. L'agenda reçoit avec chaque lecture les bornes réelles de chaque jour et les tranches de décalage UTC constant qui les couvrent (`offsets`) ; la grille (`src/features/agenda/client/zone.ts`, `layout.ts`) ne fait que de l'arithmétique sur ces valeurs.
+
+Ce que Node et le navigateur ont encore le droit de calculer :
+
+- l'arithmétique de dates civiles sans fuseau (`src/lib/time/local-date.ts` : jour suivant, nombre de jours, jour de semaine) ;
+- l'arithmétique sur les instants et les décalages envoyés par PostgreSQL (placement sur la grille, heure murale d'un instant couvert par ces décalages) ;
+- le formatage décoratif d'une date civile (`Intl.DateTimeFormat` en `timeZone: "UTC"` pour « mercredi 30 septembre ») et des montants ;
+- un pré-contrôle de formulaire (`isValidTimeZone`), que la base refait.
+
+Ils n'utilisent jamais `Intl` avec le fuseau du business pour une décision de planning. La règle `no-restricted-imports` d'`eslint.config.mjs` interdit les conversions de `src/lib/time/zoned.ts` (fondées sur `Intl`) hors des tests. Pour une date que le serveur n'a pas envoyée, l'UI affiche le libellé d'occurrence sans décalage UTC plutôt que d'en deviner un. Un test d'intégration remplace `Intl.DateTimeFormat` par une base volontairement fausse et vérifie que l'agenda, les écritures, la grille et la disponibilité ne bougent pas.
+
+Conséquence assumée : la tzdata de PostgreSQL fait foi. Si elle est en retard sur une décision gouvernementale (cas de la Colombie-Britannique ci-dessus), toute l'application suit la même règle, cohérente partout ; la mettre à jour (image Supabase) change d'un bloc l'agenda, la disponibilité et la réservation.
+
+### Calcul
+
+Le calcul est implémenté une seule fois, en PostgreSQL (`private.available_slots(business, service, date locale, now)`). La RPC publique d'affichage et la transaction de réservation appellent la même fonction : l'affichage ne peut pas être plus permissif que l'insertion. La transaction de réservation est `private.create_public_booking_at(now, …)` ; la RPC publique `create_public_booking` l'appelle avec `now()`, et aucun rôle d'API ne peut appeler le cœur avec un autre « maintenant ». Les tests utilisent ce cœur avec des instants fixes : leur résultat ne dépend pas de la date d'exécution.
 
 Pour un jour calendaire `D` du fuseau du business :
 
-1. plages ouvertes = plages hebdomadaires du jour de semaine de `D` (`0` = dimanche, `24:00` autorisé en fin de plage) + exceptions `open_override` ;
+0. jour `D` = `[local_day_start(D), local_day_start(D + 1))`, où `private.local_day_start` renvoie le premier instant réel dont la date locale est `D` ou postérieure. Conséquences :
+   - minuit répété (America/Havana et Atlantic/Azores en automne, Asia/Gaza…) : sa **première** occurrence ;
+   - minuit sauté : le premier instant après le saut ;
+   - date inexistante (Pacific/Apia, 30/12/2011) : jour vide, aucun créneau ;
+   - aucune journée n'est supposée durer 24 h.
+1. plages ouvertes (`private.opening_ranges`) = plages hebdomadaires du jour de semaine de `D` (`0` = dimanche) + exceptions `open_override`, limitées au jour réel puis fusionnées. Une plage hebdomadaire `de → à` est **l'ensemble des instants du jour `D` dont l'heure murale est dans `[de, à)`** (`24:00` = fin du jour). Elle peut donc donner plusieurs intervalles UTC :
+   - heure répétée (Havana, 1er novembre 2026, 00:00–01:00 deux fois) : `00:00 → 00:30` ouvre les deux 00:00–00:30 réels (04:00Z–04:30Z et 05:00Z–05:30Z), jamais le premier 00:30–01:00 entre les deux. Une plage qui couvre toute l'heure répétée (`00:00 → 02:00`) reste un seul intervalle continu de 3 h réelles ;
+   - heure inexistante (Paris, 28 mars 2027, 02:00–03:00 absent) : `02:30 → 04:00` ouvre 03:00–04:00 (ce qui en existe), `01:00 → 02:30` ouvre 01:00–02:00, `02:30 → 03:00` n'ouvre rien ce jour-là. Jamais d'intervalle négatif ;
+   - `00:00 → 24:00` couvre exactement la journée réelle, qu'elle dure 23, 24, 25, 23,5 ou 26 h (vérifié pour tous les fuseaux IANA, 2018–2028).
+
+   Le calcul procède par tranches de décalage UTC constant (`private.zone_offsets`) : dans une tranche, heure murale = instant + décalage, donc l'intervalle mural se convertit exactement.
+
 2. plages utilisables = plages ouvertes − exceptions `closed` (fermeture, vacances) et `blocked` (créneau bloqué, rendez-vous personnel) ; une fermeture l'emporte sur une ouverture exceptionnelle ;
 3. candidats = grille de `slot_interval_minutes` ancrée sur le début de chaque plage ouverte ;
 4. un candidat est retenu si `[début, début + durée)` tient dans une plage utilisable, si `[début, début + durée + buffer)` ne touche la plage occupée d'aucun rendez-vous non annulé, si `début ≥ now + délai minimal`, et si `début` tombe au plus tard le jour local `aujourd'hui + horizon` (le dernier jour est réservable en entier).
+   - les horaires hebdomadaires sont des heures **murales** ; le délai minimal, la durée et le buffer sont des minutes **réelles** ;
+   - une prestation ne quitte jamais un intervalle ouvert : dans `00:00 → 00:30` à Havana le 1er novembre, aucun service de 60 min n'est proposé ;
+   - l'horizon se compte en jours civils : il s'arrête à `local_day_start(aujourd'hui + N + 1)`.
+
+Un créneau appartient au jour `D` si et seulement si son instant est dans `[local_day_start(D), local_day_start(D + 1))`. La réservation valide l'instant demandé sur ce même jour (`private.local_date_of`) : ce qui est affiché est exactement ce qui est réservable, y compris pendant la première heure d'un jour au minuit répété.
 
 Le buffer n'est exigé qu'entre deux rendez-vous : une prestation peut finir à la fermeture ou au début d'un blocage.
 
-Changements d'heure (règle identique à `timestamp AT TIME ZONE` de PostgreSQL et à `src/lib/time/zoned.ts`) :
+Périodes saisies par la professionnelle (blocs, fermetures, ouvertures exceptionnelles ; `private.local_bound`) : minuit est le début réel du jour ; une autre heure suit `timestamp AT TIME ZONE` (heure répétée → occurrence la plus tardive, heure inexistante → décalage d'avant le changement). Une borne inchangée d'un bloc garde son instant stocké. Un rendez-vous saisi à une heure répétée exige `occurrence`, une heure inexistante est refusée.
 
-- une heure locale inexistante (passage à l'heure d'été) est décalée de la durée du saut : 02:30 devient 03:30 à Paris ;
-- une heure ambiguë (passage à l'heure d'hiver) prend l'instant le plus tardif, en heure standard ;
-- une plage rendue vide ou inversée ce jour-là (par exemple 02:30–03:00 le 28 mars 2027) est ignorée pour ce jour uniquement ; les autres plages de la journée restent calculées.
-
-Le serveur reçoit une date locale et renvoie des instants UTC accompagnés du fuseau du business. Côté professionnel, les exceptions sont saisies en heure murale locale et converties en UTC côté serveur avec le fuseau du business (`src/lib/time/zoned.ts`, aligné sur le comportement de PostgreSQL pour les heures ambiguës ou inexistantes). Aucun code ne suppose `Europe/Paris`, qui n'est qu'une valeur par défaut de colonne ; les fuseaux invalides sont refusés par trigger.
+La RPC publique renvoie des instants UTC, le fuseau du business et l'heure murale de chaque créneau lue par PostgreSQL (`localStartsAt`, `localEndsAt`) : un client affiche ces valeurs, jamais une conversion avec sa propre tzdata. Aucun code ne suppose `Europe/Paris`, qui n'est qu'une valeur par défaut de colonne ; les fuseaux invalides sont refusés par trigger.
 
 ### Agenda professionnel (V1, backend)
 
@@ -306,7 +347,7 @@ L'agenda n'est pas un second moteur de planning : il lit et modifie les mêmes t
 - **Statuts.** Les transitions V1 sont bornées en SQL (`agenda_set_appointment_status`). Seule l'annulation libère le créneau. `completed` et `no_show` exigent que le rendez-vous ait commencé. Revenir de `completed` est refusé dès que des points de fidélité ont été attribués.
 - **Clientes.** `clients.email` devient facultatif, pour une cliente connue par son nom ou son téléphone. `unique (business_id, email)` continue de dédupliquer les emails, et la réservation publique exige toujours un email. La recherche (`search_clients`) est limitée au business, sous RLS, et échappe les jokers `LIKE`.
 - **Lecture.** Elle passe par les Server Actions, sous RLS. Une plage est limitée à 42 jours, 800 rendez-vous et 500 exceptions ; les plages hebdomadaires et les prestations ont aussi un plafond explicite. Chaque liste est demandée avec son plafond + 1, et un dépassement est refusé plutôt que tronqué, car PostgREST plafonne silencieusement à 1000 lignes.
-- **Plages d'ouverture.** Celles de chaque jour sont calculées côté serveur avec les règles DST du §8.
+- **Plages d'ouverture.** Celles de chaque jour viennent de `private.opening_ranges`, exactement les plages de la disponibilité publique (§8) ; une plage hebdomadaire et une ouverture exceptionnelle contiguës sont fusionnées. La lecture fait trois allers-retours constants (calendrier, éléments en parallèle, heures murales), jamais un par jour ou par élément.
 - **Contrat UI.** Il est décrit dans `docs/PROFESSIONAL_AGENDA_CONTRACT.md`.
 
 ## 8 bis. Intégration des calendriers externes — architecture prévue

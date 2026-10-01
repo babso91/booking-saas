@@ -84,7 +84,7 @@ Inclus :
 - contrainte d'exclusion GiST empêchant tout chevauchement de rendez-vous non annulés, buffer compris ;
 - prestations : création, lecture, modification, activation, ordre d'affichage, suppression si jamais réservée ;
 - horaires hebdomadaires à plages multiples, réglages de réservation, exceptions (fermeture, vacances, blocage, ouverture exceptionnelle) ;
-- calcul des créneaux disponibles dans le fuseau IANA du business ;
+- calcul des créneaux disponibles dans le fuseau IANA du business, PostgreSQL étant la seule autorité calendaire (jours réels, heures murales, occurrences ; ni Node ni le navigateur ne convertissent avec leur propre tzdata : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §8) ;
 - réservation publique transactionnelle avec création/rapprochement de la cliente et email de confirmation mis en outbox ;
 - API publique : `GET /api/public/businesses/[slug]`, `GET /api/public/businesses/[slug]/availability?serviceId=…&date=AAAA-MM-JJ`, `POST /api/bookings` ;
 - Server Actions professionnelles dans `src/features/*/actions` ;
@@ -106,7 +106,7 @@ Si une action échoue au niveau du transport, `callAction` interroge la page cou
 `/app` est l'espace professionnel : barre latérale sur ordinateur, barre d'onglets en bas sur téléphone. L'agenda (`src/features/agenda/components`) n'utilise que les Server Actions de [docs/PROFESSIONAL_AGENDA_CONTRACT.md](docs/PROFESSIONAL_AGENDA_CONTRACT.md) :
 
 - une semaine est lue à partir de 768 px, une journée sur téléphone, en une seule requête agrégée ;
-- la grille place chaque élément d'après ses instants UTC réels et les bornes réelles de chaque jour local (`localDayBounds` : premier instant réel de la date → premier instant réel de la date suivante, intervalle semi-ouvert ; un minuit répété commence au premier, un minuit sauté à la transition ; jours de 23, 24, 25 h mais aussi 23,5 ou 26 h), d'après les règles IANA du runtime ; la période est demandée à partir de la veille puis réduite à ces bornes, car le backend lit un minuit répété comme sa seconde occurrence ; l'heure répétée d'automne a sa propre bande, un élément ne change jamais de jour ni de durée ; les heures affichées et les prix viennent du DTO (`local*`, `priceCents`), sans calcul flottant ;
+- la grille place chaque élément d'après ses instants UTC réels et les bornes réelles de chaque jour local (`localDayBounds` : premier instant réel de la date → premier instant réel de la date suivante, intervalle semi-ouvert ; un minuit répété commence au premier, un minuit sauté à la transition ; jours de 23, 24, 25 h mais aussi 23,5 ou 26 h), d'après les règles IANA du runtime ; la période est demandée à partir de la veille puis réduite à ces bornes (précaution conservée : le backend utilise désormais la même définition du jour, agenda comme réservation publique) ; l'heure répétée d'automne a sa propre bande, un élément ne change jamais de jour ni de durée ; les heures affichées et les prix viennent du DTO (`local*`, `priceCents`), sans calcul flottant ;
 - aucune écriture optimiste : la réponse du serveur met à jour le panneau et la plage visible est rechargée ;
 - les versions (`stale_*`), l'idempotence de création (`requestId` lié à l'empreinte de la commande), les conflits de planning et les deux occurrences de l'heure répétée à l'automne sont gérés explicitement.
 
@@ -120,14 +120,15 @@ Si une action échoue au niveau du transport, `callAction` interroge la page cou
 
 ## Migrations
 
-| Migration                                              | Contenu                                                                                                                                          |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `20260927193000_initial_foundation.sql`                | modèle initial, RLS et politiques                                                                                                                |
-| `20260927200000_harden_api_privileges.sql`             | retrait de `TRUNCATE`, privilèges anonymes et `EXECUTE` implicites ; schéma `private`                                                            |
-| `20260927200100_scheduling_invariants.sql`             | fuseau validé, réglages par défaut, plages sans chevauchement, contrainte avec buffer                                                            |
-| `20260927200200_availability_and_public_booking.sql`   | calcul des créneaux, RPC publiques de réservation, fonctions horaires et ordre des prestations                                                   |
-| `20260928090000_schedule_coordination.sql`             | verrou de planning commun, blocages refusés sur un rendez-vous, valeurs de réservation cohérentes, plages DST                                    |
-| `20260928190000_schedule_lock_order_and_isolation.sql` | remplacements atomiques (`replace_business_hours`, `reorder_services`), `READ COMMITTED` exigé pour les écritures de planning, ordre des verrous |
-| `20260929090000_auth_onboarding.sql`                   | onboarding transactionnel et idempotent, normalisation et réservation des slugs, téléphone du business                                           |
+| Migration                                              | Contenu                                                                                                                                                      |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `20260927193000_initial_foundation.sql`                | modèle initial, RLS et politiques                                                                                                                            |
+| `20260927200000_harden_api_privileges.sql`             | retrait de `TRUNCATE`, privilèges anonymes et `EXECUTE` implicites ; schéma `private`                                                                        |
+| `20260927200100_scheduling_invariants.sql`             | fuseau validé, réglages par défaut, plages sans chevauchement, contrainte avec buffer                                                                        |
+| `20260927200200_availability_and_public_booking.sql`   | calcul des créneaux, RPC publiques de réservation, fonctions horaires et ordre des prestations                                                               |
+| `20260928090000_schedule_coordination.sql`             | verrou de planning commun, blocages refusés sur un rendez-vous, valeurs de réservation cohérentes, plages DST                                                |
+| `20260928190000_schedule_lock_order_and_isolation.sql` | remplacements atomiques (`replace_business_hours`, `reorder_services`), `READ COMMITTED` exigé pour les écritures de planning, ordre des verrous             |
+| `20260929090000_auth_onboarding.sql`                   | onboarding transactionnel et idempotent, normalisation et réservation des slugs, téléphone du business                                                       |
+| `20261001090000_unified_local_day.sql`                 | PostgreSQL autorité calendaire : jour civil réel, plages murales multi-segments, `business_time`, heures murales des créneaux, réservation à `now` explicite |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.

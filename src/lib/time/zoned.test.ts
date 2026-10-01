@@ -10,7 +10,6 @@ import {
   zonedDateOf,
   zonedLocalToUtc,
   zonedOccurrenceOf,
-  zonedTimeOnDateToUtc,
   weekdayOfLocalDate,
 } from "./zoned";
 
@@ -97,16 +96,6 @@ describe("local calendar dates", () => {
   it("gives the weekday like PostgreSQL extract(dow)", () => {
     expect(weekdayOfLocalDate("2026-09-27")).toBe(0); // Sunday
     expect(weekdayOfLocalDate("2026-10-03")).toBe(6); // Saturday
-  });
-
-  it("maps 24:00 to the next local midnight, DST day included", () => {
-    // 2026-10-25 lasts 25 hours in Paris.
-    expect(
-      zonedTimeOnDateToUtc("2026-10-25", "00:00", "Europe/Paris").toISOString(),
-    ).toBe("2026-10-24T22:00:00.000Z");
-    expect(
-      zonedTimeOnDateToUtc("2026-10-25", "24:00", "Europe/Paris").toISOString(),
-    ).toBe("2026-10-25T23:00:00.000Z");
   });
 
   it("detects local times skipped by the spring transition", () => {

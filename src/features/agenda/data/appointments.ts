@@ -13,12 +13,14 @@ import type {
 } from "@/features/agenda/schemas/agenda";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
+import { readBusinessTime } from "@/lib/time/business-time";
 
 // Appointment writes of the agenda. Each is a single SQL function call
 // (supabase/migrations/20260930090000_professional_agenda.sql): schedule
 // lock, server-side duration and buffer, exclusion constraint and block
 // triggers all run in one transaction. The browser never supplies a duration,
-// an end or a business.
+// an end or a business. A typed start is resolved by PostgreSQL
+// (public.business_time), never with Node's time zone database.
 
 export type CreatedAppointmentDto = {
   appointment: AgendaAppointmentDto;
@@ -31,10 +33,10 @@ export async function createManualAppointment(
   context: AgendaContext,
   input: CreateAppointmentInput,
 ): Promise<CreatedAppointmentDto> {
-  const startsAt = localStartToUtc(
-    input.date,
-    input.time,
-    context.timezone,
+  const startsAt = await resolvedStart(
+    client,
+    context,
+    `${input.date}T${input.time}`,
     input.occurrence,
   );
   const clientFields =
@@ -70,6 +72,18 @@ export async function createManualAppointment(
   };
 }
 
+async function resolvedStart(
+  client: AppSupabaseClient,
+  context: AgendaContext,
+  local: string,
+  occurrence: CreateAppointmentInput["occurrence"],
+) {
+  const time = await readBusinessTime(client, context.businessId, {
+    locals: [local],
+  });
+  return localStartToUtc(time.local(local), occurrence);
+}
+
 /**
  * New start requested by an edit, or undefined to keep the stored instant.
  *
@@ -100,11 +114,13 @@ async function requestedStart(
 
   if (unchanged) return undefined;
 
-  return localStartToUtc(
-    input.date,
-    input.time,
-    context.timezone,
-    input.occurrence,
+  return (
+    await resolvedStart(
+      client,
+      context,
+      `${input.date}T${input.time}`,
+      input.occurrence,
+    )
   ).toISOString();
 }
 

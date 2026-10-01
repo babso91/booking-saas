@@ -4,20 +4,18 @@ import type {
   AgendaDayDto,
   AgendaDto,
 } from "@/features/agenda/data/agenda";
-import {
-  addDaysToLocalDate,
-  resolveZonedLocal,
-  utcToZonedLocal,
-} from "@/lib/time/zoned";
+
+import { dayBounds, transitionWithin, wallOf, type Zone } from "./zone";
 
 // Time grid model of the agenda, driven by real instants.
 //
-// Source of truth: the UTC instants of every item and the real bounds of
-// each local day in the business time zone (localDayBounds, built on the
-// IANA rules of the runtime through src/lib/time/zoned.ts). A local day is
-// the half-open interval [first instant of the date, first instant of the
-// next date) and may last any length (23, 24, 25 h, 23.5 h, 26 h…); an item
-// is shown on a day if and only if its real period intersects that interval.
+// Source of truth: PostgreSQL, the calendar authority. The agenda read
+// carries the real bounds of each day and the UTC offset pieces covering
+// them (./zone.ts); the grid only does arithmetic on those values and never
+// asks the browser's time zone database. A local day is the half-open
+// interval [first instant of the date, first instant of the next date) and
+// may last any length (23, 24, 25 h, 23.5 h, 26 h…); an item is shown on a
+// day if and only if its real period intersects that interval.
 //
 // Vertical axis ("y", in minutes): wall-clock time, aligned across the
 // visible days. A fall-back transition inserts a band after the repeated
@@ -57,7 +55,8 @@ export type DayFrame = {
 export type HourMark = { y: number; label: string; repeated: boolean };
 
 export type Axis = {
-  timeZone: string;
+  /** The zone sent by the server, or null before the first answer. */
+  zone: Zone | null;
   band: Band | null;
   frames: Map<string, DayFrame>;
   marks: HourMark[];
@@ -67,134 +66,67 @@ const pad = (value: number) => String(value).padStart(2, "0");
 const label = (minutes: number) =>
   `${pad(Math.floor(minutes / 60) % 24)}:${pad(minutes % 60)}`;
 
-function localMs(instant: number, timeZone: string) {
-  const local = utcToZonedLocal(new Date(instant), timeZone);
-  return Date.UTC(
-    Number(local.slice(0, 4)),
-    Number(local.slice(5, 7)) - 1,
-    Number(local.slice(8, 10)),
-    Number(local.slice(11, 13)),
-    Number(local.slice(14, 16)),
-  );
-}
-
-/** UTC offset in minutes at an instant (minute precision). */
-function offsetMinutes(instant: number, timeZone: string) {
-  return Math.round(
-    (localMs(instant, timeZone) - Math.floor(instant / MINUTE) * MINUTE) /
-      MINUTE,
-  );
-}
-
 /** Wall-clock minutes of `instant` on local `date` (the next midnight is 1440). */
-function wallMinutes(instant: number, date: string, timeZone: string) {
-  const local = utcToZonedLocal(new Date(instant), timeZone);
+function wallMinutes(zone: Zone, instant: number, date: string) {
+  const local = wallOf(zone, instant);
+  if (local === null) return 0;
   if (local.slice(0, 10) !== date) return local.slice(0, 10) > date ? DAY : 0;
   return Number(local.slice(11, 13)) * 60 + Number(local.slice(14, 16));
 }
 
-/** First instant (minute precision) after `from` whose offset differs from `from`'s. */
-function transitionBetween(from: number, to: number, timeZone: string) {
-  const initial = offsetMinutes(from, timeZone);
-  if (offsetMinutes(to - MINUTE, timeZone) === initial) return null;
-  let low = from;
-  let high = to - MINUTE;
-  while (high - low > MINUTE) {
-    const middle = low + Math.floor((high - low) / 2 / MINUTE) * MINUTE;
-    if (offsetMinutes(middle, timeZone) === initial) low = middle;
-    else high = middle;
-  }
-  return high;
-}
-
-const localDateOf = (instant: number, timeZone: string) =>
-  utcToZonedLocal(new Date(instant), timeZone).slice(0, 10);
-
 /**
- * First real instant (ms) whose wall-clock date in `timeZone` is `date`.
- *
- * Never the generic wall-clock → UTC rule, which picks one occurrence
- * arbitrarily: a repeated midnight (Havana, 1 Nov: 00:00 happens at 04:00Z
- * and again at 05:00Z) starts the day at its FIRST occurrence; a skipped
- * midnight (Havana, 8 Mar: 23:59 → 01:00) starts it at the transition. A
- * date that does not exist at all (Apia, 30 Dec 2011) yields the first
- * instant of the next date, i.e. an empty day.
- */
-export function localDayStart(date: string, timeZone: string): number {
-  const midnight = resolveZonedLocal(`${date}T00:00`, timeZone);
-  if (midnight.status === "exact") return midnight.instant.getTime();
-  if (midnight.status === "ambiguous") return midnight.first.getTime();
-
-  // Skipped midnight: search the first minute whose local date is ≥ `date`.
-  // UTC offsets stay within ±14 h, so these bounds bracket it.
-  const utcMidnight = Date.parse(`${date}T00:00:00Z`);
-  let before = utcMidnight - 26 * 60 * MINUTE; // local date < date
-  let after = utcMidnight + 26 * 60 * MINUTE; // local date ≥ date
-  while (after - before > MINUTE) {
-    const middle = before + Math.floor((after - before) / 2 / MINUTE) * MINUTE;
-    if (localDateOf(middle, timeZone) >= date) after = middle;
-    else before = middle;
-  }
-  return after;
-}
-
-/** Real bounds of a local day: [first instant of date, first instant of next date). */
-export function localDayBounds(date: string, timeZone: string) {
-  return {
-    startMs: localDayStart(date, timeZone),
-    endMs: localDayStart(addDaysToLocalDate(date, 1), timeZone),
-  };
-}
-
-/**
- * Dates to request for the visible days. The backend reads a range from
- * local midnight with the PostgreSQL rule, which picks the SECOND occurrence
- * of a repeated midnight: the first real hour of such a day (Havana, 1 Nov
- * 04:00Z–05:00Z) would be missing. The previous day is requested as well and
- * the answer is trimmed back to the real bounds by `restrictToDays`.
+ * Dates to request for the visible days: exactly those. The server reads the
+ * real bounds of each day from PostgreSQL (repeated or skipped midnight
+ * included), so nothing has to be added around them.
  */
 export function agendaRequestRange(days: string[]) {
-  return {
-    startDate: addDaysToLocalDate(days[0]!, -1),
-    endDate: days[days.length - 1]!,
-  };
+  return { startDate: days[0]!, endDate: days[days.length - 1]! };
 }
 
 /** The agenda restricted to the real interval of the visible days. */
 export function restrictToDays(data: AgendaDto, days: string[]): AgendaDto {
-  const timeZone = data.timezone;
-  const startMs = localDayStart(days[0]!, timeZone);
-  const endMs = localDayStart(
-    addDaysToLocalDate(days[days.length - 1]!, 1),
-    timeZone,
+  const visible = data.workingHours.days.filter((day) =>
+    days.includes(day.date),
   );
+  if (visible.length === 0) {
+    return {
+      ...data,
+      appointments: [],
+      blocks: [],
+      workingHours: { ...data.workingHours, days: [] },
+    };
+  }
+  const startMs = Math.min(...visible.map((day) => Date.parse(day.startsAt)));
+  const endMs = Math.max(...visible.map((day) => Date.parse(day.endsAt)));
   const inside = (item: Timed) =>
     Date.parse(item.startsAt) < endMs && Date.parse(item.endsAt) > startMs;
   return {
     ...data,
     appointments: data.appointments.filter(inside),
     blocks: data.blocks.filter(inside),
-    workingHours: {
-      ...data.workingHours,
-      days: data.workingHours.days.filter((day) => days.includes(day.date)),
-    },
+    workingHours: { ...data.workingHours, days: visible },
   };
 }
 
-/** Builds the axis of the visible days (at most one fall-back per week). */
-export function buildAxis(days: string[], timeZone: string): Axis {
+/**
+ * Builds the axis of the visible days (at most one fall-back per week) from
+ * the zone sent by the server. Without it (before the first answer), a plain
+ * 24-hour axis holding no instant.
+ */
+export function buildAxis(days: string[], zone: Zone | null): Axis {
   const bounds = days.map((date) => ({
     date,
-    ...localDayBounds(date, timeZone),
+    ...((zone && dayBounds(zone, date)) ?? { startMs: NaN, endMs: NaN }),
   }));
 
   let band: Band | null = null;
   for (const { date, startMs, endMs } of bounds) {
+    if (!zone || Number.isNaN(startMs)) continue;
     const length = Math.round((endMs - startMs) / MINUTE);
     if (length <= DAY) continue;
-    const transition = transitionBetween(startMs, endMs, timeZone);
+    const transition = transitionWithin(zone, startMs, endMs);
     if (transition === null) continue;
-    const start = wallMinutes(transition, date, timeZone);
+    const start = wallMinutes(zone, transition, date);
     band = { date, start, end: Math.min(start + (length - DAY), DAY) };
     break;
   }
@@ -205,15 +137,16 @@ export function buildAxis(days: string[], timeZone: string): Axis {
 
   const frames = new Map<string, DayFrame>();
   for (const { date, startMs, endMs } of bounds) {
-    const length = Math.round((endMs - startMs) / MINUTE);
+    const known = zone !== null && !Number.isNaN(startMs);
+    const length = known ? Math.round((endMs - startMs) / MINUTE) : DAY;
     const isBandDay = band?.date === date;
     const gaps: Interval[] = [];
     let skipped: Interval | null = null;
 
-    if (length < DAY) {
+    if (known && length < DAY) {
       const size = DAY - length;
-      const firstWall = wallMinutes(startMs, date, timeZone);
-      const transition = transitionBetween(startMs, endMs, timeZone);
+      const firstWall = wallMinutes(zone, startMs, date);
+      const transition = transitionWithin(zone, startMs, endMs);
       // Where the skipped wall-clock time sits: at the start when midnight
       // itself is skipped (Havana 00:00 → 01:00), at the end when the jump
       // lands on the next midnight (Nuuk 23:00 → 00:00: the transition is
@@ -223,7 +156,7 @@ export function buildAxis(days: string[], timeZone: string): Axis {
           ? 0
           : transition === null
             ? DAY - size
-            : wallMinutes(transition, date, timeZone) - size;
+            : wallMinutes(zone, transition, date) - size;
       skipped = {
         top: start + shiftOf(start),
         bottom: start + size + shiftOf(start),
@@ -273,13 +206,13 @@ export function buildAxis(days: string[], timeZone: string): Axis {
     (mark, index) => index === 0 || marks[index - 1]!.y !== mark.y,
   );
 
-  return { timeZone, band, frames, marks: distinct };
+  return { zone, band, frames, marks: distinct };
 }
 
 /** y of an instant inside the day `date` (clamped to the day). */
 export function yOf(axis: Axis, date: string, instant: number): number {
   const frame = axis.frames.get(date);
-  if (!frame) return 0;
+  if (!frame || !axis.zone || Number.isNaN(frame.startMs)) return 0;
   if (instant <= frame.startMs)
     return frame.gaps.find((gap) => gap.top === 0)?.bottom ?? 0;
   if (instant >= frame.endMs) return frame.endY;
@@ -288,7 +221,7 @@ export function yOf(axis: Axis, date: string, instant: number): number {
     // Fall-back day: y is the real time elapsed since local midnight.
     return Math.round((instant - frame.startMs) / MINUTE);
   }
-  const wall = wallMinutes(instant, date, axis.timeZone);
+  const wall = wallMinutes(axis.zone, instant, date);
   const band = axis.band;
   return (
     wall +
@@ -301,11 +234,13 @@ export function timeAt(axis: Axis, date: string, y: number): string | null {
   const frame = axis.frames.get(date);
   if (!frame || frame.gaps.some((gap) => y >= gap.top && y < gap.bottom))
     return null;
-  if (axis.band?.date === date) {
-    return utcToZonedLocal(
-      new Date(frame.startMs + Math.max(0, y) * MINUTE),
-      axis.timeZone,
-    ).slice(11, 16);
+  if (axis.band?.date === date && axis.zone) {
+    return (
+      wallOf(axis.zone, frame.startMs + Math.max(0, y) * MINUTE)?.slice(
+        11,
+        16,
+      ) ?? null
+    );
   }
   const band = axis.band;
   const wall =
@@ -352,7 +287,7 @@ export function segmentOn(
   date: string,
 ): Segment | null {
   const frame = axis.frames.get(date);
-  if (!frame) return null;
+  if (!frame || Number.isNaN(frame.startMs)) return null;
   const start = Date.parse(item.startsAt);
   const end = Date.parse(item.endsAt);
   const from = Math.max(start, frame.startMs);

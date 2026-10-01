@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -30,7 +30,6 @@ import {
   dayNumber,
   formatFullDate,
   formatWeekdayShort,
-  localNow,
   periodLabel,
   shiftAnchor,
   startOfWeek,
@@ -38,6 +37,7 @@ import {
   type AgendaView as View,
 } from "../client/dates";
 import { agendaRequestRange, restrictToDays } from "../client/layout";
+import { dateContaining, zoneOf } from "../client/zone";
 import { AgendaError, TextAction } from "./agenda-error";
 import { AppointmentDetails } from "./appointment-details";
 import { AppointmentForm, type ServicesState } from "./appointment-form";
@@ -70,19 +70,16 @@ const DEFAULT_TIME = "09:00";
  * open panel and the visible range is reloaded.
  */
 export function AgendaView({
-  timezone,
   today: initialToday,
   slug,
 }: {
-  timezone: string;
+  /** The business's date today, from PostgreSQL. */
   today: string;
   slug: string;
 }) {
   const wide = useMediaQuery("(min-width: 768px)");
   const view: View = wide ? "week" : "day";
   const clock = useSyncExternalStore(subscribeClock, clockBucket, () => 0);
-  const now = clock ? localNow(timezone) : `${initialToday}T00:00`;
-  const today = clock ? now.slice(0, 10) : initialToday;
 
   const [anchor, setAnchor] = useState(initialToday);
   const [includeCancelled, setIncludeCancelled] = useState(false);
@@ -120,6 +117,16 @@ export function AgendaView({
   const loading = loaded?.key !== key && !error;
   const empty =
     data !== null && data.appointments.length === 0 && data.blocks.length === 0;
+
+  // The business zone as PostgreSQL sent it with the last agenda read: day
+  // bounds and UTC offsets. Kept while the next range loads (open panels).
+  const zone = useMemo(() => (loaded ? zoneOf(loaded.data) : null), [loaded]);
+  // Today: the day read that contains now, otherwise the date PostgreSQL
+  // gave with the last read (or with the page). Never the browser's rules.
+  const today =
+    (clock && zone && dateContaining(zone, clock * 30_000)) ||
+    loaded?.data.today ||
+    initialToday;
 
   const reload = () => setReloadToken((token) => token + 1);
 
@@ -335,7 +342,6 @@ export function AgendaView({
         <TimeGrid
           days={range.days}
           data={data}
-          timezone={timezone}
           today={today}
           nowMs={clock ? clock * 30_000 : null}
           hourHeight={view === "day" ? 64 : 56}
@@ -403,7 +409,7 @@ export function AgendaView({
           <AppointmentDetails
             key={`${panel.appointment.id}:${panel.appointment.version}`}
             appointment={panel.appointment}
-            timezone={timezone}
+            zone={zone}
             onEdit={() => openEdit(panel.appointment)}
             onUpdated={showAppointment}
             onRefresh={() => refreshAppointment(panel.appointment, false)}
@@ -423,7 +429,7 @@ export function AgendaView({
                 : { kind: "create", date: panel.date, time: panel.time }
             }
             services={services ?? { status: "loading" }}
-            timezone={timezone}
+            zone={zone}
             onSaved={showAppointment}
             onCancel={() =>
               setPanel(
@@ -451,7 +457,7 @@ export function AgendaView({
                 ? { kind: "edit", block: panel.block }
                 : { kind: "create", date: panel.date, time: panel.time }
             }
-            timezone={timezone}
+            zone={zone}
             onSaved={() => {
               setPanel(null);
               reload();

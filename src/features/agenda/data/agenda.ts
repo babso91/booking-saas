@@ -1,30 +1,33 @@
 import "server-only";
 
-import type {
-  AgendaRangeInput,
-  LocalTimeOccurrence,
-} from "@/features/agenda/schemas/agenda";
+import type { AgendaRangeInput } from "@/features/agenda/schemas/agenda";
 import type { BusinessHourDto } from "@/features/availability/data/schedule";
 import type { BusinessContext } from "@/features/businesses/data/business-context";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 import {
+  readBusinessTime,
+  type BusinessTime,
+  type LocalTimeOccurrence,
+  type OpenRangeDto,
+  type ResolvedLocalTime,
+  type ZoneOffsetDto,
+} from "@/lib/time/business-time";
+import {
   addDaysToLocalDate,
   daysBetweenLocalDates,
-  localDateRangeToUtc,
-  resolveZonedLocal,
-  utcToZonedLocal,
-  weekdayOfLocalDate,
-  zonedOccurrenceOf,
-  zonedTimeOnDateToUtc,
-} from "@/lib/time/zoned";
+} from "@/lib/time/local-date";
 import type { Tables } from "@/types/database.generated";
 
 // Read side of the professional agenda. Every query uses the user's client
 // (RLS: members only) and is scoped to the business resolved from the
 // session. Instants are UTC ISO strings; each one also comes as a wall-clock
 // time in the business time zone so the UI never converts dates itself.
+//
+// Calendar authority: PostgreSQL (public.business_time). Day bounds, opening
+// ranges, wall clocks and DST occurrences all come from the database, never
+// from Node's own time zone database (src/lib/time/business-time.ts).
 
 export type AgendaContext = Pick<BusinessContext, "businessId" | "timezone">;
 
@@ -83,24 +86,33 @@ export type AgendaBlockDto = {
   reason: string | null;
 };
 
-export type AgendaTimeRange = {
-  startsAt: string;
-  endsAt: string;
-  localStartsAt: string;
-  localEndsAt: string;
-};
+export type AgendaTimeRange = OpenRangeDto;
 
 export type AgendaDayDto = {
   /** Local calendar date `YYYY-MM-DD`. */
   date: string;
   /** 0 = Sunday … 6 = Saturday. */
   weekday: number;
-  /** Opening ranges of that day: weekly hours + exceptional openings. */
+  /** Real bounds of the day: [startsAt, endsAt) (23 h, 25 h… or empty). */
+  startsAt: string;
+  endsAt: string;
+  /**
+   * Real opening of that day (weekly hours + exceptional openings), exactly
+   * the ranges public availability uses. A weekly range covering a repeated
+   * hour may give several ranges.
+   */
   openRanges: AgendaTimeRange[];
 };
 
 export type AgendaDto = {
   timezone: string;
+  /** The business's civil date when the agenda was read. */
+  today: string;
+  /**
+   * UTC offset pieces covering the days read, from PostgreSQL: the UI places
+   * instants on its grid with them, never with the browser's time zone data.
+   */
+  offsets: ZoneOffsetDto[];
   range: {
     startDate: string;
     endDate: string;
@@ -153,18 +165,19 @@ export function clientDisplayName(client: {
 
 export function toAppointmentDto(
   row: AppointmentRow,
-  timezone: string,
+  time: BusinessTime,
 ): AgendaAppointmentDto {
+  const start = time.wall(row.starts_at);
   return {
     id: row.id,
     version: row.version,
     status: row.status,
     startsAt: iso(row.starts_at),
     endsAt: iso(row.ends_at),
-    localStartsAt: utcToZonedLocal(row.starts_at, timezone),
-    localEndsAt: utcToZonedLocal(row.ends_at, timezone),
+    localStartsAt: start.local,
+    localEndsAt: time.wall(row.ends_at).local,
     durationMinutes: row.duration_minutes_snapshot,
-    startOccurrence: zonedOccurrenceOf(row.starts_at, timezone),
+    startOccurrence: start.occurrence,
     bufferMinutes: row.buffer_minutes_snapshot,
     priceCents: row.price_cents_snapshot,
     currency: row.currency,
@@ -185,42 +198,21 @@ type BlockRow = Pick<
   "id" | "version" | "kind" | "starts_at" | "ends_at" | "reason"
 >;
 
-export function toBlockDto(row: BlockRow, timezone: string): AgendaBlockDto {
+export function toBlockDto(row: BlockRow, time: BusinessTime): AgendaBlockDto {
+  const start = time.wall(row.starts_at);
+  const end = time.wall(row.ends_at);
   return {
     id: row.id,
     version: row.version,
     kind: row.kind as AgendaBlockDto["kind"],
     startsAt: iso(row.starts_at),
     endsAt: iso(row.ends_at),
-    localStartsAt: utcToZonedLocal(row.starts_at, timezone),
-    localEndsAt: utcToZonedLocal(row.ends_at, timezone),
-    startOccurrence: zonedOccurrenceOf(row.starts_at, timezone),
-    endOccurrence: zonedOccurrenceOf(row.ends_at, timezone),
+    localStartsAt: start.local,
+    localEndsAt: end.local,
+    startOccurrence: start.occurrence,
+    endOccurrence: end.occurrence,
     reason: row.reason,
   };
-}
-
-function timeRange(start: Date, end: Date, timezone: string): AgendaTimeRange {
-  return {
-    startsAt: start.toISOString(),
-    endsAt: end.toISOString(),
-    localStartsAt: utcToZonedLocal(start, timezone),
-    localEndsAt: utcToZonedLocal(end, timezone),
-  };
-}
-
-/**
- * UTC bounds of whole local days: [first real instant of startDate, first
- * real instant of endDate + 1) — repeated or skipped midnights included
- * (startOfLocalDate). Used for range reads, day clipping and whole-day
- * blocks, so all of them agree with the agenda UI's notion of a day.
- */
-export function localDaysToUtc(
-  startDate: string,
-  endDate: string,
-  timezone: string,
-) {
-  return localDateRangeToUtc(startDate, endDate, timezone);
 }
 
 /**
@@ -231,13 +223,9 @@ export function localDaysToUtc(
  *   the clocks go back, `second` = after) → `ambiguous_local_time` without it.
  */
 export function localStartToUtc(
-  date: string,
-  time: string,
-  timezone: string,
+  resolved: ResolvedLocalTime,
   occurrence?: LocalTimeOccurrence,
 ) {
-  const resolved = resolveZonedLocal(`${date}T${time}`, timezone);
-
   if (resolved.status === "nonexistent") {
     throw new AppException("validation_error", {
       fieldErrors: {
@@ -267,58 +255,23 @@ function tooMany(message: string): AppException {
   });
 }
 
-/**
- * Opening ranges per local day, with the same DST rules as availability in
- * PostgreSQL (20260928090000): weekly ranges are converted on each date, a
- * range emptied or inverted by a DST gap is dropped for that day, and
- * exceptional openings are clipped to the day.
- */
-export function openRangesByDay(
-  startDate: string,
-  endDate: string,
-  timezone: string,
-  weekly: BusinessHourDto[],
-  openings: { starts_at: string; ends_at: string }[],
-): AgendaDayDto[] {
-  const days: AgendaDayDto[] = [];
-  const count = daysBetweenLocalDates(startDate, endDate) + 1;
+/** Every civil date of [startDate, endDate]. */
+export function datesOf(startDate: string, endDate: string) {
+  return Array.from(
+    { length: daysBetweenLocalDates(startDate, endDate) + 1 },
+    (_, offset) => addDaysToLocalDate(startDate, offset),
+  );
+}
 
-  for (let offset = 0; offset < count; offset += 1) {
-    const date = addDaysToLocalDate(startDate, offset);
-    const weekday = weekdayOfLocalDate(date);
-    const { startsAt: dayStart, endsAt: dayEnd } = localDaysToUtc(
-      date,
-      date,
-      timezone,
-    );
-    const ranges: [Date, Date][] = [];
-
-    for (const hour of weekly) {
-      if (hour.weekday !== weekday) continue;
-      const start = zonedTimeOnDateToUtc(date, hour.startsAt, timezone);
-      const end = zonedTimeOnDateToUtc(date, hour.endsAt, timezone);
-      if (start < end) ranges.push([start, end]);
-    }
-
-    for (const opening of openings) {
-      const start = new Date(
-        Math.max(new Date(opening.starts_at).getTime(), dayStart.getTime()),
-      );
-      const end = new Date(
-        Math.min(new Date(opening.ends_at).getTime(), dayEnd.getTime()),
-      );
-      if (start < end) ranges.push([start, end]);
-    }
-
-    ranges.sort((a, b) => a[0].getTime() - b[0].getTime());
-    days.push({
-      date,
-      weekday,
-      openRanges: ranges.map(([start, end]) => timeRange(start, end, timezone)),
-    });
-  }
-
-  return days;
+/** Wall clocks of every bound of the rows, in one call to the authority. */
+export function wallClocksOf(
+  client: AppSupabaseClient,
+  context: AgendaContext,
+  rows: { starts_at: string; ends_at: string }[],
+) {
+  return readBusinessTime(client, context.businessId, {
+    instants: rows.flatMap((row) => [row.starts_at, row.ends_at]),
+  });
 }
 
 export async function getAgenda(
@@ -326,14 +279,17 @@ export async function getAgenda(
   context: AgendaContext,
   range: AgendaRangeInput,
 ): Promise<AgendaDto> {
-  const { businessId, timezone } = context;
-  const { startsAt, endsAt } = localDaysToUtc(
-    range.startDate,
-    range.endDate,
-    timezone,
-  );
-  const from = startsAt.toISOString();
-  const to = endsAt.toISOString();
+  const { businessId } = context;
+  const dates = datesOf(range.startDate, range.endDate);
+
+  // 1. The days themselves, from the calendar authority: real bounds,
+  //    opening ranges and UTC offsets, in one call.
+  const calendar = await readBusinessTime(client, businessId, {
+    dates,
+    openRanges: true,
+  });
+  const from = calendar.day(range.startDate).startsAt;
+  const to = calendar.day(range.endDate).endsAt;
 
   let appointmentsQuery = client
     .from("appointments")
@@ -388,6 +344,13 @@ export async function getAgenda(
     });
   }
 
+  // 2. Wall clocks of every item bound, again from the authority (one call;
+  //    a long block may start or end far outside the days read).
+  const time = await wallClocksOf(client, context, [
+    ...appointments.data,
+    ...exceptions.data,
+  ]);
+
   const weekly: BusinessHourDto[] = hours.data.map((row) => ({
     id: row.id,
     weekday: row.weekday,
@@ -396,31 +359,25 @@ export async function getAgenda(
   }));
 
   const blocks = exceptions.data.filter((row) => row.kind !== "open_override");
-  const openings = exceptions.data.filter(
-    (row) => row.kind === "open_override",
-  );
 
   return {
-    timezone,
+    timezone: calendar.timezone,
+    today: calendar.today,
+    offsets: calendar.offsets,
     range: {
       startDate: range.startDate,
       endDate: range.endDate,
       startsAt: from,
       endsAt: to,
     },
-    appointments: appointments.data.map((row) =>
-      toAppointmentDto(row, timezone),
-    ),
-    blocks: blocks.map((row) => toBlockDto(row, timezone)),
+    appointments: appointments.data.map((row) => toAppointmentDto(row, time)),
+    blocks: blocks.map((row) => toBlockDto(row, time)),
     workingHours: {
       weekly,
-      days: openRangesByDay(
-        range.startDate,
-        range.endDate,
-        timezone,
-        weekly,
-        openings,
-      ),
+      days: dates.map((date) => ({
+        ...calendar.day(date),
+        openRanges: calendar.openRanges(date),
+      })),
     },
   };
 }
@@ -440,5 +397,5 @@ export async function getAgendaAppointment(
   if (error) throw databaseException(error);
   if (!data) throw new AppException("appointment_not_found");
 
-  return toAppointmentDto(data, context.timezone);
+  return toAppointmentDto(data, await wallClocksOf(client, context, [data]));
 }

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatDuration,
-  localToday,
   minutesOf,
   periodLabel,
   shiftAnchor,
@@ -42,13 +41,6 @@ describe("agenda dates", () => {
   it("moves by a week or a day", () => {
     expect(shiftAnchor("week", "2026-09-30", 1)).toBe("2026-10-07");
     expect(shiftAnchor("day", "2026-09-30", -1)).toBe("2026-09-29");
-  });
-
-  it("computes today in the business time zone", () => {
-    // 23:30 UTC on Sept 29 is already Sept 30 in Paris, still Sept 29 in Montreal.
-    const instant = new Date("2026-09-29T23:30:00Z");
-    expect(localToday("Europe/Paris", instant)).toBe("2026-09-30");
-    expect(localToday("America/Toronto", instant)).toBe("2026-09-29");
   });
 
   it("formats labels and durations", () => {

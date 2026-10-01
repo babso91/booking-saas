@@ -22,6 +22,7 @@ import {
   timeWithOccurrence,
   type Occurrence,
 } from "../client/occurrence";
+import type { Zone } from "../client/zone";
 import {
   fingerprintOf,
   requestKeyFor,
@@ -62,14 +63,15 @@ const emptyClient: NewClient = {
 export function AppointmentForm({
   mode,
   services,
-  timezone,
+  zone,
   onSaved,
   onCancel,
   onRefresh,
 }: {
   mode: AppointmentFormMode;
   services: ServicesState;
-  timezone: string;
+  /** The business zone sent by the server, or null (labels without offsets). */
+  zone: Zone | null;
   onSaved: (appointment: AgendaAppointmentDto) => void;
   onCancel: () => void;
   /** Reloads the appointment after stale_appointment (edit only). */
@@ -337,7 +339,7 @@ export function AppointmentForm({
             originalTime,
             original.startOccurrence,
             originalDate,
-            timezone,
+            zone,
           )}
         </p>
       ) : null}
@@ -368,7 +370,7 @@ export function AppointmentForm({
                 }}
                 className="accent-[var(--ink)]"
               />
-              {time} — {occurrenceLabel(value, date, timezone)}
+              {time} — {occurrenceLabel(value, date, zone)}
             </label>
           ))}
           {fieldErrors.occurrence ? (
