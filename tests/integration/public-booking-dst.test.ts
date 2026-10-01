@@ -11,6 +11,7 @@ import {
   resolveZonedLocal,
   startOfLocalDate,
   zonedDateOf,
+  utcToZonedLocal,
 } from "@/lib/time/zoned";
 
 import {
@@ -564,6 +565,7 @@ describe("SQL and TypeScript share one definition of a civil day", () => {
       next: Date;
       ge: boolean;
       first: boolean;
+      probes: { at: string; wall: string }[];
     }>(
       `with z as (select name from pg_timezone_names where name !~ '^(posix|right)/'),
             d as (select g::date as dd from generate_series('2024-01-01'::date, '2027-12-31'::date, interval '1 day') g),
@@ -577,11 +579,25 @@ describe("SQL and TypeScript share one definition of a civil day", () => {
                         <> ((rule + interval '3 hours') at time zone name) - ((rule + interval '3 hours') at time zone 'UTC'))
        select name, to_char(dd, 'YYYY-MM-DD') as ymd, st as start, nx as next,
               (st at time zone name)::date >= dd as ge,
-              ((st - interval '1 minute') at time zone name)::date < dd as first
+              ((st - interval '1 minute') at time zone name)::date < dd as first,
+              (select json_agg(json_build_object(
+                        'at', p,
+                        'wall', to_char(p at time zone name, 'YYYY-MM-DD"T"HH24:MI')))
+               from unnest(array[st - interval '26 hours', st - interval '1 minute', st,
+                                 st + interval '26 hours']) p) as probes
        from s`,
     );
 
     expect(rows.length).toBeGreaterThan(100);
+
+    // PostgreSQL and Node each ship their own copy of the IANA database, and
+    // the two can disagree on future rules (on the CI runner, Node reads
+    // America/Vancouver on 2027-03-14 at UTC−7 where PostgreSQL still has
+    // UTC−8). The comparison with startOfLocalDate is only meaningful where
+    // both runtimes read the same wall clocks around the day; elsewhere the
+    // gap is a tzdata difference, never a difference of definition.
+    const compared: string[] = [];
+    const tzdataGaps: string[] = [];
     for (const row of rows) {
       expect([
         row.name,
@@ -590,12 +606,27 @@ describe("SQL and TypeScript share one definition of a civil day", () => {
         row.first,
         row.next >= row.start,
       ]).toEqual([row.name, row.ymd, true, true, true]);
+
+      const sameRules = row.probes.every(
+        (probe) => utcToZonedLocal(probe.at, row.name) === probe.wall,
+      );
+      if (!sameRules) {
+        tzdataGaps.push(`${row.name} ${row.ymd}`);
+        continue;
+      }
+
+      compared.push(`${row.name} ${row.ymd}`);
       expect([row.name, row.ymd, row.start.toISOString()]).toEqual([
         row.name,
         row.ymd,
         startOfLocalDate(row.ymd, row.name).toISOString(),
       ]);
     }
+
+    // The escape hatch above must stay marginal: almost every irregular day
+    // is really compared.
+    expect(compared.length).toBeGreaterThan(100);
+    expect(tzdataGaps.length).toBeLessThan(rows.length / 20);
   }, 120_000);
 
   it("agenda opening ranges cover exactly the public slots of each day", async () => {
