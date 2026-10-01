@@ -35,7 +35,8 @@ import { StatusBadge, statusMeta } from "./status-badge";
 type TimeGridProps = {
   days: string[];
   data: AgendaDto | null;
-  today: string;
+  /** The business's date today, or null while it is being checked. */
+  today: string | null;
   /** Current instant (ms), or null before the client clock is known. */
   nowMs: number | null;
   hourHeight: number;

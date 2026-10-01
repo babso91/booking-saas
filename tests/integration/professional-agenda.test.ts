@@ -9,6 +9,7 @@ import {
   deleteBlockAction,
   getAgendaAction,
   getAgendaAppointmentAction,
+  getAgendaTodayAction,
   listAgendaServicesAction,
   searchAgendaClientsAction,
   setAppointmentStatusAction,
@@ -223,6 +224,7 @@ describe("access control", () => {
     );
     failure(await create(a, "10:00"), "unauthenticated");
     failure(await listAgendaServicesAction(), "unauthenticated");
+    failure(await getAgendaTodayAction(), "unauthenticated");
     failure(
       await searchAgendaClientsAction({ query: "Julie" }),
       "unauthenticated",
@@ -1420,6 +1422,41 @@ describe("blocks", () => {
       }),
       "block_not_found",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("today", () => {
+  // What the agenda asks again after midnight, instead of working the next
+  // date out in the browser.
+  it("is PostgreSQL's date in the business time zone, with the instant it ends", async () => {
+    const read = async (timezone: string) => {
+      const { rows } = await db.query<{ date: string; ends_at: Date }>(
+        `select private.local_date_of(now(), $1)::text as date,
+                private.local_day_start(
+                  private.local_date_of(now(), $1) + 1, $1
+                ) as ends_at`,
+        [timezone],
+      );
+      return { date: rows[0]!.date, endsAt: rows[0]!.ends_at.toISOString() };
+    };
+
+    // 25 hours apart: these two businesses never share a date, wherever the
+    // test machine is.
+    const dates: string[] = [];
+    for (const timezone of ["Pacific/Kiritimati", "Pacific/Pago_Pago"]) {
+      await newAgenda({ timezone });
+      const before = await read(timezone);
+      const today = ok(await getAgendaTodayAction());
+      const after = await read(timezone);
+
+      // (`before` and `after` differ only if midnight passed in between.)
+      expect([before, after]).toContainEqual(today);
+      expect(Date.parse(today.endsAt)).toBeGreaterThan(Date.now() - 60_000);
+      dates.push(today.date);
+    }
+    expect(dates[0]! > dates[1]!).toBe(true);
   });
 });
 

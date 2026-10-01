@@ -282,6 +282,8 @@ Toute conversion qui a une conséquence sur le planning est calculée par Postgr
 
 Le serveur Next.js obtient ces valeurs en un appel par lecture ou écriture : `public.business_time` (membres uniquement, entrées bornées), encapsulée par `src/lib/time/business-time.ts`. L'agenda reçoit avec chaque lecture les bornes réelles de chaque jour et les tranches de décalage UTC constant qui les couvrent (`offsets`) ; la grille (`src/features/agenda/client/zone.ts`, `layout.ts`) ne fait que de l'arithmétique sur ces valeurs.
 
+**Date du jour sur un écran ouvert.** L'agenda reçoit de PostgreSQL la date du jour du business **et l'instant où elle se termine** (`readBusinessToday`, `getAgendaTodayAction`). Le navigateur ne fait que comparer des instants : tant que cet instant n'est pas passé, la date reste valable ; ensuite elle est périmée et PostgreSQL est réinterrogé — jamais de « date + 1 » ni d'`Intl` (`src/features/agenda/client/today.ts`, `use-canonical-today.ts`). Pas de polling : une requête par changement de jour, déclenchée par un timer posé sur cet instant, par le retour de l'onglet (`visibilitychange`, focus, `pageshow`, tick d'horloge de l'écran) ou par une action qui dépend d'aujourd'hui (bouton Aujourd'hui, jour par défaut d'une création). En cas d'échec, la dernière date connue est conservée, marquée périmée, et l'action affiche une erreur avec réessai plutôt qu'une date devinée.
+
 Ce que Node et le navigateur ont encore le droit de calculer :
 
 - l'arithmétique de dates civiles sans fuseau (`src/lib/time/local-date.ts` : jour suivant, nombre de jours, jour de semaine) ;

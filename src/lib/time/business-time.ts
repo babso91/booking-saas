@@ -55,6 +55,13 @@ export type WallClock = {
   occurrence: LocalTimeOccurrence | null;
 };
 
+export type BusinessTodayDto = {
+  /** The business's civil date now, `YYYY-MM-DD`. */
+  date: string;
+  /** Instant at which that date ends (the next civil date begins). */
+  endsAt: string;
+};
+
 type RawDay = BusinessDayDto & { openRanges: OpenRangeDto[] | null };
 
 type RawBusinessTime = {
@@ -204,4 +211,30 @@ export async function readBusinessTime(
   if (error) throw databaseException(error);
 
   return new BusinessTime(data as unknown as RawBusinessTime);
+}
+
+/**
+ * The business's civil date now and the instant it ends, both from the
+ * calendar authority. A screen left open keeps the date until that instant,
+ * then asks again: it never works the next date out by itself.
+ */
+export async function readBusinessToday(
+  client: AppSupabaseClient,
+  businessId: string,
+): Promise<BusinessTodayDto> {
+  let { today } = await readBusinessTime(client, businessId);
+
+  // The date can change between the two reads (midnight): read again until
+  // the bounds returned are those of the date PostgreSQL calls today.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const calendar = await readBusinessTime(client, businessId, {
+      dates: [today],
+    });
+    if (calendar.today === today) {
+      return { date: today, endsAt: calendar.day(today).endsAt };
+    }
+    today = calendar.today;
+  }
+
+  throw missing("a stable date for today");
 }

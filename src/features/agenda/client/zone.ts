@@ -71,14 +71,6 @@ export function dayBounds(zone: Zone, date: string) {
   return zone.days.get(date);
 }
 
-/** The civil day read that contains `instant`, or null. */
-export function dateContaining(zone: Zone, instant: number): string | null {
-  for (const [date, { startMs, endMs }] of zone.days) {
-    if (instant >= startMs && instant < endMs) return date;
-  }
-  return null;
-}
-
 /** First instant in (from, to) where the offset changes, or null. */
 export function transitionWithin(
   zone: Zone,

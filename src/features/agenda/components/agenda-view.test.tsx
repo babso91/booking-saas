@@ -23,6 +23,7 @@ import { AgendaView } from "./agenda-view";
 const actions = {
   getAgendaAction: vi.fn(),
   getAgendaAppointmentAction: vi.fn(),
+  getAgendaTodayAction: vi.fn(),
   listAgendaServicesAction: vi.fn(),
   searchAgendaClientsAction: vi.fn(),
   createAppointmentAction: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock("@/features/agenda/actions/agenda", () =>
     Object.keys({
       getAgendaAction: 0,
       getAgendaAppointmentAction: 0,
+      getAgendaTodayAction: 0,
       listAgendaServicesAction: 0,
       searchAgendaClientsAction: 0,
       createAppointmentAction: 0,
@@ -80,8 +82,14 @@ function useViewport(wide: boolean) {
     }) as unknown as MediaQueryList;
 }
 
+// What the page reads from PostgreSQL: the date and the instant it ends.
+const todayOf = (date: string) => ({
+  date,
+  endsAt: agenda(date, date).workingHours.days[0]!.endsAt,
+});
+
 function renderAgenda() {
-  return render(<AgendaView today={TODAY} slug="studio-mila" />);
+  return render(<AgendaView today={todayOf(TODAY)} slug="studio-mila" />);
 }
 
 const lastCall = (mock: ReturnType<typeof vi.fn>) =>
@@ -635,7 +643,7 @@ describe("existing appointment", () => {
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
       ok(agenda(startDate, endDate, { appointments: [repeated] })),
     );
-    render(<AgendaView today="2026-10-21" slug="studio-mila" />);
+    render(<AgendaView today={todayOf("2026-10-21")} slug="studio-mila" />);
     const details = await openAppointment(
       user,
       /02:30 \(heure d’été, UTC\+2\)/,
@@ -1055,7 +1063,7 @@ describe("blocks", () => {
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
       ok(agenda(startDate, endDate, { blocks: [repeated] })),
     );
-    render(<AgendaView today="2026-10-21" slug="studio-mila" />);
+    render(<AgendaView today={todayOf("2026-10-21")} slug="studio-mila" />);
     const card = await screen.findByRole("button", {
       name: "Bloqué · Heure en double, 02:30 – 02:30",
     });
