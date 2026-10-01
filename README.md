@@ -89,6 +89,7 @@ Inclus :
 - API publique : `GET /api/public/businesses/[slug]`, `GET /api/public/businesses/[slug]/availability?serviceId=…&date=AAAA-MM-JJ`, `POST /api/bookings` ;
 - Server Actions professionnelles dans `src/features/*/actions` ;
 - authentification professionnelle (email + mot de passe), gardes de routage serveur et onboarding transactionnel : contrat UI dans [docs/AUTH_ONBOARDING_CONTRACT.md](docs/AUTH_ONBOARDING_CONTRACT.md).
+- intégration Google Calendar entrante (OAuth, sélection des calendriers bloquants, synchronisation complète, incrémentale et push, périodes occupées dans la disponibilité et la réservation) : contrat dans [docs/CALENDAR_INTEGRATION_CONTRACT.md](docs/CALENDAR_INTEGRATION_CONTRACT.md) ;
 - backend de l'agenda professionnel V1 (lecture d'une plage, rendez-vous manuels, déplacements, statuts, blocs, concurrence) : contrat UI dans [docs/PROFESSIONAL_AGENDA_CONTRACT.md](docs/PROFESSIONAL_AGENDA_CONTRACT.md).
 
 Non inclus : écrans métier (dont l'écran d'agenda), CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
@@ -131,5 +132,6 @@ Si une action échoue au niveau du transport, `callAction` interroge la page cou
 | `20260929090000_auth_onboarding.sql`                   | onboarding transactionnel et idempotent, normalisation et réservation des slugs, téléphone du business                                                       |
 | `20261001090000_unified_local_day.sql`                 | PostgreSQL autorité calendaire : jour civil réel, plages murales multi-segments, `business_time`, heures murales des créneaux, réservation à `now` explicite |
 | `20261002090000_business_time_now.sql`                 | `business_time` renvoie aussi `now` et `todayEndsAt` : durée restante du jour calculée par PostgreSQL seul                                                   |
+| `20261003090000_calendar_inbound_sync.sql`             | calendriers externes (Google → Booking) : connexions, secrets chiffrés, calendriers bloquants, périodes externes dans la disponibilité et la réservation     |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.

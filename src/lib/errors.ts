@@ -40,6 +40,18 @@ export const appErrorMessages = {
   slug_taken:
     "Cette adresse de page est déjà utilisée. Choisissez-en une autre.",
   slug_reserved: "Cette adresse de page est réservée. Choisissez-en une autre.",
+  calendar_not_configured:
+    "La synchronisation de calendrier n’est pas disponible pour le moment.",
+  calendar_not_connected: "Aucun calendrier externe n’est connecté.",
+  calendar_reauth_required:
+    "La connexion à votre calendrier a expiré. Reconnectez-le pour reprendre la synchronisation.",
+  calendar_provider_unavailable:
+    "Le service de calendrier ne répond pas. Merci de réessayer dans quelques minutes.",
+  calendar_not_found: "Ce calendrier est introuvable.",
+  calendar_scope_missing:
+    "L’accès à vos calendriers n’a pas été accordé. Reconnectez-vous en autorisant l’accès demandé.",
+  oauth_state_invalid:
+    "Cette demande de connexion a expiré ou a déjà été utilisée. Recommencez la connexion.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -112,6 +124,13 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   already_onboarded: 409,
   slug_taken: 409,
   slug_reserved: 409,
+  calendar_not_configured: 503,
+  calendar_not_connected: 409,
+  calendar_reauth_required: 409,
+  calendar_provider_unavailable: 503,
+  calendar_not_found: 404,
+  calendar_scope_missing: 400,
+  oauth_state_invalid: 400,
   internal: 500,
 };
 

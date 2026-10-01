@@ -358,62 +358,46 @@ L'agenda n'est pas un second moteur de planning : il lit et modifie les mêmes t
 - **Plages d'ouverture.** Celles de chaque jour viennent de `private.opening_ranges`, exactement les plages de la disponibilité publique (§8) ; une plage hebdomadaire et une ouverture exceptionnelle contiguës sont fusionnées. La lecture fait trois allers-retours constants (calendrier, éléments en parallèle, heures murales), jamais un par jour ou par élément.
 - **Contrat UI.** Il est décrit dans `docs/PROFESSIONAL_AGENDA_CONTRACT.md`.
 
-## 8 bis. Intégration des calendriers externes — architecture prévue
+## 8 bis. Intégration des calendriers externes
 
-Cette section décrit une évolution future, sans table, migration, connecteur ni worker déjà implémenté. Le moteur intégré au commit `3a424e5807f7277a98cfe1ca939c8dd13821a30e` reste le socle officiel.
+Contrat complet : [`docs/CALENDAR_INTEGRATION_CONTRACT.md`](CALENDAR_INTEGRATION_CONTRACT.md). Migration : `20261003090000_calendar_inbound_sync.sql`.
 
-### Sources de vérité et abstraction provider
+### Sources de vérité
 
-- Rendez-vous clientes : Booking SaaS est la source de vérité, y compris pour leurs déplacements et annulations.
-- Événements personnels/externes : le provider externe est la source de vérité.
-- Rendez-vous Booking exportés : représentations secondaires, jamais des commandes métier entrantes en V1.
+- Rendez-vous clientes : Booking SaaS est la source de vérité, y compris pour leurs déplacements et annulations. Google n'en modifie jamais un.
+- Événements personnels et externes : le fournisseur est la source de vérité. Leurs périodes occupées, pour les calendriers explicitement sélectionnés, sont copiées localement et bloquent la disponibilité publique.
+- Rendez-vous Booking exportés vers Google : prochaine PR, non implémentée.
 
-Un adaptateur serveur par `calendar_provider` traduira les opérations de connexion, lecture des changements et export vers un modèle local commun. Google Calendar sera le premier provider ; Microsoft Outlook / Microsoft 365 et éventuellement Apple Calendar pourront être ajoutés sans modifier les invariants du moteur. Les capacités et protocoles exacts seront validés au moment de chaque intégration.
+### Implémenté (V1 : Google → Booking)
 
-### Modèle conceptuel, à préciser avant migration
+| Brique                  | Contenu                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Abstraction fournisseur | Le contrat `CalendarProvider` (`src/features/calendar/providers/types.ts`) couvre l'OAuth, la liste des calendriers, les événements full ou incrémentaux, les canaux push et des erreurs classées. Le code propre à Google est isolé dans `providers/google.ts`. Domaine, tables et actions sont génériques (`provider = 'google'`).                                                                                                                  |
+| Tables                  | `calendar_connections` (métadonnées, RLS en lecture), `external_calendars` (calendriers et sélection bloquante), `external_calendar_events` (périodes UTC, sans titre ni participant ; index GiST `(business_id, busy_window) where busy`). En schéma `private`, inaccessible aux rôles d'API : secrets chiffrés, état de sync et canaux, états OAuth.                                                                                                |
+| Secrets                 | AES‑256‑GCM côté serveur. La clé est dans l'environnement, avec rotation par identifiant de clé, et des données associées lient chaque chiffré à son business. La base ne stocke que du chiffré ; tokens de canal et `state` OAuth sont stockés sous forme de hash.                                                                                                                                                                                   |
+| OAuth                   | Flux « web server » avec PKCE `S256` et `state` à usage unique (10 min), lié à l'utilisateur et au business. `access_type=offline` et `prompt=consent`. Scopes minimaux : `calendar.calendarlist.readonly`, `calendar.events.readonly`, `openid`, `email`. Le callback est uniquement côté serveur, et l'enregistrement se fait en une transaction, sans connexion partielle.                                                                         |
+| Synchronisation         | `singleEvents=true` : Google développe les séries, il n'y a pas de moteur RRULE. Full sync bornée sur `[now − 1 j, now + 400 j)`, paginée et reprise page par page, puis balayage par génération. Incrémentale par `syncToken` ; un 410 relance une full sync. Application idempotente, page par page, sous le verrou de planning, sans appel réseau pendant le verrou. Un seul worker par calendrier (bail) ; des notifications répétées coalescent. |
+| Push et tâche           | Webhook vérifié par le canal courant, la ressource, le token et l'expiration ; réponse 204 uniforme. Tâche `/api/cron/calendar`, toutes les 15 min : renouvellement des canaux, glissement de fenêtre, reprises et rattrapage toutes les 6 h.                                                                                                                                                                                                         |
+| Disponibilité           | `compute_available_slots` traite une période externe occupée comme une occupation : `[début, début + durée + buffer)` ne doit pas la chevaucher. `create_public_booking_at` revalide sous le verrou, donc un chevauchement synchronisé entre l'affichage et la réservation est refusé. Aucun appel au fournisseur pendant une consultation ou une réservation.                                                                                        |
+| Conflits                | Un événement externe peut chevaucher un rendez-vous existant : il est stocké, la sync n'échoue pas, et le rendez-vous reste intact. `calendar_conflicts` le signale.                                                                                                                                                                                                                                                                                  |
+| Déconnexion             | D'abord en local, immédiatement et de façon idempotente : périodes, calendriers, secrets et canaux sont supprimés, aucun rendez-vous n'est touché. Ensuite, au mieux, chez Google : arrêt des canaux et révocation.                                                                                                                                                                                                                                   |
 
-Les noms suivants sont indicatifs :
+### Cohérence à terme
 
-- `calendar_connections` : `id`, `business_id`, `provider`, identifiant stable du compte connecté, état de connexion, référence vers les credentials serveur sécurisés, `last_synced_at` et dernière erreur ;
-- `calendar_sources` : `id`, `business_id`, connexion, identifiant externe du calendrier, fuseau, sélection explicite pour l'import des indisponibilités et/ou comme destination d'export, curseur de synchronisation, dernière synchronisation réussie et informations de renouvellement des notifications ;
-- `external_calendar_events` : `id`, `business_id`, source, identifiant externe d'événement/occurrence, `starts_at`, `ends_at`, statut occupé/libre/annulé, version externe et date de synchronisation. Les récurrences, exceptions et événements journée entière seront normalisés en intervalles locaux exploitables en UTC, avec conservation du fuseau pertinent ;
-- une association d'export : `business_id`, `appointment_id`, calendrier de destination, identifiant de l'événement externe, origine `booking`, version métier exportée et état de synchronisation.
+Google ne participe pas aux transactions PostgreSQL. Un événement créé chez Google bloque Booking une fois synchronisé :
 
-Les relations seront tenant-aware, avec clés étrangères composites, contraintes d'unicité par source/identifiant externe et RLS adaptée. Les titres, descriptions et participants externes ne seront pas collectés s'ils ne sont pas nécessaires ; l'API publique ne recevra que des créneaux disponibles, jamais les détails privés des événements.
+- en quelques secondes avec les notifications push ;
+- au plus après le rattrapage de 6 h, plus l'intervalle de la tâche, si une notification se perd.
 
-### Disponibilités calculées localement
+Une réservation faite dans cet intervalle est conservée. Le conflit est signalé et n'est jamais résolu automatiquement. Le futur miroir Booking → Google rendra aussi le rendez-vous visible côté Google.
 
-Le calcul cible étendra le moteur PostgreSQL existant : plages de `business_hours` et ouvertures exceptionnelles, moins fermetures/blocages de `availability_exceptions`, rendez-vous occupants de `appointments` et événements externes occupés des sources sélectionnées, puis application des règles de durée, buffer, grille, délai et horizon.
+### Export (prochaine PR)
 
-```text
-Provider externe (Google en premier)
-  → synchronisation serveur, notifications/webhooks et renouvellement
-  → événements normalisés stockés localement
-  → calcul et validation des disponibilités PostgreSQL
-```
+Une intention d'export sera enregistrée transactionnellement avec la création, le déplacement ou l'annulation du rendez-vous, puis traitée par un worker serveur avec reprise et déduplication. Elle passera par une outbox calendrier distincte de `email_events`. Une panne du fournisseur ne remettra pas en cause le rendez-vous enregistré.
 
-Aucun appel à Google ne sera effectué à chaque consultation ou réservation publique. Les notifications déclencheront une récupération serveur ; une synchronisation périodique de rattrapage, le renouvellement des abonnements et une reprise complète en cas de curseur invalide seront prévus selon les capacités du provider. Créations, mises à jour et suppressions seront appliquées de façon idempotente ; le curseur n'avancera qu'après persistance réussie.
+Une association stable rendez-vous ↔ événement externe, avec un marqueur d'origine, évitera les boucles : un événement exporté puis relu dans un calendrier sélectionné ne sera pas compté une seconde fois comme indisponibilité. Le scope `calendar.events.owned` sera ajouté par autorisation incrémentale.
 
-Les imports devront être coordonnés avec le verrou de planning par business, l'ordre des verrous et le niveau `READ COMMITTED` du moteur. Aucun appel réseau externe ne devra être effectué pendant la transaction de réservation ou pendant la détention de ce verrou. L'application d'un import et la validation d'une réservation devront lire un état local cohérent.
-
-Un import peut révéler un conflit avec un rendez-vous déjà confirmé : le provider n'est pas partie à la transaction PostgreSQL. Ne pas insérer aveuglément ces événements dans `availability_exceptions`, dont les guards refusent ces chevauchements, ni abandonner silencieusement l'import. Prévoir une représentation locale du conflit et une alerte professionnelle sans déplacer/annuler automatiquement le rendez-vous. La politique de réservation lorsque la synchronisation est périmée, ainsi que le traitement détaillé des conflits, seront arrêtés avant implémentation ; aucune garantie de cohérence instantanée avec le provider n'est annoncée.
-
-### Export, reprise et prévention des boucles
-
-Une intention d'export sera enregistrée transactionnellement avec la création, le déplacement ou l'annulation du rendez-vous, puis traitée par un worker serveur avec reprise et déduplication. Cette outbox calendrier sera distincte conceptuellement de `email_events` ; sa forme définitive reste à choisir. Une panne du provider ne remettra pas en cause le rendez-vous enregistré dans Booking.
-
-L'association stable entre rendez-vous et événement externe, accompagnée d'un marqueur d'origine lorsque le provider le permet, évitera les boucles. Un événement exporté puis relu dans un calendrier sélectionné sera reconnu comme représentation Booking et ne sera pas compté une seconde fois comme indisponibilité externe. Les mises à jour exportées devront respecter la dernière version métier, même après une reprise dans le désordre.
-
-Un déplacement ou une suppression manuelle de cette représentation chez Google ne déclenchera ni modification du rendez-vous Booking, ni email cliente, ni événement de fidélité. La divergence sera signalée puis réconciliée à partir de Booking selon une politique explicitée à la professionnelle. Seules les périodes des calendriers explicitement sélectionnés participeront à l'import, notamment pour les anniversaires et jours fériés.
-
-### Sécurité et cycle de vie de la connexion
-
-- OAuth avec consentement explicite, callback serveur et protection de la liaison au business contre CSRF/substitution de compte ; vérifier à nouveau le membre autorisé lors de la connexion, du choix des calendriers et de la déconnexion.
-- Tokens d'accès et de renouvellement exclusivement côté serveur ; aucun refresh token dans le navigateur, les DTO, les logs ou une variable `NEXT_PUBLIC_*`.
-- Stockage chiffré approprié (coffre de secrets ou chiffrement applicatif avec clés séparées des données et rotation) ; accès limité aux workers autorisés. Les métadonnées de connexion accessibles à la professionnelle ne doivent jamais exposer les credentials.
-- Permissions OAuth Google minimales pour les calendriers sélectionnés et les opérations nécessaires ; scopes exacts à valider lors de l'implémentation, sans accès élargi par défaut.
-- Notifications vérifiées et rattachées à une connexion connue côté serveur ; ne jamais faire confiance à un `business_id` fourni dans un webhook. Traitement idempotent des notifications répétées.
-- Déconnexion : arrêter les jobs et renouvellements, révoquer l'autorisation lorsque possible, supprimer les tokens locaux et désactiver les sources. Expliquer l'effet sur les disponibilités ; conserver les rendez-vous Booking et définir explicitement la conservation/suppression des représentations exportées et des données locales.
+Un déplacement ou une suppression manuelle de cette représentation chez Google ne modifiera pas le rendez-vous Booking. La divergence sera signalée.
 
 ## 9. Emails et tâches planifiées
 
