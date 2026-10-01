@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,7 +43,8 @@ import {
   type AgendaView as View,
 } from "../client/dates";
 import { agendaRequestRange, restrictToDays } from "../client/layout";
-import { dateContaining, zoneOf } from "../client/zone";
+import { useCanonicalToday } from "../client/use-canonical-today";
+import { zoneOf } from "../client/zone";
 import { AgendaError, TextAction } from "./agenda-error";
 import { AppointmentDetails } from "./appointment-details";
 import { AppointmentForm, type ServicesState } from "./appointment-form";
@@ -53,8 +60,10 @@ type Panel =
 
 type Loaded = { key: string; data: AgendaDto };
 type Failed = { key: string; error: UiError };
+/** An action that needed today's date and could not get it. */
+type TodayFailure = { error: UiError; retry: () => void };
 
-// Re-renders every 30 s so "now" (line, Today button) stays true.
+// Re-renders every 30 s so "now" (the line on the grid) stays true.
 function subscribeClock(callback: () => void) {
   const timer = window.setInterval(callback, 30_000);
   return () => window.clearInterval(timer);
@@ -68,6 +77,12 @@ const DEFAULT_TIME = "09:00";
  * one day: exactly the range on screen, in one aggregated request.
  * Writes are never applied optimistically: the server's answer updates the
  * open panel and the visible range is reloaded.
+ *
+ * "Today" is always PostgreSQL's date for the business (useCanonicalToday).
+ * Anything that depends on it — the Aujourd’hui button, the default day of
+ * a new appointment or block in the week view — asks PostgreSQL first and
+ * reports an error rather than guessing a date; the date kept on screen is
+ * only used for display (highlight, "now" line).
  */
 export function AgendaView({
   today: initialToday,
@@ -81,14 +96,27 @@ export function AgendaView({
   const view: View = wide ? "week" : "day";
   const clock = useSyncExternalStore(subscribeClock, clockBucket, () => 0);
 
+  const canonical = useCanonicalToday(initialToday, clock);
+
   const [anchor, setAnchor] = useState(initialToday);
   const [includeCancelled, setIncludeCancelled] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [failed, setFailed] = useState<Failed | null>(null);
-  const [panel, setPanel] = useState<Panel | null>(null);
+  const [panel, setPanelState] = useState<Panel | null>(null);
   const [services, setServices] = useState<ServicesState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [todayFailure, setTodayFailure] = useState<TodayFailure | null>(null);
+  // The action waiting for today's date, if any (see withToday).
+  const [awaitingToday, setAwaitingToday] = useState<number | null>(null);
+  const intent = useRef(0);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const range = visibleRange(view, anchor);
   const key = `${range.startDate}:${range.endDate}:${includeCancelled}:${reloadToken}`;
@@ -97,13 +125,15 @@ export function AgendaView({
   useEffect(() => {
     if (wide === null) return;
     let active = true;
+    const observation = canonical.begin();
     callAction(() =>
       getAgendaAction({ ...agendaRequestRange(range.days), includeCancelled }),
     ).then((result) => {
       if (!active) return;
-      if (result.ok)
+      if (result.ok) {
+        canonical.observe(observation, result.data);
         setLoaded({ key, data: restrictToDays(result.data, range.days) });
-      else setFailed({ key, error: result.error });
+      } else setFailed({ key, error: result.error });
     });
     return () => {
       active = false;
@@ -121,14 +151,62 @@ export function AgendaView({
   // The business zone as PostgreSQL sent it with the last agenda read: day
   // bounds and UTC offsets. Kept while the next range loads (open panels).
   const zone = useMemo(() => (loaded ? zoneOf(loaded.data) : null), [loaded]);
-  // Today: the day read that contains now, otherwise the date PostgreSQL
-  // gave with the last read (or with the page). Never the browser's rules.
-  const today =
-    (clock && zone && dateContaining(zone, clock * 30_000)) ||
-    loaded?.data.today ||
-    initialToday;
+  // For display only: today as PostgreSQL gave it, or null while that day
+  // may be over and the new date is not known yet (nothing is shown as today
+  // meanwhile).
+  const today = canonical.certain ? canonical.date : null;
+
+  // What an action started before an answer must see when the answer comes.
+  const latest = useRef({ view, anchor, days: range.days, data });
+  useEffect(() => {
+    latest.current = { view, anchor, days: range.days, data };
+  });
 
   const reload = () => setReloadToken((token) => token + 1);
+
+  /**
+   * A newer interaction takes over: an action still waiting for today's
+   * date must not run when its answer arrives (it would replace what the
+   * user has opened or typed since), nor report its failure.
+   */
+  function supersede() {
+    intent.current += 1;
+    setAwaitingToday(null);
+    setTodayFailure(null);
+  }
+
+  /** Every change of the panel is such an interaction: open, switch, close. */
+  function setPanel(next: Panel | null) {
+    supersede();
+    setPanelState(next);
+  }
+
+  /** So is any navigation. */
+  function navigate(date: string) {
+    supersede();
+    setAnchor(date);
+  }
+
+  /**
+   * Runs `run` with the business's date today, asked to PostgreSQL right
+   * now: the date kept on screen is never trusted for an action, whatever
+   * the device clock says. If the question fails, the action is not run
+   * with a guessed date: an error offers to retry. If the user does
+   * something else meanwhile, the action is dropped.
+   */
+  function withToday(run: (today: string) => void) {
+    supersede();
+    const id = intent.current;
+    setAwaitingToday(id);
+    void canonical.validate().then((result) => {
+      if (!alive.current || id !== intent.current) return;
+      setAwaitingToday(null);
+      if (result.ok) run(result.data);
+      else {
+        setTodayFailure({ error: result.error, retry: () => withToday(run) });
+      }
+    });
+  }
 
   function ensureServices() {
     if (services?.status === "ready" || services?.status === "loading") return;
@@ -147,22 +225,36 @@ export function AgendaView({
    * screen — the selected day, today when visible, otherwise the first
    * visible working day.
    */
-  function defaultDate() {
-    if (view === "day") return anchor;
-    if (range.days.includes(today)) return today;
-    return (
-      data?.workingHours.days.find((day) => day.openRanges.length > 0)?.date ??
-      range.startDate
-    );
+  function withDefaultDate(open: (date: string) => void) {
+    // One day on screen: that day, whatever today is.
+    if (latest.current.view === "day") {
+      open(latest.current.anchor);
+      return;
+    }
+    withToday((today) => {
+      const { view, anchor, days, data } = latest.current;
+      if (view === "day") return open(anchor);
+      if (days.includes(today)) return open(today);
+      open(
+        data?.workingHours.days.find((day) => day.openRanges.length > 0)
+          ?.date ?? days[0]!,
+      );
+    });
   }
 
-  function openCreateBlock(date = defaultDate(), time = DEFAULT_TIME) {
-    setPanel({ kind: "createBlock", date, time });
+  function openCreateBlock(date?: string, time = DEFAULT_TIME) {
+    const open = (day: string) =>
+      setPanel({ kind: "createBlock", date: day, time });
+    if (date) open(date);
+    else withDefaultDate(open);
   }
 
-  function openCreateAppointment(date = defaultDate(), time = DEFAULT_TIME) {
+  function openCreateAppointment(date?: string, time = DEFAULT_TIME) {
     ensureServices();
-    setPanel({ kind: "createAppointment", date, time });
+    const open = (day: string) =>
+      setPanel({ kind: "createAppointment", date: day, time });
+    if (date) open(date);
+    else withDefaultDate(open);
   }
 
   function openEdit(appointment: AgendaAppointmentDto) {
@@ -173,7 +265,7 @@ export function AgendaView({
   function showAppointment(appointment: AgendaAppointmentDto) {
     setPanel({ kind: "appointment", appointment });
     const date = appointment.localStartsAt.slice(0, 10);
-    if (date < range.startDate || date > range.endDate) setAnchor(date);
+    if (date < range.startDate || date > range.endDate) navigate(date);
     reload();
   }
 
@@ -197,10 +289,12 @@ export function AgendaView({
   // been moved to another day meanwhile. Absent from the range is not proof
   // of deletion, so the message says what is known.
   async function refreshBlock(block: AgendaBlockDto) {
+    const observation = canonical.begin();
     const result = await callAction(() =>
       getAgendaAction({ ...agendaRequestRange(range.days), includeCancelled }),
     );
     if (!result.ok) return result.error;
+    canonical.observe(observation, result.data);
     const data = restrictToDays(result.data, range.days);
     setLoaded({ key, data });
     const fresh = data.blocks.find((item) => item.id === block.id);
@@ -247,22 +341,29 @@ export function AgendaView({
           <div className="flex items-center gap-1.5">
             <IconButton
               label={view === "week" ? "Semaine précédente" : "Jour précédent"}
-              onClick={() => setAnchor(shiftAnchor(view, anchor, -1))}
+              onClick={() => navigate(shiftAnchor(view, anchor, -1))}
             >
               <ChevronLeftIcon size={19} />
             </IconButton>
             <Button
               variant="secondary"
               size="md"
-              onClick={() => setAnchor(today)}
-              disabled={range.days.includes(today)}
-              className="h-10 px-3.5"
+              onClick={() => withToday(navigate)}
+              // Never disabled: whether today is on screen is PostgreSQL's
+              // to say, at the click. The hint below is display only.
+              data-on-today={today !== null && range.days.includes(today)}
+              className={cn(
+                "h-10 px-3.5",
+                today !== null &&
+                  range.days.includes(today) &&
+                  "text-ink-muted",
+              )}
             >
               Aujourd’hui
             </Button>
             <IconButton
               label={view === "week" ? "Semaine suivante" : "Jour suivant"}
-              onClick={() => setAnchor(shiftAnchor(view, anchor, 1))}
+              onClick={() => navigate(shiftAnchor(view, anchor, 1))}
             >
               <ChevronRightIcon size={19} />
             </IconButton>
@@ -287,7 +388,7 @@ export function AgendaView({
         </div>
 
         {view === "day" ? (
-          <DayStrip anchor={anchor} today={today} onSelect={setAnchor} />
+          <DayStrip anchor={anchor} today={today} onSelect={navigate} />
         ) : null}
 
         <label className="flex w-fit cursor-pointer items-center gap-2 text-[13.5px] text-ink-soft">
@@ -302,7 +403,7 @@ export function AgendaView({
       </header>
 
       <div className="relative flex min-h-0 flex-1 flex-col">
-        {loading ? (
+        {loading || awaitingToday !== null ? (
           <div
             className="absolute inset-x-0 top-0 z-40 h-0.5 overflow-hidden bg-sand"
             role="progressbar"
@@ -322,6 +423,23 @@ export function AgendaView({
             >
               {notice}
             </Notice>
+          </div>
+        ) : null}
+
+        {todayFailure ? (
+          <div className="p-4 pb-0 sm:px-6 lg:px-8">
+            <AgendaError
+              error={todayFailure.error}
+              subject="agenda"
+              action={
+                todayFailure.error.code === "network" ||
+                todayFailure.error.code === "internal" ? (
+                  <TextAction onClick={todayFailure.retry}>
+                    Réessayer
+                  </TextAction>
+                ) : undefined
+              }
+            />
           </div>
         ) : null}
 
@@ -507,7 +625,7 @@ function DayStrip({
   onSelect,
 }: {
   anchor: string;
-  today: string;
+  today: string | null;
   onSelect: (date: string) => void;
 }) {
   const { days } = visibleRange("week", startOfWeek(anchor));

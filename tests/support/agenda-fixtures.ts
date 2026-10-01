@@ -4,6 +4,7 @@ import type {
   AgendaDto,
 } from "@/features/agenda/data/agenda";
 import type { AgendaServicesDto } from "@/features/agenda/data/lookups";
+import type { BusinessTodayDto } from "@/lib/time/business-time";
 import {
   addDaysToLocalDate,
   resolveZonedLocal,
@@ -137,6 +138,24 @@ export function block(
     endOccurrence: zonedOccurrenceOf(endsAt, timeZone),
     reason: "Formation",
     ...rest,
+  };
+}
+
+/**
+ * What getAgendaTodayAction answers: PostgreSQL's date at `serverNow`, the
+ * instant that date ends and the server instant of the answer. The server
+ * clock is the test clock unless another one is given (a device whose clock
+ * is wrong).
+ */
+export function businessToday(
+  timeZone = TZ,
+  serverNow: number = Date.now(),
+): BusinessTodayDto {
+  const date = utcToZonedLocal(new Date(serverNow), timeZone).slice(0, 10);
+  return {
+    date,
+    endsAt: intlCalendar(timeZone, [date]).days[0]!.endsAt,
+    now: new Date(serverNow).toISOString(),
   };
 }
 

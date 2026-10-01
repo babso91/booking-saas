@@ -1075,6 +1075,25 @@ describe("PostgreSQL is the only calendar authority", () => {
       ]),
     });
 
+    // The date today comes with its end and the database's own instant
+    // (migration 20261002090000), from one snapshot: now < todayEndsAt.
+    const calendar = member.data as {
+      today: string;
+      todayEndsAt: string;
+      now: string;
+    };
+    expect(calendar.today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(Date.parse(calendar.now)).toBeLessThan(
+      Date.parse(calendar.todayEndsAt),
+    );
+    expect(
+      Date.parse(calendar.todayEndsAt) - Date.parse(calendar.now),
+    ).toBeLessThanOrEqual(25 * 3_600_000);
+
+    // Same access rules as before: another business's member and an
+    // anonymous caller get nothing, not even the date.
+    const refused = await call(outsider.client);
+    expect(refused.data).toBeNull();
     expect((await call(outsider.client)).error).toMatchObject({
       message: "forbidden",
     });

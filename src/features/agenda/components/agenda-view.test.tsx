@@ -13,6 +13,7 @@ import {
   agenda,
   appointment,
   block,
+  businessToday,
   CLIENT_A,
   SERVICE_A,
   SERVICE_B,
@@ -23,6 +24,7 @@ import { AgendaView } from "./agenda-view";
 const actions = {
   getAgendaAction: vi.fn(),
   getAgendaAppointmentAction: vi.fn(),
+  getAgendaTodayAction: vi.fn(),
   listAgendaServicesAction: vi.fn(),
   searchAgendaClientsAction: vi.fn(),
   createAppointmentAction: vi.fn(),
@@ -39,6 +41,7 @@ vi.mock("@/features/agenda/actions/agenda", () =>
     Object.keys({
       getAgendaAction: 0,
       getAgendaAppointmentAction: 0,
+      getAgendaTodayAction: 0,
       listAgendaServicesAction: 0,
       searchAgendaClientsAction: 0,
       createAppointmentAction: 0,
@@ -103,6 +106,11 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-09-29T08:00:00Z")); // 10:00 in Paris
   Object.values(actions).forEach((mock) => mock.mockReset());
   actions.listAgendaServicesAction.mockResolvedValue(ok(services));
+  // PostgreSQL's date at the test clock: asked on mount and before every
+  // action that depends on today.
+  actions.getAgendaTodayAction.mockImplementation(async () =>
+    ok(businessToday()),
+  );
   useViewport(false);
 });
 

@@ -9,6 +9,7 @@ import {
   deleteBlockAction,
   getAgendaAction,
   getAgendaAppointmentAction,
+  getAgendaTodayAction,
   listAgendaServicesAction,
   searchAgendaClientsAction,
   setAppointmentStatusAction,
@@ -223,6 +224,7 @@ describe("access control", () => {
     );
     failure(await create(a, "10:00"), "unauthenticated");
     failure(await listAgendaServicesAction(), "unauthenticated");
+    failure(await getAgendaTodayAction(), "unauthenticated");
     failure(
       await searchAgendaClientsAction({ query: "Julie" }),
       "unauthenticated",
@@ -1420,6 +1422,52 @@ describe("blocks", () => {
       }),
       "block_not_found",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("today", () => {
+  // What the agenda asks before any action that depends on today, instead
+  // of trusting a clock of its own. Everything comes from PostgreSQL, in
+  // one call: the date, the instant it ends and the database's own "now".
+  it("date, end and now are PostgreSQL's, coherent with each other, in the business time zone", async () => {
+    const databaseNow = async () =>
+      (await db.query<{ now: Date }>("select now() as now")).rows[0]!.now;
+
+    // 25 hours apart: these two businesses never share a date, wherever the
+    // test machine is.
+    const dates: string[] = [];
+    for (const timezone of ["Pacific/Kiritimati", "Pacific/Pago_Pago"]) {
+      await newAgenda({ timezone });
+      const before = await databaseNow();
+      const today = ok(await getAgendaTodayAction());
+      const after = await databaseNow();
+
+      expect(Object.keys(today).sort()).toEqual(["date", "endsAt", "now"]);
+      // `now` is the database's clock, between two readings of that clock.
+      expect(Date.parse(today.now)).toBeGreaterThanOrEqual(before.getTime());
+      expect(Date.parse(today.now)).toBeLessThanOrEqual(after.getTime());
+
+      // The date and its end are exactly what PostgreSQL computes for that
+      // very instant: one snapshot, no mix of clocks.
+      const { rows } = await db.query<{ date: string; ends_at: Date }>(
+        `select private.local_date_of($1::timestamptz, $2)::text as date,
+                private.local_day_start(
+                  private.local_date_of($1::timestamptz, $2) + 1, $2
+                ) as ends_at`,
+        [today.now, timezone],
+      );
+      expect(today.date).toBe(rows[0]!.date);
+      expect(today.endsAt).toBe(rows[0]!.ends_at.toISOString());
+
+      // Never "today = D" with now already at or past the end of D.
+      const remaining = Date.parse(today.endsAt) - Date.parse(today.now);
+      expect(remaining).toBeGreaterThan(0);
+      expect(remaining).toBeLessThanOrEqual(24 * 3_600_000);
+      dates.push(today.date);
+    }
+    expect(dates[0]! > dates[1]!).toBe(true);
   });
 });
 

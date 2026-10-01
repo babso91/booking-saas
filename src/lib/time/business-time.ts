@@ -55,11 +55,29 @@ export type WallClock = {
   occurrence: LocalTimeOccurrence | null;
 };
 
+export type BusinessTodayDto = {
+  /** The business's civil date now, `YYYY-MM-DD`. */
+  date: string;
+  /** Instant at which that date ends (the next civil date begins). */
+  endsAt: string;
+  /**
+   * PostgreSQL's own instant for this answer (the one `date` and `endsAt`
+   * were computed from). `endsAt − now` is how long the date still lasts,
+   * by the calendar authority alone: a screen times it by elapsed time and
+   * never compares `endsAt` with its clock, nor with this server's.
+   */
+  now: string;
+};
+
 type RawDay = BusinessDayDto & { openRanges: OpenRangeDto[] | null };
 
 type RawBusinessTime = {
   timezone: string;
   today: string;
+  /** First instant of the next civil date (migration 20261002090000). */
+  todayEndsAt?: string;
+  /** The database's instant for this answer. */
+  now?: string;
   days: RawDay[];
   locals: {
     local: string;
@@ -84,6 +102,9 @@ export class BusinessTime {
   readonly timezone: string;
   /** The business's civil date now. */
   readonly today: string;
+  /** Instant that date ends, and the database's instant of this answer. */
+  readonly todayEndsAt: string | null;
+  readonly now: string | null;
   /** UTC offset pieces covering the requested days. */
   readonly offsets: ZoneOffsetDto[];
   private readonly dayMap: Map<string, RawDay>;
@@ -93,6 +114,8 @@ export class BusinessTime {
   constructor(raw: RawBusinessTime) {
     this.timezone = raw.timezone;
     this.today = raw.today;
+    this.todayEndsAt = raw.todayEndsAt ? iso(raw.todayEndsAt) : null;
+    this.now = raw.now ? iso(raw.now) : null;
     this.offsets = raw.offsets.map((piece) => ({
       startsAt: iso(piece.startsAt),
       endsAt: iso(piece.endsAt),
@@ -204,4 +227,27 @@ export async function readBusinessTime(
   if (error) throw databaseException(error);
 
   return new BusinessTime(data as unknown as RawBusinessTime);
+}
+
+/**
+ * The business's civil date now, the instant it ends and the database's
+ * instant of the answer: one round trip, everything from PostgreSQL in the
+ * same call. This server's clock is not involved.
+ */
+export async function readBusinessToday(
+  client: AppSupabaseClient,
+  businessId: string,
+): Promise<BusinessTodayDto> {
+  const calendar = await readBusinessTime(client, businessId);
+
+  // Never completed with this server's clock or a guessed end.
+  if (!calendar.todayEndsAt || !calendar.now) {
+    throw missing("the end of today and the database's now");
+  }
+
+  return {
+    date: calendar.today,
+    endsAt: calendar.todayEndsAt,
+    now: calendar.now,
+  };
 }

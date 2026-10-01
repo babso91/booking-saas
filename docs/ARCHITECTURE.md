@@ -270,17 +270,25 @@ Toute erreur annule l'ensemble.
 
 Toute conversion qui a une conséquence sur le planning est calculée par PostgreSQL, avec **sa** base IANA (migration `20261001090000`). Node et le navigateur embarquent chacun leur propre tzdata, qui peut différer : en CI, Node 24 (tzdata 2026c) lit America/Vancouver en UTC−7 le 14 mars 2027 alors que PostgreSQL (tzdata 2025b) y lit encore UTC−8. Avec trois calculs « équivalents », l'agenda montrait alors une ouverture `00:00 → 01:00` à 07:00Z–08:00Z pendant que la réservation publique la plaçait à 08:00Z–09:00Z. Il n'y a donc plus qu'une autorité :
 
-| Conversion                                                                                 | Calculée par                                               |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| date civile → instant, bornes d'un jour (`local_day_start`, `local_date_of`)               | PostgreSQL                                                 |
-| plages d'ouverture réelles d'un jour (`private.opening_ranges`)                            | PostgreSQL, pour la disponibilité publique **et** l'agenda |
-| disponibilité, horizon, délai minimal, validation de réservation                           | PostgreSQL                                                 |
-| heure murale et occurrence (`first`/`second`) d'un instant stocké                          | PostgreSQL (`wall_clock`, `wall_occurrence`)               |
-| heure murale saisie → instant(s) : `exact` / `ambiguous` / `nonexistent`, borne de période | PostgreSQL (`resolve_local`, `local_bound`)                |
-| heure murale des créneaux publics, du payload d'email                                      | PostgreSQL (`get_available_slots`, outbox)                 |
-| date du jour du business                                                                   | PostgreSQL                                                 |
+| Conversion                                                                                 | Calculée par                                                 |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| date civile → instant, bornes d'un jour (`local_day_start`, `local_date_of`)               | PostgreSQL                                                   |
+| plages d'ouverture réelles d'un jour (`private.opening_ranges`)                            | PostgreSQL, pour la disponibilité publique **et** l'agenda   |
+| disponibilité, horizon, délai minimal, validation de réservation                           | PostgreSQL                                                   |
+| heure murale et occurrence (`first`/`second`) d'un instant stocké                          | PostgreSQL (`wall_clock`, `wall_occurrence`)                 |
+| heure murale saisie → instant(s) : `exact` / `ambiguous` / `nonexistent`, borne de période | PostgreSQL (`resolve_local`, `local_bound`)                  |
+| heure murale des créneaux publics, du payload d'email                                      | PostgreSQL (`get_available_slots`, outbox)                   |
+| date du jour du business, instant où elle se termine, instant courant de référence         | PostgreSQL (`business_time` : `today`, `todayEndsAt`, `now`) |
 
 Le serveur Next.js obtient ces valeurs en un appel par lecture ou écriture : `public.business_time` (membres uniquement, entrées bornées), encapsulée par `src/lib/time/business-time.ts`. L'agenda reçoit avec chaque lecture les bornes réelles de chaque jour et les tranches de décalage UTC constant qui les couvrent (`offsets`) ; la grille (`src/features/agenda/client/zone.ts`, `layout.ts`) ne fait que de l'arithmétique sur ces valeurs.
+
+**Date du jour sur un écran ouvert.** Ni l'horloge de l'appareil ni celle du serveur Next ne certifient la date du business : elles peuvent avoir des minutes ou des heures d'écart. `public.business_time` renvoie, à partir d'un seul instant PostgreSQL (migration `20261002090000`), `today`, `todayEndsAt` et `now` ; `readBusinessToday` les transmet tels quels : `{ date, endsAt, now }`, avec toujours `now < endsAt`.
+
+- **Lecture d'action.** Toute action qui dépend d'aujourd'hui (bouton Aujourd'hui, jour par défaut d'une création en vue semaine) envoie **sa propre** question à PostgreSQL, après le clic, et utilise cette réponse. Elle ne rejoint jamais une requête déjà en vol — ni un rafraîchissement d'affichage, ni une autre action : une lecture commencée avant le clic ne dit rien de la date au moment du clic. En cas d'échec, erreur avec réessai (nouvelle lecture) plutôt qu'une date devinée. Une action en attente est abandonnée dès que l'utilisatrice fait autre chose (panneau ouvert, changé ou fermé, navigation).
+- **Lecture d'affichage.** Le surlignage d'aujourd'hui et la ligne « maintenant » utilisent un cache. Sa durée de validité est `endsAt − now`, calculée par PostgreSQL seul ; l'écran ne mesure que le temps **écoulé** depuis l'envoi de la question (le plus grand de l'horloge monotone et de l'horloge murale), sans jamais comparer une horloge à un instant de la base. Une requête par changement de jour, partagée par ses déclencheurs : timer posé sur la fin, retour de l'onglet (`visibilitychange`, focus, `pageshow`), tick d'horloge de l'écran. Tant que la date est incertaine, rien n'est surligné.
+- **Toutes les lectures.** Chacune se termine toujours (réponse, délai de 10 s ou arrêt) et une réponse arrivée après coup n'est jamais appliquée. Le cache suit la lecture **envoyée** le plus récemment : une lecture plus ancienne ne le fait jamais reculer. Arrêt puis redémarrage (React Strict Mode) équivaut à un premier démarrage.
+
+Code : `src/features/agenda/client/today.ts`, `today-tracker.ts`, `use-canonical-today.ts`. Ni `Intl` ni « date + 1 » : la date suivante vient toujours de PostgreSQL.
 
 Ce que Node et le navigateur ont encore le droit de calculer :
 

@@ -30,6 +30,7 @@ import {
   updateBlockSchema,
 } from "@/features/agenda/schemas/agenda";
 import { runBusinessAction } from "@/features/businesses/actions/run-business-action";
+import { readBusinessToday } from "@/lib/time/business-time";
 import { z } from "zod";
 
 // Official server interface of the professional agenda. Every action resolves
@@ -58,6 +59,13 @@ export async function getAgendaAppointmentAction(input: unknown) {
     input,
     ({ client, businessId, timezone }, { appointmentId }) =>
       getAgendaAppointment(client, { businessId, timezone }, appointmentId),
+  );
+}
+
+/** The business's date today and when it ends, from PostgreSQL. */
+export async function getAgendaTodayAction() {
+  return runBusinessAction(z.undefined(), undefined, ({ client, businessId }) =>
+    readBusinessToday(client, businessId),
   );
 }
 
