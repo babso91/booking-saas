@@ -17,7 +17,6 @@ import {
   SERVICE_A,
   SERVICE_B,
   services,
-  TZ,
 } from "../../../../tests/support/agenda-fixtures";
 import { AgendaView } from "./agenda-view";
 
@@ -82,7 +81,7 @@ function useViewport(wide: boolean) {
 }
 
 function renderAgenda() {
-  return render(<AgendaView timezone={TZ} today={TODAY} slug="studio-mila" />);
+  return render(<AgendaView today={TODAY} slug="studio-mila" />);
 }
 
 const lastCall = (mock: ReturnType<typeof vi.fn>) =>
@@ -113,8 +112,8 @@ afterEach(() => {
 });
 
 describe("loading", () => {
-  // The request starts one day early (a repeated midnight is read as its
-  // second occurrence by the backend); only the visible days are shown.
+  // Exactly the visible days are requested: their real bounds (repeated or
+  // skipped midnight included) come from PostgreSQL with the answer.
   it("desktop: loads one week, in a single aggregated request", async () => {
     useViewport(true);
     actions.getAgendaAction.mockResolvedValue(
@@ -124,7 +123,7 @@ describe("loading", () => {
 
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenCalledWith({
-        startDate: "2026-09-27",
+        startDate: "2026-09-28",
         endDate: "2026-10-04",
         includeCancelled: false,
       }),
@@ -148,7 +147,7 @@ describe("loading", () => {
 
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenCalledWith({
-        startDate: "2026-09-28",
+        startDate: "2026-09-29",
         endDate: TODAY,
         includeCancelled: false,
       }),
@@ -171,7 +170,7 @@ describe("loading", () => {
     await user.click(screen.getByRole("button", { name: "Jour suivant" }));
     await waitFor(() =>
       expect(lastCall(actions.getAgendaAction)).toMatchObject({
-        startDate: "2026-09-29",
+        startDate: "2026-09-30",
         endDate: "2026-09-30",
       }),
     );
@@ -179,7 +178,7 @@ describe("loading", () => {
     await user.click(screen.getByRole("button", { name: "Aujourd’hui" }));
     await waitFor(() =>
       expect(lastCall(actions.getAgendaAction)).toMatchObject({
-        startDate: "2026-09-28",
+        startDate: "2026-09-29",
         endDate: TODAY,
       }),
     );
@@ -189,7 +188,7 @@ describe("loading", () => {
     );
     await waitFor(() =>
       expect(lastCall(actions.getAgendaAction)).toMatchObject({
-        startDate: "2026-10-03",
+        startDate: "2026-10-04",
         endDate: "2026-10-04",
       }),
     );
@@ -209,7 +208,7 @@ describe("loading", () => {
     await user.click(screen.getByRole("button", { name: "Semaine suivante" }));
     await waitFor(() =>
       expect(lastCall(actions.getAgendaAction)).toMatchObject({
-        startDate: "2026-10-04",
+        startDate: "2026-10-05",
         endDate: "2026-10-11",
       }),
     );
@@ -514,11 +513,13 @@ describe("creating an appointment", () => {
     await user.click(
       form.getByRole("button", { name: "Créer le rendez-vous" }),
     );
+    // 25 October is not among the days read: the UTC offsets are only ever
+    // those PostgreSQL sent, never the browser's, so none is shown here.
     const summer = await form.findByRole("radio", {
-      name: "02:30 — heure d’été (UTC+2)",
+      name: "02:30 — heure d’été",
     });
     const winter = form.getByRole("radio", {
-      name: "02:30 — heure d’hiver (UTC+1)",
+      name: "02:30 — heure d’hiver",
     });
     expect(summer).toBeTruthy();
 
@@ -545,7 +546,7 @@ describe("creating an appointment", () => {
       occurrence: "second",
     });
     expect(
-      await within(panel()).findByText(/02:30 \(heure d’hiver, UTC\+1\)/),
+      await within(panel()).findByText(/02:30 \(heure d’hiver/),
     ).toBeTruthy();
   });
 
@@ -634,7 +635,7 @@ describe("existing appointment", () => {
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
       ok(agenda(startDate, endDate, { appointments: [repeated] })),
     );
-    render(<AgendaView timezone={TZ} today="2026-10-21" slug="studio-mila" />);
+    render(<AgendaView today="2026-10-21" slug="studio-mila" />);
     const details = await openAppointment(
       user,
       /02:30 \(heure d’été, UTC\+2\)/,
@@ -961,7 +962,7 @@ describe("blocks", () => {
     );
 
     expect(actions.getAgendaAction).toHaveBeenLastCalledWith({
-      startDate: "2026-09-27",
+      startDate: "2026-09-28",
       endDate: "2026-10-04",
       includeCancelled: false,
     });
@@ -1054,7 +1055,7 @@ describe("blocks", () => {
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
       ok(agenda(startDate, endDate, { blocks: [repeated] })),
     );
-    render(<AgendaView timezone={TZ} today="2026-10-21" slug="studio-mila" />);
+    render(<AgendaView today="2026-10-21" slug="studio-mila" />);
     const card = await screen.findByRole("button", {
       name: "Bloqué · Heure en double, 02:30 – 02:30",
     });
@@ -1113,7 +1114,7 @@ describe("defaults and retries", () => {
     await user.click(screen.getByRole("button", { name: "Semaine suivante" }));
     await waitFor(() =>
       expect(lastCall(actions.getAgendaAction)).toMatchObject({
-        startDate: "2026-10-04",
+        startDate: "2026-10-05",
         endDate: "2026-10-11",
       }),
     );

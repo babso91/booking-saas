@@ -1,12 +1,9 @@
-import {
-  addDaysToLocalDate,
-  utcToZonedLocal,
-  weekdayOfLocalDate,
-} from "@/lib/time/zoned";
+import { addDaysToLocalDate, weekdayOfLocalDate } from "@/lib/time/local-date";
 
 // Local calendar helpers for the agenda UI. Every value is a wall-clock
 // string in the business time zone, exactly as the server sends it
-// (`YYYY-MM-DD`, `YYYY-MM-DDTHH:MM`): the UI never converts instants itself.
+// (`YYYY-MM-DD`, `YYYY-MM-DDTHH:MM`): the UI never converts instants itself
+// (today and placement come from PostgreSQL, see ./zone.ts).
 
 export type AgendaView = "week" | "day";
 
@@ -38,16 +35,6 @@ export function shiftAnchor(
   direction: -1 | 1,
 ) {
   return addDaysToLocalDate(anchor, direction * (view === "week" ? 7 : 1));
-}
-
-/** Today's date in the business time zone. */
-export function localToday(timeZone: string, now: Date = new Date()) {
-  return utcToZonedLocal(now, timeZone).slice(0, 10);
-}
-
-/** Current wall-clock time `YYYY-MM-DDTHH:MM` in the business time zone. */
-export function localNow(timeZone: string, now: Date = new Date()) {
-  return utcToZonedLocal(now, timeZone);
 }
 
 export const dateOf = (local: string) => local.slice(0, 10);

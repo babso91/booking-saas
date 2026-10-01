@@ -9,12 +9,13 @@ import type { BusinessContext } from "@/features/businesses/data/business-contex
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
-import { utcToZonedLocal, zonedBoundToUtc } from "@/lib/time/zoned";
+import { readBusinessTime, type BusinessTime } from "@/lib/time/business-time";
 import type { Tables, TablesUpdate } from "@/types/database.generated";
 
 // Professional management of opening hours, booking rules and exceptions.
 // Queries run with the user's client (RLS) and are scoped to the business
-// resolved from the session.
+// resolved from the session. Wall-clock values are converted by PostgreSQL
+// (public.business_time), never with Node's time zone database.
 
 type ScheduleContext = Pick<BusinessContext, "businessId" | "timezone">;
 
@@ -77,15 +78,15 @@ function toExceptionDto(
     Tables<"availability_exceptions">,
     "id" | "kind" | "starts_at" | "ends_at" | "reason"
   >,
-  timezone: string,
+  time: BusinessTime,
 ): AvailabilityExceptionDto {
   return {
     id: row.id,
     kind: row.kind,
     startsAt: new Date(row.starts_at).toISOString(),
     endsAt: new Date(row.ends_at).toISOString(),
-    localStartsAt: utcToZonedLocal(row.starts_at, timezone),
-    localEndsAt: utcToZonedLocal(row.ends_at, timezone),
+    localStartsAt: time.wall(row.starts_at).local,
+    localEndsAt: time.wall(row.ends_at).local,
     reason: row.reason,
   };
 }
@@ -197,14 +198,41 @@ export async function updateBookingSettings(
 
 const EXCEPTION_COLUMNS = "id, kind, starts_at, ends_at, reason";
 
-function exceptionRow(
+/** Exceptions with their wall clocks, read from the calendar authority. */
+async function toExceptionDtos(
+  client: AppSupabaseClient,
+  context: ScheduleContext,
+  rows: Parameters<typeof toExceptionDto>[0][],
+): Promise<AvailabilityExceptionDto[]> {
+  // public.business_time takes at most 4000 instants per call.
+  const chunks = Array.from(
+    { length: Math.ceil(rows.length / 1000) },
+    (_, index) => rows.slice(index * 1000, (index + 1) * 1000),
+  );
+  const mapped = await Promise.all(
+    chunks.map(async (chunk) => {
+      const time = await readBusinessTime(client, context.businessId, {
+        instants: chunk.flatMap((row) => [row.starts_at, row.ends_at]),
+      });
+      return chunk.map((row) => toExceptionDto(row, time));
+    }),
+  );
+  return mapped.flat();
+}
+
+async function exceptionRow(
+  client: AppSupabaseClient,
   context: ScheduleContext,
   input: AvailabilityExceptionInput,
 ) {
   // Local midnight is where the day begins, even where midnight is repeated
-  // or skipped (a closure "D 00:00 → D+1 00:00" covers the whole real day).
-  const startsAt = zonedBoundToUtc(input.startsAt, context.timezone);
-  const endsAt = zonedBoundToUtc(input.endsAt, context.timezone);
+  // or skipped (a closure "D 00:00 → D+1 00:00" covers the whole real day);
+  // any other time follows `AT TIME ZONE` (private.local_bound).
+  const time = await readBusinessTime(client, context.businessId, {
+    locals: [input.startsAt, input.endsAt],
+  });
+  const startsAt = time.local(input.startsAt).bound;
+  const endsAt = time.local(input.endsAt).bound;
 
   // A range can collapse across a DST gap (e.g. 02:00 → 02:30 on the spring day).
   if (startsAt >= endsAt) {
@@ -238,7 +266,7 @@ export async function listAvailabilityExceptions(
     throw databaseException(error);
   }
 
-  return data.map((row) => toExceptionDto(row, context.timezone));
+  return toExceptionDtos(client, context, data);
 }
 
 export async function createAvailabilityException(
@@ -250,7 +278,7 @@ export async function createAvailabilityException(
     .from("availability_exceptions")
     .insert({
       business_id: context.businessId,
-      ...exceptionRow(context, input),
+      ...(await exceptionRow(client, context, input)),
     })
     .select(EXCEPTION_COLUMNS)
     .single();
@@ -259,7 +287,7 @@ export async function createAvailabilityException(
     throw databaseException(error);
   }
 
-  return toExceptionDto(data, context.timezone);
+  return (await toExceptionDtos(client, context, [data]))[0]!;
 }
 
 export async function updateAvailabilityException(
@@ -270,7 +298,7 @@ export async function updateAvailabilityException(
 ): Promise<AvailabilityExceptionDto> {
   const { data, error } = await client
     .from("availability_exceptions")
-    .update(exceptionRow(context, input))
+    .update(await exceptionRow(client, context, input))
     .eq("business_id", context.businessId)
     .eq("id", exceptionId)
     .select(EXCEPTION_COLUMNS)
@@ -283,7 +311,7 @@ export async function updateAvailabilityException(
     throw new AppException("not_found");
   }
 
-  return toExceptionDto(data, context.timezone);
+  return (await toExceptionDtos(client, context, [data]))[0]!;
 }
 
 export async function deleteAvailabilityException(

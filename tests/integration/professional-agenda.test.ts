@@ -468,13 +468,18 @@ describe("reading a range", () => {
       {
         date: FUTURE,
         weekday: new Date(`${FUTURE}T00:00Z`).getUTCDay(),
+        startsAt: utc(a, FUTURE, "00:00"),
+        endsAt: new Date(
+          Date.parse(utc(a, FUTURE, "00:00")) + 24 * 3_600_000,
+        ).toISOString(),
         openRanges: [
+          // Weekly 09:00–19:00 + exceptional opening 19:00–21:00: one real
+          // opening, merged exactly as public availability merges it
+          // (private.opening_ranges).
           expect.objectContaining({
+            startsAt: utc(a, FUTURE, "09:00"),
+            endsAt: utc(a, FUTURE, "21:00"),
             localStartsAt: `${FUTURE}T09:00`,
-            localEndsAt: `${FUTURE}T19:00`,
-          }),
-          expect.objectContaining({
-            localStartsAt: `${FUTURE}T19:00`,
             localEndsAt: `${FUTURE}T21:00`,
           }),
         ],

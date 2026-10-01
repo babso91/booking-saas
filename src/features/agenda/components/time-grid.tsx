@@ -29,12 +29,12 @@ import {
 } from "../client/layout";
 import { formatPrice } from "../client/money";
 import { timeWithOccurrence } from "../client/occurrence";
+import { zoneOf, type Zone } from "../client/zone";
 import { StatusBadge, statusMeta } from "./status-badge";
 
 type TimeGridProps = {
   days: string[];
   data: AgendaDto | null;
-  timezone: string;
   today: string;
   /** Current instant (ms), or null before the client clock is known. */
   nowMs: number | null;
@@ -59,7 +59,6 @@ export function blockLabel(block: AgendaBlockDto) {
 export function TimeGrid({
   days,
   data,
-  timezone,
   today,
   nowMs,
   hourHeight,
@@ -71,7 +70,9 @@ export function TimeGrid({
   const appointments = data?.appointments ?? [];
   const blocks = data?.blocks ?? [];
   const workingDays = data?.workingHours.days ?? [];
-  const axis = useMemo(() => buildAxis(days, timezone), [days, timezone]);
+  // The zone comes with the data (PostgreSQL's day bounds and offsets).
+  const zone = useMemo(() => (data ? zoneOf(data) : null), [data]);
+  const axis = useMemo(() => buildAxis(days, zone), [days, zone]);
   const { startY, endY } = visibleWindow(
     axis,
     days,
@@ -329,7 +330,7 @@ export function TimeGrid({
                         <AppointmentCard
                           key={appointment.id}
                           appointment={appointment}
-                          timezone={timezone}
+                          zone={zone}
                           heightPx={style.height}
                           roomy={single}
                           onOpen={() => onOpenAppointment(appointment)}
@@ -373,14 +374,14 @@ export function TimeGrid({
 
 function AppointmentCard({
   appointment,
-  timezone,
+  zone,
   heightPx,
   roomy,
   onOpen,
   style,
 }: {
   appointment: AgendaAppointmentDto;
-  timezone: string;
+  zone: Zone | null;
   heightPx: number;
   roomy: boolean;
   onOpen: () => void;
@@ -391,7 +392,7 @@ function AppointmentCard({
     timeOf(appointment.localStartsAt),
     appointment.startOccurrence,
     appointment.localStartsAt.slice(0, 10),
-    timezone,
+    zone,
   );
   const cancelled = appointment.status === "cancelled";
   const price = formatPrice(appointment.priceCents, appointment.currency);

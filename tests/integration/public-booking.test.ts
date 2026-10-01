@@ -119,6 +119,8 @@ describe("booking an available slot", () => {
     expect(slots[0]).toEqual({
       startsAt: local("09:00"),
       endsAt: local("10:00"),
+      localStartsAt: `${DATE}T09:00`,
+      localEndsAt: `${DATE}T10:00`,
     });
 
     const result = await createPublicBooking(

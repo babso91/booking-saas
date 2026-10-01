@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { localDayStart } from "@/features/agenda/client/layout";
-
 import {
   addDaysToLocalDate,
   localDateRangeToUtc,
@@ -149,8 +147,6 @@ describe("startOfLocalDate invariants across atypical IANA zones", () => {
       );
       // …days tile time without gap or overlap, never backwards…
       expect(next.getTime()).toBeGreaterThanOrEqual(start.getTime());
-      // …and exactly the UI's definition of a day.
-      expect(start.getTime()).toBe(localDayStart(date, zone));
 
       date = addDaysToLocalDate(date, 1);
     }

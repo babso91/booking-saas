@@ -1,5 +1,21 @@
-// Time zone helpers built on the IANA database shipped with the JS runtime.
-// Never assume a default zone: every function takes the business zone.
+// Time zone conversions with the IANA database shipped with the JS runtime
+// (Intl). NOT a calendar authority: the runtime's tzdata may differ from
+// PostgreSQL's, so production code never uses these conversions for the
+// schedule (lint rule in eslint.config.mjs); it reads PostgreSQL's answers
+// (src/lib/time/business-time.ts). They remain for tests, which compare them
+// with the database where both runtimes agree, and for isValidTimeZone, a
+// form pre-check the database repeats (complete_onboarding).
+
+import {
+  addDaysToLocalDate,
+  localDateAsUtcMidnight,
+} from "@/lib/time/local-date";
+
+export {
+  addDaysToLocalDate,
+  daysBetweenLocalDates,
+  weekdayOfLocalDate,
+} from "@/lib/time/local-date";
 
 const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 
@@ -119,60 +135,6 @@ export function utcToZonedLocal(instant: Date | string, timeZone: string) {
 /** Calendar date `YYYY-MM-DD` of an instant in `timeZone`. */
 export function zonedDateOf(instant: Date | string, timeZone: string) {
   return utcToZonedLocal(instant, timeZone).slice(0, 10);
-}
-
-// ---------------------------------------------------------------------------
-// Local calendar dates (`YYYY-MM-DD`, no time zone attached)
-// ---------------------------------------------------------------------------
-
-const LOCAL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-function localDateAsUtcMidnight(localDate: string) {
-  const match = LOCAL_DATE.exec(localDate);
-
-  if (!match) {
-    throw new RangeError(`Invalid local date: ${localDate}`);
-  }
-
-  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-}
-
-/** `localDate` shifted by `days` calendar days (DST never matters here). */
-export function addDaysToLocalDate(localDate: string, days: number) {
-  return new Date(localDateAsUtcMidnight(localDate) + days * 86_400_000)
-    .toISOString()
-    .slice(0, 10);
-}
-
-/** Calendar days from `from` to `to` (0 when equal, negative if `to` < `from`). */
-export function daysBetweenLocalDates(from: string, to: string) {
-  return Math.round(
-    (localDateAsUtcMidnight(to) - localDateAsUtcMidnight(from)) / 86_400_000,
-  );
-}
-
-/** 0 = Sunday … 6 = Saturday, as business_hours.weekday and `extract(dow)`. */
-export function weekdayOfLocalDate(localDate: string) {
-  return new Date(localDateAsUtcMidnight(localDate)).getUTCDay();
-}
-
-/**
- * UTC instant of a weekly-hours bound `HH:MM` on `localDate`, exactly as the
- * public availability engine reads it (private.compute_available_slots):
- * `00:00` is the real start of the day and `24:00` its real end
- * (startOfLocalDate, even where midnight repeats or is skipped); any other
- * time follows zonedLocalToUtc (PostgreSQL `AT TIME ZONE`).
- */
-export function zonedTimeOnDateToUtc(
-  localDate: string,
-  time: string,
-  timeZone: string,
-) {
-  if (time === "00:00") return startOfLocalDate(localDate, timeZone);
-  if (time === "24:00") {
-    return startOfLocalDate(addDaysToLocalDate(localDate, 1), timeZone);
-  }
-  return zonedLocalToUtc(`${localDate}T${time}`, timeZone);
 }
 
 /**

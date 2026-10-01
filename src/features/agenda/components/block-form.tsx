@@ -12,12 +12,13 @@ import {
 } from "@/features/agenda/actions/agenda";
 import type { AgendaBlockDto } from "@/features/agenda/data/agenda";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
-import { addDaysToLocalDate } from "@/lib/time/zoned";
+import { addDaysToLocalDate } from "@/lib/time/local-date";
 
 import { dateOf, timeOf } from "../client/dates";
 import { fieldErrorsCopy } from "../client/errors";
 import { isAllDayBlock } from "../client/layout";
 import { timeWithOccurrence } from "../client/occurrence";
+import type { Zone } from "../client/zone";
 import { AgendaError, TextAction } from "./agenda-error";
 
 export type BlockFormMode =
@@ -70,14 +71,15 @@ function initialValues(mode: BlockFormMode): Values {
  */
 export function BlockForm({
   mode,
-  timezone,
+  zone,
   onSaved,
   onDeleted,
   onCancel,
   onRefresh,
 }: {
   mode: BlockFormMode;
-  timezone: string;
+  /** The business zone sent by the server, or null (labels without offsets). */
+  zone: Zone | null;
   onSaved: (block: AgendaBlockDto) => void;
   onDeleted: () => void;
   onCancel: () => void;
@@ -177,7 +179,7 @@ export function BlockForm({
   const boundLabel = (
     local: string,
     occurrence: AgendaBlockDto["startOccurrence"],
-  ) => timeWithOccurrence(timeOf(local), occurrence, dateOf(local), timezone);
+  ) => timeWithOccurrence(timeOf(local), occurrence, dateOf(local), zone);
 
   return (
     <form noValidate onSubmit={handleSubmit} className="flex flex-col gap-6">

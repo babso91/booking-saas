@@ -252,7 +252,9 @@ describe("availability exceptions", () => {
         endsAt: "2031-09-02T00:00",
         reason: null,
       }),
-    ).rejects.toMatchObject({ code: "not_found" });
+      // Refused before any write: the calendar authority converts times for
+      // members only (public.business_time → private.assert_agenda_access).
+    ).rejects.toMatchObject({ code: "forbidden" });
     await expect(
       deleteAvailabilityException(owner.client, foreign.id, rows[0]!.id),
     ).rejects.toMatchObject({ code: "not_found" });

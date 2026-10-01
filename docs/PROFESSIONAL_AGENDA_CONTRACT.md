@@ -35,15 +35,15 @@ Aucune action ne lève d'exception vers l'UI, et aucune erreur PostgreSQL ou Sup
 
 - **Heures d'entrée.** Toutes les dates et heures reçues sont des heures murales dans le fuseau du business (`businesses.timezone`) : `date` au format `YYYY-MM-DD`, `time` au format `HH:MM`, date-heure au format `YYYY-MM-DDTHH:MM`.
 - **Stockage.** La base conserve des instants `timestamptz`.
-- **Conversion centralisée.** Elle est faite côté serveur (`src/lib/time/zoned.ts`), avec les mêmes règles que PostgreSQL et que la réservation publique.
-- **Sorties.** Chaque instant est renvoyé deux fois : `startsAt` (UTC, ISO 8601) et `localStartsAt` (heure murale du business). L'UI affiche `local*` et ne convertit jamais elle-même.
-- **Jours.** Le jour local `D` est l'intervalle semi-ouvert `[premier instant réel de D, premier instant réel de D+1)`. Le premier instant réel de `D` est le premier instant dont la date locale est `D` ou postérieure (`startOfLocalDate`, `src/lib/time/zoned.ts`, même définition que l'UI).
+- **Autorité unique : PostgreSQL.** Toute conversion (heure murale → instant, instant → heure murale et occurrence, bornes des jours, plages d'ouverture, date du jour) est faite par PostgreSQL, avec sa base IANA, via `public.business_time` (`src/lib/time/business-time.ts`). Ni le serveur Node ni le navigateur n'utilisent leur propre tzdata pour le planning : ils peuvent en avoir une autre version (cas réel : America/Vancouver en 2027). Voir `docs/ARCHITECTURE.md` §8.
+- **Sorties.** Chaque instant est renvoyé deux fois : `startsAt` (UTC, ISO 8601) et `localStartsAt` (heure murale du business, lue par PostgreSQL). L'UI affiche `local*` et ne convertit jamais elle-même ; pour placer les instants sur sa grille, elle n'utilise que `offsets` et les bornes des jours envoyés avec l'agenda.
+- **Jours.** Le jour local `D` est l'intervalle semi-ouvert `[premier instant réel de D, premier instant réel de D+1)`. Le premier instant réel de `D` est le premier instant dont la date locale est `D` ou postérieure (`private.local_day_start`) ; chaque jour lu porte ses bornes réelles (`startsAt`, `endsAt`).
   - Minuit répété (America/Havana, 1er novembre 2026) : c'est la **première** occurrence.
   - Minuit sauté : c'est le premier instant après le saut.
   - Date inexistante (Pacific/Apia, 30 décembre 2011) : le jour est vide.
   - Aucune journée n'est supposée durer 24 h : on obtient 22, 23, 23,5, 24, 24,5, 25 ou 26 h selon les règles IANA.
-  - Cette définition s'applique aux lectures de plage (`range`), au découpage de `workingHours.days` et aux blocs journée entière. C'est aussi celle de la réservation publique (`private.local_day_start`, migration `20261001090000`) : créneaux listés par date, horizon, validation de la réservation.
-  - Dans les horaires hebdomadaires, `00:00` et `24:00` sont les bornes réelles du jour. `workingHours.days` suit exactement les règles des créneaux publics.
+  - Cette définition s'applique aux lectures de plage (`range`), à `workingHours.days` et aux blocs journée entière. C'est aussi celle de la réservation publique : créneaux listés par date, horizon, validation de la réservation.
+  - Horaires hebdomadaires : une plage `de → à` est l'ensemble des instants du jour dont l'heure murale est dans `[de, à)` (`24:00` = fin du jour). Dans une heure répétée elle peut donner plusieurs `openRanges` (Havana, 1er novembre 2026 : `00:00 → 00:30` donne 04:00Z–04:30Z et 05:00Z–05:30Z) ; dans une heure sautée, seule la partie qui existe est ouverte. `workingHours.days[].openRanges` est exactement ce qu'utilise la disponibilité publique (`private.opening_ranges`).
 
 ### Changements d'heure et rendez-vous
 
@@ -86,6 +86,10 @@ Un rendez-vous est inclus s'il chevauche la plage.
 ```ts
 type AgendaDto = {
   timezone: string;
+  today: string; // date du business au moment de la lecture (PostgreSQL)
+  // Tranches de décalage UTC constant couvrant les jours lus (PostgreSQL) :
+  // la grille place les instants avec elles, jamais avec Intl.
+  offsets: { startsAt: string; endsAt: string; offsetSeconds: number }[];
   range: {
     startDate: string;
     endDate: string;
@@ -99,6 +103,8 @@ type AgendaDto = {
     days: {
       date: string; // jour local
       weekday: number; // 0 = dimanche … 6 = samedi
+      startsAt: string; // bornes réelles du jour : [startsAt, endsAt)
+      endsAt: string;
       openRanges: {
         startsAt: string;
         endsAt: string;
@@ -156,10 +162,10 @@ type AgendaClientDto = {
 
 Le rendez-vous ne contient volontairement pas les coordonnées de la cliente. `searchAgendaClientsAction` renvoie l'email et le téléphone, car il faut pouvoir distinguer deux homonymes.
 
-`workingHours.days` est calculé côté serveur jour par jour :
+`workingHours.days` est calculé par PostgreSQL (`private.opening_ranges`), avec les mêmes valeurs que les créneaux publics :
 
-- ce sont les horaires hebdomadaires plus les ouvertures exceptionnelles (`open_override`), limitées au jour ;
-- une plage vidée par le passage à l'heure d'été est ignorée ce jour-là, comme dans le calcul des créneaux publics.
+- ce sont les horaires hebdomadaires plus les ouvertures exceptionnelles (`open_override`), limitées au jour réel et fusionnées (une ouverture exceptionnelle contiguë à une plage hebdomadaire forme une seule plage) ;
+- règle des heures murales (voir « Fuseau horaire ») : une plage peut donner plusieurs intervalles le jour d'une heure répétée, et une plage entièrement dans l'heure sautée n'ouvre rien ce jour-là.
 
 ### Rendez-vous
 

@@ -2,8 +2,8 @@ import "server-only";
 
 import {
   BLOCK_COLUMNS,
-  localDaysToUtc,
   toBlockDto,
+  wallClocksOf,
   type AgendaBlockDto,
   type AgendaContext,
 } from "@/features/agenda/data/agenda";
@@ -11,7 +11,8 @@ import type { BlockInput } from "@/features/agenda/schemas/agenda";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
-import { utcToZonedLocal, zonedBoundToUtc } from "@/lib/time/zoned";
+import { readBusinessTime, type BusinessTime } from "@/lib/time/business-time";
+import { addDaysToLocalDate } from "@/lib/time/local-date";
 
 // Blocks of the agenda are availability_exceptions of kind 'blocked' (created
 // here) or 'closed' (created in the settings). They go through the existing
@@ -19,6 +20,7 @@ import { utcToZonedLocal, zonedBoundToUtc } from "@/lib/time/zoned";
 // refuse any overlap with a non-cancelled appointment (`schedule_conflict`).
 // Edits and deletions are conditioned on the version the UI loaded
 // (`stale_block`), so a stale screen never overwrites a newer change.
+// Every wall-clock value is converted by PostgreSQL (public.business_time).
 
 const EDITABLE_KINDS = ["blocked", "closed"] as const;
 
@@ -30,9 +32,12 @@ const EDITABLE_KINDS = ["blocked", "closed"] as const;
  */
 function wholeDayBounds(
   input: Extract<BlockInput, { allDay: true }>,
-  timezone: string,
+  time: BusinessTime,
 ) {
-  const bounds = localDaysToUtc(input.startDate, input.endDate, timezone);
+  const bounds = {
+    startsAt: new Date(time.day(input.startDate).startsAt),
+    endsAt: new Date(time.day(addDaysToLocalDate(input.endDate, 1)).startsAt),
+  };
 
   // Only dates skipped by the zone (Pacific/Apia, 2011-12-30) are empty.
   if (bounds.startsAt >= bounds.endsAt) {
@@ -75,10 +80,31 @@ function blockRow(startsAt: Date, endsAt: Date, reason: string | null) {
  * bound again would move a block starting in the first occurrence of the
  * repeated autumn hour (02:00 CEST) to the second one (02:00 CET).
  */
-function editedBound(stored: string, requested: string, timezone: string) {
-  return utcToZonedLocal(stored, timezone) === requested
+function editedBound(stored: string, requested: string, time: BusinessTime) {
+  return time.wall(stored).local === requested
     ? new Date(stored)
-    : zonedBoundToUtc(requested, timezone);
+    : time.local(requested).bound;
+}
+
+/** Everything a block write needs from the calendar authority, in one call. */
+function blockTime(
+  client: AppSupabaseClient,
+  context: AgendaContext,
+  input: BlockInput,
+  stored: { starts_at: string; ends_at: string } | null = null,
+) {
+  return readBusinessTime(
+    client,
+    context.businessId,
+    input.allDay
+      ? {
+          dates: [input.startDate, addDaysToLocalDate(input.endDate, 1)],
+        }
+      : {
+          locals: [input.startsAt, input.endsAt],
+          instants: stored ? [stored.starts_at, stored.ends_at] : [],
+        },
+  );
 }
 
 /** Distinguishes "gone" from "changed since loaded" after a 0-row write. */
@@ -107,12 +133,13 @@ export async function createBlock(
 ): Promise<AgendaBlockDto> {
   // Whole days: real local day bounds. Periods: midnight is where the day
   // begins; any other repeated time is its second occurrence (the engine's
-  // rule, PostgreSQL `AT TIME ZONE`).
+  // rule, PostgreSQL `AT TIME ZONE`, private.local_bound).
+  const time = await blockTime(client, context, input);
   const { startsAt, endsAt } = input.allDay
-    ? wholeDayBounds(input, context.timezone)
+    ? wholeDayBounds(input, time)
     : {
-        startsAt: zonedBoundToUtc(input.startsAt, context.timezone),
-        endsAt: zonedBoundToUtc(input.endsAt, context.timezone),
+        startsAt: time.local(input.startsAt).bound,
+        endsAt: time.local(input.endsAt).bound,
       };
   const { data, error } = await client
     .from("availability_exceptions")
@@ -126,7 +153,7 @@ export async function createBlock(
 
   if (error) throw databaseException(error);
 
-  return toBlockDto(data, context.timezone);
+  return toBlockDto(data, await wallClocksOf(client, context, [data]));
 }
 
 export async function updateBlock(
@@ -150,15 +177,12 @@ export async function updateBlock(
     throw new AppException("stale_block");
   }
 
+  const time = await blockTime(client, context, input, current);
   const { startsAt, endsAt } = input.allDay
-    ? wholeDayBounds(input, context.timezone)
+    ? wholeDayBounds(input, time)
     : {
-        startsAt: editedBound(
-          current.starts_at,
-          input.startsAt,
-          context.timezone,
-        ),
-        endsAt: editedBound(current.ends_at, input.endsAt, context.timezone),
+        startsAt: editedBound(current.starts_at, input.startsAt, time),
+        endsAt: editedBound(current.ends_at, input.endsAt, time),
       };
   const row = blockRow(startsAt, endsAt, input.reason);
 
@@ -178,7 +202,7 @@ export async function updateBlock(
   if (error) throw databaseException(error);
   if (!data) throw await missingOrStale(client, context, blockId);
 
-  return toBlockDto(data, context.timezone);
+  return toBlockDto(data, await wallClocksOf(client, context, [data]));
 }
 
 export async function deleteBlock(

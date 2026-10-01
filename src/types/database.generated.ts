@@ -391,6 +391,9 @@ isOneToOne: false
 "agenda_update_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_internal_notes"?: string,"p_service_id": string,"p_starts_at"?: string }; Returns: string
                            },
+"business_time":
+{ Args: { "p_business_id": string,"p_dates"?: (string)[],"p_instants"?: (string)[],"p_locals"?: (string)[],"p_open_ranges"?: boolean }; Returns: Json
+                           },
 "check_slug_availability":
 { Args: { "p_slug": string }; Returns: {
               "available": boolean,"reason": string,"slug": string
@@ -408,7 +411,7 @@ isOneToOne: false
                            },
 "get_available_slots":
 { Args: { "p_date": string,"p_service_id": string,"p_slug": string }; Returns: {
-              "ends_at": string,"starts_at": string
+              "ends_at": string,"local_ends_at": string,"local_starts_at": string,"starts_at": string
             }[]
                            },
 "get_public_business":

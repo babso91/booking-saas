@@ -21,6 +21,7 @@ import { callAction, type UiError } from "@/features/auth/client/call-action";
 import { formatDuration, formatFullDate, timeOf } from "../client/dates";
 import { formatPrice } from "../client/money";
 import { timeWithOccurrence } from "../client/occurrence";
+import type { Zone } from "../client/zone";
 import { AgendaError, TextAction } from "./agenda-error";
 import { StatusBadge } from "./status-badge";
 
@@ -61,13 +62,14 @@ const confirmCopy: Record<
  */
 export function AppointmentDetails({
   appointment,
-  timezone,
+  zone,
   onEdit,
   onUpdated,
   onRefresh,
 }: {
   appointment: AgendaAppointmentDto;
-  timezone: string;
+  /** The business zone sent by the server, or null (labels without offsets). */
+  zone: Zone | null;
   onEdit: () => void;
   onUpdated: (appointment: AgendaAppointmentDto) => void;
   onRefresh: () => Promise<UiError | null>;
@@ -85,7 +87,7 @@ export function AppointmentDetails({
     timeOf(appointment.localStartsAt),
     appointment.startOccurrence,
     date,
-    timezone,
+    zone,
   );
   const started = openedAt >= Date.parse(appointment.startsAt);
   const status = appointment.status;

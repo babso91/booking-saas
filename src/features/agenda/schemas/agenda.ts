@@ -4,10 +4,10 @@ import {
   localDateSchema,
   localDateTimeSchema,
 } from "@/features/availability/schemas/availability";
-import { daysBetweenLocalDates } from "@/lib/time/zoned";
+import { daysBetweenLocalDates } from "@/lib/time/local-date";
 
 // Inputs of the professional agenda. Dates and times are wall-clock values in
-// the business time zone; the server converts them (src/lib/time/zoned.ts).
+// the business time zone; PostgreSQL converts them (src/lib/time/business-time.ts).
 // No business identifier is ever accepted: the tenant comes from the session.
 
 /** Longest range one agenda read may cover (a 6-week month grid). */

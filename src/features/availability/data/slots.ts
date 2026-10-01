@@ -5,9 +5,16 @@ import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
 export type SlotDto = {
-  /** UTC instants (ISO 8601). Display them in the business time zone. */
+  /** UTC instants (ISO 8601): what a booking sends back. */
   startsAt: string;
   endsAt: string;
+  /**
+   * Wall clocks `YYYY-MM-DDTHH:MM` in the business time zone, read by
+   * PostgreSQL: display these, never a conversion with the client's own
+   * time zone database (it may disagree with the business's agenda).
+   */
+  localStartsAt: string;
+  localEndsAt: string;
 };
 
 /**
@@ -35,5 +42,7 @@ export async function getAvailableSlots(
   return data.map((slot) => ({
     startsAt: new Date(slot.starts_at).toISOString(),
     endsAt: new Date(slot.ends_at).toISOString(),
+    localStartsAt: slot.local_starts_at,
+    localEndsAt: slot.local_ends_at,
   }));
 }

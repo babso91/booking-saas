@@ -12,6 +12,8 @@ import {
   zonedOccurrenceOf,
 } from "@/lib/time/zoned";
 
+import { intlCalendar } from "./zone-fixture";
+
 // Test data shaped exactly like the agenda contract's DTOs.
 
 export const TZ = "Europe/Paris";
@@ -144,29 +146,38 @@ export function agenda(
   items: {
     appointments?: AgendaAppointmentDto[];
     blocks?: AgendaBlockDto[];
+    timeZone?: string;
   } = {},
 ): AgendaDto {
-  const days = [];
+  const timeZone = items.timeZone ?? TZ;
+  const dates: string[] = [];
   for (
     let date = startDate;
     date <= endDate;
     date = addDaysToLocalDate(date, 1)
   ) {
-    days.push({
-      date,
-      weekday: new Date(`${date}T12:00:00Z`).getUTCDay(),
-      openRanges: [
-        {
-          startsAt: iso(`${date}T09:00`),
-          endsAt: iso(`${date}T19:00`),
-          localStartsAt: `${date}T09:00`,
-          localEndsAt: `${date}T19:00`,
-        },
-      ],
-    });
+    dates.push(date);
   }
+  const calendar = intlCalendar(timeZone, dates);
+  const days = calendar.days.map(({ date, startsAt, endsAt }) => ({
+    date,
+    startsAt,
+    endsAt,
+    weekday: new Date(`${date}T12:00:00Z`).getUTCDay(),
+    openRanges: [
+      {
+        startsAt: iso(`${date}T09:00`),
+        endsAt: iso(`${date}T19:00`),
+        localStartsAt: `${date}T09:00`,
+        localEndsAt: `${date}T19:00`,
+      },
+    ],
+  }));
   return {
-    timezone: TZ,
+    timezone: timeZone,
+    // PostgreSQL's date at read time (the test clock).
+    today: utcToZonedLocal(new Date(), timeZone).slice(0, 10),
+    offsets: calendar.offsets,
     range: {
       startDate,
       endDate,

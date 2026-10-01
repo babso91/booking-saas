@@ -1,18 +1,13 @@
 import { randomUUID } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
+import { buildAxis, placeAppointments } from "@/features/agenda/client/layout";
+import { wallOf, zoneOf } from "@/features/agenda/client/zone";
 import { getAgenda } from "@/features/agenda/data/agenda";
+import { createManualAppointment } from "@/features/agenda/data/appointments";
 import { createBlock } from "@/features/agenda/data/blocks";
-import { createPublicBooking } from "@/features/appointments/data/public-booking";
-import { getAvailableSlots } from "@/features/availability/data/slots";
-import {
-  addDaysToLocalDate,
-  resolveZonedLocal,
-  startOfLocalDate,
-  zonedDateOf,
-  utcToZonedLocal,
-} from "@/lib/time/zoned";
+import { startOfLocalDate, utcToZonedLocal } from "@/lib/time/zoned";
 
 import {
   addException,
@@ -27,9 +22,12 @@ import {
   type BusinessSettings,
 } from "./support/fixtures";
 
-// Public availability and booking use the same civil day as the agenda:
-// day D = [first real instant of D, first real instant of D + 1).
-// Critical expectations are explicit UTC instants.
+// PostgreSQL is the calendar authority: public availability, booking and
+// the agenda use the same civil day, D = [first real instant of D, first
+// real instant of D + 1), and the same wall-clock policy for weekly hours.
+// Critical expectations are explicit UTC instants. Every date-dependent rule
+// runs with an explicit "now" (private.available_slots,
+// private.create_public_booking_at): the date of the run never matters.
 
 const HOUR = 3_600_000;
 const HAVANA = "America/Havana";
@@ -40,6 +38,7 @@ const ALL_DAY: [string, string] = ["00:00", "24:00"];
 type Setup = {
   businessId: string;
   slug: string;
+  timezone: string;
   serviceId: string;
   ownerClient: Awaited<ReturnType<typeof createProfessional>>["client"];
 };
@@ -75,13 +74,17 @@ async function setup(
   return {
     businessId: business.id,
     slug: business.slug,
+    timezone,
     serviceId,
     ownerClient: owner.client,
   };
 }
 
+/** A fixed "now", well before every date tested. */
+const NOW = "2026-09-01T00:00:00Z";
+
 /** private.available_slots with an explicit "now", as UTC ISO strings. */
-async function slots(s: Setup, date: string, now = "2026-09-01T00:00:00Z") {
+async function slots(s: Setup, date: string, now = NOW) {
   const { rows } = await db.query<{ starts_at: Date; ends_at: Date }>(
     `select starts_at, ends_at
      from private.available_slots($1, $2, $3::date, $4::timestamptz)`,
@@ -95,6 +98,51 @@ async function slots(s: Setup, date: string, now = "2026-09-01T00:00:00Z") {
 
 const starts = (list: { startsAt: string }[]) =>
   list.map((slot) => slot.startsAt);
+
+/**
+ * The booking transaction of public.create_public_booking, with an explicit
+ * "now" (the public RPC passes now()). Resolves to the booked start, or
+ * rejects with the error code (`slot_unavailable`…).
+ */
+async function book(s: Setup, startsAt: string, now = NOW): Promise<string> {
+  const { rows } = await db.query<{ starts_at: Date }>(
+    `select starts_at
+     from private.create_public_booking_at($1::timestamptz, $2, $3::uuid,
+       $4::timestamptz, 'Cliente', $5)`,
+    [now, s.slug, s.serviceId, startsAt, `${randomUUID()}@x.test`],
+  );
+  return rows[0]!.starts_at.toISOString();
+}
+
+/** Real opening ranges of a date (private.opening_ranges), as UTC pairs. */
+async function openRanges(s: Setup, date: string) {
+  const { rows } = await db.query<{ lo: Date; hi: Date }>(
+    `select lower(r) as lo, upper(r) as hi
+     from unnest(coalesce(private.opening_ranges($1, $2::date, $3),
+                          '{}'::tstzmultirange)) r
+     order by 1`,
+    [s.businessId, date, s.timezone],
+  );
+  return rows.map((row) => [row.lo.toISOString(), row.hi.toISOString()]);
+}
+
+/** Wall clocks read by PostgreSQL. */
+async function pgWalls(instants: string[], timezone: string) {
+  const { rows } = await db.query<{ wall: string }>(
+    `select private.wall_clock(t, $2) as wall
+     from unnest($1::timestamptz[]) with ordinality as u(t, n) order by n`,
+    [instants, timezone],
+  );
+  return rows.map((row) => row.wall);
+}
+
+async function appointmentCount(s: Setup) {
+  const { rows } = await db.query<{ count: number }>(
+    "select count(*)::int as count from public.appointments where business_id = $1",
+    [s.businessId],
+  );
+  return rows[0]!.count;
+}
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -132,9 +180,15 @@ describe("Havana, repeated midnight (2026-11-01)", () => {
     const all: string[] = [];
 
     for (const date of days) {
-      for (const slot of await slots(s, date)) {
-        // Each slot belongs to the day of its real instant.
-        expect(zonedDateOf(slot.startsAt, HAVANA)).toBe(date);
+      const list = await slots(s, date);
+      const { rows } = await db.query<{ day: string }>(
+        `select to_char(private.local_date_of(t, $2), 'YYYY-MM-DD') as day
+         from unnest($1::timestamptz[]) t`,
+        [starts(list), HAVANA],
+      );
+      // Each slot belongs to the civil day of its real instant.
+      expect(new Set(rows.map((row) => row.day))).toEqual(new Set([date]));
+      for (const slot of list) {
         expect(Date.parse(slot.endsAt) - Date.parse(slot.startsAt)).toBe(
           HOUR / 2,
         );
@@ -320,97 +374,253 @@ describe("Havana, repeated midnight (2026-11-01)", () => {
   });
 });
 
-describe("public booking agrees with the listing (real RPC, real now)", () => {
-  /** Next date whose local midnight is repeated in Havana (from tzdata). */
-  function nextRepeatedMidnight() {
-    let date = addDaysToLocalDate(new Date().toISOString().slice(0, 10), 2);
-    for (let i = 0; i < 366; i += 1, date = addDaysToLocalDate(date, 1)) {
-      const midnight = resolveZonedLocal(`${date}T00:00`, HAVANA);
-      if (midnight.status === "ambiguous") return { date, ...midnight };
-    }
-    throw new Error("No repeated midnight in Havana within a year");
-  }
+describe("booking validates exactly what is listed (fixed now, production core)", () => {
+  // Several "now" before the change: the outcome never depends on the date
+  // of the run (31/10/2026, 06/11/2026, 2027… all give the same answers).
+  const NOWS = [NOW, "2026-10-31T12:00:00Z", "2026-11-01T03:59:00Z"] as const;
 
-  it("books both 00:30 occurrences of the repeated midnight", async () => {
-    const { date, first, second } = nextRepeatedMidnight();
-    expect(second.getTime() - first.getTime()).toBe(HOUR);
+  it.each(NOWS)(
+    "now = %s: both 00:30 occurrences are listed and bookable",
+    async (now) => {
+      const s = await setup(HAVANA);
+      const listed = starts(await slots(s, REPEATED, now));
+      const targets = [
+        "2026-11-01T04:00:00.000Z", // first midnight
+        "2026-11-01T04:30:00.000Z", // 00:30, first occurrence
+        "2026-11-01T05:30:00.000Z", // 00:30, second occurrence
+      ];
+      expect(listed[0]).toBe(targets[0]);
+      expect(listed).toEqual(expect.arrayContaining(targets));
+      expect(
+        starts(await slots(s, "2026-10-31", now)).every(
+          (value) => value < targets[0]!,
+        ),
+      ).toBe(true);
+
+      for (const startsAt of targets) {
+        await expect(book(s, startsAt, now)).resolves.toBe(startsAt);
+      }
+      expect(await appointmentCount(s)).toBe(3);
+    },
+  );
+
+  it.each(NOWS)(
+    "now = %s: under a whole-day closure nothing is listed nor bookable",
+    async (now) => {
+      const s = await setup(HAVANA);
+      await createBlock(
+        s.ownerClient,
+        { businessId: s.businessId, timezone: HAVANA },
+        { allDay: true, startDate: REPEATED, endDate: REPEATED, reason: null },
+      );
+
+      expect(await slots(s, REPEATED, now)).toEqual([]);
+      for (const startsAt of [
+        "2026-11-01T04:00:00.000Z",
+        "2026-11-01T04:30:00.000Z",
+        "2026-11-01T05:30:00.000Z",
+        "2026-11-02T04:30:00.000Z", // last real minutes of the 25-hour day
+      ]) {
+        await expect(book(s, startsAt, now)).rejects.toMatchObject({
+          message: "slot_unavailable",
+        });
+      }
+      expect(await appointmentCount(s)).toBe(0);
+    },
+  );
+
+  it("a now past the slot refuses it, in the listing and in the booking", async () => {
     const s = await setup(HAVANA);
+    const later = "2026-11-01T05:00:00Z"; // second midnight
 
-    const listed = starts(
-      await getAvailableSlots(anonClient(), {
-        slug: s.slug,
-        serviceId: s.serviceId,
-        date,
-      }),
+    expect(starts(await slots(s, REPEATED, later))[0]).toBe(
+      "2026-11-01T05:00:00.000Z",
     );
-    const firstHalf = iso(first.getTime() + HOUR / 2);
-    const secondHalf = iso(second.getTime() + HOUR / 2);
-    expect(listed[0]).toBe(first.toISOString());
-    expect(listed).toContain(firstHalf);
-    expect(listed).toContain(secondHalf);
-
-    // What is listed is what can be booked, at the very first instant too.
-    for (const startsAt of [first.toISOString(), firstHalf, secondHalf]) {
-      await expect(
-        createPublicBooking(anonClient(), {
-          slug: s.slug,
-          serviceId: s.serviceId,
-          startsAt,
-          firstName: "Cliente",
-          email: `${randomUUID()}@x.test`,
-        }),
-      ).resolves.toMatchObject({ startsAt });
-    }
-
-    // The previous day lists nothing from the first real hour.
-    const before = starts(
-      await getAvailableSlots(anonClient(), {
-        slug: s.slug,
-        serviceId: s.serviceId,
-        date: addDaysToLocalDate(date, -1),
-      }),
+    await expect(
+      book(s, "2026-11-01T04:30:00.000Z", later),
+    ).rejects.toMatchObject({ message: "slot_unavailable" });
+    await expect(book(s, "2026-11-01T05:00:00.000Z", later)).resolves.toBe(
+      "2026-11-01T05:00:00.000Z",
     );
-    expect(before.every((value) => value < first.toISOString())).toBe(true);
   });
 
-  it("under a whole-day closure: nothing listed and nothing bookable", async () => {
-    const { date, first, second } = nextRepeatedMidnight();
-    const s = await setup(HAVANA);
-    await createBlock(
-      s.ownerClient,
-      { businessId: s.businessId, timezone: HAVANA },
-      { allDay: true, startDate: date, endDate: date, reason: null },
+  it("the public RPCs are the private cores called with the database's now", async () => {
+    const { rows } = await db.query<{ name: string; body: string }>(
+      `select p.proname as name, pg_get_functiondef(p.oid) as body
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public'
+         and p.proname in ('create_public_booking', 'get_available_slots')
+       order by 1`,
+    );
+    expect(rows.map((row) => row.name)).toEqual([
+      "create_public_booking",
+      "get_available_slots",
+    ]);
+    expect(rows[0]!.body).toMatch(
+      /private\.create_public_booking_at\(\s*pg_catalog\.now\(\)/,
+    );
+    expect(rows[1]!.body).toMatch(
+      /private\.available_slots\([^)]*pg_catalog\.now\(\)\)/,
     );
 
-    expect(
-      await getAvailableSlots(anonClient(), {
-        slug: s.slug,
-        serviceId: s.serviceId,
-        date,
-      }),
-    ).toEqual([]);
+    // No client can choose its own "now".
+    const { rows: grants } = await db.query<{ anon: boolean; auth: boolean }>(
+      `select
+         has_function_privilege('anon', 'private.create_public_booking_at(timestamptz, text, uuid, timestamptz, text, text, text, text)', 'execute') as anon,
+         has_function_privilege('authenticated', 'private.create_public_booking_at(timestamptz, text, uuid, timestamptz, text, text, text, text)', 'execute') as auth`,
+    );
+    expect(grants[0]).toEqual({ anon: false, auth: false });
+  });
+});
 
-    for (const startsAt of [
-      first.toISOString(),
-      iso(first.getTime() + HOUR / 2),
-      iso(second.getTime() + HOUR / 2),
-    ]) {
-      await expect(
-        createPublicBooking(anonClient(), {
-          slug: s.slug,
-          serviceId: s.serviceId,
-          startsAt,
-          firstName: "Cliente",
-          email: `${randomUUID()}@x.test`,
+describe("Havana, weekly ranges in the repeated hour (wall-clock policy)", () => {
+  // 1 November 2026 (Sunday): 00:00–01:00 happens twice, 04:00Z–05:00Z (CDT)
+  // then 05:00Z–06:00Z (CST). A weekly range is the set of instants of the
+  // day whose wall clock is in [from, to): possibly several UTC intervals,
+  // never one continuous interval longer than the wall-clock range.
+  const cases: {
+    hours: [string, string];
+    ranges: [string, string][];
+    slots: string[];
+  }[] = [
+    {
+      hours: ["00:00", "00:30"],
+      ranges: [
+        ["2026-11-01T04:00:00.000Z", "2026-11-01T04:30:00.000Z"],
+        ["2026-11-01T05:00:00.000Z", "2026-11-01T05:30:00.000Z"],
+      ],
+      slots: ["2026-11-01T04:00:00.000Z", "2026-11-01T05:00:00.000Z"],
+    },
+    {
+      hours: ["00:15", "00:45"],
+      ranges: [
+        ["2026-11-01T04:15:00.000Z", "2026-11-01T04:45:00.000Z"],
+        ["2026-11-01T05:15:00.000Z", "2026-11-01T05:45:00.000Z"],
+      ],
+      slots: ["2026-11-01T04:15:00.000Z", "2026-11-01T05:15:00.000Z"],
+    },
+    {
+      hours: ["00:30", "01:00"],
+      ranges: [
+        ["2026-11-01T04:30:00.000Z", "2026-11-01T05:00:00.000Z"],
+        ["2026-11-01T05:30:00.000Z", "2026-11-01T06:00:00.000Z"],
+      ],
+      slots: ["2026-11-01T04:30:00.000Z", "2026-11-01T05:30:00.000Z"],
+    },
+    {
+      // Covers the whole repeated hour: one continuous real interval of 3 h.
+      hours: ["00:00", "02:00"],
+      ranges: [["2026-11-01T04:00:00.000Z", "2026-11-01T07:00:00.000Z"]],
+      slots: [
+        "2026-11-01T04:00:00.000Z",
+        "2026-11-01T04:30:00.000Z",
+        "2026-11-01T05:00:00.000Z",
+        "2026-11-01T05:30:00.000Z",
+        "2026-11-01T06:00:00.000Z",
+        "2026-11-01T06:30:00.000Z",
+      ],
+    },
+  ];
+
+  it.each(cases)(
+    "$hours.0 → $hours.1: exact segments, slots, agenda and bookings agree",
+    async ({ hours, ranges, slots: expected }) => {
+      const s = await setup(HAVANA, { hours: [[0, ...hours]] });
+
+      // Segments (exact UTC, count) and slots.
+      expect(await openRanges(s, REPEATED)).toEqual(ranges);
+      const listed = await slots(s, REPEATED);
+      expect(starts(listed)).toEqual(expected);
+
+      // No opening instant has a wall clock outside [from, to).
+      const walls = await pgWalls(
+        ranges.flatMap(([lo, hi]) => {
+          const minutes: string[] = [];
+          for (let t = Date.parse(lo); t < Date.parse(hi); t += 60_000) {
+            minutes.push(iso(t));
+          }
+          return minutes;
         }),
-      ).rejects.toMatchObject({ code: "slot_unavailable" });
-    }
+        HAVANA,
+      );
+      for (const wall of walls) {
+        expect(wall.slice(0, 10)).toBe(REPEATED);
+        expect(wall.slice(11) >= hours[0] && wall.slice(11) < hours[1]).toBe(
+          true,
+        );
+      }
 
-    const { rows } = await db.query(
-      "select count(*)::int as count from public.appointments where business_id = $1",
-      [s.businessId],
+      // The agenda shows exactly the same ranges.
+      const agenda = await getAgenda(
+        s.ownerClient,
+        { businessId: s.businessId, timezone: HAVANA },
+        { startDate: REPEATED, endDate: REPEATED, includeCancelled: false },
+      );
+      expect(
+        agenda.workingHours.days[0]!.openRanges.map((range) => [
+          range.startsAt,
+          range.endsAt,
+        ]),
+      ).toEqual(ranges);
+
+      // Every listed slot can be booked; an instant between the segments
+      // cannot.
+      for (const startsAt of expected) {
+        await expect(book(s, startsAt)).resolves.toBe(startsAt);
+      }
+      if (ranges.length > 1) {
+        await expect(book(s, ranges[0]![1])).rejects.toMatchObject({
+          message: "slot_unavailable",
+        });
+      }
+    },
+  );
+
+  it("a range closing in the first occurrence, another in the second: no gap invented", async () => {
+    // Saturday 31 Oct 23:00 → 24:00 then Sunday 00:00 → 00:30: the night of
+    // the change, contiguous on the wall clock across the first midnight.
+    const s = await setup(HAVANA, {
+      hours: [
+        [6, "23:00", "24:00"],
+        [0, "00:00", "00:30"],
+      ],
+    });
+    expect(await openRanges(s, "2026-10-31")).toEqual([
+      ["2026-11-01T03:00:00.000Z", "2026-11-01T04:00:00.000Z"],
+    ]);
+    expect(await openRanges(s, REPEATED)).toEqual([
+      ["2026-11-01T04:00:00.000Z", "2026-11-01T04:30:00.000Z"],
+      ["2026-11-01T05:00:00.000Z", "2026-11-01T05:30:00.000Z"],
+    ]);
+  });
+
+  it("a service and its buffer never leave a segment, even across the change", async () => {
+    // 60-minute service, 15-minute steps, in 00:00 → 00:30: no segment is
+    // long enough, so nothing (never a 60-minute slot across the segments).
+    const s = await setup(HAVANA, {
+      durationMinutes: 60,
+      settings: { slot_interval_minutes: 15, buffer_minutes: 15 },
+      hours: [[0, "00:00", "00:30"]],
+    });
+    expect(await slots(s, REPEATED)).toEqual([]);
+
+    // 00:00 → 02:00 (one 3-hour real interval): a 60-minute slot may cross
+    // the change (04:30Z → 05:30Z, first 00:30 → second 00:30).
+    const wide = await setup(HAVANA, {
+      durationMinutes: 60,
+      settings: { slot_interval_minutes: 30, buffer_minutes: 15 },
+      hours: [[0, "00:00", "02:00"]],
+    });
+    expect(starts(await slots(wide, REPEATED))).toContain(
+      "2026-11-01T04:30:00.000Z",
     );
-    expect(rows[0].count).toBe(0);
+    await book(wide, "2026-11-01T04:30:00.000Z");
+    // Next start: 60 + 15 real minutes later at the earliest.
+    expect(
+      starts(await slots(wide, REPEATED)).filter(
+        (value) => value > "2026-11-01T04:30:00.000Z",
+      )[0],
+    ).toBe("2026-11-01T06:00:00.000Z");
   });
 });
 
@@ -471,6 +681,20 @@ describe("other irregular days", () => {
     expect(dec31[0]!.startsAt).toBe("2011-12-30T10:00:00.000Z");
   });
 
+  it("Cairo: the repeated hour ends the day; 23:00 → 24:00 opens both occurrences", async () => {
+    // 2026-10-29 (Thursday): 24:00 EEST → 23:00 EET at 21:00Z. 23:00–24:00
+    // happens twice (20:00Z–21:00Z then 21:00Z–22:00Z); the day ends at 22:00Z.
+    const s = await setup("Africa/Cairo", { hours: [[4, "23:00", "24:00"]] });
+
+    expect(await openRanges(s, "2026-10-29")).toEqual([
+      ["2026-10-29T20:00:00.000Z", "2026-10-29T22:00:00.000Z"],
+    ]);
+    expect(await slots(s, "2026-10-29")).toHaveLength(4);
+    expect(await openRanges(s, "2026-10-22")).toEqual([
+      ["2026-10-22T20:00:00.000Z", "2026-10-22T21:00:00.000Z"],
+    ]);
+  });
+
   it("Santiago and Beirut: the repeated hour is the end of the previous day", async () => {
     const santiago = await setup("America/Santiago");
     // 2027-04-03 lasts 25 h (23:00 repeated), 2026-09-06 23 h (midnight skipped).
@@ -513,34 +737,60 @@ describe("adversarial zones and bounds inside the day", () => {
     ]);
   });
 
-  it("a bound in the repeated hour is its later occurrence (documented rule)", async () => {
-    // 02:30 → 04:00 starts at the second 02:30 (01:30Z), as before this change.
+  it("a range starting in the repeated hour opens both occurrences of its part", async () => {
+    // Paris 2026-10-25, 03:00 CEST → 02:00 CET at 01:00Z. 02:30 → 04:00 is
+    // every instant whose wall clock is in [02:30, 04:00): the first
+    // 02:30–03:00 (00:30Z–01:00Z) and the second 02:30–04:00 (01:30Z–03:00Z).
     const s = await setup("Europe/Paris", { hours: [[0, "02:30", "04:00"]] });
 
+    expect(await openRanges(s, "2026-10-25")).toEqual([
+      ["2026-10-25T00:30:00.000Z", "2026-10-25T01:00:00.000Z"],
+      ["2026-10-25T01:30:00.000Z", "2026-10-25T03:00:00.000Z"],
+    ]);
     expect(starts(await slots(s, "2026-10-25"))).toEqual([
+      "2026-10-25T00:30:00.000Z",
       "2026-10-25T01:30:00.000Z",
       "2026-10-25T02:00:00.000Z",
       "2026-10-25T02:30:00.000Z",
     ]);
+    // Never the first 02:00–02:30, which is outside [02:30, 04:00).
+    expect(starts(await slots(s, "2026-10-25"))).not.toContain(
+      "2026-10-25T00:00:00.000Z",
+    );
   });
 
-  it("a bound in the spring gap keeps PostgreSQL's rule, no invented slot", async () => {
-    // Paris 2027-03-28: 02:30 does not exist; read with the offset before
-    // the change it is 01:30Z (03:30 CEST). 04:00 CEST = 02:00Z.
-    const s = await setup("Europe/Paris", { hours: [[0, "02:30", "04:00"]] });
-
-    expect(await slots(s, "2027-03-28")).toEqual([
-      {
-        startsAt: "2027-03-28T01:30:00.000Z",
-        endsAt: "2027-03-28T02:00:00.000Z",
-      },
+  it("a range bound in the spring gap: what exists of it, never a negative interval", async () => {
+    // Paris 2027-03-28: 02:00–03:00 does not exist (01:00Z: 02:00 → 03:00).
+    const opening = await setup("Europe/Paris", {
+      hours: [[0, "02:30", "04:00"]],
+    });
+    // [02:30, 04:00) exists only as 03:00–04:00 CEST = 01:00Z–02:00Z.
+    expect(await openRanges(opening, "2027-03-28")).toEqual([
+      ["2027-03-28T01:00:00.000Z", "2027-03-28T02:00:00.000Z"],
     ]);
-    // 02:30 → 03:00 converts to 01:30Z → 01:00Z (inverted): dropped for that
-    // day only, as documented since 20260928090000.
-    const gap = await setup("Europe/Paris", {
+    expect(starts(await slots(opening, "2027-03-28"))).toEqual([
+      "2027-03-28T01:00:00.000Z",
+      "2027-03-28T01:30:00.000Z",
+    ]);
+
+    // Closing in the gap: [01:00, 02:30) exists only as 01:00–02:00 CET,
+    // never past 03:00 CEST.
+    const closing = await setup("Europe/Paris", {
+      hours: [[0, "01:00", "02:30"]],
+    });
+    expect(await openRanges(closing, "2027-03-28")).toEqual([
+      ["2027-03-28T00:00:00.000Z", "2027-03-28T01:00:00.000Z"],
+    ]);
+
+    // Entirely inside the gap: nothing, for that day only.
+    const inside = await setup("Europe/Paris", {
       hours: [[0, "02:30", "03:00"]],
     });
-    expect(await slots(gap, "2027-03-28")).toEqual([]);
+    expect(await openRanges(inside, "2027-03-28")).toEqual([]);
+    expect(await slots(inside, "2027-03-28")).toEqual([]);
+    expect(await openRanges(inside, "2027-04-04")).toEqual([
+      ["2027-04-04T00:30:00.000Z", "2027-04-04T01:00:00.000Z"],
+    ]);
   });
 
   it("a long service never crosses into the next civil day", async () => {
@@ -554,21 +804,302 @@ describe("adversarial zones and bounds inside the day", () => {
   });
 });
 
-describe("SQL and TypeScript share one definition of a civil day", () => {
-  it("holds the civil-day invariants for every IANA zone, 2024–2027", async () => {
-    // Only days whose midnight is irregular (repeated or skipped) are
-    // interesting; on the others both rules trivially agree.
+describe("PostgreSQL is the only calendar authority", () => {
+  const RealDateTimeFormat = Intl.DateTimeFormat;
+
+  afterEach(() => {
+    Intl.DateTimeFormat = RealDateTimeFormat;
+  });
+
+  it("Vancouver 2027-03-14, 00:00 → 01:00: agenda, availability and booking use the same instants", async () => {
+    // Node and PostgreSQL ship different tzdata: Node 24 (2026c) reads
+    // Vancouver as UTC−7 all year from November 2026, this database
+    // (2025b) as UTC−8 until 14 March 2027 02:00. Nothing is excluded here:
+    // whatever Node believes, every result follows the database.
+    const VANCOUVER = "America/Vancouver";
+    const DAY = "2027-03-14"; // Sunday
+    const s = await setup(VANCOUVER, { hours: [[0, "00:00", "01:00"]] });
+    const { rows } = await db.query<{ start: Date }>(
+      "select private.local_day_start($1::date, $2) as start",
+      [DAY, VANCOUVER],
+    );
+    const start = rows[0]!.start.getTime();
+    // 08:00Z with this database's rules (UTC−8); 07:00Z once it has 2026 rules.
+    expect(["2027-03-14T07:00:00.000Z", "2027-03-14T08:00:00.000Z"]).toContain(
+      iso(start),
+    );
+    const at = (minutes: number) => iso(start + minutes * 60_000);
+    const context = { businessId: s.businessId, timezone: VANCOUVER };
+
+    // Agenda: the opening range of the day, from the database.
+    const before = await getAgenda(s.ownerClient, context, {
+      startDate: DAY,
+      endDate: DAY,
+      includeCancelled: false,
+    });
+    expect(before.workingHours.days[0]).toMatchObject({
+      date: DAY,
+      startsAt: at(0),
+      openRanges: [
+        {
+          startsAt: at(0),
+          endsAt: at(60),
+          localStartsAt: `${DAY}T00:00`,
+          localEndsAt: `${DAY}T01:00`,
+        },
+      ],
+    });
+
+    // Public availability: the same two slots, with the same wall clocks.
+    const listed = await slots(s, DAY);
+    expect(starts(listed)).toEqual([at(0), at(30)]);
+    expect(await pgWalls(starts(listed), VANCOUVER)).toEqual([
+      `${DAY}T00:00`,
+      `${DAY}T00:30`,
+    ]);
+
+    // A professional types 00:00 in the agenda: the database resolves it.
+    const manual = await createManualAppointment(s.ownerClient, context, {
+      date: DAY,
+      time: "00:00",
+      occurrence: undefined,
+      serviceId: s.serviceId,
+      client: {
+        type: "new",
+        firstName: "Agenda",
+        lastName: null,
+        email: null,
+        phone: null,
+      },
+      internalNotes: null,
+    });
+    expect(manual.appointment).toMatchObject({
+      startsAt: at(0),
+      localStartsAt: `${DAY}T00:00`,
+      startOccurrence: null,
+    });
+
+    // Public booking: 00:30 is bookable; an hour earlier is not open.
+    expect(starts(await slots(s, DAY))).toEqual([at(30)]);
+    await expect(book(s, at(30))).resolves.toBe(at(30));
+    await expect(book(s, at(-60))).rejects.toMatchObject({
+      message: "slot_unavailable",
+    });
+
+    // The agenda and its grid show the booking at 00:30, from the database's
+    // offsets, whatever the JS runtime's tzdata says about that instant.
+    const after = await getAgenda(s.ownerClient, context, {
+      startDate: DAY,
+      endDate: DAY,
+      includeCancelled: false,
+    });
+    expect(
+      after.appointments.map((item) => [item.startsAt, item.localStartsAt]),
+    ).toEqual([
+      [at(0), `${DAY}T00:00`],
+      [at(30), `${DAY}T00:30`],
+    ]);
+    const zone = zoneOf(after);
+    expect(wallOf(zone, start + 30 * 60_000)).toBe(`${DAY}T00:30`);
+    const axis = buildAxis([DAY], zone);
+    expect(
+      placeAppointments(axis, after.appointments, DAY).map((item) => item.top),
+    ).toEqual([0, 30]);
+
+    // Recorded, never used: Node's own reading of that instant.
+    expect([`${DAY}T00:30`, `${DAY}T01:30`]).toContain(
+      utcToZonedLocal(at(30), VANCOUVER),
+    );
+  });
+
+  it("a JS time zone database that disagrees changes nothing (synthetic divergence)", async () => {
+    const s = await setup(HAVANA, { hours: [[0, "00:00", "00:30"]] });
+    const context = { businessId: s.businessId, timezone: HAVANA };
+
+    // From now on, the JS runtime reads every zone as Asia/Kathmandu
+    // (UTC+5:45): any schedule time still derived from Intl would move.
+    Intl.DateTimeFormat = function (
+      locales?: string | string[],
+      options?: Intl.DateTimeFormatOptions,
+    ) {
+      return new RealDateTimeFormat(
+        locales,
+        options?.timeZone && options.timeZone !== "UTC"
+          ? { ...options, timeZone: "Asia/Kathmandu" }
+          : options,
+      );
+    } as unknown as typeof Intl.DateTimeFormat;
+    expect(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: HAVANA,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(new Date("2026-11-01T04:30:00Z")),
+    ).toBe("10:15"); // JS now says 10:15; Havana really reads 00:30.
+
+    const agenda = await getAgenda(s.ownerClient, context, {
+      startDate: "2026-10-31",
+      endDate: REPEATED,
+      includeCancelled: false,
+    });
+    expect(
+      agenda.workingHours.days.map((day) => [
+        day.date,
+        day.startsAt,
+        day.endsAt,
+      ]),
+    ).toEqual([
+      ["2026-10-31", "2026-10-31T04:00:00.000Z", "2026-11-01T04:00:00.000Z"],
+      [REPEATED, "2026-11-01T04:00:00.000Z", "2026-11-02T05:00:00.000Z"],
+    ]);
+    expect(
+      agenda.workingHours.days[1]!.openRanges.map((range) => [
+        range.startsAt,
+        range.endsAt,
+        range.localStartsAt,
+        range.localEndsAt,
+      ]),
+    ).toEqual([
+      [
+        "2026-11-01T04:00:00.000Z",
+        "2026-11-01T04:30:00.000Z",
+        "2026-11-01T00:00",
+        "2026-11-01T00:30",
+      ],
+      [
+        "2026-11-01T05:00:00.000Z",
+        "2026-11-01T05:30:00.000Z",
+        "2026-11-01T00:00",
+        "2026-11-01T00:30",
+      ],
+    ]);
+    expect(agenda.today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // Writes: a start typed with its occurrence, a period, whole days.
+    const created = await createManualAppointment(s.ownerClient, context, {
+      date: REPEATED,
+      time: "00:00",
+      occurrence: "second",
+      serviceId: s.serviceId,
+      client: {
+        type: "new",
+        firstName: "Divergence",
+        lastName: null,
+        email: null,
+        phone: null,
+      },
+      internalNotes: null,
+    });
+    expect(created.appointment).toMatchObject({
+      startsAt: "2026-11-01T05:00:00.000Z",
+      localStartsAt: "2026-11-01T00:00",
+      startOccurrence: "second",
+    });
+    const period = await createBlock(s.ownerClient, context, {
+      allDay: false,
+      startsAt: "2026-11-02T09:00",
+      endsAt: "2026-11-02T10:00",
+      reason: null,
+    });
+    expect([period.startsAt, period.endsAt]).toEqual([
+      "2026-11-02T14:00:00.000Z",
+      "2026-11-02T15:00:00.000Z",
+    ]);
+    const wholeDay = await createBlock(s.ownerClient, context, {
+      allDay: true,
+      startDate: "2026-11-08",
+      endDate: "2026-11-08",
+      reason: null,
+    });
+    expect([wholeDay.startsAt, wholeDay.endsAt]).toEqual([
+      "2026-11-08T05:00:00.000Z",
+      "2026-11-09T05:00:00.000Z",
+    ]);
+
+    // Public side: unchanged, and the slot taken by the agenda is gone.
+    expect(starts(await slots(s, REPEATED))).toEqual([
+      "2026-11-01T04:00:00.000Z",
+    ]);
+
+    // UI: the grid places items with the database's offsets only.
+    const after = await getAgenda(s.ownerClient, context, {
+      startDate: REPEATED,
+      endDate: REPEATED,
+      includeCancelled: false,
+    });
+    const zone = zoneOf(after);
+    expect(wallOf(zone, Date.parse("2026-11-01T05:00:00Z"))).toBe(
+      "2026-11-01T00:00",
+    );
+    const axis = buildAxis([REPEATED], zone);
+    // Repeated midnight: y is the real time since the first midnight.
+    expect(
+      placeAppointments(axis, after.appointments, REPEATED).map(
+        (item) => item.top,
+      ),
+    ).toEqual([60]);
+  });
+
+  it("public.business_time answers members only, with bounded inputs", async () => {
+    const s = await setup(HAVANA);
+    const outsider = await createProfessional("outsider");
+    const call = (client: Setup["ownerClient"], args: object = {}) =>
+      client.rpc("business_time", { p_business_id: s.businessId, ...args });
+
+    const member = await call(s.ownerClient, {
+      p_dates: [REPEATED],
+      p_locals: ["2026-11-01T00:30"],
+      p_instants: ["2026-11-01T04:30:00Z", "2026-11-01T05:30:00Z"],
+    });
+    expect(member.error).toBeNull();
+    expect(member.data).toMatchObject({
+      timezone: HAVANA,
+      days: [
+        {
+          date: REPEATED,
+          startsAt: expect.stringMatching(/^2026-11-01T04:00:00/),
+          endsAt: expect.stringMatching(/^2026-11-02T05:00:00/),
+        },
+      ],
+      locals: [{ local: "2026-11-01T00:30", status: "ambiguous" }],
+      instants: expect.arrayContaining([
+        expect.objectContaining({
+          local: "2026-11-01T00:30",
+          occurrence: "first",
+        }),
+        expect.objectContaining({
+          local: "2026-11-01T00:30",
+          occurrence: "second",
+        }),
+      ]),
+    });
+
+    expect((await call(outsider.client)).error).toMatchObject({
+      message: "forbidden",
+    });
+    expect((await call(anonClient())).error).not.toBeNull();
+    const tooMany = Array.from({ length: 63 }, (_, i) =>
+      new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
+    );
+    expect(
+      (await call(s.ownerClient, { p_dates: tooMany })).error,
+    ).toMatchObject({ message: "invalid_input" });
+  });
+
+  it("holds the civil-day invariants for every IANA zone, 2018–2028 (nothing excluded)", async () => {
+    // Product guarantee: the database alone defines days. Every zone, every
+    // day whose midnight is irregular or near a change.
     const { rows } = await db.query<{
       name: string;
       ymd: string;
-      start: Date;
-      next: Date;
       ge: boolean;
       first: boolean;
-      probes: { at: string; wall: string }[];
+      ordered: boolean;
+      membership: boolean;
     }>(
       `with z as (select name from pg_timezone_names where name !~ '^(posix|right)/'),
-            d as (select g::date as dd from generate_series('2024-01-01'::date, '2027-12-31'::date, interval '1 day') g),
+            d as (select g::date as dd from generate_series('2018-01-01'::date, '2028-12-31'::date, interval '1 day') g),
             c as (select z.name, d.dd, (d.dd::timestamp at time zone z.name) as rule from z cross join d),
             s as (select name, dd,
                          private.local_day_start(dd, name) as st,
@@ -577,9 +1108,110 @@ describe("SQL and TypeScript share one definition of a civil day", () => {
                   where (rule at time zone name) <> dd::timestamp
                      or ((rule - interval '3 hours') at time zone name) - ((rule - interval '3 hours') at time zone 'UTC')
                         <> ((rule + interval '3 hours') at time zone name) - ((rule + interval '3 hours') at time zone 'UTC'))
-       select name, to_char(dd, 'YYYY-MM-DD') as ymd, st as start, nx as next,
+       select name, to_char(dd, 'YYYY-MM-DD') as ymd,
               (st at time zone name)::date >= dd as ge,
               ((st - interval '1 minute') at time zone name)::date < dd as first,
+              nx >= st as ordered,
+              (st = nx or private.local_date_of(st, name) = dd) as membership
+       from s`,
+    );
+
+    expect(rows.length).toBeGreaterThan(1000);
+    const broken = rows.filter(
+      (row) => !(row.ge && row.first && row.ordered && row.membership),
+    );
+    expect(broken).toEqual([]);
+  }, 180_000);
+
+  it("00:00 → 24:00 opens exactly the real day, in every IANA zone (2018–2028)", async () => {
+    const s = await setup("UTC"); // every weekday 00:00 → 24:00
+    const { rows } = await db.query<{ name: string; ymd: string }>(
+      `with z as (select name from pg_timezone_names where name !~ '^(posix|right)/'),
+            d as (select g::date as dd from generate_series('2018-01-01'::date, '2028-12-31'::date, interval '1 day') g),
+            c as (select z.name, d.dd, (d.dd::timestamp at time zone z.name) as rule from z cross join d),
+            s as (select name, dd from c
+                  where (rule at time zone name) <> dd::timestamp
+                     or ((rule - interval '3 hours') at time zone name) - ((rule - interval '3 hours') at time zone 'UTC')
+                        <> ((rule + interval '3 hours') at time zone name) - ((rule + interval '3 hours') at time zone 'UTC'))
+       select name, to_char(dd, 'YYYY-MM-DD') as ymd
+       from s
+       where coalesce(private.opening_ranges($1, dd, name), '{}'::tstzmultirange)
+          <> case
+               when private.local_day_start(dd, name) < private.local_day_start(dd + 1, name)
+               then tstzmultirange(tstzrange(private.local_day_start(dd, name),
+                                             private.local_day_start(dd + 1, name), '[)'))
+               else '{}'::tstzmultirange
+             end`,
+      [s.businessId],
+    );
+    expect(rows).toEqual([]);
+  }, 300_000);
+
+  it("the UI's arithmetic on the database's offsets reproduces the database's wall clocks", async () => {
+    // Same data, same result: around every change of every zone (2024–2027),
+    // the agenda zone (offsets from private.zone_offsets) gives exactly
+    // private.wall_clock at each piece's first and last minute.
+    const { rows } = await db.query<{
+      name: string;
+      pieces: { startsAt: string; endsAt: string; offsetSeconds: number }[];
+      probes: { at: string; wall: string }[];
+    }>(
+      `with z as (select name from pg_timezone_names where name !~ '^(posix|right)/'),
+            d as (select g::date as dd from generate_series('2024-01-01'::date, '2027-12-31'::date, interval '1 day') g),
+            c as (select z.name, d.dd, private.local_day_start(d.dd, z.name) as lo,
+                         private.local_day_start(d.dd + 1, z.name) as hi
+                  from z cross join d),
+            t as (select name, lo, hi from c
+                  where hi - lo <> interval '24 hours')
+       select t.name,
+              (select json_agg(json_build_object('startsAt', p.starts_at, 'endsAt', p.ends_at,
+                                                 'offsetSeconds', p.utc_offset_seconds)
+                               order by p.starts_at)
+               from private.zone_offsets(t.name, t.lo, t.hi) p) as pieces,
+              (select json_agg(json_build_object('at', x, 'wall', private.wall_clock(x, t.name)))
+               from private.zone_offsets(t.name, t.lo, t.hi) p,
+                    unnest(array[p.starts_at, p.ends_at - interval '1 minute']) x) as probes
+       from t
+       where t.lo < t.hi`,
+    );
+
+    expect(rows.length).toBeGreaterThan(500);
+    const mismatches: string[] = [];
+    for (const row of rows) {
+      const zone = zoneOf({
+        timezone: row.name,
+        offsets: row.pieces,
+        workingHours: { days: [] },
+      });
+      for (const probe of row.probes) {
+        const wall = wallOf(zone, Date.parse(probe.at));
+        if (wall !== probe.wall) mismatches.push(`${row.name} ${probe.at}`);
+      }
+    }
+    expect(mismatches).toEqual([]);
+  }, 180_000);
+
+  it("algorithm cross-check with Intl where both tzdata agree (tzdata differences only recorded)", async () => {
+    // Not a product guarantee (the product never reads Intl): an independent
+    // implementation of the civil-day definition, compared wherever Node and
+    // the database read the same wall clocks. Days on which their tzdata
+    // differ (America/Vancouver 2027 with Node ≥ 24) are recorded, not
+    // compared — the tests above prove they cannot change any result.
+    const { rows } = await db.query<{
+      name: string;
+      ymd: string;
+      start: Date;
+      probes: { at: string; wall: string }[];
+    }>(
+      `with z as (select name from pg_timezone_names where name !~ '^(posix|right)/'),
+            d as (select g::date as dd from generate_series('2024-01-01'::date, '2027-12-31'::date, interval '1 day') g),
+            c as (select z.name, d.dd, (d.dd::timestamp at time zone z.name) as rule from z cross join d),
+            s as (select name, dd, private.local_day_start(dd, name) as st
+                  from c
+                  where (rule at time zone name) <> dd::timestamp
+                     or ((rule - interval '3 hours') at time zone name) - ((rule - interval '3 hours') at time zone 'UTC')
+                        <> ((rule + interval '3 hours') at time zone name) - ((rule + interval '3 hours') at time zone 'UTC'))
+       select name, to_char(dd, 'YYYY-MM-DD') as ymd, st as start,
               (select json_agg(json_build_object(
                         'at', p,
                         'wall', to_char(p at time zone name, 'YYYY-MM-DD"T"HH24:MI')))
@@ -588,105 +1220,28 @@ describe("SQL and TypeScript share one definition of a civil day", () => {
        from s`,
     );
 
-    expect(rows.length).toBeGreaterThan(100);
-
-    // PostgreSQL and Node each ship their own copy of the IANA database, and
-    // the two can disagree on future rules (on the CI runner, Node reads
-    // America/Vancouver on 2027-03-14 at UTC−7 where PostgreSQL still has
-    // UTC−8). The comparison with startOfLocalDate is only meaningful where
-    // both runtimes read the same wall clocks around the day; elsewhere the
-    // gap is a tzdata difference, never a difference of definition.
-    const compared: string[] = [];
-    const tzdataGaps: string[] = [];
+    const tzdataDifferences: string[] = [];
+    let compared = 0;
     for (const row of rows) {
-      expect([
-        row.name,
-        row.ymd,
-        row.ge,
-        row.first,
-        row.next >= row.start,
-      ]).toEqual([row.name, row.ymd, true, true, true]);
-
       const sameRules = row.probes.every(
         (probe) => utcToZonedLocal(probe.at, row.name) === probe.wall,
       );
       if (!sameRules) {
-        tzdataGaps.push(`${row.name} ${row.ymd}`);
+        tzdataDifferences.push(`${row.name} ${row.ymd}`);
         continue;
       }
-
-      compared.push(`${row.name} ${row.ymd}`);
+      compared += 1;
       expect([row.name, row.ymd, row.start.toISOString()]).toEqual([
         row.name,
         row.ymd,
         startOfLocalDate(row.ymd, row.name).toISOString(),
       ]);
     }
-
-    // The escape hatch above must stay marginal: almost every irregular day
-    // is really compared.
-    expect(compared.length).toBeGreaterThan(100);
-    expect(tzdataGaps.length).toBeLessThan(rows.length / 20);
-  }, 120_000);
-
-  it("agenda opening ranges cover exactly the public slots of each day", async () => {
-    const s = await setup(HAVANA);
-    const agenda = await getAgenda(
-      s.ownerClient,
-      { businessId: s.businessId, timezone: HAVANA },
-      {
-        startDate: "2026-10-31",
-        endDate: "2026-11-02",
-        includeCancelled: false,
-      },
-    );
-
-    for (const day of agenda.workingHours.days) {
-      const daySlots = await slots(s, day.date);
-      expect(day.openRanges).toHaveLength(1);
-      expect([day.openRanges[0]!.startsAt, day.openRanges[0]!.endsAt]).toEqual([
-        daySlots[0]!.startsAt,
-        daySlots.at(-1)!.endsAt,
-      ]);
-    }
-    expect(agenda.workingHours.days[1]!.openRanges[0]).toMatchObject({
-      startsAt: "2026-11-01T04:00:00.000Z",
-      endsAt: "2026-11-02T05:00:00.000Z",
-    });
-  });
-
-  it("private.local_day_start equals startOfLocalDate across atypical zones", async () => {
-    const zones: [string, string, string][] = [
-      ["America/Havana", "2025-01-01", "2027-12-31"],
-      ["America/Santiago", "2026-01-01", "2027-12-31"],
-      ["Asia/Beirut", "2026-01-01", "2027-12-31"],
-      ["Africa/Cairo", "2026-01-01", "2027-12-31"],
-      ["America/Nuuk", "2025-01-01", "2027-12-31"],
-      ["Australia/Lord_Howe", "2026-01-01", "2027-12-31"],
-      ["Pacific/Chatham", "2026-01-01", "2026-12-31"],
-      ["Antarctica/Troll", "2026-01-01", "2027-12-31"],
-      ["Pacific/Apia", "2011-12-01", "2012-01-31"],
-      ["America/Sao_Paulo", "2018-01-01", "2019-12-31"],
-      ["Atlantic/Azores", "2025-01-01", "2027-12-31"],
-      ["Asia/Gaza", "2025-01-01", "2027-12-31"],
-      ["Asia/Amman", "2020-01-01", "2022-12-31"],
-      ["America/Scoresbysund", "2024-01-01", "2026-12-31"],
-      ["Europe/Paris", "2026-01-01", "2027-12-31"],
-    ];
-
-    for (const [zone, from, to] of zones) {
-      const { rows } = await db.query<{ day: string; start: Date }>(
-        `select to_char(d, 'YYYY-MM-DD') as day, private.local_day_start(d::date, $1) as start
-         from generate_series($2::date, $3::date, interval '1 day') as d`,
-        [zone, from, to],
+    expect(compared).toBeGreaterThan(100);
+    if (tzdataDifferences.length > 0) {
+      console.info(
+        `tzdata differs between Node and PostgreSQL on ${tzdataDifferences.length} day(s), e.g. ${tzdataDifferences.slice(0, 5).join(", ")}`,
       );
-      for (const row of rows) {
-        expect([zone, row.day, row.start.toISOString()]).toEqual([
-          zone,
-          row.day,
-          startOfLocalDate(row.day, zone).toISOString(),
-        ]);
-      }
     }
-  });
+  }, 120_000);
 });
