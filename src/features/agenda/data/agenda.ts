@@ -12,10 +12,10 @@ import type { AppSupabaseClient } from "@/lib/supabase/types";
 import {
   addDaysToLocalDate,
   daysBetweenLocalDates,
+  localDateRangeToUtc,
   resolveZonedLocal,
   utcToZonedLocal,
   weekdayOfLocalDate,
-  zonedLocalToUtc,
   zonedOccurrenceOf,
   zonedTimeOnDateToUtc,
 } from "@/lib/time/zoned";
@@ -209,19 +209,18 @@ function timeRange(start: Date, end: Date, timezone: string): AgendaTimeRange {
   };
 }
 
-/** UTC bounds of whole local days [startDate 00:00, endDate + 1 00:00). */
+/**
+ * UTC bounds of whole local days: [first real instant of startDate, first
+ * real instant of endDate + 1) — repeated or skipped midnights included
+ * (startOfLocalDate). Used for range reads, day clipping and whole-day
+ * blocks, so all of them agree with the agenda UI's notion of a day.
+ */
 export function localDaysToUtc(
   startDate: string,
   endDate: string,
   timezone: string,
 ) {
-  return {
-    startsAt: zonedLocalToUtc(`${startDate}T00:00`, timezone),
-    endsAt: zonedLocalToUtc(
-      `${addDaysToLocalDate(endDate, 1)}T00:00`,
-      timezone,
-    ),
-  };
+  return localDateRangeToUtc(startDate, endDate, timezone);
 }
 
 /**

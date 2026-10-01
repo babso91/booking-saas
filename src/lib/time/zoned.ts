@@ -261,3 +261,75 @@ export function zonedOccurrenceOf(
     ? "first"
     : "second";
 }
+
+// ---------------------------------------------------------------------------
+// Real bounds of a local calendar day
+// ---------------------------------------------------------------------------
+
+const MINUTE_MS = 60_000;
+
+/**
+ * First real instant whose wall-clock date in `timeZone` is `localDate` or
+ * later: where the local day `localDate` begins.
+ *
+ * Never the generic wall-clock → UTC rule (zonedLocalToUtc), which reads a
+ * repeated time as its LATER occurrence:
+ * - repeated midnight (America/Havana, 2026-11-01: 00:00 at 04:00Z and again
+ *   at 05:00Z) → the FIRST occurrence;
+ * - skipped midnight (Havana, 2027-03-14: 23:59 → 01:00), including a
+ *   transition that starts before midnight → the first instant after the gap;
+ * - a date that does not exist (Pacific/Apia, 2011-12-30) → the first instant
+ *   of the next existing date, so that day is empty.
+ *
+ * Same definition and algorithm as the agenda UI
+ * (src/features/agenda/client/layout.ts, localDayStart).
+ */
+export function startOfLocalDate(localDate: string, timeZone: string): Date {
+  const midnight = resolveZonedLocal(`${localDate}T00:00`, timeZone);
+
+  if (midnight.status === "exact") return midnight.instant;
+  if (midnight.status === "ambiguous") return midnight.first;
+
+  // Midnight skipped: first minute whose local date is ≥ localDate. UTC
+  // offsets stay within ±14 h, so ±26 h brackets it; the local date only
+  // moves forward across a gap, so the predicate is monotonic here.
+  const utcMidnight = localDateAsUtcMidnight(localDate);
+  let before = utcMidnight - 26 * 60 * MINUTE_MS;
+  let after = utcMidnight + 26 * 60 * MINUTE_MS;
+
+  while (after - before > MINUTE_MS) {
+    const middle =
+      before + Math.floor((after - before) / 2 / MINUTE_MS) * MINUTE_MS;
+    if (zonedDateOf(new Date(middle), timeZone) >= localDate) after = middle;
+    else before = middle;
+  }
+
+  return new Date(after);
+}
+
+/**
+ * Real interval of whole local days `startDate`…`endDate` (inclusive):
+ * [first instant of startDate, first instant of endDate + 1). Never assumes
+ * 24-hour days (23 h, 25 h, 23.5 h, 26 h… follow from the zone's rules).
+ */
+export function localDateRangeToUtc(
+  startDate: string,
+  endDate: string,
+  timeZone: string,
+) {
+  return {
+    startsAt: startOfLocalDate(startDate, timeZone),
+    endsAt: startOfLocalDate(addDaysToLocalDate(endDate, 1), timeZone),
+  };
+}
+
+/**
+ * UTC instant of a period bound typed as `YYYY-MM-DDTHH:MM`. Local midnight
+ * is where the day begins (startOfLocalDate), whatever the zone does at
+ * midnight; any other time follows zonedLocalToUtc.
+ */
+export function zonedBoundToUtc(localDateTime: string, timeZone: string) {
+  return localDateTime.endsWith("T00:00")
+    ? startOfLocalDate(localDateTime.slice(0, 10), timeZone)
+    : zonedLocalToUtc(localDateTime, timeZone);
+}
