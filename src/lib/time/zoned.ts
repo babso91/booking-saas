@@ -157,17 +157,22 @@ export function weekdayOfLocalDate(localDate: string) {
 }
 
 /**
- * UTC instant of a local wall-clock `HH:MM` on `localDate`, where `24:00`
- * means the following midnight. Same rules as zonedLocalToUtc.
+ * UTC instant of a weekly-hours bound `HH:MM` on `localDate`, exactly as the
+ * public availability engine reads it (private.compute_available_slots):
+ * `00:00` is the real start of the day and `24:00` its real end
+ * (startOfLocalDate, even where midnight repeats or is skipped); any other
+ * time follows zonedLocalToUtc (PostgreSQL `AT TIME ZONE`).
  */
 export function zonedTimeOnDateToUtc(
   localDate: string,
   time: string,
   timeZone: string,
 ) {
-  return time === "24:00"
-    ? zonedLocalToUtc(`${addDaysToLocalDate(localDate, 1)}T00:00`, timeZone)
-    : zonedLocalToUtc(`${localDate}T${time}`, timeZone);
+  if (time === "00:00") return startOfLocalDate(localDate, timeZone);
+  if (time === "24:00") {
+    return startOfLocalDate(addDaysToLocalDate(localDate, 1), timeZone);
+  }
+  return zonedLocalToUtc(`${localDate}T${time}`, timeZone);
 }
 
 /**

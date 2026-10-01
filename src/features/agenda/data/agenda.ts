@@ -268,10 +268,11 @@ function tooMany(message: string): AppException {
 }
 
 /**
- * Opening ranges per local day, with the same DST rules as availability in
- * PostgreSQL (20260928090000): weekly ranges are converted on each date, a
- * range emptied or inverted by a DST gap is dropped for that day, and
- * exceptional openings are clipped to the day.
+ * Opening ranges per local day, with the same rules as public availability
+ * in PostgreSQL (20261001090000): weekly ranges are converted on each date
+ * (00:00 / 24:00 = real day bounds), clipped to the real day, a range emptied
+ * or inverted by a DST gap is dropped for that day, and exceptional openings
+ * are clipped to the day.
  */
 export function openRangesByDay(
   startDate: string,
@@ -293,10 +294,22 @@ export function openRangesByDay(
     );
     const ranges: [Date, Date][] = [];
 
+    // Same bounds as private.compute_available_slots: 00:00 / 24:00 are the
+    // real day bounds, and every range is clipped to the real day.
     for (const hour of weekly) {
       if (hour.weekday !== weekday) continue;
-      const start = zonedTimeOnDateToUtc(date, hour.startsAt, timezone);
-      const end = zonedTimeOnDateToUtc(date, hour.endsAt, timezone);
+      const start = new Date(
+        Math.max(
+          zonedTimeOnDateToUtc(date, hour.startsAt, timezone).getTime(),
+          dayStart.getTime(),
+        ),
+      );
+      const end = new Date(
+        Math.min(
+          zonedTimeOnDateToUtc(date, hour.endsAt, timezone).getTime(),
+          dayEnd.getTime(),
+        ),
+      );
       if (start < end) ranges.push([start, end]);
     }
 

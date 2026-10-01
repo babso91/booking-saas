@@ -134,3 +134,52 @@ describe("local bounds", () => {
     ).toBe("2026-10-25T09:00:00.000Z");
   });
 });
+
+describe("openRangesByDay on irregular days (same rules as public slots)", () => {
+  const allDay = [0, 1, 2, 3, 4, 5, 6].map((weekday) =>
+    hours(weekday, "00:00", "24:00"),
+  );
+
+  it("Havana, repeated midnight: 31 Oct ends and 1 Nov starts at the FIRST midnight", () => {
+    const days = openRangesByDay(
+      "2026-10-31",
+      "2026-11-01",
+      "America/Havana",
+      allDay,
+      [],
+    );
+
+    expect(
+      days.map((day) => day.openRanges.map((r) => [r.startsAt, r.endsAt])),
+    ).toEqual([
+      [["2026-10-31T04:00:00.000Z", "2026-11-01T04:00:00.000Z"]],
+      [["2026-11-01T04:00:00.000Z", "2026-11-02T05:00:00.000Z"]],
+    ]);
+  });
+
+  it("Havana, skipped midnight: the day opens after the gap", () => {
+    const [day] = openRangesByDay(
+      "2027-03-14",
+      "2027-03-14",
+      "America/Havana",
+      allDay,
+      [],
+    );
+
+    expect(day!.openRanges.map((r) => [r.startsAt, r.endsAt])).toEqual([
+      ["2027-03-14T05:00:00.000Z", "2027-03-15T04:00:00.000Z"],
+    ]);
+  });
+
+  it("Apia, a date that does not exist: no opening at all", () => {
+    const [day] = openRangesByDay(
+      "2011-12-30",
+      "2011-12-30",
+      "Pacific/Apia",
+      allDay,
+      [],
+    );
+
+    expect(day!.openRanges).toEqual([]);
+  });
+});

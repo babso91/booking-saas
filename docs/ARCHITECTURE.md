@@ -270,17 +270,28 @@ Le calcul est implémenté une seule fois, en PostgreSQL (`private.available_slo
 
 Pour un jour calendaire `D` du fuseau du business :
 
-1. plages ouvertes = plages hebdomadaires du jour de semaine de `D` (`0` = dimanche, `24:00` autorisé en fin de plage) + exceptions `open_override` ;
+0. jour `D` = `[local_day_start(D), local_day_start(D + 1))`, où `private.local_day_start` (migration `20261001090000`) renvoie le premier instant réel dont la date locale est `D` ou postérieure. C'est la même définition que l'agenda (`startOfLocalDate`, `src/lib/time/zoned.ts`) et que l'UI (`localDayBounds`) ; un test compare SQL et TypeScript sur tous les fuseaux IANA. Conséquences :
+   - minuit répété (America/Havana et Atlantic/Azores en automne, Asia/Gaza…) : sa **première** occurrence ;
+   - minuit sauté : le premier instant après le saut ;
+   - date inexistante (Pacific/Apia, 30/12/2011) : jour vide, aucun créneau ;
+   - aucune journée n'est supposée durer 24 h.
+1. plages ouvertes = plages hebdomadaires du jour de semaine de `D` (`0` = dimanche) + exceptions `open_override`, toutes limitées au jour réel. Pour les plages hebdomadaires :
+   - `00:00` est le début réel du jour et `24:00` sa fin réelle (`local_day_start(D + 1)`) : `00:00 → 24:00` couvre exactement la journée, qu'elle dure 23, 24 ou 25 h ;
+   - les autres bornes suivent la règle de PostgreSQL ci-dessous ;
 2. plages utilisables = plages ouvertes − exceptions `closed` (fermeture, vacances) et `blocked` (créneau bloqué, rendez-vous personnel) ; une fermeture l'emporte sur une ouverture exceptionnelle ;
 3. candidats = grille de `slot_interval_minutes` ancrée sur le début de chaque plage ouverte ;
 4. un candidat est retenu si `[début, début + durée)` tient dans une plage utilisable, si `[début, début + durée + buffer)` ne touche la plage occupée d'aucun rendez-vous non annulé, si `début ≥ now + délai minimal`, et si `début` tombe au plus tard le jour local `aujourd'hui + horizon` (le dernier jour est réservable en entier).
+   - le délai minimal, la durée et le buffer sont des minutes **réelles** ;
+   - l'horizon se compte en jours civils : il s'arrête à `local_day_start(aujourd'hui + N + 1)`.
+
+Un créneau appartient au jour `D` si et seulement si son instant est dans `[local_day_start(D), local_day_start(D + 1))`. La réservation (`create_public_booking`) valide l'instant demandé sur ce même jour (`private.local_date_of`) : ce qui est affiché est exactement ce qui est réservable, y compris pendant la première heure d'un jour au minuit répété.
 
 Le buffer n'est exigé qu'entre deux rendez-vous : une prestation peut finir à la fermeture ou au début d'un blocage.
 
-Changements d'heure (règle identique à `timestamp AT TIME ZONE` de PostgreSQL et à `src/lib/time/zoned.ts`) :
+Changements d'heure pour une borne **intérieure** à la journée (autre que `00:00` / `24:00`) ; règle identique à `timestamp AT TIME ZONE` de PostgreSQL et à `src/lib/time/zoned.ts` :
 
 - une heure locale inexistante (passage à l'heure d'été) est décalée de la durée du saut : 02:30 devient 03:30 à Paris ;
-- une heure ambiguë (passage à l'heure d'hiver) prend l'instant le plus tardif, en heure standard ;
+- une heure ambiguë (passage à l'heure d'hiver) prend l'instant le plus tardif, en heure standard. Les créneaux eux-mêmes sont des instants UTC : dans une plage qui couvre l'heure répétée, chaque horaire de cette heure apparaît deux fois, comme deux créneaux distincts ;
 - une plage rendue vide ou inversée ce jour-là (par exemple 02:30–03:00 le 28 mars 2027) est ignorée pour ce jour uniquement ; les autres plages de la journée restent calculées.
 
 Le serveur reçoit une date locale et renvoie des instants UTC accompagnés du fuseau du business. Côté professionnel, les exceptions sont saisies en heure murale locale et converties en UTC côté serveur avec le fuseau du business (`src/lib/time/zoned.ts`, aligné sur le comportement de PostgreSQL pour les heures ambiguës ou inexistantes). Aucun code ne suppose `Europe/Paris`, qui n'est qu'une valeur par défaut de colonne ; les fuseaux invalides sont refusés par trigger.

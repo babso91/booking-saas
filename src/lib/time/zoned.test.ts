@@ -99,6 +99,32 @@ describe("local calendar dates", () => {
     expect(weekdayOfLocalDate("2026-10-03")).toBe(6); // Saturday
   });
 
+  it("reads 00:00 and 24:00 as the real day bounds where midnight repeats", () => {
+    // Havana 2026-11-01: midnight at 04:00Z and again at 05:00Z.
+    expect(
+      zonedTimeOnDateToUtc(
+        "2026-11-01",
+        "00:00",
+        "America/Havana",
+      ).toISOString(),
+    ).toBe("2026-11-01T04:00:00.000Z");
+    expect(
+      zonedTimeOnDateToUtc(
+        "2026-10-31",
+        "24:00",
+        "America/Havana",
+      ).toISOString(),
+    ).toBe("2026-11-01T04:00:00.000Z");
+    // Other bounds keep PostgreSQL's rule (later occurrence).
+    expect(
+      zonedTimeOnDateToUtc(
+        "2026-11-01",
+        "00:30",
+        "America/Havana",
+      ).toISOString(),
+    ).toBe("2026-11-01T05:30:00.000Z");
+  });
+
   it("maps 24:00 to the next local midnight, DST day included", () => {
     // 2026-10-25 lasts 25 hours in Paris.
     expect(
