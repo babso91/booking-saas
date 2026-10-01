@@ -7,6 +7,7 @@ import {
   encryptSecret,
   randomToken,
   secretKey,
+  secretKeyId,
   sha256Hex,
 } from "./secret-box";
 
@@ -74,5 +75,14 @@ describe("secret box (AES-256-GCM)", () => {
     );
     expect(randomToken(32)).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(randomToken()).not.toBe(randomToken());
+  });
+});
+
+describe("secretKeyId", () => {
+  it("names the key a ciphertext was sealed with (re-encryption after a rotation)", () => {
+    const current = key();
+    expect(secretKeyId(encryptSecret("x", "aad", current))).toBe(current.id);
+    expect(secretKeyId("garbage")).toBeNull();
+    expect(secretKeyId("v2.abc.x.y.z")).toBeNull();
   });
 });

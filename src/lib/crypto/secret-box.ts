@@ -16,7 +16,8 @@ import {
 // Format: v1.<key id>.<iv>.<tag>.<ciphertext> (base64url). The key id (first
 // 8 bytes of SHA-256 of the key, hex) selects the decryption key, so a
 // rotation adds the new key as current and keeps former keys for decryption
-// until every secret was rewritten (tokens are rewritten at each refresh).
+// until every secret was rewritten under the current key (see
+// docs/CALENDAR_INTEGRATION_CONTRACT.md, key rotation).
 
 export type SecretKey = { id: string; key: Buffer };
 
@@ -94,6 +95,12 @@ export function decryptSecret(
   } catch {
     throw new SecretBoxError("Secret could not be decrypted.");
   }
+}
+
+/** The id of the key a ciphertext was sealed with (null if malformed). */
+export function secretKeyId(box: string): string | null {
+  const [version, keyId] = box.split(".");
+  return version === "v1" && keyId ? keyId : null;
 }
 
 /** Hex SHA-256: stored instead of a secret that only needs comparing. */

@@ -15,7 +15,11 @@ import { stopChannels } from "./channels";
 import { tokenAad, type CalendarDeps } from "./deps";
 import { logCalendar } from "./log";
 import { syncCalendar, type SyncOutcome } from "./sync";
-import { toCalendarException, withAccessToken } from "./tokens";
+import {
+  currentGeneration,
+  toCalendarException,
+  withAccessToken,
+} from "./tokens";
 
 // Connection lifecycle of the professional's external calendar. Every entry
 // point receives the tenant resolved from the session (never from input):
@@ -36,8 +40,17 @@ export type ConnectedCalendarDto = {
   timezone: string | null;
   primary: boolean;
   accessRole: string | null;
+  /** False for a calendar only shared as free/busy (events unreadable). */
+  selectable: boolean;
   blocking: boolean;
-  syncStatus: "idle" | "pending" | "error";
+  /**
+   * pending: never synced; syncing: a pass is running; synced: complete
+   * copy; stale: copy kept but behind (time zone change, interrupted pass);
+   * error: last pass failed, copy kept; incomplete: beyond the bounded sync,
+   * copy kept and partial. Only `synced` means every event is known.
+   */
+  syncStatus:
+    "pending" | "syncing" | "synced" | "stale" | "error" | "incomplete";
   lastSyncedAt: string | null;
   lastError: string | null;
 };
@@ -58,6 +71,29 @@ export type CalendarIntegrationStatusDto = {
 };
 
 const verifierAad = (stateHash: string) => `oauth-verifier:${stateHash}`;
+
+/** Access roles whose events can be listed (same rule as SQL). */
+const SELECTABLE_ROLES = new Set(["owner", "writer", "reader"]);
+
+/** Deadline of the remote revocation, well within the SQL window (2 min). */
+const REVOKE_BUDGET_MS = 60_000;
+
+const calendarItems = (
+  calendars: {
+    id: string;
+    name: string;
+    timezone: string | null;
+    primary: boolean;
+    accessRole: string | null;
+  }[],
+) =>
+  calendars.map((calendar) => ({
+    id: calendar.id,
+    name: calendar.name,
+    timezone: calendar.timezone,
+    primary: calendar.primary,
+    accessRole: calendar.accessRole,
+  }));
 
 async function connectionOf(context: CalendarContext) {
   const { data, error } = await context.client
@@ -100,6 +136,7 @@ export async function listConnectedCalendars(
     timezone: row.timezone,
     primary: row.is_primary,
     accessRole: row.access_role,
+    selectable: SELECTABLE_ROLES.has(row.access_role ?? "reader"),
     blocking: row.selected_for_blocking,
     syncStatus: row.sync_status as ConnectedCalendarDto["syncStatus"],
     lastSyncedAt: row.last_synced_at,
@@ -140,6 +177,22 @@ export async function startConnect(
   context: CalendarContext,
   deps: CalendarDeps,
 ) {
+  // A grant obtained while the former one is being revoked could be
+  // revoked with it (same Google account): wait until the revocation ended.
+  const { data: pending, error: pendingError } = await deps.admin
+    .from("calendar_connections")
+    .select("revocation_pending_until")
+    .eq("business_id", context.businessId)
+    .eq("provider", PROVIDER)
+    .maybeSingle();
+  if (pendingError) throw databaseException(pendingError);
+  if (
+    pending?.revocation_pending_until &&
+    new Date(pending.revocation_pending_until).getTime() > Date.now()
+  ) {
+    throw new AppException("calendar_disconnect_in_progress");
+  }
+
   const state = randomToken(32);
   const stateHash = sha256Hex(state);
   const codeVerifier = randomToken(48);
@@ -241,13 +294,7 @@ export async function completeConnect(
         deps.keys[0]!,
       ),
       p_access_token_expires_at: tokens.expiresAt.toISOString(),
-      p_calendars: calendars.map((calendar) => ({
-        id: calendar.id,
-        name: calendar.name,
-        timezone: calendar.timezone,
-        primary: calendar.primary,
-        accessRole: calendar.accessRole,
-      })),
+      p_calendars: calendarItems(calendars),
     },
   );
   if (saveError) throw databaseException(saveError);
@@ -261,31 +308,42 @@ export async function completeConnect(
   return { connectionId: connectionId as string };
 }
 
-/** Re-reads the calendar list from the provider. */
+/**
+ * Re-reads the calendar list from the provider, for the incarnation it was
+ * read with only (a list of former credentials is never saved). A calendar
+ * whose time zone changed is invalidated in SQL (`stale`): the caller syncs
+ * it again.
+ */
 export async function refreshCalendars(
   context: CalendarContext,
   deps: CalendarDeps,
 ) {
   const connectionId = await activeConnectionId(context);
+  const generation = await currentGeneration(deps, connectionId);
+  if (!generation) throw new AppException("calendar_not_connected");
   let calendars;
   try {
-    calendars = await withAccessToken(deps, connectionId, (token) =>
-      deps.provider(PROVIDER).listCalendars(token),
+    calendars = await withAccessToken(
+      deps,
+      connectionId,
+      (token) => deps.provider(PROVIDER).listCalendars(token),
+      { generation },
     );
   } catch (error) {
     throw toCalendarException(error);
   }
-  const { error } = await deps.admin.rpc("calendar_save_calendars", {
-    p_connection_id: connectionId,
-    p_calendars: calendars.map((calendar) => ({
-      id: calendar.id,
-      name: calendar.name,
-      timezone: calendar.timezone,
-      primary: calendar.primary,
-      accessRole: calendar.accessRole,
-    })),
-  });
+  const { data: saved, error } = await deps.admin.rpc(
+    "calendar_save_calendars",
+    {
+      p_connection_id: connectionId,
+      p_generation: generation,
+      p_calendars: calendarItems(calendars),
+    },
+  );
   if (error) throw databaseException(error);
+  if (!saved) {
+    logCalendar("calendars_refresh_superseded", { connectionId });
+  }
   return listConnectedCalendars(context);
 }
 
@@ -321,6 +379,7 @@ export async function setBlockingCalendars(
           id: channel.channelId,
           resourceId: channel.resourceId,
         })),
+        { deadline: Date.now() + 20_000 },
       ),
   };
 }
@@ -340,7 +399,7 @@ export async function syncNow(
     outcomes[calendar.id] =
       remaining > 1000
         ? await syncCalendar(deps, calendar.id, { budgetMs: remaining })
-        : "budget_exceeded";
+        : "stale";
   }
   return { outcomes, calendars: await listConnectedCalendars(context) };
 }
@@ -348,24 +407,34 @@ export async function syncNow(
 /**
  * Disconnects: locally first, at once (busy periods, calendars, cursors and
  * credentials deleted; appointments untouched), then best effort at the
- * provider (channels stopped, grant revoked). Idempotent.
+ * provider (channels stopped, grant revoked). Scoped to the incarnation read
+ * first: it never disconnects an account connected meanwhile. Reconnection
+ * is refused until the revocation ended (or two minutes), so a late
+ * revocation can never hit the grant of a new connection. Idempotent.
  */
 export async function disconnect(context: CalendarContext, deps: CalendarDeps) {
   const connection = await connectionOf(context);
   if (!connection || connection.status === "disconnected")
     return { disconnected: true };
 
+  const generation = await currentGeneration(deps, connection.id);
+  if (!generation) return { disconnected: true };
+
   const { data, error } = await deps.admin.rpc("calendar_disconnect", {
     p_connection_id: connection.id,
+    p_generation: generation,
   });
   if (error) throw databaseException(error);
   const removed = data as {
     provider: CalendarProviderId;
-    refreshTokenCiphertext?: string;
+    generation: string;
+    refreshTokenCiphertext?: string | null;
     accessTokenCiphertext?: string | null;
     accessTokenExpiresAt?: string | null;
     channels: { channelId: string; resourceId: string }[];
   } | null;
+  // Reconnected meanwhile: that newer connection stays.
+  if (!removed) throw new AppException("conflict");
 
   logCalendar("disconnected", {
     businessId: context.businessId,
@@ -373,9 +442,10 @@ export async function disconnect(context: CalendarContext, deps: CalendarDeps) {
     provider: PROVIDER,
   });
 
-  if (removed?.refreshTokenCiphertext) {
+  if (removed.refreshTokenCiphertext) {
     const provider = deps.provider(removed.provider);
     const aad = tokenAad(context.businessId, removed.provider);
+    const deadline = Date.now() + REVOKE_BUDGET_MS;
     try {
       const refreshToken = decryptSecret(
         removed.refreshTokenCiphertext,
@@ -387,7 +457,8 @@ export async function disconnect(context: CalendarContext, deps: CalendarDeps) {
         removed.accessTokenExpiresAt &&
         new Date(removed.accessTokenExpiresAt).getTime() > Date.now() + 30_000
           ? decryptSecret(removed.accessTokenCiphertext, aad, deps.keys)
-          : (await provider.refreshAccessToken(refreshToken)).accessToken;
+          : (await provider.refreshAccessToken(refreshToken, { deadline }))
+              .accessToken;
       await stopChannels(
         deps,
         connection.id,
@@ -396,13 +467,18 @@ export async function disconnect(context: CalendarContext, deps: CalendarDeps) {
           id: channel.channelId,
           resourceId: channel.resourceId,
         })),
-        accessToken,
+        { accessToken, deadline },
       );
       // Revoking the refresh token revokes the whole grant at Google.
-      await provider.revoke(refreshToken);
+      await provider.revoke(refreshToken, { deadline });
     } catch {
       logCalendar("revoke_failed", { connectionId: connection.id }, "warn");
     }
+    // Reconnection allowed again (only for this disconnection).
+    await deps.admin.rpc("calendar_revocation_done", {
+      p_connection_id: connection.id,
+      p_generation: removed.generation,
+    });
   }
 
   return { disconnected: true };

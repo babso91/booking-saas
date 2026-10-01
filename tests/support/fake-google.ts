@@ -49,6 +49,17 @@ function jwt(payload: Record<string, unknown>) {
   return `${part({ alg: "none" })}.${part(payload)}.`;
 }
 
+/** Rejects when the signal aborts (never resolves without one). */
+function aborted(signal: AbortSignal | null | undefined) {
+  return new Promise<never>((_, reject) => {
+    if (!signal) return;
+    if (signal.aborted) reject(signal.reason);
+    signal.addEventListener("abort", () => reject(signal.reason), {
+      once: true,
+    });
+  });
+}
+
 /** What the API returns for an event: no internal counter, no title (the
  * adapter asks for a field mask without it). */
 function publicEvent(event: StoredEvent) {
@@ -72,6 +83,10 @@ export class FakeGoogle {
     "https://www.googleapis.com/auth/calendar.events.readonly",
   ];
   accessTokenLifetime = 3600;
+  /** Overrides of the id_token claims (e.g. an expired `exp`). */
+  idTokenClaims: Record<string, unknown> = {};
+  /** Called on every request before it is answered (concurrent changes). */
+  readonly hooks: ((url: URL, method: string) => void | Promise<void>)[] = [];
 
   readonly requests: { method: string; url: URL; body: string }[] = [];
   readonly revoked: string[] = [];
@@ -109,6 +124,25 @@ export class FakeGoogle {
   private events = new Map<string, Map<string, StoredEvent>>();
   private expiredSyncTokens = new Set<string>();
   private failures: Failure[] = [];
+  private holds: {
+    match: (url: URL, method: string) => boolean;
+    reached: () => void;
+    released: Promise<void>;
+  }[] = [];
+
+  /**
+   * Holds the next matching request: its answer is computed at once (the
+   * provider's state at that time) but delivered only after `release()`, as
+   * a slow network would. `reached` resolves when the request arrived.
+   */
+  hold(match: (url: URL, method: string) => boolean) {
+    let reached!: () => void;
+    let release!: () => void;
+    const reachedPromise = new Promise<void>((resolve) => (reached = resolve));
+    const released = new Promise<void>((resolve) => (release = resolve));
+    this.holds.push({ match, reached, released });
+    return { reached: reachedPromise, release };
+  }
 
   /** The authorization step: Google redirects back with this code. */
   authorize(account: Account, authorizationUrl: string) {
@@ -120,6 +154,15 @@ export class FakeGoogle {
       redirectUri: url.searchParams.get("redirect_uri") ?? "",
     });
     return { code, state: url.searchParams.get("state") ?? "" };
+  }
+
+  /** Changes a calendar's time zone (as in Google's settings). */
+  setTimeZone(calendarId: string, timeZone: string) {
+    for (const list of this.calendars.values()) {
+      for (const calendar of list) {
+        if (calendar.id === calendarId) calendar.timeZone = timeZone;
+      }
+    }
   }
 
   setCalendars(
@@ -217,6 +260,9 @@ export class FakeGoogle {
         aud: CLIENT_ID,
         sub: account.sub,
         email: account.email,
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        ...this.idTokenClaims,
       }),
     };
     if (withRefresh) {
@@ -241,12 +287,37 @@ export class FakeGoogle {
     const body = typeof init?.body === "string" ? init.body : "";
     const method = init?.method ?? "GET";
     this.requests.push({ method, url, body });
+    for (const hook of this.hooks) await hook(url, method);
 
+    const response = await this.answer(url, method, body, init);
+    const hold = this.holds.findIndex((item) => item.match(url, method));
+    if (hold >= 0) {
+      const [entry] = this.holds.splice(hold, 1);
+      entry!.reached();
+      // A held answer still honours the caller's timeout (deadline).
+      await Promise.race([entry!.released, aborted(init?.signal)]);
+    }
+    return response;
+  };
+
+  private async answer(
+    url: URL,
+    method: string,
+    body: string,
+    init?: RequestInit,
+  ): Promise<Response> {
     const failure = this.failures.find(
       (item) => item.times > 0 && item.match(url),
     );
     if (failure) {
       failure.times -= 1;
+      if (typeof failure.body === "string") {
+        // A raw body (e.g. not JSON at all).
+        return new Response(failure.body, {
+          status: failure.status,
+          headers: failure.headers,
+        });
+      }
       return json(failure.body ?? {}, failure.status, failure.headers);
     }
 
@@ -355,7 +426,7 @@ export class FakeGoogle {
     }
 
     return this.listEvents(calendarId, url);
-  };
+  }
 
   private listEvents(calendarId: string, url: URL) {
     const store = [...(this.events.get(calendarId)?.values() ?? [])].sort(

@@ -1,6 +1,7 @@
 import {
   defaultRetryPolicy,
   sendWithRetry,
+  type CallOptions,
   type FetchLike,
   type RetryPolicy,
 } from "./http";
@@ -31,6 +32,13 @@ import {
 // deleted instances come back as `cancelled`. The `fields` mask keeps titles,
 // descriptions and attendees out of every response (privacy), except the
 // connected account's own response status.
+//
+// Every successful answer is validated before anything is derived from it
+// (`protocol` error otherwise): unparsable JSON, a page without exactly one
+// of nextPageToken / nextSyncToken, items that are not an array, an event
+// without id or readable bounds, an empty, malformed or truncated calendar
+// list. A malformed answer must never look like "no events" (the final sweep
+// would empty the local copy) or "no calendars" (they would be removed).
 
 export const GOOGLE_SCOPES = [
   "openid",
@@ -65,19 +73,111 @@ type GoogleEvent = {
   attendees?: { self?: boolean; responseStatus?: string }[];
 };
 
+/** Tolerated clock difference with the provider. */
+const CLOCK_SKEW_SECONDS = 300;
+
+const protocolError = (message: string) =>
+  new CalendarProviderError("protocol", null, message);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const nonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0;
+
 function decodeJwtPayload(jwt: string): Record<string, unknown> {
   const part = jwt.split(".")[1];
-  if (!part)
-    throw new CalendarProviderError("bad_request", null, "Malformed id_token");
-  return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+  if (!part) throw protocolError("Malformed id_token");
+  try {
+    const payload: unknown = JSON.parse(
+      Buffer.from(part, "base64url").toString("utf8"),
+    );
+    if (!isRecord(payload)) throw new Error("not an object");
+    return payload;
+  } catch {
+    throw protocolError("Malformed id_token");
+  }
 }
 
-async function readJson(response: Response): Promise<Record<string, unknown>> {
+/** Access token expiry (expires_in seconds, one hour if absent). */
+function expiresAt(body: Record<string, unknown>) {
+  const seconds =
+    body.expires_in === undefined ? 3600 : Number(body.expires_in);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw protocolError("Malformed token expiry");
+  }
+  return new Date(Date.now() + seconds * 1000);
+}
+
+/** Body of a successful answer: a JSON object, or a protocol error. */
+async function readSuccess(
+  response: Response,
+): Promise<Record<string, unknown>> {
+  let body: unknown;
   try {
-    return (await response.json()) as Record<string, unknown>;
+    body = await response.json();
+  } catch {
+    throw protocolError("Unparsable response");
+  }
+  if (!isRecord(body)) throw protocolError("Unexpected response");
+  return body;
+}
+
+/** Body of an error answer, only to classify it (may be HTML). */
+async function readFailure(
+  response: Response,
+): Promise<Record<string, unknown>> {
+  try {
+    const body: unknown = await response.json();
+    return isRecord(body) ? body : {};
   } catch {
     return {};
   }
+}
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_TIME =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;
+
+/** An event bound: a date (all-day) or a date-time, never both or neither. */
+function validBound(value: unknown) {
+  if (!isRecord(value)) return null;
+  const date = value.date;
+  const dateTime = value.dateTime;
+  const timeZone = value.timeZone;
+  if (timeZone !== undefined && typeof timeZone !== "string") return null;
+  if (date !== undefined && dateTime === undefined) {
+    return typeof date === "string" && DATE.test(date) ? "date" : null;
+  }
+  if (dateTime !== undefined && date === undefined) {
+    return typeof dateTime === "string" && DATE_TIME.test(dateTime)
+      ? "dateTime"
+      : null;
+  }
+  return null;
+}
+
+/** Validates one listed event (a protocol error for the whole page). */
+function parseEvent(item: unknown): ProviderEvent {
+  if (!isRecord(item) || !nonEmptyString(item.id)) {
+    throw protocolError("Event without id");
+  }
+  if (item.status !== undefined && typeof item.status !== "string") {
+    throw protocolError("Malformed event");
+  }
+  // A cancelled event may come back as its id only.
+  if (item.status !== "cancelled") {
+    const start = validBound(item.start);
+    const end = validBound(item.end);
+    if (!start || start !== end) throw protocolError("Malformed event bounds");
+  }
+  if (
+    item.attendees !== undefined &&
+    !(Array.isArray(item.attendees) && item.attendees.every(isRecord))
+  ) {
+    throw protocolError("Malformed event attendees");
+  }
+  return toProviderEvent(item as GoogleEvent)!;
 }
 
 function errorFor(status: number, body: Record<string, unknown>) {
@@ -151,11 +251,22 @@ export function createGoogleCalendarProvider(options: {
     options.fetch ?? ((input, init) => fetch(input, init));
   const retry = options.retry ?? defaultRetryPolicy;
 
-  async function call(url: string, init: RequestInit) {
-    const response = await sendWithRetry(fetchImpl, url, init, retry);
-    const body = await readJson(response);
-    if (!response.ok) throw errorFor(response.status, body);
-    return body;
+  async function call(
+    url: string,
+    init: RequestInit,
+    callOptions: CallOptions = {},
+  ) {
+    const response = await sendWithRetry(
+      fetchImpl,
+      url,
+      init,
+      retry,
+      callOptions,
+    );
+    if (!response.ok) {
+      throw errorFor(response.status, await readFailure(response));
+    }
+    return readSuccess(response);
   }
 
   function form(values: Record<string, string>) {
@@ -215,22 +326,28 @@ export function createGoogleCalendarProvider(options: {
 
       const accessToken = body.access_token;
       const idToken = body.id_token;
-      if (typeof accessToken !== "string" || typeof idToken !== "string") {
-        throw new CalendarProviderError(
-          "bad_request",
-          null,
-          "Incomplete token response",
-        );
+      if (!nonEmptyString(accessToken) || !nonEmptyString(idToken)) {
+        throw protocolError("Incomplete token response");
       }
       // Received directly from Google's token endpoint over TLS: its claims
       // are trusted without signature check (OpenID Connect, §3.1.3.7), but
-      // the audience and issuer must be ours and Google's.
+      // they must be for us (aud, azp), from Google (iss), still valid (exp,
+      // iat) and identify an account (sub; email if present is a string).
       const claims = decodeJwtPayload(idToken);
+      const now = Date.now() / 1000;
+      const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
       if (
-        claims.aud !== options.clientId ||
+        !audience.includes(options.clientId) ||
+        (claims.azp !== undefined && claims.azp !== options.clientId) ||
         (claims.iss !== "https://accounts.google.com" &&
           claims.iss !== "accounts.google.com") ||
-        typeof claims.sub !== "string"
+        !nonEmptyString(claims.sub) ||
+        typeof claims.exp !== "number" ||
+        claims.exp + CLOCK_SKEW_SECONDS < now ||
+        (claims.iat !== undefined &&
+          (typeof claims.iat !== "number" ||
+            claims.iat - CLOCK_SKEW_SECONDS > now)) ||
+        (claims.email !== undefined && typeof claims.email !== "string")
       ) {
         throw new CalendarProviderError(
           "bad_request",
@@ -241,9 +358,7 @@ export function createGoogleCalendarProvider(options: {
 
       return {
         accessToken,
-        expiresAt: new Date(
-          Date.now() + Number(body.expires_in ?? 3600) * 1000,
-        ),
+        expiresAt: expiresAt(body),
         refreshToken:
           typeof body.refresh_token === "string" ? body.refresh_token : null,
         scopes:
@@ -257,7 +372,7 @@ export function createGoogleCalendarProvider(options: {
       };
     },
 
-    async refreshAccessToken(refreshToken) {
+    async refreshAccessToken(refreshToken, callOptions) {
       const body = await call(
         TOKEN_URL,
         form({
@@ -266,36 +381,32 @@ export function createGoogleCalendarProvider(options: {
           client_secret: options.clientSecret,
           grant_type: "refresh_token",
         }),
+        callOptions,
       );
-      if (typeof body.access_token !== "string") {
-        throw new CalendarProviderError(
-          "bad_request",
-          null,
-          "Incomplete token response",
-        );
+      if (!nonEmptyString(body.access_token)) {
+        throw protocolError("Incomplete token response");
       }
       return {
         accessToken: body.access_token,
-        expiresAt: new Date(
-          Date.now() + Number(body.expires_in ?? 3600) * 1000,
-        ),
+        expiresAt: expiresAt(body),
       };
     },
 
-    async revoke(token) {
+    async revoke(token, callOptions) {
       const response = await sendWithRetry(
         fetchImpl,
         REVOKE_URL,
         form({ token }),
         retry,
+        callOptions,
       );
       // 400 invalid_token: already revoked or expired, which is the goal.
       if (!response.ok && response.status !== 400) {
-        throw errorFor(response.status, await readJson(response));
+        throw errorFor(response.status, await readFailure(response));
       }
     },
 
-    async listCalendars(accessToken) {
+    async listCalendars(accessToken, callOptions) {
       const calendars: ProviderCalendar[] = [];
       let pageToken: string | null = null;
       for (let page = 0; page < MAX_CALENDAR_PAGES; page += 1) {
@@ -303,12 +414,18 @@ export function createGoogleCalendarProvider(options: {
         url.searchParams.set("maxResults", "250");
         url.searchParams.set("fields", CALENDAR_FIELDS);
         if (pageToken) url.searchParams.set("pageToken", pageToken);
-        const body = await call(url.toString(), {
-          headers: bearer(accessToken),
-        });
-        for (const item of (body.items as
-          Record<string, unknown>[] | undefined) ?? []) {
-          if (typeof item.id !== "string") continue;
+        const body = await call(
+          url.toString(),
+          { headers: bearer(accessToken) },
+          callOptions,
+        );
+        if (!Array.isArray(body.items)) {
+          throw protocolError("Malformed calendar list");
+        }
+        for (const item of body.items as unknown[]) {
+          if (!isRecord(item) || !nonEmptyString(item.id)) {
+            throw protocolError("Malformed calendar list");
+          }
           calendars.push({
             id: item.id,
             name: String(item.summaryOverride ?? item.summary ?? item.id),
@@ -318,10 +435,19 @@ export function createGoogleCalendarProvider(options: {
               typeof item.accessRole === "string" ? item.accessRole : null,
           });
         }
-        pageToken =
-          typeof body.nextPageToken === "string" ? body.nextPageToken : null;
+        if (
+          body.nextPageToken !== undefined &&
+          !nonEmptyString(body.nextPageToken)
+        ) {
+          throw protocolError("Malformed calendar list");
+        }
+        pageToken = (body.nextPageToken as string | undefined) ?? null;
         if (!pageToken) break;
       }
+      // A partial or empty list would remove calendars (and the busy periods
+      // they block) that still exist.
+      if (pageToken) throw protocolError("Calendar list too long");
+      if (calendars.length === 0) throw protocolError("Empty calendar list");
       return calendars;
     },
 
@@ -330,6 +456,7 @@ export function createGoogleCalendarProvider(options: {
       calendarId,
       query: EventQuery,
       pageToken,
+      callOptions,
     ): Promise<ProviderEventPage> {
       const url = new URL(
         `${API}/calendars/${encodeURIComponent(calendarId)}/events`,
@@ -347,20 +474,34 @@ export function createGoogleCalendarProvider(options: {
       }
       if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-      const body = await call(url.toString(), { headers: bearer(accessToken) });
+      const body = await call(
+        url.toString(),
+        { headers: bearer(accessToken) },
+        callOptions,
+      );
+      if (body.items !== undefined && !Array.isArray(body.items)) {
+        throw protocolError("Malformed event page");
+      }
+      const nextPageToken = body.nextPageToken;
+      const nextSyncToken = body.nextSyncToken;
+      if (
+        (nextPageToken !== undefined && !nonEmptyString(nextPageToken)) ||
+        (nextSyncToken !== undefined && !nonEmptyString(nextSyncToken)) ||
+        // Exactly one: more pages, or the last page and its cursor.
+        (nextPageToken === undefined) === (nextSyncToken === undefined) ||
+        (body.timeZone !== undefined && !nonEmptyString(body.timeZone))
+      ) {
+        throw protocolError("Malformed event page");
+      }
       return {
-        events: ((body.items as GoogleEvent[] | undefined) ?? [])
-          .map(toProviderEvent)
-          .filter((event): event is ProviderEvent => event !== null),
-        nextPageToken:
-          typeof body.nextPageToken === "string" ? body.nextPageToken : null,
-        nextSyncToken:
-          typeof body.nextSyncToken === "string" ? body.nextSyncToken : null,
-        timezone: typeof body.timeZone === "string" ? body.timeZone : null,
+        events: ((body.items as unknown[] | undefined) ?? []).map(parseEvent),
+        nextPageToken: (nextPageToken as string | undefined) ?? null,
+        nextSyncToken: (nextSyncToken as string | undefined) ?? null,
+        timezone: (body.timeZone as string | undefined) ?? null,
       };
     },
 
-    async watchEvents(accessToken, calendarId, channel) {
+    async watchEvents(accessToken, calendarId, channel, callOptions) {
       const body = await call(
         `${API}/calendars/${encodeURIComponent(calendarId)}/events/watch`,
         {
@@ -376,21 +517,21 @@ export function createGoogleCalendarProvider(options: {
             token: channel.token,
           }),
         },
+        callOptions,
       );
-      if (typeof body.resourceId !== "string") {
-        throw new CalendarProviderError(
-          "bad_request",
-          null,
-          "Incomplete watch response",
-        );
+      const expiration = Number(body.expiration);
+      if (
+        !nonEmptyString(body.resourceId) ||
+        body.id !== channel.id ||
+        !Number.isFinite(expiration) ||
+        expiration <= Date.now()
+      ) {
+        throw protocolError("Incomplete watch response");
       }
-      return {
-        resourceId: body.resourceId,
-        expiresAt: new Date(Number(body.expiration ?? Date.now() + 86_400_000)),
-      };
+      return { resourceId: body.resourceId, expiresAt: new Date(expiration) };
     },
 
-    async stopChannel(accessToken, channel) {
+    async stopChannel(accessToken, channel, callOptions) {
       const response = await sendWithRetry(
         fetchImpl,
         `${API}/channels/stop`,
@@ -406,10 +547,11 @@ export function createGoogleCalendarProvider(options: {
           }),
         },
         retry,
+        callOptions,
       );
       // 404: already stopped or expired.
       if (!response.ok && response.status !== 404) {
-        throw errorFor(response.status, await readJson(response));
+        throw errorFor(response.status, await readFailure(response));
       }
     },
   };

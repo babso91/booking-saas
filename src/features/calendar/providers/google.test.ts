@@ -367,3 +367,161 @@ describe("toProviderEvent", () => {
     ).toBe("transparent");
   });
 });
+
+describe("strict protocol", () => {
+  async function token() {
+    fake.setCalendars(account.sub, [
+      { id: "cal", summary: "Travail", timeZone: "Europe/Paris" },
+    ]);
+    return (await connect()).accessToken;
+  }
+  const full = {
+    kind: "full" as const,
+    timeMin: "2026-01-01T00:00:00Z",
+    timeMax: "2027-01-01T00:00:00Z",
+  };
+  const isEvents = (url: URL) => url.pathname.endsWith("/events");
+
+  it.each([
+    ["unparsable JSON", "<html>"],
+    ["an array", []],
+    ["an empty object", {}],
+    ["items of the wrong type", { items: "x", nextSyncToken: "s" }],
+    ["a last page without cursor", { items: [] }],
+    ["both cursors", { items: [], nextPageToken: "p", nextSyncToken: "s" }],
+    ["an empty cursor", { items: [], nextSyncToken: "" }],
+    ["an item that is not an object", { items: [1], nextSyncToken: "s" }],
+    [
+      "an event without id",
+      { items: [{ status: "confirmed" }], nextSyncToken: "s" },
+    ],
+    [
+      "an event without bounds",
+      { items: [{ id: "e", status: "confirmed" }], nextSyncToken: "s" },
+    ],
+    [
+      "an event with a malformed date",
+      {
+        items: [
+          { id: "e", start: { date: "2026-13" }, end: { date: "2026-10-02" } },
+        ],
+        nextSyncToken: "s",
+      },
+    ],
+    [
+      "an event with date and dateTime",
+      {
+        items: [
+          {
+            id: "e",
+            start: { date: "2026-10-01", dateTime: "2026-10-01T10:00:00Z" },
+            end: { date: "2026-10-02" },
+          },
+        ],
+        nextSyncToken: "s",
+      },
+    ],
+    [
+      "an event mixing all-day and timed bounds",
+      {
+        items: [
+          {
+            id: "e",
+            start: { date: "2026-10-01" },
+            end: { dateTime: "2026-10-01T10:00:00Z" },
+          },
+        ],
+        nextSyncToken: "s",
+      },
+    ],
+  ])("refuses an events page with %s", async (_, body) => {
+    const accessToken = await token();
+    fake.failNext(isEvents, 200, 1, body);
+    await expect(
+      provider.listEvents(accessToken, "cal", full, null),
+    ).rejects.toMatchObject({ kind: "protocol" });
+  });
+
+  it("accepts a cancelled event reduced to its id, and an empty last page", async () => {
+    const accessToken = await token();
+    fake.failNext(isEvents, 200, 1, {
+      items: [{ id: "gone", status: "cancelled" }],
+      nextSyncToken: "s",
+      timeZone: "Europe/Paris",
+    });
+    const page = await provider.listEvents(accessToken, "cal", full, null);
+    expect(page).toMatchObject({
+      events: [{ id: "gone", status: "cancelled" }],
+      nextPageToken: null,
+      nextSyncToken: "s",
+      timezone: "Europe/Paris",
+    });
+    const empty = await provider.listEvents(accessToken, "cal", full, null);
+    expect(empty).toMatchObject({
+      events: [],
+      nextSyncToken: expect.any(String),
+    });
+  });
+
+  it.each([
+    ["an empty object", {}, 1],
+    ["no calendar", { items: [] }, 1],
+    ["an item without id", { items: [{ summary: "x" }] }, 1],
+    [
+      "more pages than read",
+      { items: [{ id: "c" }], nextPageToken: "more" },
+      4,
+    ],
+  ])("refuses a calendar list with %s", async (_, body, times) => {
+    const accessToken = await token();
+    fake.failNext(
+      (url) => url.pathname.endsWith("/calendarList"),
+      200,
+      times,
+      body,
+    );
+    await expect(provider.listCalendars(accessToken)).rejects.toMatchObject({
+      kind: "protocol",
+    });
+  });
+
+  it("refuses a successful token answer that is not JSON", async () => {
+    await token();
+    fake.failNext((url) => url.pathname === "/token", 200, 1, "oops");
+    await expect(provider.refreshAccessToken("rt")).rejects.toMatchObject({
+      kind: "protocol",
+    });
+  });
+});
+
+describe("id_token claims", () => {
+  const now = () => Math.floor(Date.now() / 1000);
+
+  it.each([
+    ["expired", { exp: now() - 3600 }],
+    ["without exp", { exp: undefined }],
+    ["issued in the future", { iat: now() + 3600 }],
+    ["for another audience", { aud: "other.apps.googleusercontent.com" }],
+    [
+      "for another authorized party",
+      { azp: "other.apps.googleusercontent.com" },
+    ],
+    ["from another issuer", { iss: "https://evil.test" }],
+    ["without subject", { sub: "" }],
+    ["with a non-string email", { email: 42 }],
+  ])("refuses an id_token %s", async (_, claims) => {
+    fake.idTokenClaims = claims;
+    await expect(connect()).rejects.toMatchObject({ kind: "bad_request" });
+  });
+
+  it("accepts a valid audience list and a little clock skew", async () => {
+    fake.idTokenClaims = {
+      aud: [fake.clientId],
+      exp: now() - 60,
+      azp: fake.clientId,
+    };
+    await expect(connect()).resolves.toMatchObject({
+      account: { id: account.sub },
+    });
+  });
+});

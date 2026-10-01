@@ -25,6 +25,10 @@ import {
   updateBlockingCalendarsAction,
 } from "@/features/calendar/actions/calendar";
 import { createManualAppointment } from "@/features/agenda/data/appointments";
+import { runCalendarJob } from "@/features/calendar/data/cron";
+import { getCalendarDeps } from "@/features/calendar/data/deps";
+import { syncCalendar } from "@/features/calendar/data/sync";
+import { secretKey, secretKeyId } from "@/lib/crypto/secret-box";
 import type { ActionResult } from "@/lib/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 import type { Database } from "@/types/database.generated";
@@ -684,12 +688,16 @@ describe("blocking selection and sync", () => {
     );
     // Resumed at page 2, not restarted.
     const resumed = fake.requests
-      .filter((request) => request.url.pathname.endsWith("/events"))
+      .filter(
+        (request) =>
+          request.url.pathname.endsWith("/events") &&
+          !request.url.searchParams.has("syncToken"),
+      )
       .slice(-4);
     expect(resumed[0]!.url.searchParams.get("pageToken")).toBe("2");
     expect(
       (await calendarsOf(s)).find((item) => item.blocking)!.syncStatus,
-    ).toBe("idle");
+    ).toBe("synced");
   });
 
   it("a calendar too large for the bounded sync is reported, never synced without limit", async () => {
@@ -701,7 +709,7 @@ describe("blocking selection and sync", () => {
     await select(s, ["Travail"]);
     const calendar = (await calendarsOf(s)).find((item) => item.blocking)!;
     expect(calendar).toMatchObject({
-      syncStatus: "error",
+      syncStatus: "incomplete",
       lastError: "too_many_events",
     });
     // 40 pages at most were read; what was read keeps blocking.
@@ -821,6 +829,13 @@ describe("blocking selection and sync", () => {
     expect(background).toHaveLength(0);
 
     // Renewed by the job: the old channel is stopped and no longer accepted.
+    // The job's queue is global (round robin, least recently attempted
+    // first): put this calendar at its head so that calendars left by other
+    // tests never decide whether it is reached.
+    await db.query(
+      "update private.external_calendar_sync set last_attempt_at = null where calendar_id = $1",
+      [calendarId],
+    );
     const response = await cronGet(
       new Request("http://localhost/api/cron/calendar", {
         headers: { authorization: `Bearer ${"c".repeat(40)}` },
@@ -923,22 +938,33 @@ describe("disconnect", () => {
     await connect(s);
     await select(s, ["Travail"]);
     const calendarId = (await calendarsOf(s)).find((item) => item.blocking)!.id;
-    const { rows } = await db.query(
-      "select generation from private.external_calendar_sync where calendar_id = $1",
-      [calendarId],
-    );
     const connection = await db.query(
-      "select id from public.calendar_connections where business_id = $1",
+      "select id, credential_generation from public.calendar_connections where business_id = $1",
       [s.business.id],
     );
+    // A worker claims the calendar and reads Google…
+    const claim = (
+      await admin.rpc("calendar_claim_sync", {
+        p_calendar_id: calendarId,
+      })
+    ).data as { claimId: string };
+    const start = (
+      await admin.rpc("calendar_start_full_sync", {
+        p_calendar_id: calendarId,
+        p_claim_id: claim.claimId,
+      })
+    ).data as { generation: number };
 
-    // Simulates a worker that read Google before the disconnection.
+    // …then the professional disconnects before the page is applied.
     await admin.rpc("calendar_disconnect", {
       p_connection_id: connection.rows[0].id,
+      p_generation: connection.rows[0].credential_generation,
     });
     const late = await admin.rpc("calendar_apply_events", {
       p_calendar_id: calendarId,
-      p_generation: rows[0]?.generation ?? 1,
+      p_claim_id: claim.claimId,
+      p_generation: start.generation,
+      p_provider_timezone: "UTC",
       p_events: [
         {
           id: "late",
@@ -1032,12 +1058,14 @@ describe("availability and booking", () => {
       }),
     ]);
 
-    // Finds the backend applying the page while the booking holds the lock.
+    // Finds the sync backend waiting for the lock the booking holds (the
+    // claim or the page, both take the schedule lock first).
     async function waitPid() {
       for (let i = 0; i < 100; i += 1) {
         const { rows: waiting } = await db.query<{ pid: number }>(
           `select pid from pg_stat_activity
-           where wait_event_type = 'Lock' and query like '%calendar_apply_events%'`,
+           where wait_event_type = 'Lock'
+             and (query like '%calendar_apply_events%' or query like '%calendar_claim_sync%')`,
         );
         if (waiting[0]) return waiting[0].pid;
         await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1138,6 +1166,7 @@ describe("tenant isolation and secrets", () => {
       expect(secrets.error?.code).toBe("42501");
       const disconnect = await client.rpc("calendar_disconnect", {
         p_connection_id: connection,
+        p_generation: randomUUID(),
       });
       expect(disconnect.error?.code).toBe("42501");
       const claim = await client.rpc("calendar_claim_sync", {
@@ -1161,9 +1190,23 @@ describe("tenant isolation and secrets", () => {
     expect(write.error?.code).toBe("42501");
     const { rows } = await db.query(
       `select has_schema_privilege('authenticated', 'private', 'usage') as auth,
-              has_function_privilege('authenticated', 'public.calendar_apply_events(uuid, bigint, jsonb, text)', 'execute') as apply`,
+              has_function_privilege('authenticated', 'public.calendar_apply_events(uuid, uuid, bigint, text, jsonb, text)', 'execute') as apply,
+              has_function_privilege('authenticated', 'public.calendar_release_sync(uuid, uuid, text, text)', 'execute') as release,
+              has_function_privilege('authenticated', 'public.calendar_reencrypt_secrets(uuid, uuid, text, text)', 'execute') as reencrypt,
+              has_function_privilege('anon', 'public.calendar_save_calendars(uuid, uuid, jsonb)', 'execute') as save`,
     );
-    expect(rows[0]).toEqual({ auth: false, apply: false });
+    expect(rows[0]).toEqual({
+      auth: false,
+      apply: false,
+      release: false,
+      reencrypt: false,
+      save: false,
+    });
+    // The incarnation is not exposed to the professional either.
+    const generation = await s.owner.client
+      .from("calendar_connections")
+      .select("credential_generation");
+    expect(generation.error?.code).toBe("42501");
   });
 });
 
@@ -1183,5 +1226,1125 @@ describe("configuration", () => {
       notification({ "x-goog-channel-id": randomUUID() }),
     );
     expect(response.status).toBe(204);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hardening (audit of 08a8013): incarnations, claims, generations, protocol,
+// time zones, fairness, channel renewal, lifecycle races.
+// ---------------------------------------------------------------------------
+
+function otherAccount() {
+  const account = {
+    sub: `sub-${randomUUID()}`,
+    email: `${randomUUID().slice(0, 6)}@gmail.test`,
+  };
+  fake.setCalendars(account.sub, [
+    { id: account.email, summary: "Perso B", timeZone: "UTC", primary: true },
+    { id: `work-${account.sub}`, summary: "Travail B", timeZone: "UTC" },
+  ]);
+  return account;
+}
+
+async function connectionRow(s: Setup) {
+  const { rows } = await db.query<{
+    id: string;
+    status: string;
+    provider_account_id: string;
+    credential_generation: string;
+    revocation_pending_until: Date | null;
+  }>(
+    `select id, status, provider_account_id, credential_generation, revocation_pending_until
+     from public.calendar_connections where business_id = $1`,
+    [s.business.id],
+  );
+  return rows[0]!;
+}
+
+async function secretsRow(s: Setup) {
+  const { rows } = await db.query<{
+    refresh_token_ciphertext: string;
+    access_token_ciphertext: string | null;
+  }>(
+    `select s.refresh_token_ciphertext, s.access_token_ciphertext
+     from private.calendar_secrets s
+     join public.calendar_connections c on c.id = s.connection_id
+     where c.business_id = $1`,
+    [s.business.id],
+  );
+  return rows[0];
+}
+
+async function providerCalendarIds(s: Setup) {
+  const { rows } = await db.query<{ provider_calendar_id: string }>(
+    `select provider_calendar_id from public.external_calendars
+     where business_id = $1 order by provider_calendar_id`,
+    [s.business.id],
+  );
+  return rows.map((row) => row.provider_calendar_id);
+}
+
+async function expireStoredAccessToken(s: Setup) {
+  await db.query(
+    `update private.calendar_secrets set access_token_expires_at = now()
+     where connection_id = (select id from public.calendar_connections where business_id = $1)`,
+    [s.business.id],
+  );
+}
+
+async function syncState(calendarId: string) {
+  const { rows } = await db.query<{
+    generation: string;
+    allocated_generation: string;
+    full_generation: string | null;
+    full_page_token: string | null;
+    sync_token: string | null;
+    claim_id: string | null;
+    lease_until: Date | null;
+    failure_count: number;
+    next_attempt_at: Date | null;
+    sync_status: string;
+    last_error: string | null;
+  }>(
+    `select s.generation, s.allocated_generation, s.full_generation, s.full_page_token,
+            s.sync_token, s.claim_id, s.lease_until, s.failure_count, s.next_attempt_at,
+            c.sync_status, c.last_error
+     from private.external_calendar_sync s
+     join public.external_calendars c on c.id = s.calendar_id
+     where s.calendar_id = $1`,
+    [calendarId],
+  );
+  const row = rows[0]!;
+  return {
+    ...row,
+    generation: Number(row.generation),
+    allocated_generation: Number(row.allocated_generation),
+    full_generation:
+      row.full_generation === null ? null : Number(row.full_generation),
+  };
+}
+
+async function blockingId(s: Setup) {
+  return (await calendarsOf(s)).find((item) => item.blocking)!.id;
+}
+
+const eventIds = async (s: Setup) =>
+  (await storedEvents(s)).map((row) => row.provider_event_id);
+
+const isEventsList = (url: URL, method: string) =>
+  method === "GET" && url.pathname.endsWith("/events");
+
+async function claim(calendarId: string) {
+  const { data, error } = await admin.rpc("calendar_claim_sync", {
+    p_calendar_id: calendarId,
+  });
+  if (error) throw error;
+  return data as { claimed: boolean; claimId: string };
+}
+
+async function expireLease(calendarId: string) {
+  await db.query(
+    `update private.external_calendar_sync
+     set lease_until = now() - interval '1 second' where calendar_id = $1`,
+    [calendarId],
+  );
+}
+
+const pageEvent = (id: string, from: string, to: string) => ({
+  id,
+  status: "confirmed",
+  start: { dateTime: at(D, from) },
+  end: { dateTime: at(D, to) },
+});
+
+describe("connection incarnations", () => {
+  it("A: a refresh of the former account finishing after a reconnection never overwrites the new credentials", async () => {
+    const s = await setup();
+    await connect(s);
+    await expireStoredAccessToken(s);
+    const B = otherAccount();
+
+    const held = fake.hold(
+      (url, method) => url.pathname === "/token" && method === "POST",
+    );
+    sessionClient = s.owner.client;
+    const pending = listConnectedCalendarsAction({ refresh: true });
+    await held.reached;
+
+    await connect(s, B);
+    const afterB = await secretsRow(s);
+    const generationB = (await connectionRow(s)).credential_generation;
+
+    held.release();
+    expect(failed(await pending)).toBe("conflict");
+    expect(await secretsRow(s)).toEqual(afterB);
+    expect(await connectionRow(s)).toMatchObject({
+      status: "active",
+      provider_account_id: B.sub,
+      credential_generation: generationB,
+    });
+    // B's stored credentials still work.
+    await select(s, ["Travail B"]);
+    expect(Object.values((await syncNow(s)).outcomes)).toEqual(["synced"]);
+  });
+
+  it("B: a calendar list of the former account arriving after a reconnection is not saved", async () => {
+    const s = await setup();
+    await connect(s);
+    const B = otherAccount();
+
+    const held = fake.hold((url) => url.pathname.endsWith("/calendarList"));
+    sessionClient = s.owner.client;
+    const pending = listConnectedCalendarsAction({ refresh: true });
+    await held.reached;
+    await connect(s, B);
+    held.release();
+
+    // The answer shows the current (B) incarnation; A's list was dropped.
+    const listed = ok(await pending);
+    expect(listed.map((calendar) => calendar.name).sort()).toEqual([
+      "Perso B",
+      "Travail B",
+    ]);
+    expect(await providerCalendarIds(s)).toEqual(
+      [B.email, `work-${B.sub}`].sort(),
+    );
+  });
+
+  it("C: a sync page of the former account arriving after a reconnection is never applied", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    fake.putEvent(work(s), timed("a-late", D, "11:00", "12:00"));
+    const B = otherAccount();
+
+    const held = fake.hold(isEventsList);
+    const pending = syncNow(s);
+    await held.reached;
+    await connect(s, B);
+    held.release();
+    await pending;
+
+    expect(await storedEvents(s)).toEqual([]);
+    expect(await providerCalendarIds(s)).not.toContain(work(s));
+  });
+
+  it("C': same account reconnected during a sync: the former pass writes nothing, the new one syncs", async () => {
+    const s = await setup();
+    await connect(s);
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    fake.putEvent(work(s), timed("x", D, "11:00", "12:00"));
+
+    const held = fake.hold(isEventsList);
+    const pending = syncCalendar(getCalendarDeps(), calendarId);
+    await held.reached;
+    // X deleted at Google, then the professional reconnects (resync).
+    fake.deleteEvent(work(s), "x");
+    await connect(s);
+    expect(await eventIds(s)).toEqual([]);
+    held.release();
+    expect(await pending).toBe("superseded");
+    expect(await eventIds(s)).toEqual([]);
+  });
+
+  it("D: an invalid_grant of the former account after a reconnection leaves the new one active", async () => {
+    const s = await setup();
+    await connect(s);
+    await select(s, ["Travail"]);
+    await expireStoredAccessToken(s);
+    fake.revokeAll();
+    const B = otherAccount();
+
+    const held = fake.hold(
+      (url, method) => url.pathname === "/token" && method === "POST",
+    );
+    const pending = syncCalendar(getCalendarDeps(), await blockingId(s));
+    await held.reached;
+    await connect(s, B);
+    held.release();
+
+    expect(await pending).toBe("superseded");
+    expect(await connectionRow(s)).toMatchObject({
+      status: "active",
+      provider_account_id: B.sub,
+    });
+  });
+
+  it("E: two concurrent callbacks: the last one wins entirely (account, calendars, credentials)", async () => {
+    const s = await setup();
+    const B = otherAccount();
+    const first = await beginConnect(s);
+    const second = await beginConnect(s, B);
+
+    const held = fake.hold(
+      (url, method) => url.pathname === "/token" && method === "POST",
+    );
+    const pendingA = oauthCallback(callbackRequest(first));
+    await held.reached;
+    expect(resultOf(await oauthCallback(callbackRequest(second)))).toBe(
+      "connected",
+    );
+    const generationB = (await connectionRow(s)).credential_generation;
+    held.release();
+    expect(resultOf(await pendingA)).toBe("connected");
+    await flush();
+
+    const { rows } = await db.query(
+      "select count(*)::int as n from public.calendar_connections where business_id = $1",
+      [s.business.id],
+    );
+    expect(rows[0].n).toBe(1);
+    const connection = await connectionRow(s);
+    expect(connection.provider_account_id).toBe(s.account.sub);
+    expect(connection.credential_generation).not.toBe(generationB);
+    expect(await providerCalendarIds(s)).toEqual(
+      [s.account.email, work(s), `birthdays-${s.account.sub}`].sort(),
+    );
+    // The stored credentials are A's and work.
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    expect(await eventIds(s)).toEqual(["a"]);
+  });
+});
+
+describe("sync claims", () => {
+  async function synced() {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    return { s, calendarId: await blockingId(s) };
+  }
+
+  it("A: after a takeover, the former worker's page, finish and release are no-ops", async () => {
+    const { s, calendarId } = await synced();
+    const a = await claim(calendarId);
+    const startA = (
+      await admin.rpc("calendar_start_full_sync", {
+        p_calendar_id: calendarId,
+        p_claim_id: a.claimId,
+      })
+    ).data as { generation: number };
+
+    await expireLease(calendarId);
+    const b = await claim(calendarId);
+    expect(b.claimed).toBe(true);
+    const startB = (
+      await admin.rpc("calendar_start_full_sync", {
+        p_calendar_id: calendarId,
+        p_claim_id: b.claimId,
+      })
+    ).data as { generation: number };
+    expect(startB.generation).toBeGreaterThan(startA.generation);
+    await admin.rpc("calendar_apply_events", {
+      p_calendar_id: calendarId,
+      p_claim_id: b.claimId,
+      p_generation: startB.generation,
+      p_provider_timezone: "UTC",
+      p_events: [pageEvent("b", "13:00", "14:00")],
+    });
+    expect(
+      (
+        await admin.rpc("calendar_finish_full_sync", {
+          p_calendar_id: calendarId,
+          p_claim_id: b.claimId,
+          p_generation: startB.generation,
+          p_sync_token: "sync-b",
+        })
+      ).data,
+    ).toBe(true);
+
+    // A answers late: nothing it sends is written.
+    const late = await admin.rpc("calendar_apply_events", {
+      p_calendar_id: calendarId,
+      p_claim_id: a.claimId,
+      p_generation: startA.generation,
+      p_provider_timezone: "UTC",
+      p_events: [pageEvent("from-a", "15:00", "16:00")],
+    });
+    expect(late.data).toEqual({ applied: false, reason: "stale_claim" });
+    expect(
+      (
+        await admin.rpc("calendar_finish_full_sync", {
+          p_calendar_id: calendarId,
+          p_claim_id: a.claimId,
+          p_generation: startA.generation,
+          p_sync_token: "sync-a",
+        })
+      ).data,
+    ).toBe(false);
+    expect(await eventIds(s)).toEqual(["b"]);
+    expect((await syncState(calendarId)).sync_token).toBe("sync-b");
+  });
+
+  it("B: the former worker's release does not release the current claim", async () => {
+    const { calendarId } = await synced();
+    const a = await claim(calendarId);
+    await expireLease(calendarId);
+    const b = await claim(calendarId);
+
+    const released = await admin.rpc("calendar_release_sync", {
+      p_calendar_id: calendarId,
+      p_claim_id: a.claimId,
+      p_outcome: "error",
+      p_error: "from_a",
+    });
+    expect(released.data).toBe(false);
+    const state = await syncState(calendarId);
+    expect(state).toMatchObject({
+      claim_id: b.claimId,
+      sync_status: "syncing",
+      failure_count: 0,
+    });
+    expect(state.lease_until).not.toBeNull();
+    expect(state.last_error).toBeNull();
+    // A new worker cannot take over while B's lease runs.
+    expect((await claim(calendarId)).claimed).toBe(false);
+  });
+
+  it("C: the former worker's cursor is refused after a takeover", async () => {
+    const { calendarId } = await synced();
+    const before = (await syncState(calendarId)).sync_token;
+    const a = await claim(calendarId);
+    await expireLease(calendarId);
+    const b = await claim(calendarId);
+
+    const finishA = await admin.rpc("calendar_finish_incremental_sync", {
+      p_calendar_id: calendarId,
+      p_claim_id: a.claimId,
+      p_sync_token: "sync-from-a",
+    });
+    expect(finishA.data).toBe(false);
+    expect((await syncState(calendarId)).sync_token).toBe(before);
+    const resetA = await admin.rpc("calendar_reset_sync", {
+      p_calendar_id: calendarId,
+      p_claim_id: a.claimId,
+    });
+    expect(resetA.data).toBe(false);
+    expect((await syncState(calendarId)).sync_token).toBe(before);
+
+    const finishB = await admin.rpc("calendar_finish_incremental_sync", {
+      p_calendar_id: calendarId,
+      p_claim_id: b.claimId,
+      p_sync_token: "sync-from-b",
+    });
+    expect(finishB.data).toBe(true);
+  });
+
+  it("D: deselecting then reselecting revokes the running worker's claim", async () => {
+    const { s, calendarId } = await synced();
+    const a = await claim(calendarId);
+    sessionClient = s.owner.client;
+    ok(await updateBlockingCalendarsAction({ calendarIds: [] }));
+    ok(await updateBlockingCalendarsAction({ calendarIds: [calendarId] }));
+    background.length = 0;
+
+    const late = await admin.rpc("calendar_apply_events", {
+      p_calendar_id: calendarId,
+      p_claim_id: a.claimId,
+      p_generation: null as unknown as number,
+      p_provider_timezone: "UTC",
+      p_events: [pageEvent("from-a", "15:00", "16:00")],
+    });
+    expect(late.data).toEqual({ applied: false, reason: "stale_claim" });
+    const record = await admin.rpc("calendar_record_channel", {
+      p_calendar_id: calendarId,
+      p_claim_id: a.claimId,
+      p_channel_id: randomUUID(),
+      p_resource_id: "res-x",
+      p_token_hash: "0".repeat(64),
+      p_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    expect(record.data).toMatchObject({ orphan: true });
+    expect(await eventIds(s)).toEqual([]);
+  });
+
+  it("a worker whose answer arrives after a takeover writes nothing (end to end)", async () => {
+    const { s, calendarId } = await synced();
+    fake.putEvent(work(s), timed("n", D, "11:00", "12:00"));
+
+    const held = fake.hold(isEventsList);
+    const workerA = syncCalendar(getCalendarDeps(), calendarId);
+    await held.reached;
+    await expireLease(calendarId);
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
+    // n deleted meanwhile, and synced so.
+    fake.deleteEvent(work(s), "n");
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
+    expect(await eventIds(s)).toEqual(["a"]);
+
+    held.release();
+    expect(await workerA).toBe("superseded");
+    expect(await eventIds(s)).toEqual(["a"]);
+    expect((await syncState(calendarId)).sync_status).toBe("synced");
+  });
+
+  it("a pass never outlives its deadline: every provider call gets the remaining budget", async () => {
+    const { calendarId } = await synced();
+    const held = fake.hold(isEventsList);
+    const started = Date.now();
+    const outcome = await syncCalendar(getCalendarDeps(), calendarId, {
+      budgetMs: 1500,
+    });
+    const elapsed = Date.now() - started;
+    held.release();
+
+    expect(outcome).toBe("stale");
+    expect(elapsed).toBeLessThan(4000);
+    expect(await syncState(calendarId)).toMatchObject({
+      sync_status: "stale",
+      last_error: "budget_exceeded",
+      claim_id: null,
+      lease_until: null,
+    });
+  });
+});
+
+describe("full sync generations", () => {
+  async function interruptedAttempt() {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), timed("y", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    expect((await syncState(calendarId)).generation).toBe(1);
+
+    // gen 2 imports X (page 2), then fails on page 3.
+    fake.pageSize = 1;
+    fake.putEvent(work(s), timed("x", D, "11:00", "12:00"));
+    fake.putEvent(work(s), timed("w", D, "14:00", "15:00"));
+    fake.expireSyncTokens();
+    fake.failNext(
+      (url) =>
+        url.pathname.endsWith("/events") &&
+        url.searchParams.get("pageToken") === "2",
+      403,
+      1,
+      { error: { errors: [{ reason: "forbidden" }] } },
+    );
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("error");
+    expect(await eventIds(s)).toEqual(["y", "x"]);
+    expect(await syncState(calendarId)).toMatchObject({
+      generation: 1,
+      full_generation: 2,
+      full_page_token: "2",
+    });
+    // X is then deleted at Google.
+    fake.deleteEvent(work(s), "x");
+    return { s, calendarId };
+  }
+
+  it("an abandoned attempt is never resumed: the restart gets a new generation and its sweep removes X", async () => {
+    const { s, calendarId } = await interruptedAttempt();
+    await db.query(
+      `update private.external_calendar_sync
+       set full_started_at = now() - interval '2 hours', next_attempt_at = null
+       where calendar_id = $1`,
+      [calendarId],
+    );
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
+    expect(await eventIds(s)).toEqual(["y", "w"]);
+    expect(await syncState(calendarId)).toMatchObject({
+      generation: 3,
+      allocated_generation: 3,
+      full_generation: null,
+      sync_status: "synced",
+    });
+  });
+
+  it("a resumed page cursor the provider rejects (410) restarts from page 1 with a new generation", async () => {
+    const { s, calendarId } = await interruptedAttempt();
+    fake.failNext(
+      (url) =>
+        url.pathname.endsWith("/events") &&
+        url.searchParams.get("pageToken") === "2",
+      410,
+    );
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
+    expect(await eventIds(s)).toEqual(["y", "w"]);
+    expect((await syncState(calendarId)).generation).toBe(3);
+  });
+
+  it("a real resume continues its own attempt (same generation)", async () => {
+    const { calendarId } = await interruptedAttempt();
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
+    const resumed = fake.requests.filter(
+      (request) =>
+        request.url.pathname.endsWith("/events") &&
+        !request.url.searchParams.has("syncToken"),
+    );
+    expect(resumed.at(-1)!.url.searchParams.get("pageToken")).toBe("2");
+    expect((await syncState(calendarId)).generation).toBe(2);
+  });
+
+  it("an invalid sync token (410) leads to a full sync with a new generation", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), timed("y", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    fake.expireSyncTokens();
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
+    expect(await syncState(calendarId)).toMatchObject({
+      generation: 2,
+      allocated_generation: 2,
+    });
+  });
+});
+
+describe("strict provider protocol", () => {
+  const malformed: [string, unknown][] = [
+    ["unparsable JSON", "<html>temporarily unavailable</html>"],
+    ["an empty object", {}],
+    ["items that are not an array", { items: {}, nextSyncToken: "sync-999" }],
+    ["a last page without cursor", { items: [] }],
+    [
+      "both cursors",
+      { items: [], nextPageToken: "1", nextSyncToken: "sync-999" },
+    ],
+    [
+      "an event without id",
+      {
+        items: [{ status: "confirmed", ...timed("", D, "10:00", "11:00") }],
+        nextSyncToken: "sync-999",
+      },
+    ],
+    [
+      "an event without bounds",
+      { items: [{ id: "x", status: "confirmed" }], nextSyncToken: "sync-999" },
+    ],
+    [
+      "an event with mixed bounds",
+      {
+        items: [
+          {
+            id: "x",
+            start: { date: D },
+            end: { dateTime: at(D, "11:00") },
+          },
+        ],
+        nextSyncToken: "sync-999",
+      },
+    ],
+  ];
+
+  it("a malformed events page fails the pass: no sweep, copy and cursor kept", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    fake.putEvent(work(s), timed("b", D, "11:00", "12:00"));
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    const before = await syncState(calendarId);
+
+    for (const [, body] of malformed) {
+      for (const mode of ["incremental", "full"] as const) {
+        await db.query(
+          `update private.external_calendar_sync
+           set next_attempt_at = null,
+               sync_token = case when $2 = 'full' then null else sync_token end
+           where calendar_id = $1`,
+          [calendarId, mode],
+        );
+        const cursor = (await syncState(calendarId)).sync_token;
+        fake.failNext((url) => url.pathname.endsWith("/events"), 200, 1, body);
+        expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("error");
+        const state = await syncState(calendarId);
+        expect(state).toMatchObject({
+          sync_status: "error",
+          last_error: "provider_protocol",
+          generation: before.generation,
+          sync_token: cursor,
+        });
+        expect(await eventIds(s)).toEqual(["a", "b"]);
+        expect(await slots(s)).not.toContain(`${D}T09:00:00.000Z`);
+      }
+    }
+
+    // A well-formed answer then synchronises normally.
+    await db.query(
+      "update private.external_calendar_sync set next_attempt_at = null where calendar_id = $1",
+      [calendarId],
+    );
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
+    expect(await eventIds(s)).toEqual(["a", "b"]);
+  });
+
+  it("a malformed, empty or truncated calendar list changes nothing", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    const calendars = await providerCalendarIds(s);
+
+    for (const [body, times] of [
+      ["not json", 1],
+      [{}, 1],
+      [{ items: [] }, 1],
+      [{ items: "x" }, 1],
+      [{ items: [{ summary: "no id" }] }, 1],
+      [{ items: [{ id: "c" }], nextPageToken: "more" }, 4],
+    ] as [unknown, number][]) {
+      fake.failNext(
+        (url) => url.pathname.endsWith("/calendarList"),
+        200,
+        times,
+        body,
+      );
+      sessionClient = s.owner.client;
+      expect(
+        failed(await listConnectedCalendarsAction({ refresh: true })),
+      ).toBe("calendar_provider_unavailable");
+      expect(await providerCalendarIds(s)).toEqual(calendars);
+      expect(await eventIds(s)).toEqual(["a"]);
+    }
+  });
+
+  it("an expired id_token is refused: nothing is stored", async () => {
+    const s = await setup();
+    fake.idTokenClaims = { exp: Math.floor(Date.now() / 1000) - 3600 };
+    const { code, state } = await beginConnect(s);
+    expect(
+      resultOf(await oauthCallback(callbackRequest({ state, code }))),
+    ).not.toBe("connected");
+    const { rows } = await db.query(
+      "select 1 from public.calendar_connections where business_id = $1",
+      [s.business.id],
+    );
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe("calendar time zone changes", () => {
+  async function dayStart(date: string, zone: string) {
+    const { rows } = await db.query<{ at: Date }>(
+      "select private.local_day_start($1::date, $2) as at",
+      [date, zone],
+    );
+    return rows[0]!.at.toISOString();
+  }
+
+  it("re-projects all-day events after a change seen in the calendar list or an events page", async () => {
+    const s = await setup();
+    fake.setCalendars(s.account.sub, [
+      {
+        id: s.account.email,
+        summary: "Personnel",
+        timeZone: "UTC",
+        primary: true,
+      },
+      { id: work(s), summary: "Travail", timeZone: "Europe/Paris" },
+    ]);
+    await connect(s);
+    fake.putEvent(work(s), {
+      id: "day",
+      start: { date: D },
+      end: { date: D2 },
+    });
+    fake.putEvent(work(s), {
+      id: "timed",
+      start: { dateTime: `${D}T10:00:00+02:00` },
+      end: { dateTime: `${D}T11:00:00+02:00` },
+    });
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    const projected = async () =>
+      Object.fromEntries(
+        (await storedEvents(s)).map((row) => [
+          row.provider_event_id,
+          [row.starts_at.toISOString(), row.ends_at.toISOString()],
+        ]),
+      );
+    const timedInstant = [
+      new Date(`${D}T08:00:00Z`).toISOString(),
+      new Date(`${D}T09:00:00Z`).toISOString(),
+    ];
+    expect(await projected()).toEqual({
+      day: [
+        await dayStart(D, "Europe/Paris"),
+        await dayStart(D2, "Europe/Paris"),
+      ],
+      timed: timedInstant,
+    });
+
+    // Paris → New York, seen by a calendar list refresh.
+    fake.setTimeZone(work(s), "America/New_York");
+    sessionClient = s.owner.client;
+    const refreshed = ok(await listConnectedCalendarsAction({ refresh: true }));
+    expect(refreshed.find((item) => item.id === calendarId)).toMatchObject({
+      timezone: "America/New_York",
+      syncStatus: "stale",
+    });
+    await flush();
+    expect(await projected()).toEqual({
+      day: [
+        await dayStart(D, "America/New_York"),
+        await dayStart(D2, "America/New_York"),
+      ],
+      timed: timedInstant,
+    });
+    expect(await syncState(calendarId)).toMatchObject({
+      generation: 2,
+      sync_status: "synced",
+    });
+
+    // New York → Paris, seen in an events page only.
+    fake.setTimeZone(work(s), "Europe/Paris");
+    expect(Object.values((await syncNow(s)).outcomes)).toEqual(["synced"]);
+    expect(await projected()).toEqual({
+      day: [
+        await dayStart(D, "Europe/Paris"),
+        await dayStart(D2, "Europe/Paris"),
+      ],
+      timed: timedInstant,
+    });
+    expect((await syncState(calendarId)).generation).toBe(3);
+    expect(
+      (await calendarsOf(s)).find((item) => item.id === calendarId),
+    ).toMatchObject({ timezone: "Europe/Paris", syncStatus: "synced" });
+  });
+});
+
+describe("periodic job fairness", () => {
+  it(
+    "50 failing calendars never starve a healthy 51st",
+    { timeout: 120_000 },
+    async () => {
+      const s = await setup();
+      const calendars = Array.from({ length: 51 }, (_, index) => ({
+        id: `cal-${index}-${s.account.sub}`,
+        summary: `Calendrier ${index}`,
+        timeZone: "UTC",
+        primary: index === 0,
+      }));
+      fake.setCalendars(s.account.sub, calendars);
+      await connect(s);
+      const healthy = calendars[50]!.id;
+      fake.putEvent(healthy, timed("h", D, "09:00", "10:00"));
+      const broken = new Set(calendars.slice(0, 50).map((item) => item.id));
+      fake.failNext(
+        (url) =>
+          [...broken].some((id) =>
+            url.pathname.includes(`/calendars/${encodeURIComponent(id)}/`),
+          ),
+        403,
+        10_000,
+        { error: { errors: [{ reason: "forbidden" }] } },
+      );
+      await db.query(
+        `update public.external_calendars set selected_for_blocking = true
+       where business_id = $1`,
+        [s.business.id],
+      );
+      await db.query(
+        `insert into private.external_calendar_sync (calendar_id)
+       select id from public.external_calendars where business_id = $1`,
+        [s.business.id],
+      );
+
+      const deps = getCalendarDeps();
+      for (let run = 0; run < 3; run += 1) {
+        await runCalendarJob(deps, { limit: 50, budgetMs: 100_000 });
+      }
+
+      expect(await eventIds(s)).toEqual(["h"]);
+      const { rows } = await db.query<{
+        provider_calendar_id: string;
+        sync_status: string;
+        failure_count: number;
+        in_backoff: boolean;
+      }>(
+        `select c.provider_calendar_id, c.sync_status, s.failure_count,
+              s.next_attempt_at > now() as in_backoff
+       from public.external_calendars c
+       join private.external_calendar_sync s on s.calendar_id = c.id
+       where c.business_id = $1`,
+        [s.business.id],
+      );
+      for (const row of rows) {
+        if (row.provider_calendar_id === healthy) {
+          expect(row.sync_status).toBe("synced");
+        } else {
+          // Attempted once, then waiting its backoff: not retried in a loop.
+          expect(row).toMatchObject({
+            sync_status: "error",
+            failure_count: 1,
+            in_backoff: true,
+          });
+        }
+      }
+
+      // The periodic job is global: 50 permanently failing calendars must
+      // not stay due for the tests (or runs) that follow.
+      await db.query(
+        "delete from public.external_calendars where business_id = $1",
+        [s.business.id],
+      );
+    },
+  );
+});
+
+describe("channel renewal", () => {
+  it("creates the new channel, catches up, then stops the former one: a change during the renewal is not lost", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    const former = (await currentChannel(calendarId))!.channel_id;
+    await db.query(
+      `update private.external_calendar_sync
+       set channel_expires_at = now() + interval '1 hour' where calendar_id = $1`,
+      [calendarId],
+    );
+
+    let busy: string | null = null;
+    fake.hooks.push(async (url, method) => {
+      if (
+        method === "POST" &&
+        url.pathname.endsWith("/events/watch") &&
+        !busy
+      ) {
+        // A change, and a notification for it, while the channel is renewed.
+        fake.putEvent(work(s), timed("during", D, "15:00", "16:00"));
+        busy = await syncCalendar(getCalendarDeps(), calendarId);
+      }
+    });
+    expect(Object.values((await syncNow(s)).outcomes)).toEqual(["synced"]);
+
+    expect(busy).toBe("busy");
+    expect(await eventIds(s)).toEqual(["a", "during"]);
+    const renewed = (await currentChannel(calendarId))!;
+    expect(renewed.channel_id).not.toBe(former);
+    expect(fake.channels.get(former)!.stopped).toBe(true);
+    expect(fake.channels.get(renewed.channel_id)!.stopped).toBe(false);
+
+    const index = (predicate: (url: URL, method: string) => boolean) =>
+      fake.requests.findLastIndex((request) =>
+        predicate(request.url, request.method),
+      );
+    const watch = index((url) => url.pathname.endsWith("/events/watch"));
+    const stop = index((url) => url.pathname.endsWith("/channels/stop"));
+    const firstCatchUp = fake.requests.findIndex(
+      (request, position) =>
+        position > watch && isEventsList(request.url, request.method),
+    );
+    expect(watch).toBeLessThan(firstCatchUp);
+    expect(firstCatchUp).toBeLessThan(stop);
+  });
+});
+
+describe("bounded incremental sync", () => {
+  it(
+    "more than 40 pages of changes switch to a full sync with a new generation",
+    { timeout: 60_000 },
+    async () => {
+      const s = await setup();
+      await connect(s);
+      for (let i = 0; i < 45; i += 1)
+        fake.putEvent(work(s), timed(`e${i}`, D, "09:00", "10:00"));
+      await select(s, ["Travail"]);
+      const calendarId = await blockingId(s);
+      expect(await eventIds(s)).toHaveLength(45);
+
+      fake.pageSize = 1;
+      for (let i = 0; i < 42; i += 1) fake.deleteEvent(work(s), `e${i}`);
+      const before = fake.requests.length;
+      expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
+
+      const incremental = fake.requests
+        .slice(before)
+        .filter((request) => request.url.searchParams.has("syncToken"));
+      expect(incremental).toHaveLength(40);
+      expect(await eventIds(s)).toEqual(["e42", "e43", "e44"]);
+      expect(await syncState(calendarId)).toMatchObject({
+        generation: 2,
+        sync_status: "synced",
+      });
+    },
+  );
+});
+
+describe("free/busy-only calendars", () => {
+  it("cannot be selected, and stop blocking when their access is reduced", async () => {
+    const s = await setup();
+    fake.setCalendars(s.account.sub, [
+      {
+        id: s.account.email,
+        summary: "Personnel",
+        timeZone: "UTC",
+        primary: true,
+      },
+      { id: work(s), summary: "Travail", timeZone: "UTC" },
+      {
+        id: `team-${s.account.sub}`,
+        summary: "Équipe",
+        timeZone: "UTC",
+        accessRole: "freeBusyReader",
+      },
+    ]);
+    await connect(s);
+    const listed = await calendarsOf(s);
+    const team = listed.find((item) => item.name === "Équipe")!;
+    expect(team.selectable).toBe(false);
+    expect(listed.find((item) => item.name === "Travail")!.selectable).toBe(
+      true,
+    );
+    expect(
+      failed(await updateBlockingCalendarsAction({ calendarIds: [team.id] })),
+    ).toBe("calendar_not_selectable");
+
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    expect(await eventIds(s)).toEqual(["a"]);
+
+    // Access reduced to free/busy at Google.
+    fake.setCalendars(s.account.sub, [
+      {
+        id: s.account.email,
+        summary: "Personnel",
+        timeZone: "UTC",
+        primary: true,
+      },
+      {
+        id: work(s),
+        summary: "Travail",
+        timeZone: "UTC",
+        accessRole: "freeBusyReader",
+      },
+    ]);
+    sessionClient = s.owner.client;
+    const refreshed = ok(await listConnectedCalendarsAction({ refresh: true }));
+    expect(refreshed.find((item) => item.name === "Travail")).toMatchObject({
+      blocking: false,
+      selectable: false,
+    });
+    expect(await eventIds(s)).toEqual([]);
+    expect(await slots(s)).toContain(`${D}T09:00:00.000Z`);
+  });
+});
+
+describe("disconnect and reconnect races", () => {
+  it("a reconnection is refused while the former grant is being revoked; allowed once it is done", async () => {
+    const s = await setup();
+    await connect(s);
+    const B = otherAccount();
+    const pendingConsent = await beginConnect(s, B);
+    const formerRefresh = (await secretsRow(s))!.refresh_token_ciphertext;
+
+    const held = fake.hold((url) => url.pathname === "/revoke");
+    sessionClient = s.owner.client;
+    const disconnecting = disconnectGoogleCalendarAction();
+    await held.reached;
+
+    expect((await connectionRow(s)).status).toBe("disconnected");
+    expect((await connectionRow(s)).revocation_pending_until).not.toBeNull();
+    sessionClient = s.owner.client;
+    expect(failed(await startGoogleCalendarConnectAction())).toBe(
+      "calendar_disconnect_in_progress",
+    );
+    expect(resultOf(await oauthCallback(callbackRequest(pendingConsent)))).toBe(
+      "disconnect_in_progress",
+    );
+    expect((await connectionRow(s)).status).toBe("disconnected");
+
+    held.release();
+    ok(await disconnecting);
+    expect((await connectionRow(s)).revocation_pending_until).toBeNull();
+    expect(fake.revoked).toHaveLength(1);
+
+    await connect(s, B);
+    expect(await connectionRow(s)).toMatchObject({
+      status: "active",
+      provider_account_id: B.sub,
+    });
+    expect((await secretsRow(s))!.refresh_token_ciphertext).not.toBe(
+      formerRefresh,
+    );
+    // B's grant was never revoked.
+    await select(s, ["Travail B"]);
+    expect(Object.values((await syncNow(s)).outcomes)).toEqual(["synced"]);
+  });
+
+  it("a disconnection of a former incarnation is a no-op", async () => {
+    const s = await setup();
+    await connect(s);
+    const connection = await connectionRow(s);
+    const stale = await admin.rpc("calendar_disconnect", {
+      p_connection_id: connection.id,
+      p_generation: randomUUID(),
+    });
+    expect(stale.data).toBeNull();
+    expect((await connectionRow(s)).status).toBe("active");
+    expect(await secretsRow(s)).toBeDefined();
+  });
+});
+
+describe("manual conflicts", () => {
+  it("use the appointment's occupied window, buffer included", async () => {
+    const s = await setup({ buffer: 15 });
+    await connect(s);
+    fake.putEvent(work(s), timed("in-buffer", D, "11:05", "11:30"));
+    fake.putEvent(work(s), timed("after-buffer", D, "11:15", "11:45"));
+    await select(s, ["Travail"]);
+    await createManualAppointment(
+      s.owner.client,
+      { businessId: s.business.id, timezone: "UTC" },
+      {
+        date: D,
+        time: "10:00",
+        occurrence: undefined,
+        serviceId: s.service,
+        client: {
+          type: "new",
+          firstName: "Agenda",
+          lastName: null,
+          email: null,
+          phone: null,
+        },
+        internalNotes: null,
+      },
+    );
+    sessionClient = s.owner.client;
+    const conflicts = ok(
+      await listCalendarConflictsAction({
+        from: `${D}T00:00:00Z`,
+        to: `${D2}T00:00:00Z`,
+      }),
+    );
+    expect(conflicts.map((item) => item.eventStartsAt)).toEqual([
+      `${D}T11:05:00.000Z`,
+    ]);
+  });
+});
+
+describe("encryption key rotation", () => {
+  it("re-encrypts both secrets lazily under the new key; the former key can then be retired", async () => {
+    const s = await setup();
+    await connect(s);
+    await select(s, ["Travail"]);
+    const formerKey = process.env.CALENDAR_TOKEN_ENCRYPTION_KEY!;
+    const newKey = randomBytes(32).toString("base64");
+    try {
+      process.env.CALENDAR_TOKEN_ENCRYPTION_KEY = newKey;
+      process.env.CALENDAR_TOKEN_PREVIOUS_KEYS = formerKey;
+      expect(Object.values((await syncNow(s)).outcomes)).toEqual(["synced"]);
+      const secrets = (await secretsRow(s))!;
+      expect(secretKeyId(secrets.refresh_token_ciphertext)).toBe(
+        secretKey(newKey).id,
+      );
+      expect(secretKeyId(secrets.access_token_ciphertext!)).toBe(
+        secretKey(newKey).id,
+      );
+
+      delete process.env.CALENDAR_TOKEN_PREVIOUS_KEYS;
+      await expireStoredAccessToken(s);
+      expect(Object.values((await syncNow(s)).outcomes)).toEqual(["synced"]);
+    } finally {
+      process.env.CALENDAR_TOKEN_ENCRYPTION_KEY = formerKey;
+      delete process.env.CALENDAR_TOKEN_PREVIOUS_KEYS;
+    }
   });
 });

@@ -48,6 +48,10 @@ export const appErrorMessages = {
   calendar_provider_unavailable:
     "Le service de calendrier ne répond pas. Merci de réessayer dans quelques minutes.",
   calendar_not_found: "Ce calendrier est introuvable.",
+  calendar_not_selectable:
+    "Ce calendrier ne partage que ses disponibilités : ses événements ne peuvent pas être lus pour bloquer des créneaux.",
+  calendar_disconnect_in_progress:
+    "La déconnexion précédente est en cours de finalisation. Merci de réessayer dans deux minutes.",
   calendar_scope_missing:
     "L’accès à vos calendriers n’a pas été accordé. Reconnectez-vous en autorisant l’accès demandé.",
   oauth_state_invalid:
@@ -129,6 +133,8 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   calendar_reauth_required: 409,
   calendar_provider_unavailable: 503,
   calendar_not_found: 404,
+  calendar_not_selectable: 400,
+  calendar_disconnect_in_progress: 409,
   calendar_scope_missing: 400,
   oauth_state_invalid: 400,
   internal: 500,

@@ -24,6 +24,7 @@ type Result =
   | "scope_missing"
   | "provider_unavailable"
   | "not_configured"
+  | "disconnect_in_progress"
   | "error";
 
 function back(request: NextRequest, result: Result, path = "/app") {
@@ -44,6 +45,9 @@ function resultOf(error: unknown): Result {
       return "provider_unavailable";
     case "calendar_not_configured":
       return "not_configured";
+    // The former grant is still being revoked: retry in two minutes.
+    case "calendar_disconnect_in_progress":
+      return "disconnect_in_progress";
     default:
       return "error";
   }

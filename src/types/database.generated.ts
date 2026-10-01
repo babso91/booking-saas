@@ -170,13 +170,13 @@ isOneToOne: false
                   ]
                 },"calendar_connections": {
                   Row: {
-                    "account_email": string | null,"business_id": string,"connected_by": string | null,"created_at": string,"id": string,"last_error": string | null,"last_synced_at": string | null,"provider": string,"provider_account_id": string,"scopes": (string)[],"status": string,"updated_at": string,"version": number
+                    "account_email": string | null,"business_id": string,"connected_by": string | null,"created_at": string,"credential_generation": string,"id": string,"last_error": string | null,"last_synced_at": string | null,"provider": string,"provider_account_id": string,"revocation_pending_until": string | null,"scopes": (string)[],"status": string,"updated_at": string,"version": number
                   }
                   Insert: {
-                    "account_email"?: string | null,"business_id": string,"connected_by"?: string | null,"created_at"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider": string,"provider_account_id": string,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
+                    "account_email"?: string | null,"business_id": string,"connected_by"?: string | null,"created_at"?: string,"credential_generation"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider": string,"provider_account_id": string,"revocation_pending_until"?: string | null,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "account_email"?: string | null,"business_id"?: string,"connected_by"?: string | null,"created_at"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider"?: string,"provider_account_id"?: string,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
+                    "account_email"?: string | null,"business_id"?: string,"connected_by"?: string | null,"created_at"?: string,"credential_generation"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider"?: string,"provider_account_id"?: string,"revocation_pending_until"?: string | null,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -452,7 +452,7 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_dates"?: (string)[],"p_instants"?: (string)[],"p_locals"?: (string)[],"p_open_ranges"?: boolean }; Returns: Json
                            },
 "calendar_apply_events":
-{ Args: { "p_calendar_id": string,"p_events": Json,"p_generation": number,"p_next_page_token"?: string }; Returns: Json
+{ Args: { "p_calendar_id": string,"p_claim_id": string,"p_events": Json,"p_generation": number,"p_next_page_token"?: string,"p_provider_timezone": string }; Returns: Json
                            },
 "calendar_begin_oauth":
 { Args: { "p_business_id": string,"p_code_verifier_ciphertext": string,"p_provider": string,"p_state_hash": string }; Returns: undefined
@@ -471,7 +471,7 @@ isOneToOne: false
             }[]
                            },
 "calendar_disconnect":
-{ Args: { "p_connection_id": string }; Returns: Json
+{ Args: { "p_connection_id": string,"p_generation": string }; Returns: Json
                            },
 "calendar_due_work":
 { Args: { "p_limit"?: number,"p_with_channels"?: boolean }; Returns: {
@@ -479,30 +479,36 @@ isOneToOne: false
             }[]
                            },
 "calendar_finish_full_sync":
-{ Args: { "p_calendar_id": string,"p_generation": number,"p_sync_token": string }; Returns: boolean
+{ Args: { "p_calendar_id": string,"p_claim_id": string,"p_generation": number,"p_sync_token": string }; Returns: boolean
                            },
 "calendar_finish_incremental_sync":
-{ Args: { "p_calendar_id": string,"p_sync_token": string }; Returns: undefined
+{ Args: { "p_calendar_id": string,"p_claim_id": string,"p_sync_token": string }; Returns: boolean
                            },
 "calendar_mark_reauth_required":
-{ Args: { "p_connection_id": string,"p_error": string }; Returns: undefined
+{ Args: { "p_connection_id": string,"p_error": string,"p_generation": string }; Returns: boolean
                            },
 "calendar_read_secrets":
 { Args: { "p_connection_id": string }; Returns: {
-              "access_token_ciphertext": string,"access_token_expires_at": string,"business_id": string,"provider": string,"refresh_token_ciphertext": string,"status": string
+              "access_token_ciphertext": string,"access_token_expires_at": string,"business_id": string,"credential_generation": string,"provider": string,"refresh_token_ciphertext": string,"status": string
             }[]
                            },
 "calendar_record_channel":
-{ Args: { "p_calendar_id": string,"p_channel_id": string,"p_expires_at": string,"p_resource_id": string,"p_token_hash": string }; Returns: Json
+{ Args: { "p_calendar_id": string,"p_channel_id": string,"p_claim_id": string,"p_expires_at": string,"p_resource_id": string,"p_token_hash": string }; Returns: Json
+                           },
+"calendar_reencrypt_secrets":
+{ Args: { "p_access_token_ciphertext": string,"p_connection_id": string,"p_generation": string,"p_refresh_token_ciphertext": string }; Returns: boolean
                            },
 "calendar_release_sync":
-{ Args: { "p_calendar_id": string,"p_error"?: string }; Returns: boolean
+{ Args: { "p_calendar_id": string,"p_claim_id": string,"p_error"?: string,"p_outcome": string }; Returns: boolean
                            },
 "calendar_reset_sync":
-{ Args: { "p_calendar_id": string }; Returns: undefined
+{ Args: { "p_calendar_id": string,"p_claim_id": string }; Returns: boolean
+                           },
+"calendar_revocation_done":
+{ Args: { "p_connection_id": string,"p_generation": string }; Returns: undefined
                            },
 "calendar_save_calendars":
-{ Args: { "p_calendars": Json,"p_connection_id": string }; Returns: undefined
+{ Args: { "p_calendars": Json,"p_connection_id": string,"p_generation": string }; Returns: boolean
                            },
 "calendar_save_connection":
 { Args: { "p_access_token_ciphertext": string,"p_access_token_expires_at": string,"p_account_email": string,"p_business_id": string,"p_calendars": Json,"p_provider": string,"p_provider_account_id": string,"p_refresh_token_ciphertext": string,"p_scopes": (string)[],"p_user_id": string }; Returns: string
@@ -511,10 +517,10 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_calendar_ids": (string)[] }; Returns: Json
                            },
 "calendar_start_full_sync":
-{ Args: { "p_calendar_id": string }; Returns: Json
+{ Args: { "p_calendar_id": string,"p_claim_id": string }; Returns: Json
                            },
 "calendar_store_access_token":
-{ Args: { "p_access_token_ciphertext": string,"p_access_token_expires_at": string,"p_connection_id": string }; Returns: undefined
+{ Args: { "p_access_token_ciphertext": string,"p_access_token_expires_at": string,"p_connection_id": string,"p_generation": string }; Returns: boolean
                            },
 "calendar_verify_notification":
 { Args: { "p_channel_id": string,"p_resource_id": string,"p_token_hash": string }; Returns: string

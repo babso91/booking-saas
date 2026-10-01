@@ -79,3 +79,53 @@ describe("sendWithRetry", () => {
     expect(sleep.mock.calls[0]![0]).toBeGreaterThanOrEqual(750);
   });
 });
+
+describe("sendWithRetry deadline", () => {
+  it("never sleeps past the deadline: gives up instead of retrying late", async () => {
+    const fetch = vi.fn().mockResolvedValue(response(503));
+    const sleep = vi.fn<(ms: number) => Promise<void>>(async () => undefined);
+    await expect(
+      sendWithRetry(
+        fetch,
+        "https://x.test",
+        {},
+        { ...policy(sleep), baseDelayMs: 5000, maxDelayMs: 5000 },
+        { deadline: Date.now() + 1000 },
+      ),
+    ).rejects.toMatchObject({ kind: "unavailable" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("cuts each attempt's timeout to the remaining time", async () => {
+    const fetch = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_, reject) =>
+          init!.signal!.addEventListener("abort", () =>
+            reject(init!.signal!.reason),
+          ),
+        ),
+    );
+    const started = Date.now();
+    await expect(
+      sendWithRetry(
+        fetch,
+        "https://x.test",
+        {},
+        { ...policy(), timeoutMs: 10_000 },
+        { deadline: Date.now() + 200 },
+      ),
+    ).rejects.toBeInstanceOf(CalendarProviderError);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it("refuses to start once the deadline passed", async () => {
+    const fetch = vi.fn();
+    await expect(
+      sendWithRetry(fetch, "https://x.test", {}, policy(), {
+        deadline: Date.now() - 1,
+      }),
+    ).rejects.toMatchObject({ kind: "unavailable" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});

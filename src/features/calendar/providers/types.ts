@@ -2,6 +2,10 @@
 // (sync engine, connection lifecycle) only knows these types; each provider
 // (Google Calendar today, Microsoft or CalDAV later) implements them.
 
+import type { CallOptions } from "./http";
+
+export type { CallOptions };
+
 export type CalendarProviderId = "google";
 
 export type ProviderAccount = {
@@ -77,23 +81,41 @@ export interface CalendarProvider {
   }): Promise<ProviderTokens>;
   refreshAccessToken(
     refreshToken: string,
+    options?: CallOptions,
   ): Promise<{ accessToken: string; expiresAt: Date }>;
-  revoke(token: string): Promise<void>;
+  revoke(token: string, options?: CallOptions): Promise<void>;
 
-  listCalendars(accessToken: string): Promise<ProviderCalendar[]>;
+  /**
+   * The complete calendar list. Fails (never a partial list) when the list
+   * is malformed, empty or longer than what is read.
+   */
+  listCalendars(
+    accessToken: string,
+    options?: CallOptions,
+  ): Promise<ProviderCalendar[]>;
+  /**
+   * One page of events, validated: exactly one of nextPageToken (more
+   * pages) and nextSyncToken (last page); a malformed page fails.
+   */
   listEvents(
     accessToken: string,
     calendarId: string,
     query: EventQuery,
     pageToken: string | null,
+    options?: CallOptions,
   ): Promise<ProviderEventPage>;
 
   watchEvents(
     accessToken: string,
     calendarId: string,
     channel: { id: string; token: string; address: string },
+    options?: CallOptions,
   ): Promise<{ resourceId: string; expiresAt: Date }>;
-  stopChannel(accessToken: string, channel: ProviderChannel): Promise<void>;
+  stopChannel(
+    accessToken: string,
+    channel: ProviderChannel,
+    options?: CallOptions,
+  ): Promise<void>;
 }
 
 export type ProviderErrorKind =
@@ -109,7 +131,13 @@ export type ProviderErrorKind =
   | "unavailable"
   | "not_found"
   | "forbidden"
-  | "bad_request";
+  | "bad_request"
+  /**
+   * A successful answer that does not follow the provider's protocol
+   * (unparsable JSON, missing or inconsistent fields): nothing of it is
+   * applied, the local copy and the cursor are kept.
+   */
+  | "protocol";
 
 export class CalendarProviderError extends Error {
   constructor(

@@ -151,6 +151,16 @@ export const errorCopy: Record<
     title: "Calendrier introuvable",
     message: "Ce calendrier n’existe plus. Actualise la liste.",
   },
+  calendar_not_selectable: {
+    title: "Calendrier non utilisable",
+    message:
+      "Ce calendrier ne partage que tes disponibilités : il ne peut pas bloquer tes créneaux.",
+  },
+  calendar_disconnect_in_progress: {
+    title: "Déconnexion en cours",
+    message:
+      "La déconnexion précédente se termine. Réessaie dans deux minutes.",
+  },
   calendar_scope_missing: {
     title: "Accès non accordé",
     message: "Reconnecte-toi en autorisant l’accès à tes calendriers.",

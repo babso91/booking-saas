@@ -53,10 +53,21 @@ export async function listConnectedCalendarsAction(input?: unknown) {
   return runBusinessAction(
     listConnectedCalendarsSchema,
     input,
-    (context, { refresh }) =>
-      refresh
-        ? refreshCalendars(contextOf(context), getCalendarDeps())
-        : listConnectedCalendars(contextOf(context)),
+    async (context, { refresh }) => {
+      if (!refresh) return listConnectedCalendars(contextOf(context));
+      const deps = getCalendarDeps();
+      const calendars = await refreshCalendars(contextOf(context), deps);
+      // A time zone change invalidated these: re-project them now.
+      const stale = calendars.filter(
+        (calendar) => calendar.blocking && calendar.syncStatus === "stale",
+      );
+      if (stale.length > 0) {
+        runAfterResponse("timezone_sync", async () => {
+          for (const calendar of stale) await syncCalendar(deps, calendar.id);
+        });
+      }
+      return calendars;
+    },
   );
 }
 
