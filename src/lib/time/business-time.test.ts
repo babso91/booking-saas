@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
@@ -6,108 +6,94 @@ import { readBusinessToday } from "./business-time";
 
 vi.mock("server-only", () => ({}));
 
-// public.business_time as PostgreSQL answers it, reduced to what the read of
-// today uses: bounds are returned for the dates asked.
-const ENDS: Record<string, string> = {
-  "2027-03-13": "2027-03-14T08:00:00+00:00",
-  "2027-03-14": "2027-03-15T07:00:00+00:00",
-  "2027-03-20": "2027-03-21T07:00:00+00:00",
+// public.business_time as PostgreSQL answers it (migration 20261002090000):
+// the date, the instant it ends and the database's own instant, from one
+// call. Here PostgreSQL is at 23:50 in Vancouver on 13 March 2027: the date
+// lasts ten more minutes.
+const POSTGRES = {
+  timezone: "America/Vancouver",
+  today: "2027-03-13",
+  todayEndsAt: "2027-03-14T08:00:00+00:00",
+  now: "2027-03-14T07:50:00+00:00",
+  days: [],
+  locals: [],
+  instants: [],
+  offsets: [],
 };
 
-function postgres(todays: string[]) {
-  const rpc = vi.fn(async (_name: string, args: { p_dates: string[] }) => ({
-    data: {
-      timezone: "America/Vancouver",
-      today: todays[Math.min(rpc.mock.calls.length - 1, todays.length - 1)],
-      days: args.p_dates.map((date) => ({
-        date,
-        weekday: 0,
-        startsAt: "2026-01-01T00:00:00Z",
-        endsAt: ENDS[date] ?? "2026-01-02T00:00:00Z",
-        openRanges: null,
-      })),
-      locals: [],
-      instants: [],
-      offsets: [],
-    },
-    error: null,
-  }));
+function postgres(answer: object = POSTGRES) {
+  const rpc = vi.fn(async () => ({ data: answer, error: null }));
   return { client: { rpc } as unknown as AppSupabaseClient, rpc };
 }
 
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  // The server: 14 March 2027, 03:00Z (still 13 March in Vancouver).
-  vi.setSystemTime(new Date("2027-03-14T03:00:00.000Z"));
-});
+const remaining = (today: { endsAt: string; now: string }) =>
+  Date.parse(today.endsAt) - Date.parse(today.now);
+
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe("readBusinessToday", () => {
-  it("one round trip: PostgreSQL's date, the end PostgreSQL gives it, the server instant", async () => {
-    const { client, rpc } = postgres(["2027-03-13"]);
+  it("one round trip: the date, its end and now, all from PostgreSQL", async () => {
+    const { client, rpc } = postgres();
 
     expect(await readBusinessToday(client, "business")).toEqual({
       date: "2027-03-13",
       endsAt: "2027-03-14T08:00:00.000Z",
-      now: "2027-03-14T03:00:00.000Z",
+      now: "2027-03-14T07:50:00.000Z",
     });
     expect(rpc).toHaveBeenCalledTimes(1);
-    // Candidates around the UTC date: a guess about which bounds to fetch.
-    expect(rpc.mock.calls[0]![1]).toMatchObject({
-      p_dates: ["2027-03-13", "2027-03-14", "2027-03-15"],
-    });
-  });
-
-  it("the server instant is taken AFTER PostgreSQL answered (never promises more time than there is)", async () => {
-    const { client, rpc } = postgres(["2027-03-13"]);
-    rpc.mockImplementationOnce(async (_name, args) => {
-      vi.setSystemTime(new Date("2027-03-14T03:00:02.000Z")); // a slow answer
-      return {
-        data: {
-          timezone: "America/Vancouver",
-          today: "2027-03-13",
-          days: args.p_dates.map((date) => ({
-            date,
-            weekday: 0,
-            startsAt: "2026-01-01T00:00:00Z",
-            endsAt: ENDS[date] ?? "2026-01-02T00:00:00Z",
-            openRanges: null,
-          })),
-          locals: [],
-          instants: [],
-          offsets: [],
-        },
-        error: null,
-      };
-    });
-    expect((await readBusinessToday(client, "business")).now).toBe(
-      "2027-03-14T03:00:02.000Z",
+    expect(rpc).toHaveBeenCalledWith(
+      "business_time",
+      expect.objectContaining({ p_business_id: "business", p_dates: [] }),
     );
   });
 
-  it("the date is PostgreSQL's even when it is none of the candidates: asked again for its bounds", async () => {
-    // A server clock (or tzdata) far from the database's.
-    const { client, rpc } = postgres(["2027-03-20"]);
+  it.each([
+    ["on time", "2027-03-14T07:50:00Z"],
+    ["24 hours late", "2027-03-13T07:50:00Z"],
+    ["24 hours ahead", "2027-03-15T07:50:00Z"],
+    ["in 1999", "1999-01-01T00:00:00Z"],
+  ])(
+    "this server's clock %s: the answer is the same, ten minutes remain",
+    async (_label, serverClock) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(serverClock));
+      const { client, rpc } = postgres();
 
-    expect(await readBusinessToday(client, "business")).toMatchObject({
-      date: "2027-03-20",
-      endsAt: "2027-03-21T07:00:00.000Z",
-    });
-    expect(rpc).toHaveBeenCalledTimes(2);
-    expect(rpc.mock.calls[1]![1]).toMatchObject({ p_dates: ["2027-03-20"] });
-  });
+      const today = await readBusinessToday(client, "business");
+      expect(today).toEqual({
+        date: "2027-03-13",
+        endsAt: "2027-03-14T08:00:00.000Z",
+        now: "2027-03-14T07:50:00.000Z",
+      });
+      expect(remaining(today)).toBe(10 * 60_000);
+      // Nothing derived from this server's date is sent either.
+      expect(rpc.mock.calls[0]).toEqual([
+        "business_time",
+        {
+          p_business_id: "business",
+          p_dates: [],
+          p_locals: [],
+          p_instants: [],
+          p_open_ranges: false,
+        },
+      ]);
+    },
+  );
 
-  it("gives up with an internal error rather than inventing a date", async () => {
-    const { client } = postgres([
-      "2027-04-01",
-      "2027-04-02",
-      "2027-04-03",
-      "2027-04-04",
-    ]);
-    await expect(readBusinessToday(client, "business")).rejects.toMatchObject({
-      code: "internal",
-    });
+  it("a database without the migration: an internal error, never this server's clock instead", async () => {
+    const { todayEndsAt: _end, now: _now, ...old } = POSTGRES;
+    void _end;
+    void _now;
+    await expect(
+      readBusinessToday(postgres(old).client, "business"),
+    ).rejects.toMatchObject({ code: "internal" });
+    await expect(
+      readBusinessToday(
+        postgres({ ...old, todayEndsAt: POSTGRES.todayEndsAt }).client,
+        "business",
+      ),
+    ).rejects.toMatchObject({ code: "internal" });
   });
 });

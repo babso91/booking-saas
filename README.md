@@ -130,5 +130,6 @@ Si une action échoue au niveau du transport, `callAction` interroge la page cou
 | `20260928190000_schedule_lock_order_and_isolation.sql` | remplacements atomiques (`replace_business_hours`, `reorder_services`), `READ COMMITTED` exigé pour les écritures de planning, ordre des verrous             |
 | `20260929090000_auth_onboarding.sql`                   | onboarding transactionnel et idempotent, normalisation et réservation des slugs, téléphone du business                                                       |
 | `20261001090000_unified_local_day.sql`                 | PostgreSQL autorité calendaire : jour civil réel, plages murales multi-segments, `business_time`, heures murales des créneaux, réservation à `now` explicite |
+| `20261002090000_business_time_now.sql`                 | `business_time` renvoie aussi `now` et `todayEndsAt` : durée restante du jour calculée par PostgreSQL seul                                                   |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.

@@ -137,19 +137,29 @@ async function click(element: HTMLElement) {
   await flush();
 }
 
-/** Every answer to "what is today?" is held until the test releases it. */
+/**
+ * A transport that holds every answer to "what is today?". Each answer is
+ * PostgreSQL's snapshot taken when the request STARTED, delivered when the
+ * test says so: a request sent before midnight says "yesterday" even if it
+ * is delivered after midnight.
+ */
 function holdToday() {
   const held: ((value: unknown) => void)[] = [];
-  actions.getAgendaTodayAction.mockImplementation(
-    () => new Promise((resolve) => held.push(resolve)),
-  );
+  const snapshots: ReturnType<typeof pgToday>[] = [];
+  actions.getAgendaTodayAction.mockImplementation(() => {
+    snapshots.push(pgToday());
+    return new Promise((resolve) => held.push(resolve));
+  });
+  const deliver = async (index: number) => {
+    held[index]!(ok(snapshots[index]!));
+    await flush();
+  };
   return {
     held,
-    /** Answers the oldest held question with PostgreSQL's date right now. */
-    release: async (index = held.length - 1) => {
-      held[index]!(ok(pgToday()));
-      await flush();
-    },
+    snapshots,
+    deliver,
+    /** Delivers the most recent request. */
+    release: () => deliver(held.length - 1),
   };
 }
 
@@ -272,6 +282,8 @@ describe("display: midnight with the tab active (desktop, Sunday → Monday)", (
     ["2 hours late", -2 * HOUR],
     ["10 minutes ahead", 10 * MINUTE],
     ["2 hours ahead", 2 * HOUR],
+    ["24 hours late", -24 * HOUR],
+    ["24 hours ahead", 24 * HOUR],
   ])(
     "device clock %s: the date changes at the server's midnight",
     async (_label, skew) => {
@@ -337,7 +349,7 @@ describe("actions always ask PostgreSQL first", () => {
     const before = todayCalls();
 
     await click(button(/Nouveau rendez-vous/));
-    expect(todayCalls()).toBe(before + 1);
+    expect(todayCalls()).toBeGreaterThan(before); // PostgreSQL was asked
     expect(fieldValue("Date")).toBe("2026-10-02");
     closePanel();
 
@@ -413,6 +425,114 @@ describe("actions always ask PostgreSQL first", () => {
     // No event has reached the page yet.
     await click(button(/Bloquer un créneau/));
     expect(fieldValue("Début — date")).toBe("2026-10-02");
+  });
+});
+
+describe("an action never shares a read started before it", () => {
+  // Codex's reproduction. A: a display read sent at 21:59:59Z (still the
+  // previous day in Paris), held in the transport. The user acts at
+  // 22:00:02Z, after midnight. A is delivered at 22:00:05Z.
+  async function displayReadHeldOverMidnight(day: "thursday" | "sunday") {
+    startAt(
+      at(day === "thursday" ? "2026-10-01T21:59:59Z" : "2026-10-04T21:59:59Z"),
+    );
+    const today = holdToday();
+    await renderAgenda(); // A: the verification on mount
+    expect(today.held).toHaveLength(1);
+    await pass(3_000); // 22:00:02Z
+    return today;
+  }
+
+  it.each([
+    ["Nouveau rendez-vous", /Nouveau rendez-vous/, "Date"],
+    ["Bloquer un créneau", /Bloquer un créneau/, "Début — date"],
+  ] as const)(
+    "%s: A (1 Oct) delivered after the click does not open the form; B (2 Oct) does",
+    async (_label, name, field) => {
+      const today = await displayReadHeldOverMidnight("thursday");
+      expect(today.snapshots[0]!.date).toBe("2026-10-01");
+
+      fireEvent.click(button(name));
+      expect(today.held).toHaveLength(2); // B, sent after the click
+      expect(today.snapshots[1]!.date).toBe("2026-10-02");
+
+      await pass(3_000); // 22:00:05Z
+      await today.deliver(0); // A
+      expect(dialog()).toBeNull();
+      expect(waiting()).toBe(true);
+
+      await today.deliver(1); // B
+      expect(fieldValue(field)).toBe("2026-10-02");
+    },
+  );
+
+  it("Aujourd’hui, Sunday → Monday: A does not keep the old week; B goes to the new one", async () => {
+    const today = await displayReadHeldOverMidnight("sunday");
+    fireEvent.click(todayButton());
+    expect(today.held).toHaveLength(2);
+
+    await pass(3_000);
+    await today.deliver(0); // A: "Sunday"
+    expect(lastAgendaRange()).toBe("2026-09-28..2026-10-04");
+    expect(waiting()).toBe(true);
+
+    await today.deliver(1); // B: Monday
+    expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
+    expect(onToday()).toBe(true);
+  });
+
+  it("B delivered first, then A: no way back — cache, highlight, week", async () => {
+    const today = await displayReadHeldOverMidnight("sunday");
+    fireEvent.click(todayButton());
+    await today.deliver(1); // B
+    expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
+    expect(onToday()).toBe(true);
+    const agendaReads = actions.getAgendaAction.mock.calls.length;
+
+    await today.deliver(0); // A, at last: "Sunday"
+    await pass(MINUTE);
+    expect(onToday()).toBe(true); // Monday is still today on screen
+    expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
+    expect(actions.getAgendaAction.mock.calls.length).toBe(agendaReads);
+
+    actions.getAgendaTodayAction.mockImplementation(async () => ok(pgToday()));
+    await click(button(/Nouveau rendez-vous/));
+    expect(fieldValue("Date")).toBe("2026-10-05");
+  });
+
+  it("an action just before midnight uses ITS read (1 Oct), whenever it is delivered", async () => {
+    startAt(THURSDAY_2350);
+    await renderAgenda();
+    sleep(9 * MINUTE + 59_500, 9 * MINUTE + 59_500); // 21:59:59.500Z
+    const today = holdToday();
+
+    fireEvent.click(button(/Bloquer un créneau/));
+    const mine = today.held.length - 1;
+    expect(today.snapshots[mine]!.date).toBe("2026-10-01");
+    await pass(4_000); // delivered after midnight
+    await today.deliver(mine);
+    expect(fieldValue("Début — date")).toBe("2026-10-01");
+  });
+
+  it("an action whose read never answers is not satisfied by A; only the retry's read runs it", async () => {
+    const today = await displayReadHeldOverMidnight("thursday");
+    fireEvent.click(button(/Nouveau rendez-vous/)); // B
+    await pass(2_000);
+    await today.deliver(0); // A answers meanwhile
+    expect(dialog()).toBeNull();
+    expect(waiting()).toBe(true);
+
+    await pass(TODAY_TIMEOUT_MS); // B is given up
+    expect(waiting()).toBe(false);
+    expect(dialog()).toBeNull();
+    const asked = today.held.length;
+    fireEvent.click(screen.getByRole("button", { name: "Réessayer" })); // C
+    expect(today.held.length).toBe(asked + 1);
+
+    await today.deliver(1); // B answers at last
+    expect(dialog()).toBeNull();
+    await today.deliver(asked); // C
+    expect(fieldValue("Date")).toBe("2026-10-02");
   });
 });
 
@@ -676,18 +796,47 @@ describe("a pending action never overrides what the user did since", () => {
     expect(fieldValue("Date")).toBe("2026-09-30");
   });
 
-  it("two pending actions: only the last one runs", async () => {
-    await renderAgenda();
-    const today = holdToday();
-    fireEvent.click(button(/Bloquer un créneau/));
-    fireEvent.click(button(/Nouveau rendez-vous/));
-    await today.release();
+  it.each([
+    ["in the order they were sent", [0, 1]],
+    ["in the reverse order", [1, 0]],
+  ])(
+    "two pending actions, answers %s: only the last action runs",
+    async (_label, order) => {
+      await renderAgenda();
+      const today = holdToday();
+      fireEvent.click(button(/Bloquer un créneau/));
+      fireEvent.click(button(/Nouveau rendez-vous/));
+      expect(today.held).toHaveLength(2); // each action has its own read
 
-    expect(screen.getByRole("dialog", { name: "Nouveau rendez-vous" }));
-    expect(
-      screen.queryByRole("dialog", { name: "Bloquer un créneau" }),
-    ).toBeNull();
-    expect(today.held).toHaveLength(1); // one shared request
+      for (const index of order) await today.deliver(index);
+
+      expect(screen.getByRole("dialog", { name: "Nouveau rendez-vous" }));
+      expect(
+        screen.queryByRole("dialog", { name: "Bloquer un créneau" }),
+      ).toBeNull();
+    },
+  );
+
+  it("old display read A pending → action B → the user opens a panel (C) → B answers → A answers: C stays", async () => {
+    startAt(at("2026-10-01T21:59:59Z"));
+    const today = holdToday(); // A: the verification on mount, held
+    await renderAgenda();
+    expect(today.held).toHaveLength(1);
+
+    await pass(3_000);
+    fireEvent.click(button(/Bloquer un créneau/)); // B
+    expect(today.held).toHaveLength(2);
+    await click(screen.getByRole("button", { name: /Camille Roux/ })); // C
+    await click(within(dialog()!).getByRole("button", { name: "Modifier" }));
+    fireEvent.change(within(dialog()!).getByLabelText(/Note interne/), {
+      target: { value: "Note en cours" },
+    });
+
+    await today.deliver(1); // B
+    await today.deliver(0); // A
+    expect(screen.getByRole("dialog", { name: "Modifier le rendez-vous" }));
+    expect(fieldValue(/Note interne/)).toBe("Note en cours");
+    expect(waiting()).toBe(false);
   });
 
   it("pending Aujourd’hui → the user changes week: the navigation wins", async () => {
@@ -719,7 +868,7 @@ describe("a pending action never overrides what the user did since", () => {
 
     await pass(TODAY_TIMEOUT_MS + 1_000); // the request is given up
     expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
-    await today.release(0); // …and answers at last
+    await today.deliver(0); // …and answers at last
     expect(dialog()).toBeNull();
     expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
   });
@@ -751,7 +900,7 @@ describe("a request that never answers", () => {
     const retry = screen.getByRole("button", { name: "Réessayer" });
     expect(dialog()).toBeNull();
 
-    await today.release(0); // the abandoned request answers: nothing happens
+    await today.deliver(0); // the abandoned request answers: nothing happens
     expect(dialog()).toBeNull();
 
     await pass(15 * MINUTE); // Friday now
@@ -789,10 +938,10 @@ describe("a request that never answers", () => {
 });
 
 describe("concurrent refreshes and stale answers", () => {
-  it("13. timer, focus, visibility and clicks share one request", async () => {
+  it("13. timer, focus, visibility and ticks share one display read; each click has its own", async () => {
     await renderAgenda();
     const today = holdToday();
-    await pass(10 * MINUTE + 1_000); // boundary timer: request in flight
+    await pass(10 * MINUTE + 1_000); // boundary timer: display read in flight
     expect(today.held).toHaveLength(1);
 
     act(() => {
@@ -800,15 +949,20 @@ describe("concurrent refreshes and stale answers", () => {
     });
     setVisibility("visible");
     await pass(5_000);
-    fireEvent.click(todayButton()); // exactly during the refresh
+    expect(today.held).toHaveLength(1);
+
+    fireEvent.click(todayButton()); // during the display read
     fireEvent.click(todayButton());
     await flush();
-    expect(today.held).toHaveLength(1);
+    expect(today.held).toHaveLength(3);
     expect(lastAgendaRange()).toBe("2026-09-28..2026-10-04"); // waiting, not guessing
 
-    await today.release();
+    await today.deliver(0); // the display read does not satisfy a click
+    expect(lastAgendaRange()).toBe("2026-09-28..2026-10-04");
+    await today.deliver(1); // nor does the superseded first click
+    expect(lastAgendaRange()).toBe("2026-09-28..2026-10-04");
+    await today.deliver(2);
     expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
-    expect(today.held).toHaveLength(1);
   });
 
   it("13. an answer older than what an agenda read already brought is ignored", async () => {
@@ -849,9 +1003,9 @@ describe("clean-up", () => {
     expect(added.filter((type) => wake.includes(type)).sort()).toEqual(
       [...wake].sort(),
     );
-    await pass(10 * MINUTE + 1_000);
-    fireEvent.click(button(/Nouveau rendez-vous/));
-    expect(today.held).toHaveLength(1);
+    await pass(10 * MINUTE + 1_000); // a display read…
+    fireEvent.click(button(/Nouveau rendez-vous/)); // …and an action read
+    expect(today.held).toHaveLength(2);
 
     view.unmount();
     expect(removed.filter((type) => wake.includes(type)).sort()).toEqual(
@@ -859,10 +1013,11 @@ describe("clean-up", () => {
     );
     expect(vi.getTimerCount()).toBe(0);
 
-    await today.release(0);
+    await today.deliver(0);
+    await today.deliver(1);
     sleep(40 * HOUR);
     await pass(MINUTE);
-    expect(today.held).toHaveLength(1);
+    expect(today.held).toHaveLength(2);
     expect(errors).not.toHaveBeenCalled();
   });
 });

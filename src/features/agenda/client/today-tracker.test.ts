@@ -38,12 +38,22 @@ function sleep(ms: number) {
 }
 
 type Answer = UiResult<BusinessTodayDto>;
+/**
+ * A transport that holds every answer. Each answer is PostgreSQL's snapshot
+ * taken when the request STARTED (`snapshots`), delivered when the test says
+ * so (`deliver`): a request sent before midnight says "yesterday" even if it
+ * is delivered after midnight.
+ */
 function asking() {
   const pending: ((answer: Answer) => void)[] = [];
-  const ask = vi.fn(
-    () => new Promise<Answer>((resolve) => pending.push(resolve)),
-  );
-  return { ask, pending };
+  const snapshots: BusinessTodayDto[] = [];
+  const ask = vi.fn(() => {
+    snapshots.push(pg());
+    return new Promise<Answer>((resolve) => pending.push(resolve));
+  });
+  const deliver = (index: number) =>
+    pending[index]!({ ok: true, data: snapshots[index]! });
+  return { ask, pending, snapshots, deliver };
 }
 const answering = () =>
   vi.fn(async (): Promise<Answer> => ({ ok: true, data: pg() }));
@@ -101,6 +111,8 @@ describe("display cache, timed by the server", () => {
     ["2 hours late", -2 * HOUR],
     ["10 minutes ahead", 10 * MINUTE],
     ["2 hours ahead", 2 * HOUR],
+    ["24 hours late", -24 * HOUR],
+    ["24 hours ahead", 24 * HOUR],
   ])(
     "device clock %s: the date changes at the server's midnight all the same",
     async (_label, skew) => {
@@ -273,28 +285,155 @@ describe("validate: what an action gets", () => {
     expect(await today.validate()).toEqual({ ok: true, data: "2026-10-02" });
   });
 
-  it("concurrent callers share one request", async () => {
-    const { ask, pending } = asking();
+  it("every action sends its own question; nothing is shared between actions", async () => {
+    const { ask, deliver } = asking();
     const today = tracker("2026-10-01", ask);
-    today.start();
-    const first = today.validate();
-    const second = today.validate();
-    window.dispatchEvent(new Event("focus"));
-    today.check();
-    expect(ask).toHaveBeenCalledTimes(1);
+    today.start(); // display read 0
+    const first = today.validate(); // 1
+    const second = today.validate(); // 2
+    expect(ask).toHaveBeenCalledTimes(3);
 
-    pending[0]!({ ok: true, data: pg() });
-    expect(await first).toEqual({ ok: true, data: "2026-10-01" });
+    deliver(2);
     expect(await second).toEqual({ ok: true, data: "2026-10-01" });
+    let settled = false;
+    void first.then(() => (settled = true));
+    await pass(0);
+    expect(settled).toBe(false); // another action's answer is not its answer
+    deliver(1);
+    expect(await first).toEqual({ ok: true, data: "2026-10-01" });
   });
 });
 
-describe("a request always ends, and an ended request never comes back", () => {
-  it("never answers: network error at the deadline, then a retry works", async () => {
-    const { ask, pending } = asking();
+describe("display reads and action reads are never mixed", () => {
+  it("timer, focus, visibility and ticks share ONE display read", async () => {
+    const { ask } = asking();
     const today = tracker("2026-10-01", ask);
     today.start();
-    const result = today.validate();
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("pageshow"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    for (let tick = 0; tick < 5; tick += 1) today.check();
+    expect(ask).toHaveBeenCalledTimes(1);
+  });
+
+  // Codex's reproduction. A: a display read sent at 21:59:59Z (1 Oct in
+  // Paris), held in the transport. The user acts at 22:00:02Z (2 Oct).
+  async function pendingDisplayReadThenAction() {
+    server.now = at("2026-10-01T21:59:59Z");
+    const transport = asking();
+    const today = tracker("2026-10-01", transport.ask);
+    today.start(); // A
+    expect(transport.snapshots[0]!.date).toBe("2026-10-01");
+
+    await pass(3_000); // 22:00:02Z
+    const action = today.validate(); // B, sent after the intention
+    expect(transport.ask).toHaveBeenCalledTimes(2);
+    expect(transport.snapshots[1]!.date).toBe("2026-10-02");
+    let outcome: unknown = "pending";
+    void action.then((value) => (outcome = value));
+    await pass(3_000); // 22:00:05Z
+    return { ...transport, today, action, outcome: () => outcome };
+  }
+
+  it("a read started before the action never satisfies it (A delivered first, then B)", async () => {
+    const { deliver, today, action, outcome } =
+      await pendingDisplayReadThenAction();
+
+    deliver(0); // A: "1 Oct", delivered after midnight
+    await pass(0);
+    expect(outcome()).toBe("pending");
+
+    deliver(1); // B
+    expect(await action).toEqual({ ok: true, data: "2026-10-02" });
+    expect(today.snapshot()).toEqual({ date: "2026-10-02", certain: true });
+  });
+
+  it("B delivered first, then A: the old read never brings the cache back to 1 Oct", async () => {
+    const { deliver, today, action } = await pendingDisplayReadThenAction();
+
+    deliver(1); // B
+    expect(await action).toEqual({ ok: true, data: "2026-10-02" });
+    expect(today.snapshot()).toEqual({ date: "2026-10-02", certain: true });
+
+    deliver(0); // A, at last
+    await pass(MINUTE);
+    expect(today.snapshot()).toEqual({ date: "2026-10-02", certain: true });
+  });
+
+  it("an action just before midnight uses ITS read, whenever it is delivered", async () => {
+    server.now = at("2026-10-01T21:59:59.500Z");
+    const { ask, deliver, snapshots } = asking();
+    const today = tracker("2026-10-01", ask);
+    today.start();
+    const action = today.validate(); // sent at 21:59:59.5: PostgreSQL says 1 Oct
+    expect(snapshots[1]!.date).toBe("2026-10-01");
+
+    await pass(4_000); // delivered after midnight
+    deliver(1);
+    // The read was made for this intention: its date is the answer.
+    expect(await action).toEqual({ ok: true, data: "2026-10-01" });
+  });
+
+  it("an action answered after a later read was applied gets that later date, never an earlier one", async () => {
+    server.now = at("2026-10-01T21:59:59.500Z");
+    const { ask, deliver, snapshots } = asking();
+    const today = tracker("2026-10-01", ask);
+    today.start(); // 0
+    const early = today.validate(); // 1: sent before midnight → 1 Oct
+    await pass(2_000);
+    const late = today.validate(); // 2: sent after midnight → 2 Oct
+    expect(snapshots.map((snapshot) => snapshot.date)).toEqual([
+      "2026-10-01",
+      "2026-10-01",
+      "2026-10-02",
+    ]);
+
+    deliver(2);
+    expect(await late).toEqual({ ok: true, data: "2026-10-02" });
+    deliver(1); // its own snapshot says 1 Oct, but a later read is known
+    expect(await early).toEqual({ ok: true, data: "2026-10-02" });
+    expect(today.snapshot()).toEqual({ date: "2026-10-02", certain: true });
+  });
+
+  it("an action that never answers is not satisfied by a display answer; only its retry runs", async () => {
+    const { ask, deliver, pending } = asking();
+    const today = tracker("2026-10-01", ask);
+    today.start(); // A (display)
+    const action = today.validate(); // B
+    let outcome: unknown = "pending";
+    void action.then((value) => (outcome = value));
+
+    await pass(5_000);
+    deliver(0); // A answers meanwhile
+    await pass(0);
+    expect(outcome).toBe("pending");
+    expect(today.snapshot()).toEqual({ date: "2026-10-01", certain: true });
+
+    await pass(TODAY_TIMEOUT_MS - 5_000);
+    expect(outcome).toEqual({ ok: false, error: { code: "network" } });
+
+    await pass(15 * MINUTE); // 2 Oct now
+    const retry = today.validate(); // C
+    const asked = ask.mock.calls.length;
+    let retried: unknown = "pending";
+    void retry.then((value) => (retried = value));
+    deliver(1); // B answers at last, with its old snapshot
+    await pass(0);
+    expect(retried).toBe("pending");
+    expect(today.snapshot()).toEqual({ date: "2026-10-01", certain: false });
+
+    pending[asked - 1]!({ ok: true, data: pg() }); // C
+    expect(await retry).toEqual({ ok: true, data: "2026-10-02" });
+    expect(today.snapshot()).toEqual({ date: "2026-10-02", certain: true });
+  });
+});
+
+describe("a read always ends, and an ended read never comes back", () => {
+  it("never answers: network error at the deadline, then a retry works", async () => {
+    const { ask, deliver } = asking();
+    const today = tracker("2026-10-01", ask);
+    today.start(); // 0 (display)
+    const result = today.validate(); // 1
     let settled = false;
     void result.then(() => (settled = true));
 
@@ -304,84 +443,59 @@ describe("a request always ends, and an ended request never comes back", () => {
     expect(await result).toEqual({ ok: false, error: { code: "network" } });
     expect(today.snapshot()).toEqual({ date: "2026-10-01", certain: false });
 
-    const retry = today.validate();
-    expect(ask).toHaveBeenCalledTimes(2);
-    pending[1]!({ ok: true, data: pg() });
+    const retry = today.validate(); // 2
+    expect(ask).toHaveBeenCalledTimes(3);
+    deliver(2);
     expect(await retry).toEqual({ ok: true, data: "2026-10-01" });
     expect(today.snapshot().certain).toBe(true);
   });
 
   it("answer just before the deadline: applied", async () => {
-    const { ask, pending } = asking();
+    const { ask, deliver } = asking();
     const today = tracker("2026-10-01", ask);
     today.start();
-    const result = today.validate();
+    const result = today.validate(); // 1
     await pass(TODAY_TIMEOUT_MS - 1);
-    pending[0]!({ ok: true, data: pg() });
+    deliver(1);
     expect(await result).toEqual({ ok: true, data: "2026-10-01" });
-    await pass(10);
-    expect(ask).toHaveBeenCalledTimes(1);
+    expect(today.snapshot()).toEqual({ date: "2026-10-01", certain: true });
   });
 
   it("answer in the same instant as the deadline: one outcome only, whichever came first", async () => {
-    const { ask, pending } = asking();
+    const { ask, deliver } = asking();
     const today = tracker("2026-10-01", ask);
     today.start();
-    const result = today.validate();
+    const result = today.validate(); // 1
     const outcomes: unknown[] = [];
     void result.then((value) => outcomes.push(value));
     await pass(TODAY_TIMEOUT_MS); // the deadline fires first…
-    pending[0]!({ ok: true, data: pg() }); // …the answer right behind
+    deliver(1); // …the answer right behind
     await pass(0);
     expect(outcomes).toEqual([{ ok: false, error: { code: "network" } }]);
-    expect(ask).toHaveBeenCalledTimes(1);
   });
 
   it("answer after the deadline: dropped, never applied", async () => {
-    const { ask, pending } = asking();
+    const { ask, deliver } = asking();
     const today = tracker("2026-09-30", ask); // a stale page
     today.start();
     await pass(TODAY_TIMEOUT_MS);
     expect(today.snapshot()).toEqual({ date: "2026-09-30", certain: false });
 
-    pending[0]!({ ok: true, data: pg() });
+    deliver(0);
     await pass(0);
     expect(today.snapshot()).toEqual({ date: "2026-09-30", certain: false });
-  });
-
-  it("retry sent before the old answer arrives: the old answer never replaces the retry's", async () => {
-    const { ask, pending } = asking();
-    const today = tracker("2026-10-01", ask);
-    today.start();
-    await pass(TODAY_TIMEOUT_MS); // request 1 abandoned
-    const old = pg(); // what request 1 will say: 1 Oct
-    await pass(15 * MINUTE); // server: 2 Oct 00:05
-
-    const retry = today.validate(); // request 2
-    expect(ask).toHaveBeenCalledTimes(2);
-    pending[0]!({ ok: true, data: old }); // the old answer comes first…
-    await pass(0);
-    expect(today.snapshot().certain).toBe(false);
-    pending[1]!({ ok: true, data: pg() }); // …then the retry's
-    expect(await retry).toEqual({ ok: true, data: "2026-10-02" });
-
-    // …or the other way round.
-    const again = today.validate(); // request 3
-    pending[2]!({ ok: true, data: pg() });
-    expect(await again).toEqual({ ok: true, data: "2026-10-02" });
-    expect(today.snapshot()).toEqual({ date: "2026-10-02", certain: true });
   });
 });
 
 describe("life cycle", () => {
-  it("stop leaves nothing behind: no timer, no listener, no pending request", async () => {
+  it("stop leaves nothing behind: no timer, no listener, no pending read of either kind", async () => {
     const added = vi.spyOn(window, "addEventListener");
     const removed = vi.spyOn(window, "removeEventListener");
     const { ask, pending } = asking();
     const today = tracker("2026-10-01", ask);
-    today.start();
-    const result = today.validate();
-    expect(vi.getTimerCount()).toBe(1); // the deadline
+    today.start(); // display read
+    const result = today.validate(); // action read
+    expect(vi.getTimerCount()).toBe(2); // their two deadlines
 
     today.stop();
     expect(await result).toEqual({ ok: false, error: { code: "network" } });
@@ -390,13 +504,14 @@ describe("life cycle", () => {
       added.mock.calls.map(([type]) => type).sort(),
     );
 
-    // Its answer changes nothing; nothing is asked any more.
+    // Their answers change nothing; nothing is asked any more.
     pending[0]!({ ok: true, data: { ...pg(), date: "2026-10-09" } });
+    pending[1]!({ ok: true, data: { ...pg(), date: "2026-10-09" } });
     window.dispatchEvent(new Event("focus"));
     today.check();
     await pass(HOUR);
     expect(today.snapshot()).toEqual({ date: "2026-10-01", certain: true });
-    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask).toHaveBeenCalledTimes(2);
     expect(await today.validate()).toEqual({
       ok: false,
       error: { code: "network" },
@@ -406,25 +521,25 @@ describe("life cycle", () => {
     removed.mockRestore();
   });
 
-  it("start → stop → start (Strict Mode): a silent request still ends at its deadline", async () => {
-    const { ask, pending } = asking();
+  it("start → stop → start (Strict Mode): like a first start, and a silent action still ends at its deadline", async () => {
+    const { ask, pending, deliver } = asking();
     const today = tracker("2026-10-01", ask);
-    today.start(); // request 1 (verification)
-    today.stop(); // …cancelled with its deadline
-    today.start(); // request 2, with its own deadline
+    today.start(); // read 0 (verification)
+    today.stop(); // …cancelled with its deadline, not counted as a failure
+    today.start(); // read 1, at once, with its own deadline
     expect(ask).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(1);
 
-    const result = today.validate(); // shares request 2
-    expect(ask).toHaveBeenCalledTimes(2);
+    const result = today.validate(); // read 2, with its own deadline
+    expect(vi.getTimerCount()).toBe(2);
     await pass(TODAY_TIMEOUT_MS);
     expect(await result).toEqual({ ok: false, error: { code: "network" } });
     expect(vi.getTimerCount()).toBe(0);
 
     // The first cycle's answer is ignored; a retry works.
     pending[0]!({ ok: true, data: { ...pg(), date: "2026-10-09" } });
-    const retry = today.validate();
-    pending[2]!({ ok: true, data: pg() });
+    const retry = today.validate(); // read 3
+    deliver(3);
     expect(await retry).toEqual({ ok: true, data: "2026-10-01" });
     expect(today.snapshot()).toEqual({ date: "2026-10-01", certain: true });
   });

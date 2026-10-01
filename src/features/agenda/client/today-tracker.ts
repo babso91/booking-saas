@@ -39,30 +39,40 @@ type Flight = {
 /**
  * The business's date today on a screen that stays open (see ./today.ts).
  *
- * - `validate()` asks PostgreSQL and resolves with its date: every action
- *   that depends on today calls it first. The device clock never authorises
- *   an action.
- * - `snapshot()` is the display cache. It is verified on start, then asked
- *   again only when the date ends on the server — a timer for that moment,
- *   the tab coming back (timers do not run while a device sleeps), the
- *   screen's clock tick as a fallback (`check`). No polling: one request per
+ * Two kinds of read, never mixed:
+ *
+ * - ACTION read — `validate()`. Every call sends its OWN question to
+ *   PostgreSQL, after the user's intention, and resolves with the date of
+ *   THAT answer (or of a read sent even later, if one was applied
+ *   meanwhile). It never joins a request already in flight (a read started
+ *   before the click says nothing about the date at the click), not even
+ *   another action's. The device clock never authorises an action.
+ * - DISPLAY read — the cache behind `snapshot()` (highlight, "now" line).
+ *   Verified on start, then asked again only when the date ends on the
+ *   server — a timer for that moment, the tab coming back (timers do not run
+ *   while a device sleeps), the screen's clock tick as a fallback (`check`).
+ *   These triggers share one display request. No polling: one request per
  *   day change. Agenda reads that show another date are taken into account
  *   (`begin` / `observe`).
  *
- * One request at a time, shared by every caller. A request always ends — by
- * its answer, by its deadline or by `stop` — and once ended it is dropped
- * for good: a late answer is never applied. `stop` leaves nothing behind (no
- * timer, no listener, no pending request), so start → stop → start (React
- * Strict Mode) behaves like a first start. Answers are applied in the order
- * they were asked. A failure keeps the last date, marked uncertain, and is
- * retried with a growing delay — never replaced by a local guess.
+ * Whatever its kind, a read always ends — by its answer, by its deadline or
+ * by `stop` — and once ended it is dropped for good: a late answer is never
+ * applied. Every answer also refreshes the display cache, in the order the
+ * questions were SENT: an older read never overrides a newer one. `stop`
+ * leaves nothing behind (no timer, no listener, no pending read), so
+ * start → stop → start (React Strict Mode) behaves like a first start. A
+ * failed display read keeps the last date, marked uncertain, and is retried
+ * with a growing delay — never replaced by a local guess.
  */
 export class TodayTracker {
   private known: KnownToday;
   private shown: ShownToday;
   private readonly listeners = new Set<() => void>();
   private sequence = { issued: 0, applied: 0 };
-  private flight: Flight | null = null;
+  /** Every read in flight, of both kinds: all end with `stop`. */
+  private readonly flights = new Set<Flight>();
+  /** The display read in flight, shared by the display triggers only. */
+  private display: Flight | null = null;
   private failure = { count: 0, retryAt: 0 };
   private boundary: number | null = null;
   private running = false;
@@ -110,8 +120,8 @@ export class TodayTracker {
     window.removeEventListener("focus", this.onWake);
     window.removeEventListener("pageshow", this.onWake);
     this.stopBoundary();
-    // Never a request left shared without its deadline.
-    this.flight?.cancel();
+    // Never a read left pending without its deadline.
+    [...this.flights].forEach((flight) => flight.cancel());
   }
 
   // Timers do not run while a device sleeps and are throttled in background
@@ -145,13 +155,34 @@ export class TodayTracker {
     // Nobody is looking: wait for the tab to come back.
     if (document.visibilityState === "hidden") return;
     if (performance.now() < this.failure.retryAt) return;
-    void this.validate();
+    void this.refreshDisplay();
   };
 
-  /** Asks PostgreSQL for today; concurrent callers share one request. */
-  readonly validate = (): Promise<UiResult<string>> => {
-    if (!this.running) return Promise.resolve(unreachable);
-    if (this.flight) return this.flight.promise;
+  /**
+   * ACTION read: a question sent now, for this call only. Resolves with the
+   * date of its own answer.
+   */
+  readonly validate = (): Promise<UiResult<string>> => this.read().promise;
+
+  /** DISPLAY read: timer, wake-up and tick share the one in flight. */
+  private refreshDisplay() {
+    if (!this.running || this.display) return;
+    this.display = this.read((outcome) => {
+      this.display = null;
+      // A read cancelled by `stop` did not fail: no delay for the next start.
+      if (outcome !== "failed") return;
+      const count = this.failure.count + 1;
+      this.failure = { count, retryAt: performance.now() + retryDelay(count) };
+    });
+  }
+
+  /** Sends one question; `ended` is told how it went, exactly once. */
+  private read(
+    ended?: (outcome: "answered" | "failed" | "cancelled") => void,
+  ): Flight {
+    if (!this.running) {
+      return { promise: Promise.resolve(unreachable), cancel: () => {} };
+    }
 
     const token = (this.sequence.issued += 1);
     const sent = readClock();
@@ -159,54 +190,63 @@ export class TodayTracker {
     const promise = new Promise<UiResult<string>>((resolve) => {
       settle = resolve;
     });
-    // The request ends exactly once, and always does: by its answer, by the
+    // The read ends exactly once, and always does: by its answer, by the
     // deadline or by `stop`.
     let over = false;
-    const finish = (result: UiResult<string>) => {
+    const finish = (
+      result: UiResult<string>,
+      outcome: "answered" | "failed" | "cancelled",
+    ) => {
       if (over) return;
       over = true;
       window.clearTimeout(deadline);
-      if (this.flight?.promise === promise) this.flight = null;
+      this.flights.delete(flight);
+      ended?.(outcome);
       settle(result);
     };
     const failed = (result: UiResult<string>) => {
-      const count = this.failure.count + 1;
-      this.failure = { count, retryAt: performance.now() + retryDelay(count) };
       // Not verified, or already over on the server: nothing is shown as
       // today until PostgreSQL answers.
       const left = msUntilEnd(this.known, readClock());
       if (left === null || left <= 0) {
         this.show({ ...this.shown, certain: false });
       }
-      finish(result);
+      finish(result, "failed");
     };
 
     const deadline = window.setTimeout(
       () => failed(unreachable),
       TODAY_TIMEOUT_MS,
     );
-    this.flight = { promise, cancel: () => finish(unreachable) };
+    const flight: Flight = {
+      promise,
+      cancel: () => finish(unreachable, "cancelled"),
+    };
+    this.flights.add(flight);
 
     void this.ask().then((result) => {
       // Past its deadline or stopped: dropped for good, even if it answers.
       if (over) return;
       if (!result.ok) return failed(result);
 
-      this.failure = { count: 0, retryAt: 0 };
+      // The display cache follows the most recently SENT read.
       if (token > this.sequence.applied) {
         this.sequence.applied = token;
+        this.failure = { count: 0, retryAt: 0 };
         this.known = anchored(result.data, sent);
         this.show({ date: this.known.date, certain: true });
         this.schedule();
       }
-      // A more recent answer (an agenda read) may already be in place…
-      finish({ ok: true, data: this.known.date });
-      // …and if that one came without its end, ask for it.
-      if (this.known.remainingMs === null) void this.validate();
+      // The caller gets the date of its own read — or, if a read SENT AFTER
+      // it has already been applied, that more recent date. Either way a
+      // read started after the caller's intention, never one before it.
+      finish({ ok: true, data: this.known.date }, "answered");
+      // A newer agenda read may have left the cache without its end.
+      if (this.known.remainingMs === null) this.refreshDisplay();
     });
 
-    return promise;
-  };
+    return flight;
+  }
 
   /** Marks the start of an agenda read; pass the token to `observe`. */
   readonly begin = () => (this.sequence.issued += 1);
@@ -220,6 +260,6 @@ export class TodayTracker {
     this.known = unverified(data.today);
     this.stopBoundary();
     this.show({ date: data.today, certain: true });
-    void this.validate(); // for the moment it ends
+    this.refreshDisplay(); // for the moment it ends
   };
 }

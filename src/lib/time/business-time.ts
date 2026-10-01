@@ -4,8 +4,6 @@ import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
-import { addDaysToLocalDate } from "./local-date";
-
 // Calendar facts of a business, read from PostgreSQL (public.business_time).
 //
 // PostgreSQL is the only calendar authority: every conversion with a
@@ -63,9 +61,10 @@ export type BusinessTodayDto = {
   /** Instant at which that date ends (the next civil date begins). */
   endsAt: string;
   /**
-   * Server instant taken right after PostgreSQL answered. `endsAt − now` is
-   * how long the date still lasts: a screen times it by elapsed time, never
-   * by comparing `endsAt` with its own clock.
+   * PostgreSQL's own instant for this answer (the one `date` and `endsAt`
+   * were computed from). `endsAt − now` is how long the date still lasts,
+   * by the calendar authority alone: a screen times it by elapsed time and
+   * never compares `endsAt` with its clock, nor with this server's.
    */
   now: string;
 };
@@ -75,6 +74,10 @@ type RawDay = BusinessDayDto & { openRanges: OpenRangeDto[] | null };
 type RawBusinessTime = {
   timezone: string;
   today: string;
+  /** First instant of the next civil date (migration 20261002090000). */
+  todayEndsAt?: string;
+  /** The database's instant for this answer. */
+  now?: string;
   days: RawDay[];
   locals: {
     local: string;
@@ -99,6 +102,9 @@ export class BusinessTime {
   readonly timezone: string;
   /** The business's civil date now. */
   readonly today: string;
+  /** Instant that date ends, and the database's instant of this answer. */
+  readonly todayEndsAt: string | null;
+  readonly now: string | null;
   /** UTC offset pieces covering the requested days. */
   readonly offsets: ZoneOffsetDto[];
   private readonly dayMap: Map<string, RawDay>;
@@ -108,6 +114,8 @@ export class BusinessTime {
   constructor(raw: RawBusinessTime) {
     this.timezone = raw.timezone;
     this.today = raw.today;
+    this.todayEndsAt = raw.todayEndsAt ? iso(raw.todayEndsAt) : null;
+    this.now = raw.now ? iso(raw.now) : null;
     this.offsets = raw.offsets.map((piece) => ({
       startsAt: iso(piece.startsAt),
       endsAt: iso(piece.endsAt),
@@ -222,33 +230,24 @@ export async function readBusinessTime(
 }
 
 /**
- * The business's civil date now, the instant it ends and the server instant
- * of the answer. The date and its end come from the calendar authority.
+ * The business's civil date now, the instant it ends and the database's
+ * instant of the answer: one round trip, everything from PostgreSQL in the
+ * same call. This server's clock is not involved.
  */
 export async function readBusinessToday(
   client: AppSupabaseClient,
   businessId: string,
 ): Promise<BusinessTodayDto> {
-  // Bounds are only returned for dates that are asked for. The business's
-  // date is at most one day away from the UTC date, so these three
-  // candidates almost always contain it: one round trip. They are a guess
-  // about WHICH bounds to fetch, never about the date itself — PostgreSQL
-  // says which one is today, and anything else is asked again.
-  const utcDate = new Date().toISOString().slice(0, 10);
-  let dates = [-1, 0, 1].map((shift) => addDaysToLocalDate(utcDate, shift));
+  const calendar = await readBusinessTime(client, businessId);
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const calendar = await readBusinessTime(client, businessId, { dates });
-    const now = new Date().toISOString();
-    if (dates.includes(calendar.today)) {
-      return {
-        date: calendar.today,
-        endsAt: calendar.day(calendar.today).endsAt,
-        now,
-      };
-    }
-    dates = [calendar.today];
+  // Never completed with this server's clock or a guessed end.
+  if (!calendar.todayEndsAt || !calendar.now) {
+    throw missing("the end of today and the database's now");
   }
 
-  throw missing("a stable date for today");
+  return {
+    date: calendar.today,
+    endsAt: calendar.todayEndsAt,
+    now: calendar.now,
+  };
 }
