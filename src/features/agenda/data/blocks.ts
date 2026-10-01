@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   BLOCK_COLUMNS,
+  localDaysToUtc,
   toBlockDto,
   type AgendaBlockDto,
   type AgendaContext,
@@ -10,11 +11,7 @@ import type { BlockInput } from "@/features/agenda/schemas/agenda";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
-import {
-  addDaysToLocalDate,
-  utcToZonedLocal,
-  zonedLocalToUtc,
-} from "@/lib/time/zoned";
+import { utcToZonedLocal, zonedBoundToUtc } from "@/lib/time/zoned";
 
 // Blocks of the agenda are availability_exceptions of kind 'blocked' (created
 // here) or 'closed' (created in the settings). They go through the existing
@@ -25,14 +22,28 @@ import {
 
 const EDITABLE_KINDS = ["blocked", "closed"] as const;
 
-/** Requested bounds as local wall-clock `YYYY-MM-DDTHH:MM` values. */
-function localBounds(input: BlockInput) {
-  return input.allDay
-    ? {
-        start: `${input.startDate}T00:00`,
-        end: `${addDaysToLocalDate(input.endDate, 1)}T00:00`,
-      }
-    : { start: input.startsAt, end: input.endsAt };
+/**
+ * Whole-day bounds: [first real instant of startDate, first real instant of
+ * endDate + 1). Deterministic, so they are always recomputed, on creation and
+ * on edit: an unchanged whole-day block keeps exactly the same instants, and
+ * one stored with a wrong midnight is realigned on the real day.
+ */
+function wholeDayBounds(
+  input: Extract<BlockInput, { allDay: true }>,
+  timezone: string,
+) {
+  const bounds = localDaysToUtc(input.startDate, input.endDate, timezone);
+
+  // Only dates skipped by the zone (Pacific/Apia, 2011-12-30) are empty.
+  if (bounds.startsAt >= bounds.endsAt) {
+    throw new AppException("validation_error", {
+      fieldErrors: {
+        endDate: ["Ces dates n’existent pas dans le fuseau horaire."],
+      },
+    });
+  }
+
+  return bounds;
 }
 
 /**
@@ -67,7 +78,7 @@ function blockRow(startsAt: Date, endsAt: Date, reason: string | null) {
 function editedBound(stored: string, requested: string, timezone: string) {
   return utcToZonedLocal(stored, timezone) === requested
     ? new Date(stored)
-    : zonedLocalToUtc(requested, timezone);
+    : zonedBoundToUtc(requested, timezone);
 }
 
 /** Distinguishes "gone" from "changed since loaded" after a 0-row write. */
@@ -94,19 +105,21 @@ export async function createBlock(
   context: AgendaContext,
   input: BlockInput,
 ): Promise<AgendaBlockDto> {
-  // New bounds follow the engine's rule (zonedLocalToUtc = PostgreSQL
-  // `AT TIME ZONE`): a repeated autumn time is the second occurrence.
-  const bounds = localBounds(input);
+  // Whole days: real local day bounds. Periods: midnight is where the day
+  // begins; any other repeated time is its second occurrence (the engine's
+  // rule, PostgreSQL `AT TIME ZONE`).
+  const { startsAt, endsAt } = input.allDay
+    ? wholeDayBounds(input, context.timezone)
+    : {
+        startsAt: zonedBoundToUtc(input.startsAt, context.timezone),
+        endsAt: zonedBoundToUtc(input.endsAt, context.timezone),
+      };
   const { data, error } = await client
     .from("availability_exceptions")
     .insert({
       business_id: context.businessId,
       kind: "blocked",
-      ...blockRow(
-        zonedLocalToUtc(bounds.start, context.timezone),
-        zonedLocalToUtc(bounds.end, context.timezone),
-        input.reason,
-      ),
+      ...blockRow(startsAt, endsAt, input.reason),
     })
     .select(BLOCK_COLUMNS)
     .single();
@@ -137,12 +150,17 @@ export async function updateBlock(
     throw new AppException("stale_block");
   }
 
-  const bounds = localBounds(input);
-  const row = blockRow(
-    editedBound(current.starts_at, bounds.start, context.timezone),
-    editedBound(current.ends_at, bounds.end, context.timezone),
-    input.reason,
-  );
+  const { startsAt, endsAt } = input.allDay
+    ? wholeDayBounds(input, context.timezone)
+    : {
+        startsAt: editedBound(
+          current.starts_at,
+          input.startsAt,
+          context.timezone,
+        ),
+        endsAt: editedBound(current.ends_at, input.endsAt, context.timezone),
+      };
+  const row = blockRow(startsAt, endsAt, input.reason);
 
   // One UPDATE conditioned on the version read above: a change committed in
   // between is re-checked by PostgreSQL (READ COMMITTED) and makes this write

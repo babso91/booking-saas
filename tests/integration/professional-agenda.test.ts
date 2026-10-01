@@ -2547,3 +2547,306 @@ describe("block validation on resolved instants (Europe/Paris, 2026-10-25)", () 
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("whole-day blocks cover the real local day", () => {
+  const HAVANA = "America/Havana";
+  // 2026-11-01: 00:59 CDT → 00:00 CST at 05:00Z; midnight at 04:00Z and 05:00Z.
+  const REPEATED = "2026-11-01";
+  const HAVANA_START = "2026-11-01T04:00:00.000Z";
+  const HAVANA_END = "2026-11-02T05:00:00.000Z";
+
+  function wholeDay(startDate: string, endDate = startDate, reason?: string) {
+    return createBlockAction({ allDay: true, startDate, endDate, reason });
+  }
+
+  const hours = (block: { startsAt: string; endsAt: string }) =>
+    (Date.parse(block.endsAt) - Date.parse(block.startsAt)) / 3_600_000;
+
+  async function stored(blockId: string) {
+    const { rows } = await db.query(
+      "select starts_at, ends_at, version, reason from public.availability_exceptions where id = $1",
+      [blockId],
+    );
+    return {
+      startsAt: (rows[0].starts_at as Date).toISOString(),
+      endsAt: (rows[0].ends_at as Date).toISOString(),
+      version: rows[0].version as number,
+      reason: rows[0].reason as string | null,
+    };
+  }
+
+  it("Havana, repeated midnight: starts at the first midnight, no free first hour", async () => {
+    const a = await newAgenda({ timezone: HAVANA, bufferMinutes: 0 });
+
+    const block = ok(await wholeDay(REPEATED));
+    expect(block).toMatchObject({
+      startsAt: HAVANA_START,
+      endsAt: HAVANA_END,
+      localStartsAt: `${REPEATED}T00:00`,
+      localEndsAt: "2026-11-02T00:00",
+      startOccurrence: "first",
+    });
+    expect(hours(block)).toBe(25);
+
+    // The first real hour (00:30 before the change) is blocked…
+    failure(
+      await create(a, "00:30", {
+        date: REPEATED,
+        occurrence: "first",
+        serviceId: a.shortService,
+      }),
+      "schedule_conflict",
+    );
+    // …as is the repeated one, and the day after is free.
+    failure(
+      await create(a, "00:30", {
+        date: REPEATED,
+        occurrence: "second",
+        serviceId: a.shortService,
+      }),
+      "schedule_conflict",
+    );
+    await createOk(a, "00:00", {
+      date: "2026-11-02",
+      serviceId: a.shortService,
+    });
+  });
+
+  it("Havana: refuses a whole day over an appointment in its first real hour", async () => {
+    const a = await newAgenda({ timezone: HAVANA, bufferMinutes: 0 });
+    await createOk(a, "00:15", {
+      date: REPEATED,
+      occurrence: "first",
+      serviceId: a.shortService,
+    }); // 04:15Z–04:45Z: before the second midnight
+
+    failure(await wholeDay(REPEATED), "schedule_conflict");
+  });
+
+  it("23-hour days: spring forward in Paris, skipped midnight in Santiago", async () => {
+    await newAgenda({ timezone: "Europe/Paris" });
+    const paris = ok(await wholeDay("2027-03-28"));
+    expect(paris).toMatchObject({
+      startsAt: "2027-03-27T23:00:00.000Z",
+      endsAt: "2027-03-28T22:00:00.000Z",
+    });
+    expect(hours(paris)).toBe(23);
+
+    await newAgenda({ timezone: "America/Santiago" });
+    const santiago = ok(await wholeDay("2026-09-06"));
+    expect(santiago).toMatchObject({
+      startsAt: "2026-09-06T04:00:00.000Z", // 23:59 → 01:00: starts at the gap
+      endsAt: "2026-09-07T03:00:00.000Z",
+    });
+    expect(hours(santiago)).toBe(23);
+  });
+
+  it("25-hour days: fall back in Paris, repeated 23:00 in Santiago", async () => {
+    await newAgenda({ timezone: "Europe/Paris" });
+    const paris = ok(await wholeDay("2026-10-25"));
+    expect(paris).toMatchObject({
+      startsAt: "2026-10-24T22:00:00.000Z",
+      endsAt: "2026-10-25T23:00:00.000Z",
+    });
+    expect(hours(paris)).toBe(25);
+
+    await newAgenda({ timezone: "America/Santiago" });
+    expect(hours(ok(await wholeDay("2027-04-03")))).toBe(25);
+  });
+
+  it("30-minute and 2-hour transitions, and a normal day", async () => {
+    await newAgenda({ timezone: "Australia/Lord_Howe" });
+    expect(hours(ok(await wholeDay("2026-10-04")))).toBe(23.5);
+
+    await newAgenda({ timezone: "Antarctica/Troll" });
+    expect(hours(ok(await wholeDay("2026-10-25")))).toBe(26);
+
+    await newAgenda({ timezone: "Europe/Paris" });
+    const normal = ok(await wholeDay("2026-11-10", "2026-11-11"));
+    expect(normal).toMatchObject({
+      startsAt: "2026-11-09T23:00:00.000Z",
+      endsAt: "2026-11-11T23:00:00.000Z",
+    });
+    expect(hours(normal)).toBe(48);
+  });
+
+  it("refuses a whole day on a date that does not exist (Apia, 2011-12-30)", async () => {
+    await newAgenda({ timezone: "Pacific/Apia" });
+
+    const empty = failure(await wholeDay("2011-12-30"), "validation_error");
+    expect(empty?.fieldErrors).toHaveProperty("endDate");
+    // Around it, the real days are adjacent: 29 and 31 December only.
+    const around = ok(await wholeDay("2011-12-29", "2011-12-31"));
+    expect(hours(around)).toBe(48);
+  });
+
+  it("changing the reason does not move a whole-day block", async () => {
+    await newAgenda({ timezone: HAVANA, bufferMinutes: 0 });
+    const block = ok(await wholeDay(REPEATED, REPEATED, "Congés"));
+
+    const edited = ok(
+      await updateBlockAction({
+        blockId: block.id,
+        expectedVersion: block.version,
+        block: {
+          allDay: true,
+          startDate: REPEATED,
+          endDate: REPEATED,
+          reason: "Formation",
+        },
+      }),
+    );
+
+    expect(await stored(block.id)).toEqual({
+      startsAt: HAVANA_START,
+      endsAt: HAVANA_END,
+      version: 2,
+      reason: "Formation",
+    });
+    expect(edited.version).toBe(2);
+  });
+
+  it("answers stale_block to an old version, writing nothing", async () => {
+    await newAgenda({ timezone: HAVANA, bufferMinutes: 0 });
+    const block = ok(await wholeDay(REPEATED));
+    ok(
+      await updateBlockAction({
+        blockId: block.id,
+        expectedVersion: block.version,
+        block: {
+          allDay: true,
+          startDate: REPEATED,
+          endDate: REPEATED,
+          reason: "Ailleurs",
+        },
+      }),
+    );
+
+    failure(
+      await updateBlockAction({
+        blockId: block.id,
+        expectedVersion: block.version,
+        block: { allDay: true, startDate: "2026-11-03", endDate: "2026-11-03" },
+      }),
+      "stale_block",
+    );
+    expect(await stored(block.id)).toMatchObject({
+      startsAt: HAVANA_START,
+      version: 2,
+      reason: "Ailleurs",
+    });
+  });
+
+  it("moves a whole-day closure to another date, and realigns a wrong midnight", async () => {
+    const a = await newAgenda({ timezone: HAVANA, bufferMinutes: 0 });
+    // A closure stored with the old rule: second midnight, first hour free.
+    const { rows } = await db.query<{ id: string }>(
+      `insert into public.availability_exceptions (business_id, kind, starts_at, ends_at)
+       values ($1, 'closed', '2026-11-01T05:00:00Z', '2026-11-02T05:00:00Z') returning id`,
+      [a.business.id],
+    );
+    const closure = ok(
+      await getAgendaAction({ startDate: REPEATED, endDate: REPEATED }),
+    ).blocks[0]!;
+    expect(closure.id).toBe(rows[0]!.id);
+
+    // Sent back as the whole day it shows: realigned on the real day.
+    const realigned = ok(
+      await updateBlockAction({
+        blockId: closure.id,
+        expectedVersion: closure.version,
+        block: { allDay: true, startDate: REPEATED, endDate: REPEATED },
+      }),
+    );
+    expect(realigned).toMatchObject({
+      kind: "closed",
+      startsAt: HAVANA_START,
+      endsAt: HAVANA_END,
+    });
+
+    // Moved to another date: that date's real bounds, kind kept.
+    const moved = ok(
+      await updateBlockAction({
+        blockId: closure.id,
+        expectedVersion: realigned.version,
+        block: { allDay: true, startDate: "2026-11-05", endDate: "2026-11-05" },
+      }),
+    );
+    expect(moved).toMatchObject({
+      kind: "closed",
+      startsAt: "2026-11-05T05:00:00.000Z",
+      endsAt: "2026-11-06T05:00:00.000Z",
+    });
+
+    // A settings closure typed from midnight to midnight gets the same bounds.
+    const { createAvailabilityException } =
+      await import("@/features/availability/data/schedule");
+    const settings = await createAvailabilityException(
+      a.owner.client,
+      { businessId: a.business.id, timezone: HAVANA },
+      {
+        kind: "closed",
+        startsAt: `${REPEATED}T00:00`,
+        endsAt: "2026-11-02T00:00",
+        reason: null,
+      },
+    );
+    expect(settings).toMatchObject({
+      startsAt: HAVANA_START,
+      endsAt: HAVANA_END,
+    });
+  });
+
+  it("reads the whole real day: the range and the block bounds agree", async () => {
+    const a = await newAgenda({ timezone: HAVANA, bufferMinutes: 0 });
+    // An appointment in the first real hour, before the second midnight.
+    const early = await createOk(a, "00:10", {
+      date: REPEATED,
+      occurrence: "first",
+      serviceId: a.shortService,
+    });
+
+    const agenda = ok(
+      await getAgendaAction({ startDate: REPEATED, endDate: REPEATED }),
+    );
+    expect(agenda.range).toMatchObject({
+      startsAt: HAVANA_START,
+      endsAt: HAVANA_END,
+    });
+    expect(agenda.appointments.map((item) => item.id)).toEqual([early.id]);
+
+    // A whole day on the next date covers exactly that date's read range.
+    const block = ok(await wholeDay("2026-11-02"));
+    const next = ok(
+      await getAgendaAction({ startDate: "2026-11-02", endDate: "2026-11-02" }),
+    );
+    expect([block.startsAt, block.endsAt]).toEqual([
+      next.range.startsAt,
+      next.range.endsAt,
+    ]);
+  });
+
+  it("leaves hourly blocks unchanged", async () => {
+    const a = await newAgenda({ timezone: HAVANA, bufferMinutes: 0 });
+
+    const hourly = ok(await block(a, "10:00", "11:30", REPEATED));
+    expect(hourly).toMatchObject({
+      startsAt: "2026-11-01T15:00:00.000Z",
+      endsAt: "2026-11-01T16:30:00.000Z",
+    });
+    // Repeated non-midnight time: still the second occurrence (engine rule).
+    const repeated = ok(await block(a, "00:30", "02:00", REPEATED));
+    expect(repeated.startsAt).toBe("2026-11-01T05:30:00.000Z");
+    // A period ending at midnight ends where the next day really begins.
+    const evening = ok(
+      await createBlockAction({
+        allDay: false,
+        startsAt: "2026-10-31T22:00",
+        endsAt: `${REPEATED}T00:00`,
+      }),
+    );
+    expect(evening.endsAt).toBe(HAVANA_START);
+  });
+});

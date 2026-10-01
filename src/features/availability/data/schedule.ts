@@ -9,7 +9,7 @@ import type { BusinessContext } from "@/features/businesses/data/business-contex
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
-import { utcToZonedLocal, zonedLocalToUtc } from "@/lib/time/zoned";
+import { utcToZonedLocal, zonedBoundToUtc } from "@/lib/time/zoned";
 import type { Tables, TablesUpdate } from "@/types/database.generated";
 
 // Professional management of opening hours, booking rules and exceptions.
@@ -201,8 +201,10 @@ function exceptionRow(
   context: ScheduleContext,
   input: AvailabilityExceptionInput,
 ) {
-  const startsAt = zonedLocalToUtc(input.startsAt, context.timezone);
-  const endsAt = zonedLocalToUtc(input.endsAt, context.timezone);
+  // Local midnight is where the day begins, even where midnight is repeated
+  // or skipped (a closure "D 00:00 → D+1 00:00" covers the whole real day).
+  const startsAt = zonedBoundToUtc(input.startsAt, context.timezone);
+  const endsAt = zonedBoundToUtc(input.endsAt, context.timezone);
 
   // A range can collapse across a DST gap (e.g. 02:00 → 02:30 on the spring day).
   if (startsAt >= endsAt) {
