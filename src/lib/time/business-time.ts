@@ -4,6 +4,8 @@ import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
+import { addDaysToLocalDate } from "./local-date";
+
 // Calendar facts of a business, read from PostgreSQL (public.business_time).
 //
 // PostgreSQL is the only calendar authority: every conversion with a
@@ -60,6 +62,12 @@ export type BusinessTodayDto = {
   date: string;
   /** Instant at which that date ends (the next civil date begins). */
   endsAt: string;
+  /**
+   * Server instant taken right after PostgreSQL answered. `endsAt − now` is
+   * how long the date still lasts: a screen times it by elapsed time, never
+   * by comparing `endsAt` with its own clock.
+   */
+  now: string;
 };
 
 type RawDay = BusinessDayDto & { openRanges: OpenRangeDto[] | null };
@@ -214,26 +222,32 @@ export async function readBusinessTime(
 }
 
 /**
- * The business's civil date now and the instant it ends, both from the
- * calendar authority. A screen left open keeps the date until that instant,
- * then asks again: it never works the next date out by itself.
+ * The business's civil date now, the instant it ends and the server instant
+ * of the answer. The date and its end come from the calendar authority.
  */
 export async function readBusinessToday(
   client: AppSupabaseClient,
   businessId: string,
 ): Promise<BusinessTodayDto> {
-  let { today } = await readBusinessTime(client, businessId);
+  // Bounds are only returned for dates that are asked for. The business's
+  // date is at most one day away from the UTC date, so these three
+  // candidates almost always contain it: one round trip. They are a guess
+  // about WHICH bounds to fetch, never about the date itself — PostgreSQL
+  // says which one is today, and anything else is asked again.
+  const utcDate = new Date().toISOString().slice(0, 10);
+  let dates = [-1, 0, 1].map((shift) => addDaysToLocalDate(utcDate, shift));
 
-  // The date can change between the two reads (midnight): read again until
-  // the bounds returned are those of the date PostgreSQL calls today.
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const calendar = await readBusinessTime(client, businessId, {
-      dates: [today],
-    });
-    if (calendar.today === today) {
-      return { date: today, endsAt: calendar.day(today).endsAt };
+    const calendar = await readBusinessTime(client, businessId, { dates });
+    const now = new Date().toISOString();
+    if (dates.includes(calendar.today)) {
+      return {
+        date: calendar.today,
+        endsAt: calendar.day(calendar.today).endsAt,
+        now,
+      };
     }
-    today = calendar.today;
+    dates = [calendar.today];
   }
 
   throw missing("a stable date for today");

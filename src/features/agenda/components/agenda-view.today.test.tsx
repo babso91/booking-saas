@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   agenda,
   appointment,
+  block,
+  businessToday,
   services,
 } from "../../../../tests/support/agenda-fixtures";
-import { TODAY_TIMEOUT_MS } from "../client/use-canonical-today";
+import { TODAY_TIMEOUT_MS } from "../client/today-tracker";
 import { AgendaView } from "./agenda-view";
 
 // The device is never in the business time zone in this file: UTC+14, a
@@ -48,17 +51,38 @@ vi.mock("@/features/agenda/actions/agenda", () =>
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const at = (value: string) => new Date(value).getTime();
 const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 
-// PostgreSQL, simulated: the business's date at the (fake) current instant
-// and the instant that date ends. Production code only ever receives these.
+// Two independent clocks.
+// - The SERVER: `server.now`. PostgreSQL's date, the end of that date and the
+//   server instant all derive from it (simulated; production code only ever
+//   receives them).
+// - The DEVICE: the fake Date / performance / timers of this test.
+//   It runs continuously: while the device is awake it advances with real
+//   elapsed time (the fake monotonic clock), plus what passed during sleeps.
+const server = {
+  ahead: 0,
+  get now() {
+    return this.ahead + performance.now();
+  },
+};
 let businessZone = "Europe/Paris";
-function pgToday() {
-  const date = agenda("2026-01-01", "2026-01-01", {
-    timeZone: businessZone,
-  }).today;
-  const day = agenda(date, date, { timeZone: businessZone }).workingHours
-    .days[0]!;
-  return { date, endsAt: day.endsAt };
+const pgToday = () => businessToday(businessZone, server.now);
+
+/** Real time passes: both clocks advance, device timers run. */
+const pass = (ms: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+const flush = () => pass(0);
+/**
+ * The device sleeps (or its tab is frozen): `ms` pass on the server while no
+ * device timer runs and its monotonic clock stands still. Its wall clock
+ * shows `wallMs` more (all of it by default; less for a clock that lags).
+ */
+function sleep(ms: number, wallMs = ms) {
+  server.ahead += ms;
+  vi.setSystemTime(Date.now() + wallMs);
 }
 
 const originalMatchMedia = window.matchMedia;
@@ -82,21 +106,11 @@ function setVisibility(state: DocumentVisibilityState) {
   });
 }
 
-/** Lets time pass with timers running (an active tab). */
-const pass = (ms: number) =>
-  act(async () => {
-    await vi.advanceTimersByTimeAsync(ms);
-  });
-const flush = () => pass(0);
-/** Time passes while timers do NOT run (device asleep, suspended tab). */
-function sleepUntil(instant: string) {
-  vi.setSystemTime(new Date(instant));
-}
-
-async function renderAgenda() {
-  const view = render(<AgendaView today={pgToday()} slug="studio-mila" />);
+async function renderAgenda(strict = false) {
+  const view = <AgendaView today={pgToday().date} slug="studio-mila" />;
+  const rendered = render(strict ? <StrictMode>{view}</StrictMode> : view);
   await flush();
-  return view;
+  return rendered;
 }
 
 const todayCalls = () => actions.getAgendaTodayAction.mock.calls.length;
@@ -108,25 +122,61 @@ const lastAgendaRange = () => {
 const button = (name: RegExp | string) =>
   screen.getAllByRole("button", { name })[0] as HTMLButtonElement;
 const todayButton = () => button("Aujourd’hui");
+/** Display hint only: does the screen believe today is in view? */
+const onToday = () => todayButton().getAttribute("data-on-today") === "true";
 const dialog = () => screen.queryByRole("dialog");
-const fieldValue = (label: string) =>
+const fieldValue = (label: string | RegExp) =>
   (within(dialog()!).getByLabelText(label) as HTMLInputElement).value;
+const closePanel = () => fireEvent.keyDown(document, { key: "Escape" });
+const waiting = () =>
+  screen.queryByRole("progressbar", { name: "Chargement de l’agenda" }) !==
+  null;
 
 async function click(element: HTMLElement) {
   fireEvent.click(element);
   await flush();
 }
 
-// Sunday 4 Oct 2026, 23:50 in Paris (UTC+2). Paris midnight is 22:00Z:
-// Monday 5 Oct starts a new week.
-const SUNDAY_2350 = "2026-10-04T21:50:00Z";
-const PARIS_MIDNIGHT = at("2026-10-04T22:00:00Z");
+/** Every answer to "what is today?" is held until the test releases it. */
+function holdToday() {
+  const held: ((value: unknown) => void)[] = [];
+  actions.getAgendaTodayAction.mockImplementation(
+    () => new Promise((resolve) => held.push(resolve)),
+  );
+  return {
+    held,
+    /** Answers the oldest held question with PostgreSQL's date right now. */
+    release: async (index = held.length - 1) => {
+      held[index]!(ok(pgToday()));
+      await flush();
+    },
+  };
+}
+
+// Thursday 1 Oct 2026, 23:50 in Paris (UTC+2): Paris midnight is 22:00Z.
+const THURSDAY_2350 = at("2026-10-01T21:50:00Z");
+// Sunday 4 Oct 2026, 23:50: the next day starts a new week.
+const SUNDAY_2350 = at("2026-10-04T21:50:00Z");
+
+function startAt(serverNow: number, deviceSkew = 0) {
+  server.ahead = serverNow - performance.now();
+  vi.setSystemTime(new Date(serverNow + deviceSkew));
+}
 
 vi.setConfig({ testTimeout: 20_000 });
 
 beforeEach(() => {
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date(SUNDAY_2350));
+  vi.useFakeTimers({
+    toFake: [
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "Date",
+      "performance",
+    ],
+  });
+  startAt(SUNDAY_2350);
   businessZone = "Europe/Paris";
   visibility = "visible";
   Object.defineProperty(document, "visibilityState", {
@@ -136,7 +186,10 @@ beforeEach(() => {
   Object.values(actions).forEach((mock) => mock.mockReset());
   actions.listAgendaServicesAction.mockResolvedValue(ok(services));
   actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
-    ok(agenda(startDate, endDate, { timeZone: businessZone })),
+    ok({
+      ...agenda(startDate, endDate, { timeZone: businessZone }),
+      today: pgToday().date,
+    }),
   );
   actions.getAgendaTodayAction.mockImplementation(async () => ok(pgToday()));
   useViewport(true);
@@ -156,21 +209,21 @@ it("runs with a device time zone that is not the business's", () => {
   expect(pgToday().date).toBe("2026-10-04");
 });
 
-describe("same day", () => {
-  it("1. starts on the date PostgreSQL gave, without asking again", async () => {
+describe("display: same day", () => {
+  it("1. starts on PostgreSQL's date, verified once on mount", async () => {
     await renderAgenda();
     expect(lastAgendaRange()).toBe("2026-09-28..2026-10-04");
-    expect(todayButton().disabled).toBe(true);
-    expect(todayCalls()).toBe(0);
+    expect(onToday()).toBe(true);
+    expect(todayCalls()).toBe(1);
   });
 
-  it("2 & 15. nothing is asked while the day lasts: no polling, whatever wakes the tab", async () => {
-    vi.setSystemTime(new Date("2026-10-04T08:00:00Z")); // Sunday 10:00
+  it("2 & 15. nothing more is asked while the day lasts, whatever wakes the tab", async () => {
+    startAt(at("2026-10-04T08:00:00Z")); // Sunday 10:00
     await renderAgenda();
 
     await pass(30 * MINUTE); // 60 clock ticks
-    for (const later of ["2026-10-04T14:00:00Z", "2026-10-04T21:30:00Z"]) {
-      sleepUntil(later); // still Sunday in Paris
+    for (const hours of [5, 7]) {
+      sleep(hours * HOUR); // still Sunday in Paris
       act(() => {
         window.dispatchEvent(new Event("focus"));
         window.dispatchEvent(new Event("pageshow"));
@@ -180,172 +233,243 @@ describe("same day", () => {
       await pass(5 * MINUTE);
     }
 
-    expect(todayCalls()).toBe(0);
+    expect(todayCalls()).toBe(1);
     expect(actions.getAgendaAction).toHaveBeenCalledTimes(1);
-    expect(todayButton().disabled).toBe(true);
-
-    await click(button(/Nouveau rendez-vous/));
-    expect(fieldValue("Date")).toBe("2026-10-04");
-    expect(todayCalls()).toBe(0);
+    expect(onToday()).toBe(true);
   });
 
   it("15. one request per day change over several days, never more", async () => {
     await renderAgenda();
-    for (const beforeMidnight of [
-      "2026-10-04T21:59:00Z",
-      "2026-10-05T21:59:00Z",
-      "2026-10-06T21:59:00Z",
-    ]) {
-      sleepUntil(beforeMidnight);
+    for (let day = 0; day < 3; day += 1) {
       await pass(20 * MINUTE); // through midnight, 40 clock ticks
+      sleep(24 * HOUR - 20 * MINUTE); // …then asleep until 23:50
+      act(() => {
+        window.dispatchEvent(new Event("focus"));
+      });
+      await flush();
     }
-    expect(todayCalls()).toBe(3);
+    // Mount + one per midnight: the wake-ups found the date still running.
+    expect(todayCalls()).toBe(1 + 3);
     expect(actions.getAgendaAction).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("midnight with the tab active (desktop, Sunday → Monday)", () => {
-  it("3 & 4. asks PostgreSQL once at the boundary and takes the new date", async () => {
+describe("display: midnight with the tab active (desktop, Sunday → Monday)", () => {
+  it("3 & 4. asks PostgreSQL once at the boundary and shows the new date", async () => {
     await renderAgenda();
-    await pass(PARIS_MIDNIGHT - Date.now() - 1);
-    expect(todayCalls()).toBe(0);
-    expect(todayButton().disabled).toBe(true);
+    await pass(10 * MINUTE - 1_000);
+    expect(todayCalls()).toBe(1);
+    expect(onToday()).toBe(true);
 
     await pass(MINUTE);
-    expect(todayCalls()).toBe(1);
-    // The week on screen is now last week: the button works again…
-    expect(todayButton().disabled).toBe(false);
+    expect(todayCalls()).toBe(2);
+    expect(onToday()).toBe(false); // the week on screen is now last week
     expect(actions.getAgendaAction).toHaveBeenCalledTimes(1); // nothing reloaded behind the user
   });
 
-  it("5. Aujourd’hui goes to the new week", async () => {
+  it.each([
+    ["10 minutes late", -10 * MINUTE],
+    ["2 hours late", -2 * HOUR],
+    ["10 minutes ahead", 10 * MINUTE],
+    ["2 hours ahead", 2 * HOUR],
+  ])(
+    "device clock %s: the date changes at the server's midnight",
+    async (_label, skew) => {
+      startAt(SUNDAY_2350, skew);
+      await renderAgenda();
+      expect(onToday()).toBe(true);
+      await pass(9 * MINUTE);
+      expect(onToday()).toBe(true);
+      await pass(MINUTE + 1_000);
+      expect(onToday()).toBe(false);
+      expect(todayCalls()).toBe(2);
+    },
+  );
+});
+
+describe("actions always ask PostgreSQL first", () => {
+  beforeEach(() => startAt(THURSDAY_2350));
+
+  it("5, 6 & 7. Aujourd’hui, Nouveau rendez-vous and Bloquer each validate the date", async () => {
+    await renderAgenda();
+    await click(button(/Nouveau rendez-vous/));
+    expect(fieldValue("Date")).toBe("2026-10-01");
+    closePanel();
+    await click(button(/Bloquer un créneau/));
+    expect(fieldValue("Début — date")).toBe("2026-10-01");
+    closePanel();
+    await click(todayButton());
+    expect(todayCalls()).toBe(1 + 3);
+
+    await pass(11 * MINUTE); // Friday 00:01
+    await click(button(/Nouveau rendez-vous/));
+    expect(fieldValue("Date")).toBe("2026-10-02");
+    closePanel();
+    await click(button(/Bloquer un créneau/));
+    expect(fieldValue("Début — date")).toBe("2026-10-02");
+  });
+
+  it("Sunday → Monday: Aujourd’hui goes to the new week; a creation never prefills the day before", async () => {
+    startAt(SUNDAY_2350);
     await renderAgenda();
     await pass(11 * MINUTE);
 
-    await click(todayButton());
-    expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
-    expect(todayButton().disabled).toBe(true);
-    expect(todayCalls()).toBe(1);
-  });
-
-  it("6. Nouveau rendez-vous: the day before is never prefilled once it is over", async () => {
-    await renderAgenda();
-    await click(button(/Nouveau rendez-vous/));
-    expect(fieldValue("Date")).toBe("2026-10-04"); // today, 23:50
-    fireEvent.keyDown(document, { key: "Escape" });
-
-    await pass(11 * MINUTE); // 00:01 on Monday; last week still on screen
     await click(button(/Nouveau rendez-vous/));
     // Today (Monday) is not on screen: first working day of the week shown.
     expect(fieldValue("Date")).toBe("2026-09-28");
-    fireEvent.keyDown(document, { key: "Escape" });
+    closePanel();
 
     await click(todayButton());
+    expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
     await click(button(/Nouveau rendez-vous/));
     expect(fieldValue("Date")).toBe("2026-10-05");
   });
 
-  it("7. Bloquer un créneau follows the same rule", async () => {
+  // Codex's reproduction: two independent clocks.
+  it("A. device late — server 2 Oct 00:05, device 1 Oct 23:55, cached today 1 Oct", async () => {
+    startAt(THURSDAY_2350, -10 * MINUTE); // device 23:40
     await renderAgenda();
-    await click(button(/Bloquer un créneau/));
-    expect(fieldValue("Début — date")).toBe("2026-10-04");
-    fireEvent.keyDown(document, { key: "Escape" });
+    // 15 minutes later nothing has run on the device (timers suspended).
+    sleep(15 * MINUTE);
+    expect(new Date().toISOString()).toBe("2026-10-01T21:55:00.000Z");
+    expect(pgToday().date).toBe("2026-10-02");
+    expect(onToday()).toBe(true); // the screen still shows the cached 1 Oct
+    const before = todayCalls();
 
-    await pass(11 * MINUTE);
-    await click(todayButton());
+    await click(button(/Nouveau rendez-vous/));
+    expect(todayCalls()).toBe(before + 1);
+    expect(fieldValue("Date")).toBe("2026-10-02");
+    closePanel();
+
     await click(button(/Bloquer un créneau/));
-    expect(fieldValue("Début — date")).toBe("2026-10-05");
+    expect(fieldValue("Début — date")).toBe("2026-10-02");
+    closePanel();
   });
 
-  it("23:59 → 00:00 inside the same week: the default day moves with PostgreSQL's date", async () => {
-    vi.setSystemTime(new Date("2026-09-29T21:59:00Z")); // Tuesday 23:59
+  it("A. device late: Aujourd’hui is not disabled and goes to PostgreSQL's date", async () => {
+    startAt(SUNDAY_2350, -10 * MINUTE);
     await renderAgenda();
-    await click(button(/Nouveau rendez-vous/));
-    expect(fieldValue("Date")).toBe("2026-09-29");
-    fireEvent.keyDown(document, { key: "Escape" });
-
-    await pass(MINUTE + 1_000); // Wednesday 00:00:01
-    expect(todayButton().disabled).toBe(true); // same week
-    await click(button(/Nouveau rendez-vous/));
-    expect(fieldValue("Date")).toBe("2026-09-30");
-    expect(todayCalls()).toBe(1);
-  });
-});
-
-describe("suspended tabs and delayed timers", () => {
-  it("8. hidden at midnight, visible the next day: asked once, when it comes back", async () => {
-    await renderAgenda();
-    setVisibility("hidden");
-    await pass(20 * MINUTE); // through midnight: timers fire, nobody is looking
-    sleepUntil("2026-10-05T07:00:00Z");
-    expect(todayCalls()).toBe(0);
-
-    setVisibility("visible");
-    await flush();
-    expect(todayCalls()).toBe(1);
+    sleep(15 * MINUTE); // server: Monday 00:05; device: Sunday 23:55
     expect(todayButton().disabled).toBe(false);
+
     await click(todayButton());
     expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
   });
 
+  it("B. device very late: the server has been on the next day for hours", async () => {
+    await renderAgenda();
+    // Nine hours on the server; the device's clocks did not move at all.
+    server.ahead += 9 * HOUR;
+    expect(onToday()).toBe(true);
+
+    await click(button(/Nouveau rendez-vous/));
+    expect(fieldValue("Date")).toBe("2026-10-02");
+    closePanel();
+    await click(button(/Bloquer un créneau/));
+    expect(fieldValue("Début — date")).toBe("2026-10-02");
+    closePanel();
+
+    startAt(SUNDAY_2350 + 9 * HOUR, -9 * HOUR);
+    await click(todayButton());
+    expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
+  });
+
+  it("C. device ahead — it believes midnight has passed, PostgreSQL does not", async () => {
+    startAt(THURSDAY_2350, 20 * MINUTE); // device: 2 Oct 00:10
+    await renderAgenda();
+    await pass(5 * MINUTE);
+    expect(todayCalls()).toBe(1); // no early storm either
+
+    await click(button(/Nouveau rendez-vous/));
+    expect(fieldValue("Date")).toBe("2026-10-01");
+    closePanel();
+    await click(button(/Bloquer un créneau/));
+    expect(fieldValue("Début — date")).toBe("2026-10-01");
+    closePanel();
+    await click(todayButton());
+    expect(lastAgendaRange()).toBe("2026-09-28..2026-10-04");
+    expect(onToday()).toBe(true);
+  });
+
+  it.each([1_000, 3_000, 30_000])(
+    "D. small skew (%i ms): no trust window lets the old date through",
+    async (skew) => {
+      // The last answer arrives one second before midnight on a device that
+      // is `skew` late.
+      startAt(at("2026-10-01T21:59:59Z"), -skew);
+      await renderAgenda();
+      for (const later of [2_000, 60_000, 4 * MINUTE]) {
+        sleep(later, 0); // the device notices nothing
+        await click(button(/Nouveau rendez-vous/));
+        expect(fieldValue("Date")).toBe("2026-10-02");
+        closePanel();
+      }
+    },
+  );
+
+  it("E. sleep: timers and the monotonic clock stopped; the action after wake-up validates", async () => {
+    await renderAgenda();
+    sleep(9 * HOUR);
+    // No event has reached the page yet.
+    await click(button(/Bloquer un créneau/));
+    expect(fieldValue("Début — date")).toBe("2026-10-02");
+  });
+});
+
+describe("display: suspended tabs and delayed timers", () => {
+  it("8. hidden at midnight, visible the next day: asked once, when it comes back", async () => {
+    await renderAgenda();
+    setVisibility("hidden");
+    await pass(20 * MINUTE); // through midnight: timers fire, nobody is looking
+    sleep(9 * HOUR);
+    expect(todayCalls()).toBe(1);
+
+    setVisibility("visible");
+    await flush();
+    expect(todayCalls()).toBe(2);
+    expect(onToday()).toBe(false);
+  });
+
   it("9. device asleep (no timer ran), window focused the next day", async () => {
     await renderAgenda();
-    sleepUntil("2026-10-05T07:00:00Z");
-    expect(todayCalls()).toBe(0);
+    sleep(9 * HOUR);
+    expect(todayCalls()).toBe(1);
 
     act(() => {
       window.dispatchEvent(new Event("focus"));
     });
     await flush();
-    expect(todayCalls()).toBe(1);
-    expect(todayButton().disabled).toBe(false);
+    expect(todayCalls()).toBe(2);
+    expect(onToday()).toBe(false);
   });
 
-  it("10. timer never fired and no event: the action itself checks first", async () => {
+  it("back two days later: one request for the display, the right week on Aujourd’hui", async () => {
     await renderAgenda();
-    sleepUntil("2026-10-04T22:00:05Z"); // Monday 00:00:05, nothing ran
-    // The stale date still looks current on screen…
-    expect(todayButton().disabled).toBe(true);
-
-    // …but a creation asks PostgreSQL before choosing a day.
-    await click(button(/Nouveau rendez-vous/));
-    expect(todayCalls()).toBe(1);
-    expect(fieldValue("Date")).toBe("2026-09-28"); // never Sunday 4 Oct
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(todayButton().disabled).toBe(false);
-  });
-
-  it("back two days later: one request, the right week", async () => {
-    await renderAgenda();
-    sleepUntil("2026-10-06T15:00:00Z"); // Tuesday 6 Oct
+    sleep(41 * HOUR); // Tuesday 6 Oct
     setVisibility("visible");
     await flush();
-    expect(todayCalls()).toBe(1);
+    expect(todayCalls()).toBe(2);
 
-    await click(button(/Bloquer un créneau/));
-    expect(fieldValue("Début — date")).toBe("2026-09-28");
-    fireEvent.keyDown(document, { key: "Escape" });
     await click(todayButton());
+    expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
     await click(button(/Nouveau rendez-vous/));
     expect(fieldValue("Date")).toBe("2026-10-06");
-    expect(todayCalls()).toBe(1);
   });
 });
 
 describe("the business time zone decides, as PostgreSQL resolves it", () => {
   it("11. Vancouver business on a Kiritimati device", async () => {
     businessZone = "America/Vancouver";
-    vi.setSystemTime(new Date("2026-10-05T06:50:00Z")); // Sunday 4 Oct, 23:50 PDT
+    startAt(at("2026-10-05T06:50:00Z")); // Sunday 4 Oct, 23:50 PDT
     await renderAgenda();
     expect(lastAgendaRange()).toBe("2026-09-28..2026-10-04");
     expect(new Date().getDate()).toBe(5); // the device is already on Monday evening
 
     await click(button(/Nouveau rendez-vous/));
     expect(fieldValue("Date")).toBe("2026-10-04");
-    fireEvent.keyDown(document, { key: "Escape" });
+    closePanel();
 
     await pass(11 * MINUTE); // Vancouver midnight is 07:00Z
-    expect(todayCalls()).toBe(1);
     await click(todayButton());
     expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
   });
@@ -353,40 +477,35 @@ describe("the business time zone decides, as PostgreSQL resolves it", () => {
   it("tzdata divergence: the date changes when PostgreSQL says so, not when the runtime's rules would", async () => {
     // PostgreSQL ends Sunday one hour later than this runtime's tzdata would
     // (the Vancouver case of docs/ARCHITECTURE.md §8).
-    const pg = { date: "2026-10-04", endsAt: "2026-10-04T23:00:00.000Z" };
-    actions.getAgendaAction.mockImplementation(
-      async ({ startDate, endDate }) => {
-        const data = agenda(startDate, endDate);
-        data.today = pg.date;
-        data.workingHours.days.find((day) => day.date === pg.date)!.endsAt =
-          pg.endsAt;
-        return ok(data);
-      },
+    const postgres = () =>
+      server.now < at("2026-10-04T23:00:00Z")
+        ? { date: "2026-10-04", endsAt: "2026-10-04T23:00:00.000Z" }
+        : { date: "2026-10-05", endsAt: "2026-10-05T23:00:00.000Z" };
+    actions.getAgendaTodayAction.mockImplementation(async () =>
+      ok({ ...postgres(), now: new Date(server.now).toISOString() }),
     );
-    const view = render(<AgendaView today={pg} slug="studio-mila" />);
-    await flush();
-    actions.getAgendaTodayAction.mockResolvedValue(
-      ok({ date: "2026-10-05", endsAt: "2026-10-05T23:00:00.000Z" }),
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok({ ...agenda(startDate, endDate), today: postgres().date }),
     );
+    await renderAgenda();
 
     await pass(40 * MINUTE); // 22:30Z: Monday for Intl, still Sunday for PostgreSQL
-    expect(todayCalls()).toBe(0);
+    expect(todayCalls()).toBe(1);
+    expect(onToday()).toBe(true);
     await click(button(/Bloquer un créneau/));
     expect(fieldValue("Début — date")).toBe("2026-10-04");
-    fireEvent.keyDown(document, { key: "Escape" });
+    closePanel();
 
     await pass(31 * MINUTE); // 23:01Z
-    expect(todayCalls()).toBe(1);
-    expect(todayButton().disabled).toBe(false);
-    view.unmount();
+    expect(onToday()).toBe(false);
   });
 });
 
-describe("network failure while refreshing", () => {
+describe("network failure", () => {
   beforeEach(() => {
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
-      ok(
-        agenda(startDate, endDate, {
+      ok({
+        ...agenda(startDate, endDate, {
           appointments: [
             appointment({
               startsAt: "2026-10-02T08:00:00.000Z",
@@ -394,97 +513,287 @@ describe("network failure while refreshing", () => {
             }),
           ],
         }),
-      ),
+        today: pgToday().date,
+      }),
     );
-    // The request itself fails in transport (the probe finds no network).
-    actions.getAgendaTodayAction.mockRejectedValue(new TypeError("offline"));
   });
 
   it("12. keeps the agenda and its data, invents no date, never claims an expired session", async () => {
     await renderAgenda();
+    // The request itself fails in transport (the probe finds no network).
+    actions.getAgendaTodayAction.mockRejectedValue(new TypeError("offline"));
     await pass(11 * MINUTE);
-    expect(todayCalls()).toBeGreaterThan(0);
 
     expect(screen.getAllByText(/Camille Roux/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Session expirée/)).toBeNull();
     expect(screen.queryByRole("link", { name: "Me reconnecter" })).toBeNull();
     expect(actions.getAgendaAction).toHaveBeenCalledTimes(1);
+    expect(onToday()).toBe(false); // uncertain: nothing shown as today
 
     // An action that needs today reports the failure instead of guessing.
     await click(button(/Nouveau rendez-vous/));
     expect(dialog()).toBeNull();
     expect(screen.getByText(/Connexion/)).toBeTruthy();
-    const retry = screen.getByRole("button", { name: "Réessayer" });
-
-    // Aujourd’hui is not stuck disabled on the old date, and does not move
-    // anywhere without an answer.
-    expect(todayButton().disabled).toBe(false);
     await click(todayButton());
     expect(lastAgendaRange()).toBe("2026-09-28..2026-10-04");
+    const retry = screen.getByRole("button", { name: "Réessayer" });
 
     actions.getAgendaTodayAction.mockImplementation(async () => ok(pgToday()));
-    await click(screen.getByRole("button", { name: "Réessayer" }));
-    expect(retry.isConnected).toBe(false);
+    await click(retry);
+    expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
     expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
   });
 
-  it("12. retries by itself with a growing delay, not in a loop", async () => {
+  it("12. the display retries by itself with a growing delay, not in a loop", async () => {
     await renderAgenda();
+    actions.getAgendaTodayAction.mockRejectedValue(new TypeError("offline"));
     await pass(10 * MINUTE + 30 * MINUTE); // half an hour offline after midnight
-    // At 0 s, then after 30 s, 60 s, 120 s, 240 s, 480 s, 600 s…: at most
-    // 7 attempts in 30 minutes (60 clock ticks).
-    expect(todayCalls()).toBeGreaterThanOrEqual(5);
-    expect(todayCalls()).toBeLessThanOrEqual(7);
+    // At 0 s, then after 30 s, 60 s, 120 s, 240 s, 480 s, 600 s…
+    const offline = todayCalls() - 1;
+    expect(offline).toBeGreaterThanOrEqual(5);
+    expect(offline).toBeLessThanOrEqual(7);
 
     actions.getAgendaTodayAction.mockImplementation(async () => ok(pgToday()));
     await pass(11 * MINUTE);
     const settled = todayCalls();
     await pass(20 * MINUTE);
     expect(todayCalls()).toBe(settled);
-    expect(todayButton().disabled).toBe(false);
+    expect(onToday()).toBe(false); // Monday, known again
+    await click(todayButton());
+    expect(onToday()).toBe(true);
+  });
+});
+
+describe("a pending action never overrides what the user did since", () => {
+  const loaded = appointment({
+    startsAt: "2026-10-01T08:00:00.000Z",
+    endsAt: "2026-10-01T09:15:00.000Z",
+    version: 2,
+    internalNotes: "Allergie colle",
+  });
+  const formation = block({
+    from: "2026-09-30T12:30",
+    to: "2026-09-30T15:00",
+    version: 4,
+  });
+
+  beforeEach(() => {
+    startAt(THURSDAY_2350);
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok({
+        ...agenda(startDate, endDate, {
+          appointments: [loaded],
+          blocks: [formation],
+        }),
+        today: pgToday().date,
+      }),
+    );
+  });
+
+  it("Codex: block creation pending → open appointment → Modifier → type a note → today answers", async () => {
+    await renderAgenda();
+    const today = holdToday();
+
+    fireEvent.click(button(/Bloquer un créneau/)); // waits for today
+    expect(waiting()).toBe(true);
+
+    await click(screen.getByRole("button", { name: /Camille Roux/ }));
+    await click(within(dialog()!).getByRole("button", { name: "Modifier" }));
+    const note = within(dialog()!).getByLabelText(/Note interne/);
+    fireEvent.change(note, { target: { value: "Allergie colle + latex" } });
+
+    await today.release();
+
+    expect(screen.getByRole("dialog", { name: "Modifier le rendez-vous" }));
+    expect(fieldValue(/Note interne/)).toBe("Allergie colle + latex");
+    expect(within(dialog()!).queryByLabelText("Début — date")).toBeNull();
+    expect(
+      screen.queryByRole("dialog", { name: "Bloquer un créneau" }),
+    ).toBeNull();
+    expect(waiting()).toBe(false);
+  });
+
+  it("appointment creation pending → open a block for editing", async () => {
+    await renderAgenda();
+    const today = holdToday();
+    fireEvent.click(button(/Nouveau rendez-vous/));
+
+    await click(screen.getByRole("button", { name: /Bloqué · Formation/ }));
+    fireEvent.change(within(dialog()!).getByLabelText(/Motif/), {
+      target: { value: "Formation cils" },
+    });
+    await today.release();
+
+    expect(screen.getByRole("dialog", { name: "Créneau bloqué" }));
+    expect(fieldValue(/Motif/)).toBe("Formation cils");
+    expect(
+      screen.queryByRole("dialog", { name: "Nouveau rendez-vous" }),
+    ).toBeNull();
+  });
+
+  it("pending → open details only", async () => {
+    await renderAgenda();
+    const today = holdToday();
+    fireEvent.click(button(/Bloquer un créneau/));
+    await click(screen.getByRole("button", { name: /Camille Roux/ }));
+    await today.release();
+    expect(screen.getByRole("dialog", { name: "Rendez-vous" }));
+  });
+
+  it("pending → a panel opened then closed: nothing reopens", async () => {
+    await renderAgenda();
+    const today = holdToday();
+    fireEvent.click(button(/Nouveau rendez-vous/));
+    await click(screen.getByRole("button", { name: /Camille Roux/ }));
+    closePanel();
+    await flush();
+    expect(dialog()).toBeNull();
+
+    await today.release();
+    expect(dialog()).toBeNull();
+    expect(waiting()).toBe(false);
+  });
+
+  it("pending → creation at an explicit time on the grid", async () => {
+    await renderAgenda();
+    const today = holdToday();
+    fireEvent.click(button(/Bloquer un créneau/));
+
+    const column = screen
+      .getAllByRole("group", { name: "mercredi 30 septembre 2026" })
+      .flatMap((group) => [group, ...group.querySelectorAll("div")])
+      .find((element) => {
+        fireEvent.click(element);
+        return dialog() !== null;
+      });
+    expect(column).toBeTruthy();
+    await flush();
+    expect(screen.getByRole("dialog", { name: "Nouveau rendez-vous" }));
+    expect(fieldValue("Date")).toBe("2026-09-30");
+
+    await today.release();
+    expect(screen.getByRole("dialog", { name: "Nouveau rendez-vous" }));
+    expect(fieldValue("Date")).toBe("2026-09-30");
+  });
+
+  it("two pending actions: only the last one runs", async () => {
+    await renderAgenda();
+    const today = holdToday();
+    fireEvent.click(button(/Bloquer un créneau/));
+    fireEvent.click(button(/Nouveau rendez-vous/));
+    await today.release();
+
+    expect(screen.getByRole("dialog", { name: "Nouveau rendez-vous" }));
+    expect(
+      screen.queryByRole("dialog", { name: "Bloquer un créneau" }),
+    ).toBeNull();
+    expect(today.held).toHaveLength(1); // one shared request
+  });
+
+  it("pending Aujourd’hui → the user changes week: the navigation wins", async () => {
+    await renderAgenda();
+    const today = holdToday();
+    fireEvent.click(todayButton());
+    await click(button("Semaine précédente"));
+    expect(lastAgendaRange()).toBe("2026-09-21..2026-09-27");
+
+    await today.release();
+    expect(lastAgendaRange()).toBe("2026-09-21..2026-09-27");
+  });
+
+  it("pending creation → the user changes week: no form appears later", async () => {
+    await renderAgenda();
+    const today = holdToday();
+    fireEvent.click(button(/Nouveau rendez-vous/));
+    await click(button("Semaine suivante"));
+    await today.release();
+    expect(dialog()).toBeNull();
+  });
+
+  it("a very late answer after navigation: no form, no error, no jump", async () => {
+    await renderAgenda();
+    const today = holdToday();
+    fireEvent.click(button(/Bloquer un créneau/));
+    await click(button("Semaine suivante"));
+    expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
+
+    await pass(TODAY_TIMEOUT_MS + 1_000); // the request is given up
+    expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
+    await today.release(0); // …and answers at last
+    expect(dialog()).toBeNull();
+    expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
+  });
+
+  it("a failure of a superseded action is not reported either", async () => {
+    await renderAgenda();
+    const today = holdToday();
+    fireEvent.click(button(/Nouveau rendez-vous/));
+    await click(screen.getByRole("button", { name: /Camille Roux/ }));
+    today.held[0]!({ ok: false, error: { code: "internal", message: "x" } });
+    await flush();
+    expect(screen.getByRole("dialog", { name: "Rendez-vous" }));
+    expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
   });
 });
 
 describe("a request that never answers", () => {
-  it("does not hang the action: error after the deadline, and the late answer still counts", async () => {
-    let answer!: (value: unknown) => void;
-    actions.getAgendaTodayAction.mockImplementation(
-      () => new Promise((resolve) => (answer = resolve)),
-    );
+  it("does not hang the action: error at the deadline; its late answer is ignored; retry works", async () => {
+    startAt(THURSDAY_2350);
     await renderAgenda();
-    sleepUntil("2026-10-04T22:00:05Z");
+    const today = holdToday();
 
     fireEvent.click(button(/Nouveau rendez-vous/));
     await pass(TODAY_TIMEOUT_MS - 1_000);
-    expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
+    expect(waiting()).toBe(true);
     expect(dialog()).toBeNull(); // waiting, not guessing
     await pass(1_500);
-    expect(screen.getByRole("button", { name: "Réessayer" })).toBeTruthy();
+    expect(waiting()).toBe(false);
+    const retry = screen.getByRole("button", { name: "Réessayer" });
     expect(dialog()).toBeNull();
 
-    answer(ok(pgToday()));
-    await flush();
-    expect(todayButton().disabled).toBe(false);
-    await click(todayButton());
-    expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
-    expect(todayCalls()).toBe(1);
+    await today.release(0); // the abandoned request answers: nothing happens
+    expect(dialog()).toBeNull();
+
+    await pass(15 * MINUTE); // Friday now
+    fireEvent.click(retry);
+    await today.release();
+    expect(fieldValue("Date")).toBe("2026-10-02");
+  });
+
+  it("Strict Mode: same guarantees after setup → clean-up → setup", async () => {
+    startAt(THURSDAY_2350);
+    const today = holdToday();
+    await renderAgenda(true);
+
+    fireEvent.click(button(/Nouveau rendez-vous/));
+    await pass(TODAY_TIMEOUT_MS + 1_000); // eleven seconds
+    expect(waiting()).toBe(false);
+    expect(dialog()).toBeNull();
+    const retry = screen.getByRole("button", { name: "Réessayer" });
+    // Only the screen's clock is left: no orphan deadline or boundary timer.
+    expect(vi.getTimerCount()).toBe(1);
+
+    // Nothing blocks the next actions: the retry sends a new request…
+    const asked = today.held.length;
+    fireEvent.click(retry);
+    expect(today.held.length).toBe(asked + 1);
+    await today.release();
+    expect(fieldValue("Date")).toBe("2026-10-01");
+    closePanel();
+
+    // …and so does any other action.
+    actions.getAgendaTodayAction.mockImplementation(async () => ok(pgToday()));
+    await click(button(/Bloquer un créneau/));
+    expect(fieldValue("Début — date")).toBe("2026-10-01");
   });
 });
 
 describe("concurrent refreshes and stale answers", () => {
-  function deferredToday() {
-    const resolvers: ((value: unknown) => void)[] = [];
-    actions.getAgendaTodayAction.mockImplementation(
-      () => new Promise((resolve) => resolvers.push(resolve)),
-    );
-    return resolvers;
-  }
-
-  it("13. timer, focus, visibility and a click share one request", async () => {
+  it("13. timer, focus, visibility and clicks share one request", async () => {
     await renderAgenda();
-    const pending = deferredToday();
+    const today = holdToday();
     await pass(10 * MINUTE + 1_000); // boundary timer: request in flight
-    expect(todayCalls()).toBe(1);
+    expect(today.held).toHaveLength(1);
 
     act(() => {
       window.dispatchEvent(new Event("focus"));
@@ -494,47 +803,29 @@ describe("concurrent refreshes and stale answers", () => {
     fireEvent.click(todayButton()); // exactly during the refresh
     fireEvent.click(todayButton());
     await flush();
-    expect(todayCalls()).toBe(1);
+    expect(today.held).toHaveLength(1);
     expect(lastAgendaRange()).toBe("2026-09-28..2026-10-04"); // waiting, not guessing
 
-    pending[0]!(ok(pgToday()));
-    await flush();
+    await today.release();
     expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
-    expect(todayCalls()).toBe(1);
-  });
-
-  it("13. a navigation made while waiting wins over the pending Aujourd’hui", async () => {
-    await renderAgenda();
-    const pending = deferredToday();
-    await pass(10 * MINUTE + 1_000);
-    fireEvent.click(todayButton());
-    await click(button("Semaine précédente"));
-    expect(lastAgendaRange()).toBe("2026-09-21..2026-09-27");
-
-    pending[0]!(ok(pgToday()));
-    await flush();
-    expect(lastAgendaRange()).toBe("2026-09-21..2026-09-27");
-    expect(todayButton().disabled).toBe(false);
+    expect(today.held).toHaveLength(1);
   });
 
   it("13. an answer older than what an agenda read already brought is ignored", async () => {
     await renderAgenda();
-    const pending = deferredToday();
-    await pass(10 * MINUTE + 1_000); // refresh asked first, still pending
+    const today = holdToday();
+    const sunday = pgToday();
+    await pass(10 * MINUTE + 1_000); // asked at the boundary, still pending
 
-    // The agenda read of the next week comes back first, with Monday and its
-    // real bounds.
+    // The agenda read of the next week comes back first, saying Monday.
     await click(button("Semaine suivante"));
     expect(lastAgendaRange()).toBe("2026-10-05..2026-10-11");
-    expect(todayButton().disabled).toBe(true);
+    expect(onToday()).toBe(true);
 
     // The older answer finally arrives, saying Sunday.
-    pending[0]!(ok({ date: "2026-10-04", endsAt: "2026-10-04T22:00:00.000Z" }));
+    today.held[0]!(ok(sunday));
     await flush();
-    expect(todayButton().disabled).toBe(true); // still Monday
-    await click(button(/Nouveau rendez-vous/));
-    expect(fieldValue("Date")).toBe("2026-10-05");
-    expect(todayCalls()).toBe(1);
+    expect(onToday()).toBe(true); // still Monday
   });
 });
 
@@ -542,27 +833,25 @@ describe("clean-up", () => {
   it("14. removes its listeners and timers, and ignores an answer after unmount", async () => {
     const added: string[] = [];
     const removed: string[] = [];
-    const spies = [document, window].flatMap((target) => [
-      vi
-        .spyOn(target, "addEventListener")
-        .mockImplementation((type: string) => void added.push(type)),
-      vi
-        .spyOn(target, "removeEventListener")
-        .mockImplementation((type: string) => void removed.push(type)),
-    ]);
+    [document, window].forEach((target) => {
+      vi.spyOn(target, "addEventListener").mockImplementation(
+        (type: string) => void added.push(type),
+      );
+      vi.spyOn(target, "removeEventListener").mockImplementation(
+        (type: string) => void removed.push(type),
+      );
+    });
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    let resolve!: (value: unknown) => void;
-    actions.getAgendaTodayAction.mockImplementation(
-      () => new Promise((done) => (resolve = done)),
-    );
 
     const view = await renderAgenda();
+    const today = holdToday();
     const wake = ["visibilitychange", "focus", "pageshow"];
     expect(added.filter((type) => wake.includes(type)).sort()).toEqual(
       [...wake].sort(),
     );
     await pass(10 * MINUTE + 1_000);
-    expect(todayCalls()).toBe(1);
+    fireEvent.click(button(/Nouveau rendez-vous/));
+    expect(today.held).toHaveLength(1);
 
     view.unmount();
     expect(removed.filter((type) => wake.includes(type)).sort()).toEqual(
@@ -570,13 +859,11 @@ describe("clean-up", () => {
     );
     expect(vi.getTimerCount()).toBe(0);
 
-    resolve(ok(pgToday()));
-    sleepUntil("2026-10-06T10:00:00Z");
+    await today.release(0);
+    sleep(40 * HOUR);
     await pass(MINUTE);
-    expect(todayCalls()).toBe(1);
+    expect(today.held).toHaveLength(1);
     expect(errors).not.toHaveBeenCalled();
-    spies.forEach((spy) => spy.mockRestore());
-    errors.mockRestore();
   });
 });
 
@@ -586,16 +873,17 @@ describe("phone (one day on screen)", () => {
   it("day view, week strip, Aujourd’hui and creation after midnight", async () => {
     await renderAgenda();
     expect(lastAgendaRange()).toBe("2026-10-04..2026-10-04");
-    expect(todayButton().disabled).toBe(true);
+    expect(onToday()).toBe(true);
 
     await pass(11 * MINUTE);
-    expect(todayCalls()).toBe(1);
-    expect(todayButton().disabled).toBe(false);
+    expect(onToday()).toBe(false);
 
     // The day on screen is the default of a creation, whatever today is.
+    const asked = todayCalls();
     await click(button(/Nouveau rendez-vous/));
     expect(fieldValue("Date")).toBe("2026-10-04");
-    fireEvent.keyDown(document, { key: "Escape" });
+    expect(todayCalls()).toBe(asked);
+    closePanel();
 
     await click(todayButton());
     expect(lastAgendaRange()).toBe("2026-10-05..2026-10-05");
@@ -612,21 +900,34 @@ describe("phone (one day on screen)", () => {
 
     await click(button(/Nouveau rendez-vous/));
     expect(fieldValue("Date")).toBe("2026-10-05");
-    fireEvent.keyDown(document, { key: "Escape" });
+    closePanel();
     await click(button(/Bloquer un créneau/));
     expect(fieldValue("Début — date")).toBe("2026-10-05");
-    expect(todayCalls()).toBe(1);
   });
 
-  it("left open over midnight, back in the app the next morning", async () => {
+  it("left open over midnight on a device that is late, back the next morning", async () => {
+    startAt(SUNDAY_2350, -30 * MINUTE);
     await renderAgenda();
     setVisibility("hidden");
-    sleepUntil("2026-10-05T06:30:00Z"); // Monday 08:30, no timer ran
+    sleep(9 * HOUR); // Monday 08:50 on the server
     setVisibility("visible");
     await flush();
+    expect(onToday()).toBe(false);
 
-    expect(todayCalls()).toBe(1);
     await click(todayButton());
     expect(lastAgendaRange()).toBe("2026-10-05..2026-10-05");
+  });
+
+  it("pending Aujourd’hui → creation on the day shown: the form stays, the day does not jump", async () => {
+    await renderAgenda();
+    await pass(11 * MINUTE);
+    const today = holdToday();
+    fireEvent.click(todayButton());
+    await click(button(/Nouveau rendez-vous/)); // explicit day: opens at once
+    expect(fieldValue("Date")).toBe("2026-10-04");
+
+    await today.release();
+    expect(fieldValue("Date")).toBe("2026-10-04");
+    expect(lastAgendaRange()).toBe("2026-10-04..2026-10-04");
   });
 });

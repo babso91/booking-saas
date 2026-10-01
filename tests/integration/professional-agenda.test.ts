@@ -1428,9 +1428,9 @@ describe("blocks", () => {
 // ---------------------------------------------------------------------------
 
 describe("today", () => {
-  // What the agenda asks again after midnight, instead of working the next
-  // date out in the browser.
-  it("is PostgreSQL's date in the business time zone, with the instant it ends", async () => {
+  // What the agenda asks before any action that depends on today, instead
+  // of trusting the device clock or working the next date out in the browser.
+  it("is PostgreSQL's date in the business time zone, with the instant it ends and the server instant", async () => {
     const read = async (timezone: string) => {
       const { rows } = await db.query<{ date: string; ends_at: Date }>(
         `select private.local_date_of(now(), $1)::text as date,
@@ -1448,12 +1448,21 @@ describe("today", () => {
     for (const timezone of ["Pacific/Kiritimati", "Pacific/Pago_Pago"]) {
       await newAgenda({ timezone });
       const before = await read(timezone);
-      const today = ok(await getAgendaTodayAction());
+      const sentAt = Date.now();
+      const { now, ...today } = ok(await getAgendaTodayAction());
+      const receivedAt = Date.now();
       const after = await read(timezone);
 
       // (`before` and `after` differ only if midnight passed in between.)
       expect([before, after]).toContainEqual(today);
-      expect(Date.parse(today.endsAt)).toBeGreaterThan(Date.now() - 60_000);
+      // The server instant of the answer: what the date's remaining time is
+      // measured from.
+      expect(Date.parse(now)).toBeGreaterThanOrEqual(sentAt);
+      expect(Date.parse(now)).toBeLessThanOrEqual(receivedAt);
+      expect(Date.parse(today.endsAt) - Date.parse(now)).toBeGreaterThan(0);
+      expect(Date.parse(today.endsAt) - Date.parse(now)).toBeLessThanOrEqual(
+        24 * 3_600_000,
+      );
       dates.push(today.date);
     }
     expect(dates[0]! > dates[1]!).toBe(true);

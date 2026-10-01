@@ -31,7 +31,6 @@ import { callAction, type UiError } from "@/features/auth/client/call-action";
 import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
-import type { BusinessTodayDto } from "@/lib/time/business-time";
 
 import {
   dayNumber,
@@ -79,34 +78,32 @@ const DEFAULT_TIME = "09:00";
  * Writes are never applied optimistically: the server's answer updates the
  * open panel and the visible range is reloaded.
  *
- * "Today" is always PostgreSQL's date for the business (useCanonicalToday):
- * once the day it gave has ended, anything that depends on today — the
- * Aujourd’hui button, the default day of a new appointment or block — asks
- * again first, and reports an error rather than guessing a date.
+ * "Today" is always PostgreSQL's date for the business (useCanonicalToday).
+ * Anything that depends on it — the Aujourd’hui button, the default day of
+ * a new appointment or block in the week view — asks PostgreSQL first and
+ * reports an error rather than guessing a date; the date kept on screen is
+ * only used for display (highlight, "now" line).
  */
 export function AgendaView({
   today: initialToday,
   slug,
 }: {
-  /** The business's date today and the instant it ends, from PostgreSQL. */
-  today: BusinessTodayDto;
+  /** The business's date today, from PostgreSQL. */
+  today: string;
   slug: string;
 }) {
   const wide = useMediaQuery("(min-width: 768px)");
   const view: View = wide ? "week" : "day";
   const clock = useSyncExternalStore(subscribeClock, clockBucket, () => 0);
 
-  const canonical = useCanonicalToday(
-    initialToday,
-    clock ? clock * 30_000 : null,
-  );
+  const canonical = useCanonicalToday(initialToday, clock);
 
-  const [anchor, setAnchor] = useState(initialToday.date);
+  const [anchor, setAnchor] = useState(initialToday);
   const [includeCancelled, setIncludeCancelled] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [failed, setFailed] = useState<Failed | null>(null);
-  const [panel, setPanel] = useState<Panel | null>(null);
+  const [panel, setPanelState] = useState<Panel | null>(null);
   const [services, setServices] = useState<ServicesState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [todayFailure, setTodayFailure] = useState<TodayFailure | null>(null);
@@ -154,9 +151,10 @@ export function AgendaView({
   // The business zone as PostgreSQL sent it with the last agenda read: day
   // bounds and UTC offsets. Kept while the next range loads (open panels).
   const zone = useMemo(() => (loaded ? zoneOf(loaded.data) : null), [loaded]);
-  // Today as PostgreSQL gave it, or null once that day has ended and the
-  // new date is not known yet: nothing is shown as today meanwhile.
-  const today = canonical.fresh ? canonical.date : null;
+  // For display only: today as PostgreSQL gave it, or null while that day
+  // may be over and the new date is not known yet (nothing is shown as today
+  // meanwhile).
+  const today = canonical.certain ? canonical.date : null;
 
   // What an action started before an answer must see when the answer comes.
   const latest = useRef({ view, anchor, days: range.days, data });
@@ -166,31 +164,41 @@ export function AgendaView({
 
   const reload = () => setReloadToken((token) => token + 1);
 
-  /** Any explicit navigation: an action still waiting for today is dropped. */
-  function navigate(date: string) {
+  /**
+   * A newer interaction takes over: an action still waiting for today's
+   * date must not run when its answer arrives (it would replace what the
+   * user has opened or typed since), nor report its failure.
+   */
+  function supersede() {
     intent.current += 1;
     setAwaitingToday(null);
     setTodayFailure(null);
+  }
+
+  /** Every change of the panel is such an interaction: open, switch, close. */
+  function setPanel(next: Panel | null) {
+    supersede();
+    setPanelState(next);
+  }
+
+  /** So is any navigation. */
+  function navigate(date: string) {
+    supersede();
     setAnchor(date);
   }
 
   /**
-   * Runs `run` with the business's date today. Immediate while the known
-   * date is still valid; otherwise PostgreSQL is asked first. If that fails,
-   * the action is not run with a guessed date: an error offers to retry.
+   * Runs `run` with the business's date today, asked to PostgreSQL right
+   * now: the date kept on screen is never trusted for an action, whatever
+   * the device clock says. If the question fails, the action is not run
+   * with a guessed date: an error offers to retry. If the user does
+   * something else meanwhile, the action is dropped.
    */
   function withToday(run: (today: string) => void) {
-    const id = (intent.current += 1);
-    setTodayFailure(null);
-    const known = canonical.current();
-    if (known) {
-      setAwaitingToday(null);
-      run(known);
-      return;
-    }
+    supersede();
+    const id = intent.current;
     setAwaitingToday(id);
-    void canonical.refresh().then((result) => {
-      // Unmounted, or replaced by a later action or navigation.
+    void canonical.validate().then((result) => {
       if (!alive.current || id !== intent.current) return;
       setAwaitingToday(null);
       if (result.ok) run(result.data);
@@ -341,8 +349,15 @@ export function AgendaView({
               variant="secondary"
               size="md"
               onClick={() => withToday(navigate)}
-              disabled={today !== null && range.days.includes(today)}
-              className="h-10 px-3.5"
+              // Never disabled: whether today is on screen is PostgreSQL's
+              // to say, at the click. The hint below is display only.
+              data-on-today={today !== null && range.days.includes(today)}
+              className={cn(
+                "h-10 px-3.5",
+                today !== null &&
+                  range.days.includes(today) &&
+                  "text-ink-muted",
+              )}
             >
               Aujourd’hui
             </Button>

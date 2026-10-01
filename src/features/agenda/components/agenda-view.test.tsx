@@ -13,6 +13,7 @@ import {
   agenda,
   appointment,
   block,
+  businessToday,
   CLIENT_A,
   SERVICE_A,
   SERVICE_B,
@@ -82,14 +83,8 @@ function useViewport(wide: boolean) {
     }) as unknown as MediaQueryList;
 }
 
-// What the page reads from PostgreSQL: the date and the instant it ends.
-const todayOf = (date: string) => ({
-  date,
-  endsAt: agenda(date, date).workingHours.days[0]!.endsAt,
-});
-
 function renderAgenda() {
-  return render(<AgendaView today={todayOf(TODAY)} slug="studio-mila" />);
+  return render(<AgendaView today={TODAY} slug="studio-mila" />);
 }
 
 const lastCall = (mock: ReturnType<typeof vi.fn>) =>
@@ -111,6 +106,11 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-09-29T08:00:00Z")); // 10:00 in Paris
   Object.values(actions).forEach((mock) => mock.mockReset());
   actions.listAgendaServicesAction.mockResolvedValue(ok(services));
+  // PostgreSQL's date at the test clock: asked on mount and before every
+  // action that depends on today.
+  actions.getAgendaTodayAction.mockImplementation(async () =>
+    ok(businessToday()),
+  );
   useViewport(false);
 });
 
@@ -643,7 +643,7 @@ describe("existing appointment", () => {
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
       ok(agenda(startDate, endDate, { appointments: [repeated] })),
     );
-    render(<AgendaView today={todayOf("2026-10-21")} slug="studio-mila" />);
+    render(<AgendaView today="2026-10-21" slug="studio-mila" />);
     const details = await openAppointment(
       user,
       /02:30 \(heure d’été, UTC\+2\)/,
@@ -1063,7 +1063,7 @@ describe("blocks", () => {
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
       ok(agenda(startDate, endDate, { blocks: [repeated] })),
     );
-    render(<AgendaView today={todayOf("2026-10-21")} slug="studio-mila" />);
+    render(<AgendaView today="2026-10-21" slug="studio-mila" />);
     const card = await screen.findByRole("button", {
       name: "Bloqué · Heure en double, 02:30 – 02:30",
     });

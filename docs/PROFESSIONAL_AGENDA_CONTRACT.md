@@ -73,7 +73,7 @@ Le serveur ne choisit jamais un instant à la place de la professionnelle.
 | ----------------------------------- | ------------------------------------------- | --------------------------------------- |
 | `getAgendaAction(input)`            | `{ startDate, endDate, includeCancelled? }` | `AgendaDto`                             |
 | `getAgendaAppointmentAction(input)` | `{ appointmentId }`                         | `AgendaAppointmentDto`                  |
-| `getAgendaTodayAction()`            | —                                           | `{ date, endsAt }`                      |
+| `getAgendaTodayAction()`            | —                                           | `{ date, endsAt, now }`                 |
 | `listAgendaServicesAction()`        | —                                           | `{ services, bufferMinutes, currency }` |
 | `searchAgendaClientsAction(input)`  | `{ query }` (2 à 100 caractères)            | `AgendaClientDto[]` (10 au maximum)     |
 

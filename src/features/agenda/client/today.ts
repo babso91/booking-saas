@@ -1,72 +1,79 @@
-import type { AgendaDto } from "@/features/agenda/data/agenda";
 import type { BusinessTodayDto } from "@/lib/time/business-time";
 
 // "Today" of the business on a screen that stays open.
 //
-// PostgreSQL is the only authority for the business's date. The screen keeps
-// the last date it sent together with the instant that date ends, and knows
-// one thing by itself: whether that instant has passed. Once it has, the
-// date is stale and PostgreSQL is asked again — the next date is never worked
-// out here (no Intl, no time zone arithmetic, no "date + 1"). Only instants
-// are compared.
+// PostgreSQL is the only authority for the business's date, and the device
+// clock cannot certify anything about it: it may be minutes or hours off.
+//
+// - An ACTION that depends on today (the Aujourd’hui button, the default day
+//   of a creation) asks PostgreSQL every time, right before acting. Nothing
+//   kept here ever authorises it.
+// - What is kept here is a DISPLAY cache (today's highlight, the "now"
+//   line). It is timed from the server's own clock: the answer says how long
+//   the date still lasts on the server (`endsAt − now`), and the screen only
+//   measures how much time has ELAPSED since it asked. The device's wall
+//   clock is never compared with a server instant, so a wrong clock or a
+//   wrong time zone cannot keep a stale date alive or invent the next one.
+//
+// The next date is never worked out here (no Intl, no "date + 1").
+
+/** Two readings of the device, used for durations only. */
+export type Clock = {
+  /** Monotonic (performance.now): immune to clock changes, may pause in sleep. */
+  mono: number;
+  /** Wall (Date.now): keeps running in sleep, may be changed by hand. */
+  wall: number;
+};
 
 export type KnownToday = {
   /** Civil date PostgreSQL called today. */
   date: string;
-  /** Instant (ms) that date ends, or null when it was not sent. */
-  endsAt: number | null;
-  /** Device instant (ms) the answer was received; null for the page's value. */
-  receivedAt: number | null;
+  /**
+   * How long that date still lasted on the server when it answered, or null
+   * when the date is known without its end (the page's value, a date seen in
+   * an agenda read): it is then verified as soon as possible.
+   */
+  remainingMs: number | null;
+  /** Device readings when the question was SENT (so latency counts as elapsed). */
+  sent: Clock;
 };
 
 /**
- * How long an answer whose end is already behind the device clock is still
- * trusted. Only happens when the device clock runs ahead of the server's:
- * the date is PostgreSQL's all the same, and it is asked again at most once
- * per window instead of in a loop.
+ * Shortest life given to an answer. The server's clock (which timestamps
+ * `now`) and PostgreSQL's (which decides the date) can differ by a moment
+ * around midnight: without a floor the screen would ask again in a loop.
+ * Display only — actions never rely on it.
  */
-export const SKEW_TRUST_MS = 5 * 60_000;
+export const MIN_REMAINING_MS = 5_000;
 
-export function knownFrom(
-  today: BusinessTodayDto,
-  receivedAt: number | null,
-): KnownToday {
-  return { date: today.date, endsAt: Date.parse(today.endsAt), receivedAt };
+export function unverified(date: string): KnownToday {
+  return { date, remainingMs: null, sent: { mono: 0, wall: 0 } };
 }
 
-/** Instant (ms) until which `known` can be used without asking again. */
-export function freshUntil(known: KnownToday): number {
-  if (known.endsAt === null) return known.receivedAt ?? 0;
-  if (known.receivedAt !== null && known.endsAt <= known.receivedAt) {
-    return known.receivedAt + SKEW_TRUST_MS;
-  }
-  return known.endsAt;
-}
-
-export function isFresh(known: KnownToday, now: number) {
-  return now < freshUntil(known);
+export function anchored(today: BusinessTodayDto, sent: Clock): KnownToday {
+  return {
+    date: today.date,
+    remainingMs: Math.max(
+      Date.parse(today.endsAt) - Date.parse(today.now),
+      MIN_REMAINING_MS,
+    ),
+    sent,
+  };
 }
 
 /**
- * What an agenda read says about today: its date and, when that date is one
- * of the days read, the instant it ends. Null when it adds nothing to what
- * is already known (same date, no bounds).
+ * Time elapsed since the question was sent: the larger of the two readings,
+ * so neither a sleep (monotonic clock paused) nor a clock set back by hand
+ * can hide that time has passed. Too large only asks again early.
  */
-export function knownFromAgenda(
-  data: Pick<AgendaDto, "today"> & {
-    workingHours: { days: { date: string; endsAt: string }[] };
-  },
-  current: KnownToday,
-  receivedAt: number,
-): KnownToday | null {
-  const day = data.workingHours.days.find((entry) => entry.date === data.today);
-  if (day) {
-    return { date: data.today, endsAt: Date.parse(day.endsAt), receivedAt };
-  }
-  if (data.today === current.date) return null;
-  // The date changed but its end is unknown: stale at once, so its bounds
-  // are asked for.
-  return { date: data.today, endsAt: null, receivedAt };
+export function elapsedSince(sent: Clock, clock: Clock) {
+  return Math.max(clock.mono - sent.mono, clock.wall - sent.wall);
+}
+
+/** Time left before the known date ends on the server; null when unverified. */
+export function msUntilEnd(known: KnownToday, clock: Clock): number | null {
+  if (known.remainingMs === null) return null;
+  return known.remainingMs - elapsedSince(known.sent, clock);
 }
 
 /** Wait before asking again after `failures` failed attempts in a row. */
