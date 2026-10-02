@@ -135,47 +135,150 @@ async function readFailure(
   }
 }
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DATE_TIME =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;
+  /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-](\d{2}):(\d{2}))?$/;
 
-/** An event bound: a date (all-day) or a date-time, never both or neither. */
-function validBound(value: unknown) {
+const EVENT_STATUSES = new Set(["confirmed", "tentative", "cancelled"]);
+const TRANSPARENCIES = new Set(["opaque", "transparent"]);
+const RESPONSE_STATUSES = new Set([
+  "needsAction",
+  "declined",
+  "tentative",
+  "accepted",
+]);
+
+/**
+ * A real calendar date (no 2026-02-30). Plain calendar arithmetic: the
+ * zone-dependent projection of a date stays PostgreSQL's.
+ */
+function isCalendarDate(value: string) {
+  const match = DATE.exec(value);
+  if (!match) return false;
+  const [year, month, day] = [match[1], match[2], match[3]].map(Number) as [
+    number,
+    number,
+    number,
+  ];
+  if (month < 1 || month > 12 || day < 1) return false;
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** RFC 3339 date-time; `zoned`: it carries its own offset (or Z). */
+function parseDateTime(value: string) {
+  const match = DATE_TIME.exec(value);
+  if (!match || !isCalendarDate(match[1]!)) return null;
+  const [hour, minute, second] = [match[2], match[3], match[4] ?? "0"].map(
+    Number,
+  ) as [number, number, number];
+  if (hour > 23 || minute > 59 || second > 60) return null;
+  if (match[6] && (Number(match[6]) > 14 || Number(match[7]) > 59)) {
+    return null;
+  }
+  return { zoned: Boolean(match[5]) };
+}
+
+type Bound =
+  | { kind: "date"; date: string }
+  | { kind: "dateTime"; dateTime: string; zoned: boolean };
+
+/**
+ * An event bound: a real date (all-day) or a date-time, never both or
+ * neither. A date-time without offset must name its zone (Google's rule).
+ */
+function parseBound(value: unknown): Bound | null {
   if (!isRecord(value)) return null;
-  const date = value.date;
-  const dateTime = value.dateTime;
-  const timeZone = value.timeZone;
-  if (timeZone !== undefined && typeof timeZone !== "string") return null;
+  const { date, dateTime, timeZone } = value;
+  if (timeZone !== undefined && !nonEmptyString(timeZone)) return null;
   if (date !== undefined && dateTime === undefined) {
-    return typeof date === "string" && DATE.test(date) ? "date" : null;
+    return typeof date === "string" && isCalendarDate(date)
+      ? { kind: "date", date }
+      : null;
   }
   if (dateTime !== undefined && date === undefined) {
-    return typeof dateTime === "string" && DATE_TIME.test(dateTime)
-      ? "dateTime"
-      : null;
+    if (typeof dateTime !== "string") return null;
+    const parsed = parseDateTime(dateTime);
+    if (!parsed || (!parsed.zoned && timeZone === undefined)) return null;
+    return { kind: "dateTime", dateTime, zoned: parsed.zoned };
   }
   return null;
 }
 
-/** Validates one listed event (a protocol error for the whole page). */
+const optional = (value: unknown, valid: (value: unknown) => boolean) =>
+  value === undefined || valid(value);
+
+/**
+ * Validates one listed event; any anomaly is a protocol error for the
+ * whole page (never "free", never deleted): types and values of every
+ * field blocking depends on, attendees' `self` a boolean, bounds of the
+ * same kind, and a non-empty interval (end after start).
+ */
 function parseEvent(item: unknown): ProviderEvent {
   if (!isRecord(item) || !nonEmptyString(item.id)) {
     throw protocolError("Event without id");
   }
-  if (item.status !== undefined && typeof item.status !== "string") {
+  if (
+    !optional(
+      item.status,
+      (value) => typeof value === "string" && EVENT_STATUSES.has(value),
+    ) ||
+    !optional(
+      item.transparency,
+      (value) => typeof value === "string" && TRANSPARENCIES.has(value),
+    ) ||
+    !optional(item.eventType, nonEmptyString) ||
+    !optional(item.recurringEventId, nonEmptyString) ||
+    !optional(item.etag, (value) => typeof value === "string") ||
+    !optional(
+      item.updated,
+      (value) =>
+        typeof value === "string" && parseDateTime(value)?.zoned === true,
+    )
+  ) {
     throw protocolError("Malformed event");
   }
-  // A cancelled event may come back as its id only.
-  if (item.status !== "cancelled") {
-    const start = validBound(item.start);
-    const end = validBound(item.end);
-    if (!start || start !== end) throw protocolError("Malformed event bounds");
-  }
   if (
-    item.attendees !== undefined &&
-    !(Array.isArray(item.attendees) && item.attendees.every(isRecord))
+    !optional(
+      item.attendees,
+      (value) =>
+        Array.isArray(value) &&
+        value.every(
+          (attendee) =>
+            isRecord(attendee) &&
+            optional(attendee.self, (self) => typeof self === "boolean") &&
+            optional(
+              attendee.responseStatus,
+              (status) =>
+                typeof status === "string" && RESPONSE_STATUSES.has(status),
+            ),
+        ),
+    )
   ) {
     throw protocolError("Malformed event attendees");
+  }
+
+  // A cancelled event may come back as its id only.
+  if (item.status !== "cancelled") {
+    const start = parseBound(item.start);
+    const end = parseBound(item.end);
+    if (!start || !end || start.kind !== end.kind) {
+      throw protocolError("Malformed event bounds");
+    }
+    // Empty or inverted intervals. All-day: civil dates compare as
+    // strings. Timed: compared here when both carry an offset (absolute
+    // instants), otherwise by PostgreSQL in the event's zone.
+    if (
+      (start.kind === "date" &&
+        end.kind === "date" &&
+        end.date <= start.date) ||
+      (start.kind === "dateTime" &&
+        end.kind === "dateTime" &&
+        start.zoned &&
+        end.zoned &&
+        Date.parse(end.dateTime) <= Date.parse(start.dateTime))
+    ) {
+      throw protocolError("Empty or inverted event interval");
+    }
   }
   return toProviderEvent(item as GoogleEvent)!;
 }
@@ -233,7 +336,8 @@ export function toProviderEvent(event: GoogleEvent): ProviderEvent | null {
     eventType: event.eventType ?? null,
     declined: Boolean(
       event.attendees?.some(
-        (attendee) => attendee.self && attendee.responseStatus === "declined",
+        (attendee) =>
+          attendee.self === true && attendee.responseStatus === "declined",
       ),
     ),
     etag: event.etag ?? null,
@@ -336,8 +440,12 @@ export function createGoogleCalendarProvider(options: {
       const claims = decodeJwtPayload(idToken);
       const now = Date.now() / 1000;
       const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+      // OpenID Connect Core 3.1.3.7: with several audiences, azp must be
+      // present (and, when present, always be our client).
       if (
         !audience.includes(options.clientId) ||
+        !audience.every(nonEmptyString) ||
+        (audience.length > 1 && claims.azp === undefined) ||
         (claims.azp !== undefined && claims.azp !== options.clientId) ||
         (claims.iss !== "https://accounts.google.com" &&
           claims.iss !== "accounts.google.com") ||

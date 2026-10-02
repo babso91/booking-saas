@@ -44,6 +44,12 @@ export type ConnectedCalendarDto = {
   selectable: boolean;
   blocking: boolean;
   /**
+   * True once a blocking calendar completed its first full sync: before
+   * that ("activation en cours"), only the events already read block, and
+   * the UI must not present the calendar as protecting availability.
+   */
+  protecting: boolean;
+  /**
    * pending: never synced; syncing: a pass is running; synced: complete
    * copy; stale: copy kept but behind (time zone change, interrupted pass);
    * error: last pass failed, copy kept; incomplete: beyond the bounded sync,
@@ -74,9 +80,6 @@ const verifierAad = (stateHash: string) => `oauth-verifier:${stateHash}`;
 
 /** Access roles whose events can be listed (same rule as SQL). */
 const SELECTABLE_ROLES = new Set(["owner", "writer", "reader"]);
-
-/** Deadline of the remote revocation, well within the SQL window (2 min). */
-const REVOKE_BUDGET_MS = 60_000;
 
 const calendarItems = (
   calendars: {
@@ -138,6 +141,7 @@ export async function listConnectedCalendars(
     accessRole: row.access_role,
     selectable: SELECTABLE_ROLES.has(row.access_role ?? "reader"),
     blocking: row.selected_for_blocking,
+    protecting: row.selected_for_blocking && row.last_synced_at !== null,
     syncStatus: row.sync_status as ConnectedCalendarDto["syncStatus"],
     lastSyncedAt: row.last_synced_at,
     lastError: row.last_error,
@@ -405,12 +409,35 @@ export async function syncNow(
 }
 
 /**
+ * Milliseconds left to act at the provider for disconnection `generation`,
+ * or null: the window fixed when the disconnection committed is closed, or
+ * the connection was reconnected since. Checked in SQL (server clock).
+ */
+async function revocationWindow(
+  deps: CalendarDeps,
+  connectionId: string,
+  generation: string,
+): Promise<number | null> {
+  const { data, error } = await deps.admin.rpc("calendar_begin_revocation", {
+    p_connection_id: connectionId,
+    p_generation: generation,
+  });
+  if (error) throw databaseException(error);
+  return typeof data === "number" && data > 0 ? data : null;
+}
+
+/**
  * Disconnects: locally first, at once (busy periods, calendars, cursors and
  * credentials deleted; appointments untouched), then best effort at the
  * provider (channels stopped, grant revoked). Scoped to the incarnation read
- * first: it never disconnects an account connected meanwhile. Reconnection
- * is refused until the revocation ended (or two minutes), so a late
- * revocation can never hit the grant of a new connection. Idempotent.
+ * first: it never disconnects an account connected meanwhile.
+ *
+ * The remote work is authorised by the disconnection itself: one minute
+ * from its commit (revocation_authorized_until), re-checked atomically
+ * before starting and right before the revocation, whatever time this code
+ * resumes at; every provider call is bounded by that window. Reconnection
+ * stays refused one more minute, so a revocation can never reach the grant
+ * of a newer connection. Idempotent.
  */
 export async function disconnect(context: CalendarContext, deps: CalendarDeps) {
   const connection = await connectionOf(context);
@@ -445,7 +472,16 @@ export async function disconnect(context: CalendarContext, deps: CalendarDeps) {
   if (removed.refreshTokenCiphertext) {
     const provider = deps.provider(removed.provider);
     const aad = tokenAad(context.businessId, removed.provider);
-    const deadline = Date.now() + REVOKE_BUDGET_MS;
+    const window = await revocationWindow(
+      deps,
+      connection.id,
+      removed.generation,
+    );
+    if (window === null) {
+      logCalendar("revoke_skipped", { connectionId: connection.id }, "warn");
+      return { disconnected: true };
+    }
+    const deadline = Date.now() + window;
     try {
       const refreshToken = decryptSecret(
         removed.refreshTokenCiphertext,
@@ -469,8 +505,21 @@ export async function disconnect(context: CalendarContext, deps: CalendarDeps) {
         })),
         { accessToken, deadline },
       );
-      // Revoking the refresh token revokes the whole grant at Google.
-      await provider.revoke(refreshToken, { deadline });
+      // Revoking the refresh token revokes the whole grant at Google: last
+      // atomic check that this disconnection is still the current
+      // incarnation and its window still open.
+      const remaining = await revocationWindow(
+        deps,
+        connection.id,
+        removed.generation,
+      );
+      if (remaining === null) {
+        logCalendar("revoke_skipped", { connectionId: connection.id }, "warn");
+      } else {
+        await provider.revoke(refreshToken, {
+          deadline: Math.min(deadline, Date.now() + remaining),
+        });
+      }
     } catch {
       logCalendar("revoke_failed", { connectionId: connection.id }, "warn");
     }

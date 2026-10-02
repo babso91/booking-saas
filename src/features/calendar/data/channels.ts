@@ -87,18 +87,25 @@ export async function ensureChannel(pass: SyncPass): Promise<ChannelResult> {
   const provider = deps.provider(claim.provider);
   const channelId = randomUUID();
   const token = randomToken(32);
+  // The access token that created the channel, kept in memory only: if the
+  // channel cannot be recorded (claim lost, reconnection), it is stopped
+  // with the very credentials that created it, which may no longer exist
+  // in the database.
+  let watchToken: string | undefined;
   let watched;
   try {
     watched = await withAccessToken(
       deps,
       claim.connectionId,
-      (accessToken) =>
-        provider.watchEvents(
+      (accessToken) => {
+        watchToken = accessToken;
+        return provider.watchEvents(
           accessToken,
           claim.providerCalendarId,
           { id: channelId, token, address },
           { deadline: pass.deadline },
-        ),
+        );
+      },
       { generation: claim.connectionGeneration, deadline: pass.deadline },
     );
   } catch (error) {
@@ -132,7 +139,7 @@ export async function ensureChannel(pass: SyncPass): Promise<ChannelResult> {
     // Not recorded (the claim was lost, or the database failed): nobody
     // would ever stop this channel.
     await stopChannels(deps, claim.connectionId, claim.provider, [created], {
-      generation: claim.connectionGeneration,
+      accessToken: watchToken,
       deadline: pass.deadline + 5_000,
     });
     if (error) {

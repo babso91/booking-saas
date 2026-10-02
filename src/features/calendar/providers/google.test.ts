@@ -368,6 +368,11 @@ describe("toProviderEvent", () => {
   });
 });
 
+const timedBounds = {
+  start: { dateTime: "2026-10-01T10:00:00Z" },
+  end: { dateTime: "2026-10-01T11:00:00Z" },
+};
+
 describe("strict protocol", () => {
   async function token() {
     fake.setCalendars(account.sub, [
@@ -434,12 +439,139 @@ describe("strict protocol", () => {
         nextSyncToken: "s",
       },
     ],
+    ...(
+      [
+        [
+          "an empty timed interval",
+          {
+            start: { dateTime: "2026-10-01T10:00:00Z" },
+            end: { dateTime: "2026-10-01T10:00:00Z" },
+          },
+        ],
+        [
+          "an inverted timed interval (offsets)",
+          {
+            start: { dateTime: "2026-10-01T12:00:00+02:00" },
+            end: { dateTime: "2026-10-01T09:30:00Z" },
+          },
+        ],
+        [
+          "an inverted all-day interval",
+          { start: { date: "2026-10-03" }, end: { date: "2026-10-02" } },
+        ],
+        [
+          "an empty all-day interval",
+          { start: { date: "2026-10-02" }, end: { date: "2026-10-02" } },
+        ],
+        [
+          "a date that does not exist",
+          { start: { date: "2026-02-30" }, end: { date: "2026-03-01" } },
+        ],
+        [
+          "an hour out of range",
+          {
+            start: { dateTime: "2026-10-01T24:30:00Z" },
+            end: { dateTime: "2026-10-02T01:00:00Z" },
+          },
+        ],
+        [
+          "an offset out of range",
+          {
+            start: { dateTime: "2026-10-01T10:00:00+15:00" },
+            end: { dateTime: "2026-10-01T11:00:00Z" },
+          },
+        ],
+        [
+          "a date-time with neither offset nor zone",
+          {
+            start: { dateTime: "2026-10-01T10:00:00" },
+            end: { dateTime: "2026-10-01T11:00:00" },
+          },
+        ],
+        [
+          "attendee self as a string",
+          {
+            ...timedBounds,
+            attendees: [{ self: "false", responseStatus: "declined" }],
+          },
+        ],
+        [
+          "attendee self as a number",
+          {
+            ...timedBounds,
+            attendees: [{ self: 1, responseStatus: "declined" }],
+          },
+        ],
+        [
+          "an unknown response status",
+          {
+            ...timedBounds,
+            attendees: [{ self: true, responseStatus: "maybe" }],
+          },
+        ],
+        [
+          "an attendee that is not an object",
+          { ...timedBounds, attendees: ["x"] },
+        ],
+        ["an unknown status", { ...timedBounds, status: "maybe" }],
+        ["an unknown transparency", { ...timedBounds, transparency: "clear" }],
+        ["a non-string event type", { ...timedBounds, eventType: 3 }],
+        ["a malformed updated", { ...timedBounds, updated: "yesterday" }],
+        ["an empty recurringEventId", { ...timedBounds, recurringEventId: "" }],
+      ] as [string, Record<string, unknown>][]
+    ).map(
+      ([name, fields]) =>
+        [name, { items: [{ id: "e", ...fields }], nextSyncToken: "s" }] as [
+          string,
+          unknown,
+        ],
+    ),
   ])("refuses an events page with %s", async (_, body) => {
     const accessToken = await token();
     fake.failNext(isEvents, 200, 1, body);
     await expect(
       provider.listEvents(accessToken, "cal", full, null),
     ).rejects.toMatchObject({ kind: "protocol" });
+  });
+
+  it("accepts valid events: zoned local times, Apia's missing day, declined by the account", async () => {
+    const accessToken = await token();
+    fake.failNext(isEvents, 200, 1, {
+      items: [
+        {
+          id: "local",
+          start: { dateTime: "2026-10-01T10:00:00", timeZone: "Europe/Paris" },
+          end: { dateTime: "2026-10-01T11:00:00", timeZone: "Europe/Paris" },
+        },
+        // Syntactically valid; PostgreSQL decides it occupies no time.
+        {
+          id: "apia",
+          start: { date: "2011-12-30" },
+          end: { date: "2011-12-31" },
+        },
+        {
+          id: "declined",
+          ...timedBounds,
+          attendees: [
+            { self: false, responseStatus: "accepted" },
+            { self: true, responseStatus: "declined" },
+          ],
+        },
+        {
+          id: "other-declined",
+          ...timedBounds,
+          attendees: [{ self: false, responseStatus: "declined" }],
+        },
+      ],
+      nextSyncToken: "s",
+    });
+    const page = await provider.listEvents(accessToken, "cal", full, null);
+    expect(page.events.map((event) => [event.id, event.declined])).toEqual([
+      ["local", false],
+      ["apia", false],
+      ["declined", true],
+      ["other-declined", false],
+    ]);
   });
 
   it("accepts a cancelled event reduced to its id, and an empty last page", async () => {
@@ -509,9 +641,33 @@ describe("id_token claims", () => {
     ["from another issuer", { iss: "https://evil.test" }],
     ["without subject", { sub: "" }],
     ["with a non-string email", { email: 42 }],
-  ])("refuses an id_token %s", async (_, claims) => {
-    fake.idTokenClaims = claims;
-    await expect(connect()).rejects.toMatchObject({ kind: "bad_request" });
+    [
+      "with several audiences and no azp (OpenID Connect Core 3.1.3.7)",
+      { aud: ["other.apps.googleusercontent.com", "CLIENT"] },
+    ],
+  ] as [string, Record<string, unknown>][])(
+    "refuses an id_token %s",
+    async (_, claims) => {
+      fake.idTokenClaims = Array.isArray(claims.aud)
+        ? {
+            ...claims,
+            aud: (claims.aud as string[]).map((value) =>
+              value === "CLIENT" ? fake.clientId : value,
+            ),
+          }
+        : claims;
+      await expect(connect()).rejects.toMatchObject({ kind: "bad_request" });
+    },
+  );
+
+  it("accepts several audiences when azp is our client", async () => {
+    fake.idTokenClaims = {
+      aud: ["other.apps.googleusercontent.com", fake.clientId],
+      azp: fake.clientId,
+    };
+    await expect(connect()).resolves.toMatchObject({
+      account: { id: account.sub },
+    });
   });
 
   it("accepts a valid audience list and a little clock skew", async () => {

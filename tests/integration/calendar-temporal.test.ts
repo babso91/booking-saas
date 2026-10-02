@@ -10,6 +10,12 @@ import {
   everyDay,
   setWeeklyHours,
 } from "./support/fixtures";
+import {
+  closeTransaction,
+  openTransaction,
+  outcome,
+  waitUntilBlocked,
+} from "./support/transactions";
 
 // How provider events become busy periods, through the same SQL function the
 // sync uses (public.calendar_apply_events), with a fixed sync window and a
@@ -310,7 +316,7 @@ describe("idempotence, order and window", () => {
     ]);
   });
 
-  it("drops events outside the window or empty", async () => {
+  it("drops events outside the window", async () => {
     const c = await calendar({ businessZone: "UTC", calendarZone: "UTC" });
     await applied(c, [
       {
@@ -324,11 +330,6 @@ describe("idempotence, order and window", () => {
         end: { dateTime: "2031-01-01T11:00:00Z" },
       },
       {
-        id: "empty",
-        start: { dateTime: "2026-10-02T10:00:00Z" },
-        end: { dateTime: "2026-10-02T10:00:00Z" },
-      },
-      {
         id: "kept",
         start: { dateTime: "2026-10-02T10:00:00Z" },
         end: { dateTime: "2026-10-02T11:00:00Z" },
@@ -337,8 +338,16 @@ describe("idempotence, order and window", () => {
     expect((await busy(c)).map((row) => row[0])).toEqual(["kept"]);
   });
 
-  it("an unreadable or id-less event rejects the whole page (never silently dropped)", async () => {
+  it("an unreadable, empty, inverted or id-less event rejects the whole page (never silently dropped)", async () => {
     const c = await calendar({ businessZone: "UTC", calendarZone: "UTC" });
+    // A valid busy period already in the copy must survive every rejection.
+    await applied(c, [
+      {
+        id: "cached",
+        start: { dateTime: "2026-10-05T10:00:00Z" },
+        end: { dateTime: "2026-10-05T11:00:00Z" },
+      },
+    ]);
     const good = {
       id: "good",
       start: { dateTime: "2026-10-02T10:00:00Z" },
@@ -353,13 +362,37 @@ describe("idempotence, order and window", () => {
       { id: "", start: good.start, end: good.end },
       { start: good.start, end: good.end },
       { id: "no-end", start: good.start },
+      // Empty or inverted intervals, inverted civil dates, mixed bounds.
+      { id: "empty", start: good.start, end: good.start },
+      { id: "inverted", start: good.end, end: good.start },
+      allDay("inverted-day", "2026-10-03", "2026-10-02"),
+      allDay("empty-day", "2026-10-02", "2026-10-02"),
+      { id: "mixed", start: { date: "2026-10-02" }, end: good.end },
+      {
+        id: "bad-offset",
+        start: { dateTime: "2026-10-02T10:00:00+25:00" },
+        end: good.end,
+      },
     ]) {
       await expect(apply(c, [good, bad])).rejects.toMatchObject({
         message: "invalid_input",
       });
     }
-    // Nothing of the rejected pages was applied.
-    expect(await busy(c)).toEqual([]);
+    // Nothing of the rejected pages was applied, nothing was deleted.
+    expect(await busy(c)).toEqual([
+      ["cached", "2026-10-05T10:00:00.000Z", "2026-10-05T11:00:00.000Z", false],
+    ]);
+    // Even a page that would move the cached event to an empty interval.
+    await expect(
+      apply(c, [
+        {
+          id: "cached",
+          start: { dateTime: "2026-10-05T10:00:00Z" },
+          end: { dateTime: "2026-10-05T10:00:00Z" },
+        },
+      ]),
+    ).rejects.toMatchObject({ message: "invalid_input" });
+    expect((await busy(c)).map((row) => row[0])).toEqual(["cached"]);
   });
 
   it("a full sync's final sweep removes what was not seen again", async () => {
@@ -498,8 +531,8 @@ describe("calendar time zone change", () => {
       sync_token: null,
       full_generation: null,
     });
-    // The known busy periods keep blocking until re-projected.
-    expect(await busy(c)).toEqual(paris);
+    // Re-projected in the same transaction: the new zone blocks at once.
+    expect(await busy(c)).toEqual(newYork);
 
     const second = await fullSync(c, "America/New_York", events);
     expect(second).toBeGreaterThan(first);
@@ -515,6 +548,7 @@ describe("calendar time zone change", () => {
       [c.calendarId, c.claimId, rows[0]!.start.generation],
     );
     expect(stopped.rows[0]!.result.reason).toBe("timezone_changed");
+    expect(await busy(c)).toEqual(paris);
     const third = await fullSync(c, "Europe/Paris", events);
     expect(third).toBeGreaterThan(rows[0]!.start.generation);
     expect(await busy(c)).toEqual(paris);
@@ -533,5 +567,202 @@ describe("calendar time zone change", () => {
       sync_token: "sync-x",
     });
     expect(await busy(c)).toEqual(paris);
+  });
+});
+
+describe("no under-blocking while a time zone change is being resynced", () => {
+  // The full sync confirming a zone change runs after the change is known:
+  // meanwhile (status stale) the busy periods must already be those of the
+  // new zone. Business in UTC, open around the clock, 60-minute service.
+  async function fullSyncIn(c: Calendar, zone: string, events: unknown[]) {
+    const { rows } = await db.query<{ start: { generation: number } }>(
+      "select public.calendar_start_full_sync($1, $2) as start",
+      [c.calendarId, c.claimId],
+    );
+    const generation = rows[0]!.start.generation;
+    await db.query(
+      `update private.external_calendar_sync
+       set full_window_start = '2010-01-01T00:00Z', full_window_end = '2030-01-01T00:00Z'
+       where calendar_id = $1`,
+      [c.calendarId],
+    );
+    await db.query(
+      "select public.calendar_apply_events($1, $2, $3, $4, $5::jsonb)",
+      [c.calendarId, c.claimId, generation, zone, JSON.stringify(events)],
+    );
+    await db.query(
+      "select public.calendar_finish_full_sync($1, $2, $3, 'sync-x')",
+      [c.calendarId, c.claimId, generation],
+    );
+  }
+
+  async function slug(c: Calendar) {
+    const { rows } = await db.query<{ slug: string }>(
+      "select slug from public.businesses where id = $1",
+      [c.businessId],
+    );
+    return rows[0]!.slug;
+  }
+
+  const book = async (c: Calendar, startsAt: string) =>
+    outcome(
+      db.query(
+        `select * from private.create_public_booking_at($1::timestamptz, $2, $3, $4::timestamptz, 'Cliente', $5)`,
+        [NOW, await slug(c), c.serviceId, startsAt, `${randomUUID()}@x.test`],
+      ),
+    );
+
+  /** Changes the calendar zone through the calendar list (refresh). */
+  async function listReportsZone(c: Calendar, zone: string) {
+    const { rows } = await db.query<{ saved: boolean }>(
+      `select public.calendar_save_calendars(k.id, k.credential_generation,
+                jsonb_build_array(jsonb_build_object('id', 'cal', 'name', 'Travail', 'timezone', $2::text))) as saved
+       from public.calendar_connections k
+       join public.external_calendars c on c.connection_id = k.id
+       where c.id = $1`,
+      [c.calendarId, zone],
+    );
+    expect(rows[0]!.saved).toBe(true);
+  }
+
+  const events = [
+    allDay("day", "2026-10-02", "2026-10-03"),
+    {
+      id: "offset",
+      start: { dateTime: "2026-10-04T10:00:00+02:00" },
+      end: { dateTime: "2026-10-04T11:00:00+02:00" },
+    },
+  ];
+  const offsetRow = [
+    "offset",
+    "2026-10-04T08:00:00.000Z",
+    "2026-10-04T09:00:00.000Z",
+    false,
+  ];
+
+  it("Paris → New York seen in an events page: 03/10 01:00Z is blocked and refused before the resync ends", async () => {
+    const c = await calendar({
+      businessZone: "UTC",
+      calendarZone: "Europe/Paris",
+    });
+    await fullSyncIn(c, "Europe/Paris", events);
+    expect(await busy(c)).toEqual([
+      ["day", "2026-10-01T22:00:00.000Z", "2026-10-02T22:00:00.000Z", true],
+      offsetRow,
+    ]);
+    // Free under the Paris reading.
+    expect(await slots(c, "2026-10-03")).toContain("2026-10-03T01:00:00.000Z");
+
+    expect(await apply(c, [], "America/New_York")).toEqual({
+      applied: false,
+      reason: "timezone_changed",
+    });
+
+    // Stale, full sync not done yet: the New York reading already blocks.
+    const { rows } = await db.query(
+      "select sync_status from public.external_calendars where id = $1",
+      [c.calendarId],
+    );
+    expect(rows[0].sync_status).toBe("stale");
+    expect(await busy(c)).toEqual([
+      ["day", "2026-10-02T04:00:00.000Z", "2026-10-03T04:00:00.000Z", true],
+      offsetRow,
+    ]);
+    expect(await slots(c, "2026-10-03")).not.toContain(
+      "2026-10-03T01:00:00.000Z",
+    );
+    expect(await slots(c, "2026-10-02")).not.toContain(
+      "2026-10-02T23:00:00.000Z",
+    );
+    expect(await book(c, "2026-10-03T01:00:00Z")).toBe("slot_unavailable");
+    expect(await book(c, "2026-10-02T22:00:00Z")).toBe("slot_unavailable");
+
+    // The confirming full sync changes nothing.
+    await fullSyncIn(c, "America/New_York", events);
+    expect(await busy(c)).toEqual([
+      ["day", "2026-10-02T04:00:00.000Z", "2026-10-03T04:00:00.000Z", true],
+      offsetRow,
+    ]);
+  });
+
+  it("New York → Paris seen in the calendar list: 02/10 01:00Z is blocked and refused before the resync ends", async () => {
+    const c = await calendar({
+      businessZone: "UTC",
+      calendarZone: "America/New_York",
+    });
+    await fullSyncIn(c, "America/New_York", events);
+    expect(await slots(c, "2026-10-02")).toContain("2026-10-02T01:00:00.000Z");
+
+    await listReportsZone(c, "Europe/Paris");
+
+    expect(await busy(c)).toEqual([
+      ["day", "2026-10-01T22:00:00.000Z", "2026-10-02T22:00:00.000Z", true],
+      offsetRow,
+    ]);
+    expect(await slots(c, "2026-10-02")).not.toContain(
+      "2026-10-02T01:00:00.000Z",
+    );
+    expect(await slots(c, "2026-10-01")).not.toContain(
+      "2026-10-01T23:00:00.000Z",
+    );
+    expect(await book(c, "2026-10-02T01:00:00Z")).toBe("slot_unavailable");
+    expect(await book(c, "2026-10-01T22:00:00Z")).toBe("slot_unavailable");
+    // The sync was invalidated: a full sync (new generation) will confirm.
+    const { rows } = await db.query(
+      `select c.sync_status, s.sync_token from public.external_calendars c
+       join private.external_calendar_sync s on s.calendar_id = c.id where c.id = $1`,
+      [c.calendarId],
+    );
+    expect(rows[0]).toEqual({ sync_status: "stale", sync_token: null });
+  });
+
+  it("multi-day all-day events across DST and events with their own zone", async () => {
+    const c = await calendar({
+      businessZone: "UTC",
+      calendarZone: "Europe/Paris",
+    });
+    await fullSyncIn(c, "Europe/Paris", [
+      allDay("multi", "2026-10-24", "2026-11-03"),
+      allDay("tokyo", "2026-10-10", "2026-10-11", {
+        start: { date: "2026-10-10", timeZone: "Asia/Tokyo" },
+      }),
+    ]);
+    await listReportsZone(c, "America/New_York");
+    expect(await busy(c)).toEqual([
+      // Its own zone: unchanged.
+      ["tokyo", "2026-10-09T15:00:00.000Z", "2026-10-10T15:00:00.000Z", true],
+      ["multi", "2026-10-24T04:00:00.000Z", "2026-11-03T05:00:00.000Z", true],
+    ]);
+  });
+
+  it("a booking waiting on the zone change transaction sees the new projection (two real transactions)", async () => {
+    const c = await calendar({
+      businessZone: "UTC",
+      calendarZone: "Europe/Paris",
+    });
+    await fullSyncIn(c, "Europe/Paris", events);
+
+    const change = await openTransaction();
+    await change.connection.query(
+      `select public.calendar_save_calendars(k.id, k.credential_generation,
+                jsonb_build_array(jsonb_build_object('id', 'cal', 'name', 'Travail', 'timezone', 'America/New_York')))
+       from public.calendar_connections k
+       join public.external_calendars c on c.connection_id = k.id
+       where c.id = $1`,
+      [c.calendarId],
+    );
+
+    const booking = await openTransaction();
+    const pending = outcome(
+      booking.connection.query(
+        `select * from private.create_public_booking_at($1::timestamptz, $2, $3, '2026-10-03T01:00:00Z'::timestamptz, 'Cliente', $4)`,
+        [NOW, await slug(c), c.serviceId, `${randomUUID()}@x.test`],
+      ),
+    );
+    await waitUntilBlocked(booking.pid);
+    await closeTransaction(change, "commit");
+
+    expect(await pending).toBe("slot_unavailable");
+    await closeTransaction(booking, "rollback");
   });
 });

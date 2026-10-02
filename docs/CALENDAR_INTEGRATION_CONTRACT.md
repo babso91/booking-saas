@@ -1,6 +1,6 @@
 # Contrat — intégration calendrier (V1 : Google → Booking)
 
-Ce document décrit le backend de l'intégration calendrier livré par les migrations `20261003090000_calendar_inbound_sync.sql` et `20261004090000_calendar_sync_hardening.sql` (incarnations, claims, générations, fuseaux, équité). Il sert de contrat à la future UI et au déploiement.
+Ce document décrit le backend de l'intégration calendrier livré par les migrations `20261003090000_calendar_inbound_sync.sql`, `20261004090000_calendar_sync_hardening.sql` (incarnations, claims, générations, fuseaux, équité) et `20261005090000_calendar_sync_hardening_2.sql` (reprojection atomique des fuseaux, CAS des secrets, fenêtre de révocation, intervalles stricts). Il sert de contrat à la future UI et au déploiement.
 
 ## Principes
 
@@ -29,7 +29,7 @@ Index : `gist (business_id, busy_window) where busy` pour le chevauchement. La d
 - **Clé.** `CALENDAR_TOKEN_ENCRYPTION_KEY` : 32 octets en base64, présente uniquement dans l'environnement serveur. La base ne voit que du chiffré.
 - **Rotation.** Chaque chiffré porte l'identifiant de sa clé. Une rotation sûre :
   1. Mettre la nouvelle clé dans `CALENDAR_TOKEN_ENCRYPTION_KEY` et l'ancienne dans `CALENDAR_TOKEN_PREVIOUS_KEYS` (liste séparée par des virgules), puis déployer.
-  2. **Rechiffrement paresseux des deux secrets.** À chaque lecture des identifiants d'une connexion (sync, rafraîchissement de la liste, tâche périodique), si le refresh token **ou** l'access token est chiffré avec une autre clé que la clé courante, les deux sont réécrits sous la clé courante (`calendar_reencrypt_secrets`, limité à l'incarnation lue). Les refresh tokens sont donc réécrits eux aussi, sans attendre une reconnexion.
+  2. **Rechiffrement paresseux des deux secrets.** À chaque lecture des identifiants d'une connexion (sync, rafraîchissement de la liste, tâche périodique), si le refresh token **ou** l'access token est chiffré avec une autre clé que la clé courante, les deux sont réécrits sous la clé courante (`calendar_reencrypt_secrets`). L'écriture est un _compare-and-set_ sur la ligne lue (incarnation **et** `secret_version`) : si un rafraîchissement a écrit un nouveau token entre la lecture et la réécriture, le rechiffrement ne fait rien et le nouveau token, avec sa vraie expiration, reste en place. Les refresh tokens sont donc réécrits eux aussi, sans attendre une reconnexion.
   3. Vérifier qu'il ne reste aucun chiffré de l'ancienne clé : `select count(*) from private.calendar_secrets where split_part(refresh_token_ciphertext, '.', 2) = '<id>' or split_part(access_token_ciphertext, '.', 2) = '<id>'` (l'identifiant est celui affiché par `secretKey(...).id`). La tâche périodique touche chaque calendrier bloquant au moins toutes les 6 heures ; une connexion **sans calendrier bloquant** n'est lue que lorsqu'on l'utilise : il faut alors attendre ce compteur à zéro, ou demander une reconnexion.
   4. Retirer l'ancienne clé seulement quand le compteur est à zéro. Une connexion dont un secret n'est plus déchiffrable échoue (sync en `error`) : il faut la reconnecter.
 
@@ -60,7 +60,7 @@ Index : `gist (business_id, busy_window) where busy` pour le chevauchement. La d
   1. le `state` est consommé par l'utilisateur connecté (même utilisateur, non expiré, jamais utilisé) ;
   2. le business du `state` doit être celui de la session ;
   3. le code est échangé avec le vérificateur ;
-  4. l'`id_token` est contrôlé : `aud` (ou liste contenant le client) et `azp` éventuels égaux au client, `iss` Google, `sub` non vide, `exp` non dépassé et `iat` non futur (tolérance de 5 minutes), `email` éventuel de type chaîne ;
+  4. l'`id_token` est contrôlé : `aud` (chaîne, ou liste de chaînes contenant le client) ; avec plusieurs audiences, `azp` est exigé (OpenID Connect Core §3.1.3.7) ; `azp`, s'il est présent, égal au client ; `iss` Google, `sub` non vide, `exp` non dépassé et `iat` non futur (tolérance de 5 minutes), `email` éventuel de type chaîne ;
   5. les scopes sont vérifiés ;
   6. la liste des calendriers est lue ;
   7. connexion, secrets et calendriers sont enregistrés **dans une seule transaction**.
@@ -92,9 +92,40 @@ Deux identifiants rendent toute réponse tardive inoffensive. Chaque écriture l
 
   Le _single-flight_ du rafraîchissement est indexé par `(connexion, incarnation)` : un appelant d'une incarnation ne reçoit jamais le token d'une autre.
 
-- **Claim de sync** (`external_calendar_sync.claim_id`). `calendar_claim_sync` délivre un claim quand aucun bail vivant n'existe. **Le bail ne sert qu'à l'acquisition** ; l'autorité d'écrire est le claim. Pages, début et fin de full sync, fin d'incrémentale, réinitialisation du curseur, enregistrement de canal et libération exigent le claim courant, un calendrier toujours sélectionné et une connexion active. Une reconnexion, une déconnexion, une désélection (même suivie d'une resélection) ou un changement de fuseau révoquent le claim. Un worker dont le bail a expiré et qu'un autre a remplacé n'écrit donc plus rien, même s'il reçoit encore des réponses de Google ; un canal créé par lui est arrêté (`orphan`).
+  **Atomicité.** Une vérification préalable dans une autre table ne suffit pas sous READ COMMITTED : un écrivain qui a passé le contrôle puis attend un verrou écrirait après la reconnexion. Les écritures de secrets sont donc un _compare-and-set_ sur la ligne `private.calendar_secrets` elle-même, qui porte `credential_generation` et `secret_version` (`update … where credential_generation = $gen [and secret_version = $version]`, puis contrôle du nombre de lignes), précédé d'un verrou partagé sur la ligne de connexion, relue après toute attente. PostgreSQL réévalue la condition sur la version validée de la ligne : l'écrivain périmé écrit zéro ligne. Testé avec deux transactions réelles (reconnexion non validée, écrivain de l'ancienne incarnation bloqué, validation, puis `false` et secrets de B intacts) pour le rafraîchissement, le rechiffrement et `invalid_grant`, dans les deux ordres.
 
-- **Échéance globale.** Une passe de sync a une échéance absolue (budget, 25 s par défaut). Chaque appel Google, rafraîchissement compris, reçoit le temps restant : délai de tentative réduit à ce temps, aucune attente de retry au-delà, aucun appel après. Le bail dure le budget plus 30 s : une passe se termine toujours avant que son bail puisse être repris.
+  **Ordre des verrous.**
+
+  1. verrou de planning du business (consultatif, `business_schedule:<id>`) ;
+  2. ligne `calendar_connections` ;
+  3. ligne `private.calendar_secrets` ;
+  4. lignes `external_calendars` ;
+  5. lignes `private.external_calendar_sync` ;
+  6. lignes `external_calendar_events`.
+
+  | Opération                                           | 1   | 2                        | 3        | 4   | 5            | 6   |
+  | --------------------------------------------------- | --- | ------------------------ | -------- | --- | ------------ | --- |
+  | connexion, reconnexion (`calendar_save_connection`) | ✓   | `for update`             | écriture | ✓   | ✓            | ✓   |
+  | déconnexion (`calendar_disconnect`)                 | ✓   | `for update`             | suppr.   | ✓   | (cascade)    | ✓   |
+  | rafraîchissement du token                           |     | `for share`              | CAS      |     |              |     |
+  | rechiffrement (rotation)                            |     | `for share`              | CAS      |     |              |     |
+  | `invalid_grant`                                     |     | écriture CAS             | écriture |     |              |     |
+  | liste des calendriers (`calendar_save_calendars`)   | ✓   | `for update`             |          | ✓   | ✓            | ✓   |
+  | changement de fuseau (liste ou page)                | ✓   | (liste)                  |          | ✓   | ✓            | ✓   |
+  | claim (`calendar_claim_sync`)                       | ✓   |                          |          | ✓   | ✓            |     |
+  | page, fin de full sync, fin d'incrémentale          | ✓   | (fin : `last_synced_at`) |          | ✓   | `for update` | ✓   |
+  | début de full sync, reset, canal (claim vérifié)    |     |                          |          |     | `for update` |     |
+  | libération (`calendar_release_sync`)                | ✓   | (écriture `last_error`)  |          | ✓   | `for update` |     |
+  | sélection (`calendar_set_blocking`)                 | ✓   | `for update`             |          | ✓   | ✓            | ✓   |
+  | réservation, blocs, horaires                        | ✓   |                          |          |     |              |     |
+
+  Règles : (1) précède toujours tout le reste ; (2) précède toujours (3). Une transaction **sans** le verrou de planning ne prend que 2 puis 3 (token, rechiffrement, `invalid_grant`) ou une seule ligne 5 (écritures de sync à claim vérifié), et n'attend plus rien ensuite. Les lignes 4–6, ainsi que les mises à jour de la connexion en fin de passe (`last_synced_at`, `last_error`, prises après les lignes 4–5), ne sont écrites que sous le verrou de planning, qui sérialise ces transactions pour un business. Un cycle d'attente à deux transactions est donc impossible : entre deux détenteurs du verrou de planning, l'un attend l'autre sur ce verrou avant tout le reste ; un non-détenteur prend 2 puis 3, ou une seule ligne 5 ; tenant 3 ou 5, il n'attend plus rien, et tenant 2 il n'attend que 3, qu'aucun détenteur du verrou de planning ne peut tenir sans tenir déjà 2 en mode exclusif : quiconque attend un non-détenteur finit donc par passer. Les tests à deux transactions vérifient les deux ordres (écrivain d'abord, puis reconnexion ; reconnexion d'abord, puis écrivain) sans interblocage.
+
+- **Claim de sync** (`external_calendar_sync.claim_id`). `calendar_claim_sync` délivre un claim quand aucun bail vivant n'existe. **Le bail ne sert qu'à l'acquisition** ; l'autorité d'écrire est le claim. Pages, début et fin de full sync, fin d'incrémentale, réinitialisation du curseur, enregistrement de canal et libération exigent le claim courant, un calendrier toujours sélectionné et une connexion active. Une reconnexion, une déconnexion, une désélection (même suivie d'une resélection) ou un changement de fuseau révoquent le claim. Un worker dont le bail a expiré et qu'un autre a remplacé n'écrit donc plus rien, même s'il reçoit encore des réponses de Google ; un canal créé par lui est arrêté (`orphan`) **avec le token d'accès qui l'a créé**, gardé en mémoire le temps de la passe (jamais persisté) : après une reconnexion, les identifiants de l'ancienne incarnation n'existent plus en base.
+
+- **Échéance globale.** Une passe de sync a une échéance absolue (budget, 25 s par défaut). Chaque appel Google reçoit le temps restant : délai de tentative réduit à ce temps, aucune attente de retry au-delà, aucun appel après. Le bail dure le budget plus 30 s : une passe se termine toujours avant que son bail puisse être repris.
+- **Rafraîchissement partagé.** Un rafraîchissement de token est partagé par les appelants de la même incarnation et a son propre budget (30 s), indépendant de celui qui l'a lancé. Chaque appelant borne seulement **sa propre attente** à son échéance (`awaitWithDeadline`) : un worker dont le budget expire s'arrête (`stale`), le rafraîchissement continue pour les autres. Testé : rafraîchissement bloqué, worker à 1,5 s qui sort à l'heure, second appelant servi ensuite, un seul appel `/token`.
+- **Tentative de full sync et claim.** La **génération identifie la tentative logique** (sa fenêtre et son curseur de page sont persistés) ; le **claim protège les écritures de la passe en cours**. Une tentative peut donc être reprise par une autre passe, avec un autre claim, tant qu'elle a moins d'une heure. Cette heure est notre propre plafond, pas une garantie de Google sur la durée de vie d'un `pageToken` : si Google refuse le curseur repris (410 ou 400), la tentative est abandonnée sans balayage et une nouvelle full sync, avec une génération neuve, repart de la page 1.
 
 ## Token d'accès
 
@@ -121,11 +152,17 @@ Les 4xx ne sont jamais retentés. Un 403 `rateLimitExceeded` est classé `rate_l
 - le corps n'est pas un objet JSON ;
 - une page d'événements n'a pas **exactement un** de `nextPageToken` et `nextSyncToken` (`{}`, dernière page sans curseur, deux curseurs, curseur vide) ;
 - `items` n'est pas un tableau, ou un élément n'est pas un objet avec un `id` non vide ;
-- un événement non annulé n'a pas `start` et `end` du même type (`date` `AAAA-MM-JJ`, ou `dateTime` RFC 3339) ;
+- un événement non annulé n'a pas `start` et `end` du même type (`date` `AAAA-MM-JJ` existante, ou `dateTime` RFC 3339 valide : heure 00–23, minutes et secondes valides, décalage ±14:00 au plus) ;
+- un `dateTime` n'a ni décalage ni `timeZone` (règle de Google) ;
+- l'intervalle est vide ou inversé : `end ≤ start` pour deux dates civiles, ou pour deux `dateTime` avec décalage (comparés en instants) ; sans décalage, PostgreSQL fait le même contrôle dans le fuseau de l'événement ;
+- un champ dont dépend le blocage est mal typé ou inconnu : `status` (`confirmed`, `tentative`, `cancelled`), `transparency` (`opaque`, `transparent`), `eventType` (chaîne non vide ; un type inconnu bloque, sens sûr), `recurringEventId`, `etag`, `updated` (RFC 3339 avec décalage) ;
+- `attendees` n'est pas un tableau d'objets, un `self` n'est pas un booléen (`"false"` ou `1` sont refusés, jamais interprétés), ou un `responseStatus` n'est pas `needsAction`, `declined`, `tentative` ou `accepted` ;
 - la liste des calendriers est vide, malformée, ou plus longue que les 4 pages lues (une liste tronquée supprimerait des calendriers existants) ;
 - une réponse de token n'a pas d'`access_token` ou un `expires_in` invalide ; une réponse `watch` n'a pas la ressource, l'id ou l'expiration attendus.
 
-Un événement que PostgreSQL ne sait pas placer fait aussi échouer la page entière (`invalid_input`), au lieu d'être ignoré. Dans tous ces cas la passe s'arrête en `error` (`provider_protocol`) : **aucun balayage**, copie locale et curseur conservés, ancienne génération intacte.
+Un événement que PostgreSQL ne sait pas placer, ou dont l'intervalle résolu est vide ou inversé, fait aussi échouer la page entière (`invalid_input`) : jamais supprimé, jamais considéré libre. Dans tous ces cas la passe s'arrête en `error` (`provider_protocol`) : **aucun événement de la page appliqué, aucun ancien événement supprimé, aucun balayage**, copie locale et curseur conservés, ancienne génération intacte (testé avec un seul événement invalide parmi 249 valides).
+
+À distinguer : une **date civile valide qui n'existe pas localement** (Apia, 30 décembre 2011) n'est pas une erreur de protocole. Sa projection est vide et, selon la politique existante, elle n'occupe aucun temps.
 
 ## Sélection des calendriers bloquants
 
@@ -155,7 +192,7 @@ Un événement que PostgreSQL ne sait pas placer fait aussi échouer la page ent
 
 - Elle est paginée par 250 événements, avec au plus 40 pages par passe.
 - Chaque page est appliquée dans sa propre transaction, avec le curseur de page.
-- **Générations jamais réutilisées.** Une full sync qui commence en page 1 reçoit une génération neuve (`allocated_generation + 1`, jamais une valeur déjà donnée à une tentative, même abandonnée). Seule une vraie reprise (curseur de page enregistré, tentative de moins d'une heure, par le claimant) continue sa propre génération. Un curseur de page refusé (410/400), une tentative trop ancienne, un 410 sur le `syncToken`, un changement de fuseau ou une incrémentale trop longue redémarrent en page 1, avec une génération neuve.
+- **Générations jamais réutilisées.** Une full sync qui commence en page 1 reçoit une génération neuve (`allocated_generation + 1`, jamais une valeur déjà donnée à une tentative, même abandonnée). Seule une vraie reprise (curseur de page enregistré, tentative de moins d'une heure, par la passe qui détient le claim courant, quelle qu'elle soit) continue la génération de la tentative. Un curseur de page refusé (410/400), une tentative trop ancienne, un 410 sur le `syncToken`, un changement de fuseau ou une incrémentale trop longue redémarrent en page 1, avec une génération neuve.
 - À la fin, la dernière page doit porter un `nextSyncToken` (sinon : erreur de protocole). Le balayage supprime toute ligne de génération **inférieure** à celle de la tentative, donc aussi ce qu'une tentative abandonnée avait importé ; puis le curseur, la génération et la fenêtre sont enregistrés.
 - Pendant toute la full sync, les anciennes périodes continuent de bloquer : il n'y a jamais de fenêtre sans blocage.
 - Au‑delà de 40 pages, la passe s'arrête en `incomplete` (`too_many_events`) : ce qui a été lu s'ajoute à l'ancienne copie et bloque, **sans balayage** ; la passe suivante (après backoff) reprend la pagination si la tentative a moins d'une heure, sinon recommence avec une génération neuve, toujours sans balayer avant la dernière page. Une copie partielle n'est jamais `synced`.
@@ -186,7 +223,17 @@ Un événement que PostgreSQL ne sait pas placer fait aussi échouer la page ent
 - _Événements avec heure._ Un `dateTime` avec décalage ou `Z` est pris tel quel. Sans décalage, il est lu dans son `timeZone`, ou à défaut dans le fuseau du calendrier, par PostgreSQL.
 - _Événements « journée entière »._ `[start.date, end.date)`, avec une date de fin exclusive, devient `[local_day_start(start), local_day_start(end))` dans le fuseau de l'événement, sinon du calendrier, sinon du business. Une journée de 23 h, 25 h, Havana ou une date Apia inexistante (vide) sont gérées. Le fuseau du calendrier peut différer de celui du business.
 
-**Changement de fuseau du calendrier.** Le fuseau fait partie de la copie : les événements « journée entière » sont projetés dedans. Quand Google annonce un autre fuseau, par la liste des calendriers (`refresh`) ou par une page d'événements (`timeZone`), le fuseau est mis à jour, le curseur et toute full sync en cours sont effacés, le claim courant est révoqué (liste) ou la page refusée (`timezone_changed`), et le calendrier passe `stale`. Une full sync avec une génération neuve reprojette alors chaque événement « journée entière » ; les événements avec décalage explicite ne bougent pas. D'ici là, l'ancienne projection continue de bloquer. Un fuseau inconnu de PostgreSQL est ignoré.
+**Changement de fuseau du calendrier, sans sous-blocage.** Le fuseau fait partie de la copie. Chaque événement « journée entière » garde ses **dates civiles** (`all_day_start_date`, `all_day_end_date`) et son propre fuseau s'il en a un (`all_day_zone`).
+
+Quand Google annonce un autre fuseau, par la liste des calendriers (`refresh`) ou par une page d'événements (`timeZone`), **dans la même transaction, sous le verrou de planning** :
+
+1. le fuseau est mis à jour ;
+2. toutes les périodes « journée entière » qui suivent le fuseau du calendrier sont **reprojetées par PostgreSQL** dans le nouveau fuseau (`private.reproject_all_day`) ;
+3. le curseur et toute full sync en cours sont effacés, le claim révoqué (liste) ou la page refusée (`timezone_changed`), et le calendrier passe `stale`.
+
+Il n'existe donc aucun instant où une réservation verrait l'ancienne projection seule : dès que le changement est connu, les périodes bloquées sont celles du nouveau fuseau. Exemple testé : journée du 2 octobre, Paris → New York ; la projection passe de `01/10 22:00Z → 02/10 22:00Z` à `02/10 04:00Z → 03/10 04:00Z` dans la transaction de détection, et le créneau `03/10 01:00Z` n'est plus proposé ni réservable pendant `stale`. Idem New York → Paris. Une réservation qui attend le verrou pendant le changement voit la nouvelle projection (testé avec deux transactions réelles). La full sync à génération neuve qui suit ne fait que confirmer la copie.
+
+Les événements avec heure portent un instant (décalage, ou leur propre `timeZone`) et ne bougent pas ; une journée entière avec son propre fuseau non plus. Un fuseau inconnu de PostgreSQL est ignoré.
 
 **Un seul worker par calendrier.** Le bail et le claim l'assurent. Une demande qui arrive pendant une sync marque `resync_requested` : le worker refait une passe, avec 3 passes au plus. Ainsi, 50 notifications identiques coûtent quelques passes, pas 50.
 
@@ -202,6 +249,8 @@ Un événement que PostgreSQL ne sait pas placer fait aussi échouer la page ent
 | `incomplete`  | calendrier au-delà de la sync bornée (`too_many_events`)                                      | ancienne copie + pages lues, bloque, jamais balayée |
 
 La connexion a son propre statut : `active`, `reauth_required` (copie gardée, plus de sync), `disconnected` (tout supprimé).
+
+**Activation d'un calendrier bloquant.** Un calendrier tout juste sélectionné n'a, par définition, aucune copie complète antérieure : si sa première passe est `error` ou `incomplete`, seuls les événements déjà lus bloquent. Il n'est donc considéré **protecteur** qu'après sa première sync complète : le DTO expose `protecting` (`blocking` et `last_synced_at` renseigné). Une désélection remet `last_synced_at` à vide. Tant que `protecting` est faux, l'UI doit afficher « activation en cours » et ne jamais présenter l'intégration comme protégeant les disponibilités. Le produit ne bloque pas tout Booking pour autant.
 
 **Politique de disponibilité.** La disponibilité utilise toujours les périodes connues localement, quel que soit le statut : une passe qui échoue ne vide jamais la copie. Seul `synced` garantit que tous les événements de la fenêtre sont connus ; dans les autres statuts, des événements que la sync n'a pas pu lire peuvent manquer, et **rien ne prétend qu'ils sont couverts** (le statut et `last_error` l'indiquent à l'UI).
 
@@ -259,9 +308,16 @@ Google et PostgreSQL ne partagent pas de transaction. Une petite fenêtre est in
 `disconnectGoogleCalendarAction` est idempotente et limitée à l'incarnation lue au départ. Elle procède en deux temps :
 
 1. **En local, immédiatement, dans une transaction sous le verrou.** Les périodes, les calendriers, les curseurs, les canaux et les secrets sont supprimés, la connexion passe `disconnected` et reçoit une nouvelle incarnation (toute opération en cours devient sans effet). La disponibilité n'est plus bloquée et aucun rendez-vous n'est touché.
-2. **Chez Google, au mieux, en 60 s au plus.** Les canaux sont arrêtés et le refresh token est révoqué, ce qui révoque l'autorisation. Un échec est seulement journalisé, car les canaux expirent d'eux-mêmes.
+2. **Chez Google, au mieux, dans la fenêtre fixée par la déconnexion.** Les canaux sont arrêtés et le refresh token est révoqué, ce qui révoque l'autorisation. Un échec est seulement journalisé, car les canaux expirent d'eux-mêmes.
 
-**Révocation tardive.** Chez Google, révoquer un token révoque l'autorisation du compte pour l'application : une révocation qui arriverait après une reconnexion du même compte révoquerait la nouvelle. Une reconnexion est donc refusée (`calendar_disconnect_in_progress`, au démarrage comme au callback, résultat `disconnect_in_progress`) tant que la révocation est en cours : `revocation_pending_until` vaut deux minutes et est levé par `calendar_revocation_done` dès la fin de la révocation.
+**Révocation tardive.** Chez Google, révoquer un token révoque l'autorisation du compte pour l'application : une révocation qui arriverait après une reconnexion du même compte révoquerait la nouvelle. Le droit de révoquer est donc lié à la déconnexion elle-même, jamais à l'heure où le code appelant reprend la main :
+
+- la transaction de déconnexion fixe `revocation_authorized_until = commit + 1 min` et `revocation_pending_until = commit + 2 min` ;
+- `calendar_begin_revocation(id, incarnation de déconnexion)` renvoie le temps restant, mesuré par PostgreSQL, seulement si la connexion est toujours déconnectée **dans cette incarnation** (aucune reconnexion depuis) et si la fenêtre est ouverte ; sinon `null` et aucun appel Google ne part ;
+- il est vérifié avant tout appel distant, puis **une dernière fois juste avant `/revoke`** ; chaque appel est borné par cette fenêtre ;
+- une reconnexion est refusée (`calendar_disconnect_in_progress`, au démarrage comme au callback, résultat `disconnect_in_progress`) jusqu'à `revocation_pending_until`, une minute après la fin de la fenêtre ; `calendar_revocation_done` lève les deux bornes dès la fin de la révocation.
+
+Testé : réponse de la déconnexion retardée de 3 minutes, reconnexion du même compte (ou d'un autre) pendant ce délai, puis reprise de l'ancien code : aucun appel `/revoke` ni `channels/stop`.
 
 ## Server Actions (`src/features/calendar/actions/calendar.ts`)
 
@@ -277,7 +333,7 @@ Toutes dérivent l'utilisateur et le business de la session. Aucune n'accepte d'
 | `disconnectGoogleCalendarAction()`               | —                                          | `{ disconnected: true }`                                                                                                                                 |
 | `listCalendarConflictsAction({ from, to })`      | ISO 8601, 400 jours au plus                | `{ appointmentId, appointmentStartsAt, appointmentEndsAt, calendarId, eventStartsAt, eventEndsAt }[]`                                                    |
 
-`ConnectedCalendarDto` : `{ id, name, timezone, primary, accessRole, selectable, blocking, syncStatus, lastSyncedAt, lastError }`. Avec `refresh: true`, les calendriers bloquants devenus `stale` (fuseau changé) sont resynchronisés après la réponse.
+`ConnectedCalendarDto` : `{ id, name, timezone, primary, accessRole, selectable, blocking, protecting, syncStatus, lastSyncedAt, lastError }`. Avec `refresh: true`, les calendriers bloquants devenus `stale` (fuseau changé) sont resynchronisés après la réponse.
 
 **Erreurs stables :**
 
@@ -345,6 +401,12 @@ L'index GiST est utilisé dans tous les cas (aucun _Seq Scan_), et le coût d'un
 - une échéance par appel (`{ deadline }`) et des réponses validées (jamais une page ou une liste partielle).
 
 Tout ce qui est propre à Google se trouve dans `providers/google.ts`. Le domaine (sync, connexion, webhook, tâche) et les tables restent génériques : `provider` vaut `'google'` aujourd'hui. Microsoft 365 ou CalDAV s'ajouteront par un nouvel adaptateur et une valeur de `provider`.
+
+## Limites connues
+
+- **Canaux d'un compte remplacé.** Quand un autre compte remplace la connexion, les canaux de l'ancien compte ne sont pas arrêtés chez Google (ses identifiants sont remplacés dans la même transaction) : leurs notifications sont ignorées (réponse 204 uniforme) jusqu'à leur expiration (au plus 7 jours).
+- **Fuseau du business.** Un calendrier sans fuseau connu suit celui du business ; Google donne toujours un fuseau de calendrier, mais un changement du fuseau du business ne reprojette pas les journées entières de tels calendriers avant leur prochaine full sync.
+- **Fenêtre de révocation.** La révocation n'est tentée que dans la minute qui suit la déconnexion ; au-delà (serveur très lent), elle est abandonnée et l'autorisation reste valide chez Google jusqu'à ce que la professionnelle la retire elle-même.
 
 ## Évolutions prévues
 

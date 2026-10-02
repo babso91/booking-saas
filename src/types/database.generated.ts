@@ -170,13 +170,13 @@ isOneToOne: false
                   ]
                 },"calendar_connections": {
                   Row: {
-                    "account_email": string | null,"business_id": string,"connected_by": string | null,"created_at": string,"credential_generation": string,"id": string,"last_error": string | null,"last_synced_at": string | null,"provider": string,"provider_account_id": string,"revocation_pending_until": string | null,"scopes": (string)[],"status": string,"updated_at": string,"version": number
+                    "account_email": string | null,"business_id": string,"connected_by": string | null,"created_at": string,"credential_generation": string,"id": string,"last_error": string | null,"last_synced_at": string | null,"provider": string,"provider_account_id": string,"revocation_authorized_until": string | null,"revocation_pending_until": string | null,"scopes": (string)[],"status": string,"updated_at": string,"version": number
                   }
                   Insert: {
-                    "account_email"?: string | null,"business_id": string,"connected_by"?: string | null,"created_at"?: string,"credential_generation"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider": string,"provider_account_id": string,"revocation_pending_until"?: string | null,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
+                    "account_email"?: string | null,"business_id": string,"connected_by"?: string | null,"created_at"?: string,"credential_generation"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider": string,"provider_account_id": string,"revocation_authorized_until"?: string | null,"revocation_pending_until"?: string | null,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "account_email"?: string | null,"business_id"?: string,"connected_by"?: string | null,"created_at"?: string,"credential_generation"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider"?: string,"provider_account_id"?: string,"revocation_pending_until"?: string | null,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
+                    "account_email"?: string | null,"business_id"?: string,"connected_by"?: string | null,"created_at"?: string,"credential_generation"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider"?: string,"provider_account_id"?: string,"revocation_authorized_until"?: string | null,"revocation_pending_until"?: string | null,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -239,13 +239,13 @@ isOneToOne: false
                   ]
                 },"external_calendar_events": {
                   Row: {
-                    "all_day": boolean,"business_id": string,"busy": boolean,"busy_window": unknown,"ends_at": string,"external_calendar_id": string,"id": string,"provider_etag": string | null,"provider_event_id": string,"provider_recurring_event_id": string | null,"provider_updated_at": string | null,"starts_at": string,"sync_generation": number,"synced_at": string
+                    "all_day": boolean,"all_day_end_date": string | null,"all_day_start_date": string | null,"all_day_zone": string | null,"business_id": string,"busy": boolean,"busy_window": unknown,"ends_at": string,"external_calendar_id": string,"id": string,"provider_etag": string | null,"provider_event_id": string,"provider_recurring_event_id": string | null,"provider_updated_at": string | null,"starts_at": string,"sync_generation": number,"synced_at": string
                   }
                   Insert: {
-                    "all_day": boolean,"business_id": string,"busy": boolean,"busy_window"?: never,"ends_at": string,"external_calendar_id": string,"id"?: string,"provider_etag"?: string | null,"provider_event_id": string,"provider_recurring_event_id"?: string | null,"provider_updated_at"?: string | null,"starts_at": string,"sync_generation": number,"synced_at"?: string
+                    "all_day": boolean,"all_day_end_date"?: string | null,"all_day_start_date"?: string | null,"all_day_zone"?: string | null,"business_id": string,"busy": boolean,"busy_window"?: never,"ends_at": string,"external_calendar_id": string,"id"?: string,"provider_etag"?: string | null,"provider_event_id": string,"provider_recurring_event_id"?: string | null,"provider_updated_at"?: string | null,"starts_at": string,"sync_generation": number,"synced_at"?: string
                   }
                   Update: {
-                    "all_day"?: boolean,"business_id"?: string,"busy"?: boolean,"busy_window"?: never,"ends_at"?: string,"external_calendar_id"?: string,"id"?: string,"provider_etag"?: string | null,"provider_event_id"?: string,"provider_recurring_event_id"?: string | null,"provider_updated_at"?: string | null,"starts_at"?: string,"sync_generation"?: number,"synced_at"?: string
+                    "all_day"?: boolean,"all_day_end_date"?: string | null,"all_day_start_date"?: string | null,"all_day_zone"?: string | null,"business_id"?: string,"busy"?: boolean,"busy_window"?: never,"ends_at"?: string,"external_calendar_id"?: string,"id"?: string,"provider_etag"?: string | null,"provider_event_id"?: string,"provider_recurring_event_id"?: string | null,"provider_updated_at"?: string | null,"starts_at"?: string,"sync_generation"?: number,"synced_at"?: string
                   }
                   Relationships: [
                     {
@@ -457,6 +457,9 @@ isOneToOne: false
 "calendar_begin_oauth":
 { Args: { "p_business_id": string,"p_code_verifier_ciphertext": string,"p_provider": string,"p_state_hash": string }; Returns: undefined
                            },
+"calendar_begin_revocation":
+{ Args: { "p_connection_id": string,"p_generation": string }; Returns: number
+                           },
 "calendar_claim_sync":
 { Args: { "p_calendar_id": string,"p_lease_seconds"?: number }; Returns: Json
                            },
@@ -489,14 +492,14 @@ isOneToOne: false
                            },
 "calendar_read_secrets":
 { Args: { "p_connection_id": string }; Returns: {
-              "access_token_ciphertext": string,"access_token_expires_at": string,"business_id": string,"credential_generation": string,"provider": string,"refresh_token_ciphertext": string,"status": string
+              "access_token_ciphertext": string,"access_token_expires_at": string,"business_id": string,"credential_generation": string,"provider": string,"refresh_token_ciphertext": string,"secret_version": number,"status": string
             }[]
                            },
 "calendar_record_channel":
 { Args: { "p_calendar_id": string,"p_channel_id": string,"p_claim_id": string,"p_expires_at": string,"p_resource_id": string,"p_token_hash": string }; Returns: Json
                            },
 "calendar_reencrypt_secrets":
-{ Args: { "p_access_token_ciphertext": string,"p_connection_id": string,"p_generation": string,"p_refresh_token_ciphertext": string }; Returns: boolean
+{ Args: { "p_access_token_ciphertext": string,"p_connection_id": string,"p_generation": string,"p_refresh_token_ciphertext": string,"p_secret_version": number }; Returns: boolean
                            },
 "calendar_release_sync":
 { Args: { "p_calendar_id": string,"p_claim_id": string,"p_error"?: string,"p_outcome": string }; Returns: boolean

@@ -9,6 +9,7 @@ import {
   encryptSecret,
   secretKeyId,
 } from "@/lib/crypto/secret-box";
+import { deadlineExceeded } from "@/features/calendar/providers/http";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 
@@ -30,8 +31,18 @@ import { logCalendar } from "./log";
 // incarnation never receives the token of a former one. Across processes two
 // refreshes may happen: harmless, Google keeps the refresh token valid and
 // both access tokens work.
+//
+// The shared refresh has its own budget (REFRESH_BUDGET_MS), independent of
+// whoever started it; each caller only bounds its own wait by its deadline
+// (a worker whose budget ends stops waiting, the refresh goes on for the
+// others).
+//
+// Every write is compare-and-set in SQL on the secrets row itself
+// (incarnation, and secret_version for a re-encryption): a stale writer
+// waiting on a lock writes nothing once the newer row is committed.
 
 const EARLY_REFRESH_MS = 60_000;
+const REFRESH_BUDGET_MS = 30_000;
 const inflight = new Map<string, Promise<string>>();
 
 /**
@@ -57,6 +68,8 @@ export type ConnectionSecrets = {
   provider: CalendarProviderId;
   status: string;
   generation: string;
+  /** Version of the secrets row read (compare-and-set of re-encryption). */
+  secretVersion: number;
   refreshToken: string;
   accessToken: string | null;
   accessTokenExpiresAt: Date | null;
@@ -79,6 +92,7 @@ export async function readConnectionSecrets(
     provider: row.provider as CalendarProviderId,
     status: row.status,
     generation: row.credential_generation,
+    secretVersion: row.secret_version,
     refreshToken: decryptSecret(row.refresh_token_ciphertext, aad, deps.keys),
     accessToken: row.access_token_ciphertext
       ? decryptSecret(row.access_token_ciphertext, aad, deps.keys)
@@ -89,8 +103,8 @@ export async function readConnectionSecrets(
   };
 
   // Lazy re-encryption after a key rotation: both secrets are rewritten
-  // under the current key (for this incarnation only), so former keys can be
-  // retired once no ciphertext uses them.
+  // under the current key, only if the row is still exactly the one read
+  // (incarnation and version): a token refreshed meanwhile always wins.
   const current = deps.keys[0]!.id;
   if (
     secretKeyId(row.refresh_token_ciphertext) !== current ||
@@ -102,6 +116,7 @@ export async function readConnectionSecrets(
       {
         p_connection_id: connectionId,
         p_generation: secrets.generation,
+        p_secret_version: secrets.secretVersion,
         p_refresh_token_ciphertext: encryptSecret(
           secrets.refreshToken,
           aad,
@@ -161,7 +176,7 @@ async function refresh(
   deps: CalendarDeps,
   connectionId: string,
   secrets: ConnectionSecrets,
-  deadline: number | undefined,
+  deadline: number,
 ) {
   let fresh;
   try {
@@ -244,17 +259,39 @@ export async function getAccessToken(
   }
 
   const key = `${connectionId}:${secrets.generation}`;
-  const running = inflight.get(key);
-  if (running) return running;
+  let pending = inflight.get(key);
+  if (!pending) {
+    pending = refresh(
+      deps,
+      connectionId,
+      secrets,
+      Date.now() + REFRESH_BUDGET_MS,
+    ).finally(() => inflight.delete(key));
+    // Handled even when every caller stopped waiting.
+    pending.catch(() => undefined);
+    inflight.set(key, pending);
+  }
+  return awaitWithDeadline(pending, options.deadline);
+}
 
-  const pending = refresh(
-    deps,
-    connectionId,
-    secrets,
-    options.deadline,
-  ).finally(() => inflight.delete(key));
-  inflight.set(key, pending);
-  return pending;
+/**
+ * Waits for a shared operation, at most until `deadline` (epoch ms). Only
+ * this caller stops waiting: the operation itself goes on for the others.
+ */
+export function awaitWithDeadline<T>(
+  shared: Promise<T>,
+  deadline: number | undefined,
+): Promise<T> {
+  if (deadline === undefined) return shared;
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return Promise.reject(deadlineExceeded());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    shared,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(deadlineExceeded()), remaining);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 /** Runs a provider call with a valid token, refreshing once after a 401. */

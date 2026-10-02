@@ -28,7 +28,13 @@ import { createManualAppointment } from "@/features/agenda/data/appointments";
 import { runCalendarJob } from "@/features/calendar/data/cron";
 import { getCalendarDeps } from "@/features/calendar/data/deps";
 import { syncCalendar } from "@/features/calendar/data/sync";
-import { secretKey, secretKeyId } from "@/lib/crypto/secret-box";
+import { getAccessToken } from "@/features/calendar/data/tokens";
+import {
+  decryptSecret,
+  encryptSecret,
+  secretKey,
+  secretKeyId,
+} from "@/lib/crypto/secret-box";
 import type { ActionResult } from "@/lib/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 import type { Database } from "@/types/database.generated";
@@ -49,7 +55,12 @@ import {
   type Professional,
   type TestBusiness,
 } from "./support/fixtures";
-import { openTransaction, waitUntilBlocked } from "./support/transactions";
+import {
+  closeTransaction,
+  openTransaction,
+  waitUntilBlocked,
+  type OpenTransaction,
+} from "./support/transactions";
 
 // Google Calendar inbound sync against the real stack. Google itself is the
 // in-memory FakeGoogle (tests/support/fake-google.ts), reached through the
@@ -65,8 +76,27 @@ const admin = createClient<Database>(env.apiUrl, env.serviceRoleKey, {
 vi.mock("@/lib/supabase/server", () => ({
   createServerSupabaseClient: async () => sessionClient,
 }));
+// The service-role client the server code uses, with optional hooks run
+// before an RPC is sent or after its answer arrived (to interleave a
+// concurrent write, or to delay an answer as a slow network would).
+const rpcHooks = new Map<
+  string,
+  { before?: () => Promise<void>; after?: () => Promise<void> }
+>();
+const serverAdmin = new Proxy(admin, {
+  get(target, property, receiver) {
+    if (property !== "rpc") return Reflect.get(target, property, receiver);
+    return async (...args: Parameters<typeof admin.rpc>) => {
+      const hook = rpcHooks.get(args[0] as string);
+      await hook?.before?.();
+      const result = await target.rpc(...args);
+      await hook?.after?.();
+      return result;
+    };
+  },
+});
 vi.mock("@/lib/supabase/admin", () => ({
-  createAdminSupabaseClient: () => admin,
+  createAdminSupabaseClient: () => serverAdmin,
 }));
 vi.mock("@/features/calendar/data/background", () => ({
   runAfterResponse: (_operation: string, task: () => Promise<unknown>) => {
@@ -111,6 +141,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   background.length = 0;
+  rpcHooks.clear();
 });
 
 async function flush() {
@@ -1192,7 +1223,7 @@ describe("tenant isolation and secrets", () => {
       `select has_schema_privilege('authenticated', 'private', 'usage') as auth,
               has_function_privilege('authenticated', 'public.calendar_apply_events(uuid, uuid, bigint, text, jsonb, text)', 'execute') as apply,
               has_function_privilege('authenticated', 'public.calendar_release_sync(uuid, uuid, text, text)', 'execute') as release,
-              has_function_privilege('authenticated', 'public.calendar_reencrypt_secrets(uuid, uuid, text, text)', 'execute') as reencrypt,
+              has_function_privilege('authenticated', 'public.calendar_reencrypt_secrets(uuid, uuid, bigint, text, text)', 'execute') as reencrypt,
               has_function_privilege('anon', 'public.calendar_save_calendars(uuid, uuid, jsonb)', 'execute') as save`,
     );
     expect(rows[0]).toEqual({
@@ -1816,6 +1847,76 @@ describe("strict provider protocol", () => {
       { items: [{ id: "x", status: "confirmed" }], nextSyncToken: "sync-999" },
     ],
     [
+      "an empty interval",
+      {
+        items: [{ ...timed("a", D, "10:00", "10:00") }],
+        nextSyncToken: "sync-999",
+      },
+    ],
+    [
+      "an inverted interval",
+      {
+        items: [{ ...timed("a", D, "10:00", "09:00") }],
+        nextSyncToken: "sync-999",
+      },
+    ],
+    [
+      "an attendee self given as a string",
+      {
+        items: [
+          {
+            ...timed("a", D, "09:00", "10:00"),
+            attendees: [{ self: "false", responseStatus: "declined" }],
+          },
+        ],
+        nextSyncToken: "sync-999",
+      },
+    ],
+    [
+      "an attendee self given as a number",
+      {
+        items: [
+          {
+            ...timed("a", D, "09:00", "10:00"),
+            attendees: [{ self: 1, responseStatus: "declined" }],
+          },
+        ],
+        nextSyncToken: "sync-999",
+      },
+    ],
+    [
+      "an unknown response status",
+      {
+        items: [
+          {
+            ...timed("a", D, "09:00", "10:00"),
+            attendees: [{ self: true, responseStatus: "maybe" }],
+          },
+        ],
+        nextSyncToken: "sync-999",
+      },
+    ],
+    [
+      "a malformed offset",
+      {
+        items: [
+          {
+            id: "a",
+            start: { dateTime: `${D}T09:00:00+25:00` },
+            end: { dateTime: at(D, "10:00") },
+          },
+        ],
+        nextSyncToken: "sync-999",
+      },
+    ],
+    [
+      "an invalid all-day shape",
+      {
+        items: [{ id: "a", start: { date: `${D}T00:00` }, end: { date: D2 } }],
+        nextSyncToken: "sync-999",
+      },
+    ],
+    [
       "an event with mixed bounds",
       {
         items: [
@@ -2346,5 +2447,483 @@ describe("encryption key rotation", () => {
       process.env.CALENDAR_TOKEN_ENCRYPTION_KEY = formerKey;
       delete process.env.CALENDAR_TOKEN_PREVIOUS_KEYS;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Second hardening round (audit of 19b2191): CAS on secrets, revocation
+// window, strict events, shared refresh deadline, orphan channels.
+// ---------------------------------------------------------------------------
+
+/** Reconnects in an open transaction (not committed): new incarnation. */
+async function reconnectIn(
+  transaction: OpenTransaction,
+  s: Setup,
+  account: { sub: string; email: string },
+  secrets: { refresh: string; access: string },
+) {
+  await transaction.connection.query(
+    `select public.calendar_save_connection($1, $2, 'google', $3, $4, $5::text[], $6, $7,
+              now() + interval '1 hour', $8::jsonb)`,
+    [
+      s.business.id,
+      s.owner.userId,
+      account.sub,
+      account.email,
+      fake.grantedScopes,
+      secrets.refresh,
+      secrets.access,
+      JSON.stringify([
+        {
+          id: account.email,
+          name: "Personnel",
+          timezone: "UTC",
+          primary: true,
+          accessRole: "owner",
+        },
+      ]),
+    ],
+  );
+}
+
+async function secretsState(s: Setup) {
+  const { rows } = await db.query<{
+    refresh_token_ciphertext: string;
+    access_token_ciphertext: string | null;
+    access_token_expires_at: Date | null;
+    secret_version: string;
+    credential_generation: string;
+  }>(
+    `select s.refresh_token_ciphertext, s.access_token_ciphertext, s.access_token_expires_at,
+            s.secret_version, s.credential_generation
+     from private.calendar_secrets s
+     join public.calendar_connections c on c.id = s.connection_id
+     where c.business_id = $1`,
+    [s.business.id],
+  );
+  return rows[0]!;
+}
+
+const result = (query: Promise<{ rows: { result: unknown }[] }>) =>
+  query.then((answer) => answer.rows[0]!.result);
+
+describe("credential writes are compare-and-set (two real transactions)", () => {
+  it("a stale writer waiting on a reconnection writes nothing: refresh, re-encryption, invalid_grant", async () => {
+    const s = await setup();
+    await connect(s);
+    const writers: [
+      string,
+      (id: string, generation: string, version: string) => [string, unknown[]],
+    ][] = [
+      [
+        "refresh",
+        (id, generation) => [
+          "select public.calendar_store_access_token($1, $2, 'stale-access', now() + interval '1 hour') as result",
+          [id, generation],
+        ],
+      ],
+      [
+        "re-encryption",
+        (id, generation, version) => [
+          "select public.calendar_reencrypt_secrets($1, $2, $3, 'stale-refresh', 'stale-access') as result",
+          [id, generation, version],
+        ],
+      ],
+      [
+        "invalid_grant",
+        (id, generation) => [
+          "select public.calendar_mark_reauth_required($1, $2, 'invalid_grant') as result",
+          [id, generation],
+        ],
+      ],
+    ];
+
+    for (const [name, writer] of writers) {
+      const connection = await connectionRow(s);
+      const stale = await secretsState(s);
+
+      // B reconnects (same account) and has not committed yet.
+      const reconnection = await openTransaction();
+      await reconnectIn(reconnection, s, s.account, {
+        refresh: `refresh-b-${name}`,
+        access: `access-b-${name}`,
+      });
+
+      // A, of the former incarnation, reaches its write and waits.
+      const staleWriter = await openTransaction();
+      const [sql, params] = writer(
+        connection.id,
+        connection.credential_generation,
+        stale.secret_version,
+      );
+      const written = result(staleWriter.connection.query(sql, params));
+      await waitUntilBlocked(staleWriter.pid);
+
+      await closeTransaction(reconnection, "commit");
+      expect(await written).toBe(false);
+      await closeTransaction(staleWriter, "commit");
+
+      expect(await secretsState(s)).toMatchObject({
+        refresh_token_ciphertext: `refresh-b-${name}`,
+        access_token_ciphertext: `access-b-${name}`,
+      });
+      expect((await connectionRow(s)).status).toBe("active");
+    }
+  });
+
+  it("a writer that locked first finishes, then the reconnection replaces everything (no deadlock)", async () => {
+    const s = await setup();
+    await connect(s);
+    const connection = await connectionRow(s);
+
+    const writer = await openTransaction();
+    expect(
+      await result(
+        writer.connection.query(
+          "select public.calendar_store_access_token($1, $2, 'first-access', now() + interval '1 hour') as result",
+          [connection.id, connection.credential_generation],
+        ),
+      ),
+    ).toBe(true);
+
+    const reconnection = await openTransaction();
+    const reconnected = reconnectIn(reconnection, s, s.account, {
+      refresh: "refresh-b",
+      access: "access-b",
+    });
+    await waitUntilBlocked(reconnection.pid);
+    await closeTransaction(writer, "commit");
+    await reconnected;
+    await closeTransaction(reconnection, "commit");
+
+    const secrets = await secretsState(s);
+    expect(secrets).toMatchObject({
+      refresh_token_ciphertext: "refresh-b",
+      access_token_ciphertext: "access-b",
+    });
+    expect(secrets.credential_generation).toBe(
+      (await connectionRow(s)).credential_generation,
+    );
+  });
+
+  it("a re-encryption never replaces a token refreshed meanwhile (both orders)", async () => {
+    const s = await setup();
+    await connect(s);
+    const connection = await connectionRow(s);
+    const read = await secretsState(s);
+    const refreshedUntil = "2030-01-01T00:00:00.000Z";
+
+    // The refresh holds the row; the re-encryption of what was read waits.
+    const refresh = await openTransaction();
+    await refresh.connection.query(
+      "select public.calendar_store_access_token($1, $2, 'refreshed', $3::timestamptz)",
+      [connection.id, connection.credential_generation, refreshedUntil],
+    );
+    const reencryption = await openTransaction();
+    const reencrypted = result(
+      reencryption.connection.query(
+        "select public.calendar_reencrypt_secrets($1, $2, $3, 'reencrypted-refresh', 'reencrypted-old-access') as result",
+        [connection.id, connection.credential_generation, read.secret_version],
+      ),
+    );
+    await waitUntilBlocked(reencryption.pid);
+    await closeTransaction(refresh, "commit");
+    expect(await reencrypted).toBe(false);
+    await closeTransaction(reencryption, "commit");
+    let secrets = await secretsState(s);
+    expect(secrets.access_token_ciphertext).toBe("refreshed");
+    expect(secrets.access_token_expires_at!.toISOString()).toBe(refreshedUntil);
+
+    // The re-encryption holds the row; the refresh waits, then wins.
+    const reencryption2 = await openTransaction();
+    expect(
+      await result(
+        reencryption2.connection.query(
+          "select public.calendar_reencrypt_secrets($1, $2, $3, 'reencrypted-refresh', 'reencrypted-access') as result",
+          [
+            connection.id,
+            connection.credential_generation,
+            secrets.secret_version,
+          ],
+        ),
+      ),
+    ).toBe(true);
+    const refresh2 = await openTransaction();
+    const refreshed = result(
+      refresh2.connection.query(
+        "select public.calendar_store_access_token($1, $2, 'refreshed-2', '2031-01-01T00:00:00Z'::timestamptz) as result",
+        [connection.id, connection.credential_generation],
+      ),
+    );
+    await waitUntilBlocked(refresh2.pid);
+    await closeTransaction(reencryption2, "commit");
+    expect(await refreshed).toBe(true);
+    await closeTransaction(refresh2, "commit");
+    secrets = await secretsState(s);
+    expect(secrets.access_token_ciphertext).toBe("refreshed-2");
+    expect(secrets.refresh_token_ciphertext).toBe("reencrypted-refresh");
+    expect(secrets.access_token_expires_at!.toISOString()).toBe(
+      "2031-01-01T00:00:00.000Z",
+    );
+  });
+
+  it("key rotation: a refresh landing during the lazy re-encryption keeps its token and expiry (server code)", async () => {
+    const s = await setup();
+    await connect(s);
+    await select(s, ["Travail"]);
+    const formerKey = process.env.CALENDAR_TOKEN_ENCRYPTION_KEY!;
+    const newKey = randomBytes(32).toString("base64");
+    const aad = `calendar-token:google:${s.business.id}`;
+    const refreshedUntil = new Date(Date.now() + 3_000_000);
+    try {
+      process.env.CALENDAR_TOKEN_ENCRYPTION_KEY = newKey;
+      process.env.CALENDAR_TOKEN_PREVIOUS_KEYS = formerKey;
+      // The refresh commits between the read and the re-encryption.
+      rpcHooks.set("calendar_reencrypt_secrets", {
+        before: async () => {
+          rpcHooks.delete("calendar_reencrypt_secrets");
+          const connection = await connectionRow(s);
+          await admin.rpc("calendar_store_access_token", {
+            p_connection_id: connection.id,
+            p_generation: connection.credential_generation,
+            p_access_token_ciphertext: encryptSecret(
+              "at-refreshed",
+              aad,
+              secretKey(newKey),
+            ),
+            p_access_token_expires_at: refreshedUntil.toISOString(),
+          });
+        },
+      });
+      expect(Object.values((await syncNow(s)).outcomes)).toEqual(["synced"]);
+
+      const secrets = await secretsState(s);
+      expect(
+        decryptSecret(secrets.access_token_ciphertext!, aad, [
+          secretKey(newKey),
+        ]),
+      ).toBe("at-refreshed");
+      expect(secrets.access_token_expires_at!.toISOString()).toBe(
+        refreshedUntil.toISOString(),
+      );
+    } finally {
+      process.env.CALENDAR_TOKEN_ENCRYPTION_KEY = formerKey;
+      delete process.env.CALENDAR_TOKEN_PREVIOUS_KEYS;
+    }
+  });
+});
+
+describe("shared token refresh", () => {
+  it("a worker stops waiting at its own deadline; the shared refresh goes on for the others", async () => {
+    const s = await setup();
+    await connect(s);
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    const connection = await connectionRow(s);
+    await expireStoredAccessToken(s);
+    const refreshes = () =>
+      fake.count(
+        (url, method) => url.pathname === "/token" && method === "POST",
+      );
+    const before = refreshes();
+
+    const held = fake.hold(
+      (url, method) => url.pathname === "/token" && method === "POST",
+    );
+    const started = Date.now();
+    const worker = syncCalendar(getCalendarDeps(), calendarId, {
+      budgetMs: 1500,
+    });
+    await held.reached;
+    // Another caller joins the same refresh, without a deadline.
+    const other = getAccessToken(getCalendarDeps(), connection.id);
+
+    expect(await worker).toBe("stale");
+    expect(Date.now() - started).toBeLessThan(3500);
+
+    held.release();
+    expect(await other).toMatch(/^at-/);
+    expect(refreshes() - before).toBe(1);
+  });
+});
+
+describe("remote revocation window", () => {
+  async function disconnectAnsweredLate(
+    s: Setup,
+    meanwhile: () => Promise<void>,
+  ) {
+    rpcHooks.set("calendar_disconnect", {
+      after: async () => {
+        rpcHooks.delete("calendar_disconnect");
+        // Three minutes pass before the answer reaches the server code.
+        await db.query(
+          `update public.calendar_connections
+           set revocation_authorized_until = now() - interval '2 minutes',
+               revocation_pending_until = now() - interval '1 minute'
+           where business_id = $1`,
+          [s.business.id],
+        );
+        await meanwhile();
+      },
+    });
+    sessionClient = s.owner.client;
+    ok(await disconnectGoogleCalendarAction());
+  }
+
+  const remoteCalls = () =>
+    fake.count(
+      (url) =>
+        url.pathname === "/revoke" || url.pathname.endsWith("/channels/stop"),
+    );
+
+  it("same account reconnected while the disconnection answer was delayed 3 min: no revocation", async () => {
+    const s = await setup();
+    await connect(s);
+    await select(s, ["Travail"]);
+    await disconnectAnsweredLate(s, () => connect(s));
+
+    expect(remoteCalls()).toBe(0);
+    expect(fake.revoked).toEqual([]);
+    expect(await connectionRow(s)).toMatchObject({
+      status: "active",
+      provider_account_id: s.account.sub,
+    });
+    await select(s, ["Travail"]);
+    expect(Object.values((await syncNow(s)).outcomes)).toEqual(["synced"]);
+  });
+
+  it("another account reconnected meanwhile: no revocation either", async () => {
+    const s = await setup();
+    await connect(s);
+    const B = otherAccount();
+    await disconnectAnsweredLate(s, () => connect(s, B));
+
+    expect(remoteCalls()).toBe(0);
+    expect(await connectionRow(s)).toMatchObject({
+      status: "active",
+      provider_account_id: B.sub,
+    });
+  });
+
+  it("nobody reconnected but the window fixed at the disconnection closed: no revocation", async () => {
+    const s = await setup();
+    await connect(s);
+    await disconnectAnsweredLate(s, async () => undefined);
+    expect(remoteCalls()).toBe(0);
+    expect((await connectionRow(s)).status).toBe("disconnected");
+  });
+
+  it("within the window, the revocation runs and is bounded by it", async () => {
+    const s = await setup();
+    await connect(s);
+    sessionClient = s.owner.client;
+    ok(await disconnectGoogleCalendarAction());
+    expect(fake.revoked).toHaveLength(1);
+    const { rows } = await db.query(
+      "select revocation_authorized_until, revocation_pending_until from public.calendar_connections where business_id = $1",
+      [s.business.id],
+    );
+    expect(rows[0]).toEqual({
+      revocation_authorized_until: null,
+      revocation_pending_until: null,
+    });
+  });
+});
+
+describe("orphan channel cleanup", () => {
+  it("a channel created just before a reconnection is stopped with the credentials that created it", async () => {
+    const s = await setup();
+    await connect(s);
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    await db.query(
+      `update private.external_calendar_sync
+       set channel_expires_at = now() + interval '1 hour' where calendar_id = $1`,
+      [calendarId],
+    );
+    const known = new Set(fake.channels.keys());
+
+    const held = fake.hold(
+      (url, method) =>
+        method === "POST" && url.pathname.endsWith("/events/watch"),
+    );
+    const worker = syncCalendar(getCalendarDeps(), calendarId);
+    await held.reached;
+    await connect(s, otherAccount());
+    held.release();
+    expect(await worker).toBe("superseded");
+
+    const created = [...fake.channels.keys()].filter((id) => !known.has(id));
+    expect(created).toHaveLength(1);
+    expect(fake.channels.get(created[0]!)!.stopped).toBe(true);
+  });
+});
+
+describe("strict events: semantically invalid events fail the page", () => {
+  it("one invalid event among 249 valid ones: nothing applied, nothing deleted, cursor kept", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    const before = await syncState(calendarId);
+
+    const items: unknown[] = Array.from({ length: 249 }, (_, index) => ({
+      id: `new-${index}`,
+      status: "confirmed",
+      start: { dateTime: at(D2, "10:00") },
+      end: { dateTime: at(D2, "11:00") },
+    }));
+    items.splice(200, 0, {
+      id: "a",
+      status: "confirmed",
+      start: { dateTime: at(D, "10:00") },
+      end: { dateTime: at(D, "09:00") },
+    });
+    fake.failNext((url) => url.pathname.endsWith("/events"), 200, 1, {
+      items,
+      nextSyncToken: "sync-999",
+    });
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("error");
+    expect(await eventIds(s)).toEqual(["a"]);
+    expect(await syncState(calendarId)).toMatchObject({
+      sync_status: "error",
+      last_error: "provider_protocol",
+      sync_token: before.sync_token,
+      generation: before.generation,
+    });
+    expect(await slots(s)).not.toContain(`${D}T09:00:00.000Z`);
+  });
+});
+
+describe("activation of a blocking calendar", () => {
+  it("protects only after its first complete sync", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    fake.failNext((url) => url.pathname.endsWith("/events"), 403, 1, {
+      error: { errors: [{ reason: "forbidden" }] },
+    });
+    await select(s, ["Travail"]);
+    let calendar = (await calendarsOf(s)).find((item) => item.blocking)!;
+    expect(calendar).toMatchObject({
+      blocking: true,
+      protecting: false,
+      syncStatus: "error",
+    });
+
+    await db.query(
+      "update private.external_calendar_sync set next_attempt_at = null where calendar_id = $1",
+      [calendar.id],
+    );
+    expect(await syncCalendar(getCalendarDeps(), calendar.id)).toBe("synced");
+    calendar = (await calendarsOf(s)).find((item) => item.id === calendar.id)!;
+    expect(calendar).toMatchObject({ protecting: true, syncStatus: "synced" });
+
+    sessionClient = s.owner.client;
+    ok(await updateBlockingCalendarsAction({ calendarIds: [] }));
+    expect(
+      (await calendarsOf(s)).find((item) => item.id === calendar.id),
+    ).toMatchObject({ blocking: false, protecting: false, lastSyncedAt: null });
   });
 });
