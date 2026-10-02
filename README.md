@@ -32,18 +32,19 @@ Le seed de démonstration est intentionnellement désactivé dans cette étape d
 
 ## Scripts
 
-| Commande           | Usage                                                |
-| ------------------ | ---------------------------------------------------- |
-| `npm run dev`      | serveur Next.js local                                |
-| `npm run build`    | build de production                                  |
-| `npm run check`    | format, lint, types et tests                         |
-| `npm run test`     | tests unitaires Vitest (sans base)                   |
-| `npm run test:db`  | tests d'intégration contre Supabase local            |
-| `npm run test:e2e` | parcours de confirmation email contre `next start`   |
-| `npm run db:start` | démarre Supabase local                               |
-| `npm run db:stop`  | arrête Supabase local                                |
-| `npm run db:reset` | rejoue les migrations locales                        |
-| `npm run db:types` | régénère les types TypeScript depuis le schéma local |
+| Commande               | Usage                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| `npm run dev`          | serveur Next.js local                                                                             |
+| `npm run build`        | build de production                                                                               |
+| `npm run check`        | format, lint, types et tests                                                                      |
+| `npm run test`         | tests unitaires Vitest (sans base)                                                                |
+| `npm run test:db`      | tests d'intégration contre Supabase local                                                         |
+| `npm run test:upgrade` | upgrade d'une base peuplée : remise à un ancien schéma, données historiques, migrations suivantes |
+| `npm run test:e2e`     | parcours de confirmation email contre `next start`                                                |
+| `npm run db:start`     | démarre Supabase local                                                                            |
+| `npm run db:stop`      | arrête Supabase local                                                                             |
+| `npm run db:reset`     | rejoue les migrations locales                                                                     |
+| `npm run db:types`     | régénère les types TypeScript depuis le schéma local                                              |
 
 ## Tests de base de données
 
@@ -54,6 +55,8 @@ npm run db:start   # une fois
 npm run db:reset   # rejoue toutes les migrations
 npm run test:db
 ```
+
+Les migrations qui transforment des données existantes ont deux preuves : base vierge (`npm run db:reset` puis `npm run test:db`) et upgrade d'une base peuplée (`npm run test:upgrade`, `tests/upgrade`). Ce dernier remet la base locale à un schéma antérieur, insère des données historiques, applique les migrations suivantes et vérifie les données. Il est destructif pour la base locale, qu'il laisse entièrement migrée.
 
 Le test E2E `tests/e2e` vérifie l'inscription avec confirmation email : lien reçu dans Mailpit (http://127.0.0.1:54324), `/auth/callback`, session puis `/onboarding`. Il démarre lui-même `next start` sur `http://localhost:3000` (port libre requis) :
 
@@ -135,5 +138,6 @@ Si une action échoue au niveau du transport, `callAction` interroge la page cou
 | `20261003090000_calendar_inbound_sync.sql`             | calendriers externes (Google → Booking) : connexions, secrets chiffrés, calendriers bloquants, périodes externes dans la disponibilité et la réservation               |
 | `20261004090000_calendar_sync_hardening.sql`           | sync calendrier durcie : incarnations de connexion, claims de sync, générations jamais réutilisées, changement de fuseau, backoff et équité, `freeBusyReader`          |
 | `20261005090000_calendar_sync_hardening_2.sql`         | sync calendrier, 2ᵉ passe : reprojection atomique des journées entières au changement de fuseau, CAS des secrets, fenêtre de révocation persistée, intervalles stricts |
+| `20261006090000_calendar_sync_hardening_3.sql`         | sync calendrier, 3ᵉ passe : aucun repli sur le fuseau du business, fuseaux stricts, lignes historiques préservées et resynchronisées, attentes de verrou bornées       |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.

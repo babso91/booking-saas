@@ -40,7 +40,10 @@ export type ConnectedCalendarDto = {
   timezone: string | null;
   primary: boolean;
   accessRole: string | null;
-  /** False for a calendar only shared as free/busy (events unreadable). */
+  /**
+   * False for a calendar only shared as free/busy (events unreadable), or
+   * without a known zone of its own (its all-day events cannot be placed).
+   */
   selectable: boolean;
   blocking: boolean;
   /**
@@ -139,7 +142,9 @@ export async function listConnectedCalendars(
     timezone: row.timezone,
     primary: row.is_primary,
     accessRole: row.access_role,
-    selectable: SELECTABLE_ROLES.has(row.access_role ?? "reader"),
+    selectable:
+      SELECTABLE_ROLES.has(row.access_role ?? "reader") &&
+      row.timezone !== null,
     blocking: row.selected_for_blocking,
     protecting: row.selected_for_blocking && row.last_synced_at !== null,
     syncStatus: row.sync_status as ConnectedCalendarDto["syncStatus"],
@@ -427,6 +432,79 @@ async function revocationWindow(
 }
 
 /**
+ * Remote part of a disconnection (channels stopped, grant revoked), within
+ * the window the disconnection fixed. Best effort: may throw, the caller
+ * only logs.
+ */
+async function revokeRemotely(
+  deps: CalendarDeps,
+  businessId: string,
+  connectionId: string,
+  removed: {
+    provider: CalendarProviderId;
+    generation: string;
+    refreshTokenCiphertext: string;
+    accessTokenCiphertext?: string | null;
+    accessTokenExpiresAt?: string | null;
+    channels: { channelId: string; resourceId: string }[];
+  },
+) {
+  const window = await revocationWindow(deps, connectionId, removed.generation);
+  if (window === null) {
+    logCalendar("revoke_skipped", { connectionId }, "warn");
+    return;
+  }
+  const provider = deps.provider(removed.provider);
+  const aad = tokenAad(businessId, removed.provider);
+  const deadline = Date.now() + window;
+  try {
+    const refreshToken = decryptSecret(
+      removed.refreshTokenCiphertext,
+      aad,
+      deps.keys,
+    );
+    const accessToken =
+      removed.accessTokenCiphertext &&
+      removed.accessTokenExpiresAt &&
+      new Date(removed.accessTokenExpiresAt).getTime() > Date.now() + 30_000
+        ? decryptSecret(removed.accessTokenCiphertext, aad, deps.keys)
+        : (await provider.refreshAccessToken(refreshToken, { deadline }))
+            .accessToken;
+    await stopChannels(
+      deps,
+      connectionId,
+      removed.provider,
+      removed.channels.map((channel) => ({
+        id: channel.channelId,
+        resourceId: channel.resourceId,
+      })),
+      { accessToken, deadline },
+    );
+    // Revoking the refresh token revokes the whole grant at Google: last
+    // atomic check that this disconnection is still the current
+    // incarnation and its window still open.
+    const remaining = await revocationWindow(
+      deps,
+      connectionId,
+      removed.generation,
+    );
+    if (remaining === null) {
+      logCalendar("revoke_skipped", { connectionId }, "warn");
+    } else {
+      await provider.revoke(refreshToken, {
+        deadline: Math.min(deadline, Date.now() + remaining),
+      });
+    }
+  } finally {
+    // Reconnection allowed again (only for this disconnection).
+    await deps.admin.rpc("calendar_revocation_done", {
+      p_connection_id: connectionId,
+      p_generation: removed.generation,
+    });
+  }
+}
+
+/**
  * Disconnects: locally first, at once (busy periods, calendars, cursors and
  * credentials deleted; appointments untouched), then best effort at the
  * provider (channels stopped, grant revoked). Scoped to the incarnation read
@@ -469,65 +547,15 @@ export async function disconnect(context: CalendarContext, deps: CalendarDeps) {
     provider: PROVIDER,
   });
 
+  // The local disconnection is committed: the action has succeeded. All
+  // that follows is best effort and never reported as a failure.
   if (removed.refreshTokenCiphertext) {
-    const provider = deps.provider(removed.provider);
-    const aad = tokenAad(context.businessId, removed.provider);
-    const window = await revocationWindow(
-      deps,
-      connection.id,
-      removed.generation,
+    await revokeRemotely(deps, context.businessId, connection.id, {
+      ...removed,
+      refreshTokenCiphertext: removed.refreshTokenCiphertext,
+    }).catch(() =>
+      logCalendar("revoke_failed", { connectionId: connection.id }, "warn"),
     );
-    if (window === null) {
-      logCalendar("revoke_skipped", { connectionId: connection.id }, "warn");
-      return { disconnected: true };
-    }
-    const deadline = Date.now() + window;
-    try {
-      const refreshToken = decryptSecret(
-        removed.refreshTokenCiphertext,
-        aad,
-        deps.keys,
-      );
-      const accessToken =
-        removed.accessTokenCiphertext &&
-        removed.accessTokenExpiresAt &&
-        new Date(removed.accessTokenExpiresAt).getTime() > Date.now() + 30_000
-          ? decryptSecret(removed.accessTokenCiphertext, aad, deps.keys)
-          : (await provider.refreshAccessToken(refreshToken, { deadline }))
-              .accessToken;
-      await stopChannels(
-        deps,
-        connection.id,
-        removed.provider,
-        removed.channels.map((channel) => ({
-          id: channel.channelId,
-          resourceId: channel.resourceId,
-        })),
-        { accessToken, deadline },
-      );
-      // Revoking the refresh token revokes the whole grant at Google: last
-      // atomic check that this disconnection is still the current
-      // incarnation and its window still open.
-      const remaining = await revocationWindow(
-        deps,
-        connection.id,
-        removed.generation,
-      );
-      if (remaining === null) {
-        logCalendar("revoke_skipped", { connectionId: connection.id }, "warn");
-      } else {
-        await provider.revoke(refreshToken, {
-          deadline: Math.min(deadline, Date.now() + remaining),
-        });
-      }
-    } catch {
-      logCalendar("revoke_failed", { connectionId: connection.id }, "warn");
-    }
-    // Reconnection allowed again (only for this disconnection).
-    await deps.admin.rpc("calendar_revocation_done", {
-      p_connection_id: connection.id,
-      p_generation: removed.generation,
-    });
   }
 
   return { disconnected: true };

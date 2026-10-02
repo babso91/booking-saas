@@ -33,9 +33,15 @@ import { logCalendar } from "./log";
 // both access tokens work.
 //
 // The shared refresh has its own budget (REFRESH_BUDGET_MS), independent of
-// whoever started it; each caller only bounds its own wait by its deadline
-// (a worker whose budget ends stops waiting, the refresh goes on for the
-// others).
+// whoever started it, covering the provider call, the compare-and-set
+// write and the release of the single-flight entry: the entry is always
+// gone when the budget ends. Each caller bounds its own wait (reading the
+// secrets included) by its deadline; a worker whose budget ends stops
+// waiting, the refresh goes on for the others. Database waits are bounded
+// in SQL too (lock_timeout on credential writes), and every write is
+// compare-and-set, so a write the caller stopped waiting for either fails
+// or lands harmlessly (a valid token of the same incarnation, with its own
+// expiry).
 //
 // Every write is compare-and-set in SQL on the secrets row itself
 // (incarnation, and secret_version for a re-encryption): a stale writer
@@ -128,8 +134,17 @@ export async function readConnectionSecrets(
           : null) as string,
       },
     );
-    if (rewriteError) throw databaseException(rewriteError);
-    if (rewritten) logCalendar("secrets_reencrypted", { connectionId });
+    // Opportunistic: a failed or refused re-encryption (lock timeout, newer
+    // secrets) never fails the read; the next read tries again.
+    if (rewriteError) {
+      logCalendar(
+        "secrets_reencrypt_failed",
+        { connectionId, code: rewriteError.code },
+        "warn",
+      );
+    } else if (rewritten) {
+      logCalendar("secrets_reencrypted", { connectionId });
+    }
   }
   return secrets;
 }
@@ -236,7 +251,10 @@ export async function getAccessToken(
   connectionId: string,
   options: TokenOptions & { forceRefresh?: boolean } = {},
 ): Promise<string> {
-  const secrets = await readConnectionSecrets(deps, connectionId);
+  const secrets = await awaitWithDeadline(
+    readConnectionSecrets(deps, connectionId),
+    options.deadline,
+  );
   if (options.generation && secrets?.generation !== options.generation) {
     throw new StaleCredentialsError();
   }
@@ -261,12 +279,13 @@ export async function getAccessToken(
   const key = `${connectionId}:${secrets.generation}`;
   let pending = inflight.get(key);
   if (!pending) {
-    pending = refresh(
-      deps,
-      connectionId,
-      secrets,
-      Date.now() + REFRESH_BUDGET_MS,
-    ).finally(() => inflight.delete(key));
+    const budgetEnd = Date.now() + REFRESH_BUDGET_MS;
+    pending = awaitWithDeadline(
+      refresh(deps, connectionId, secrets, budgetEnd),
+      budgetEnd,
+    ).finally(() => {
+      if (inflight.get(key) === pending) inflight.delete(key);
+    });
     // Handled even when every caller stopped waiting.
     pending.catch(() => undefined);
     inflight.set(key, pending);

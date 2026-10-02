@@ -439,13 +439,14 @@ export function createGoogleCalendarProvider(options: {
       // iat) and identify an account (sub; email if present is a string).
       const claims = decodeJwtPayload(idToken);
       const now = Date.now() / 1000;
+      // Single audience, ours: Google issues the token to this client only
+      // ("verify that the value of the aud claim is equal to your app's
+      // client ID"). A list is accepted only if it is exactly [client]: we
+      // trust no other audience. azp, if present, must be our client too.
       const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-      // OpenID Connect Core 3.1.3.7: with several audiences, azp must be
-      // present (and, when present, always be our client).
       if (
-        !audience.includes(options.clientId) ||
-        !audience.every(nonEmptyString) ||
-        (audience.length > 1 && claims.azp === undefined) ||
+        audience.length !== 1 ||
+        audience[0] !== options.clientId ||
         (claims.azp !== undefined && claims.azp !== options.clientId) ||
         (claims.iss !== "https://accounts.google.com" &&
           claims.iss !== "accounts.google.com") ||

@@ -70,19 +70,14 @@ alter table public.external_calendar_events
   add column all_day_end_date date,
   add column all_day_zone text;
 
--- Existing all-day rows: civil dates read back in the zone they were most
--- likely projected in; their calendars are fully synced again to confirm.
-update public.external_calendar_events e
-set all_day_start_date = (e.starts_at at time zone coalesce(c.timezone, b.timezone))::date,
-    all_day_end_date = (e.ends_at at time zone coalesce(c.timezone, b.timezone))::date
-from public.external_calendars c
-join public.businesses b on b.id = c.business_id
-where c.id = e.external_calendar_id
-  and e.all_day;
-
-delete from public.external_calendar_events
-where all_day and all_day_end_date <= all_day_start_date;
-
+-- Existing all-day rows: their UTC busy window is the only certain data;
+-- the civil dates and the zone they were projected in were not stored and
+-- cannot be reconstructed reliably (an event may have had its own zone).
+-- They are kept exactly as they are, with unknown civil dates (null), and
+-- every calendar holding one is invalidated: its next full sync replaces
+-- them with canonical rows (civil dates from Google). Nothing is deleted.
+-- (Corrected before merge: an earlier version of this migration rebuilt
+-- the dates in the calendar zone and could delete valid busy periods.)
 do $$
 declare
   v_calendar uuid;
@@ -91,6 +86,7 @@ begin
     select distinct e.external_calendar_id
     from public.external_calendar_events e
     where e.all_day
+    order by 1
   loop
     update public.external_calendars set sync_status = 'stale' where id = v_calendar;
     perform private.invalidate_sync(v_calendar);
@@ -101,6 +97,7 @@ $$;
 alter table public.external_calendar_events
   add constraint external_calendar_events_all_day_dates check (
     not all_day
+    or (all_day_start_date is null and all_day_end_date is null)
     or (all_day_start_date is not null
         and all_day_end_date is not null
         and all_day_end_date > all_day_start_date)
@@ -135,6 +132,7 @@ begin
   where e.external_calendar_id = p_calendar_id
     and e.all_day
     and e.all_day_zone is null
+    and e.all_day_start_date is not null
     and private.local_day_start(e.all_day_end_date, p_zone)
         <= private.local_day_start(e.all_day_start_date, p_zone);
 
@@ -143,7 +141,8 @@ begin
       ends_at = private.local_day_start(e.all_day_end_date, p_zone)
   where e.external_calendar_id = p_calendar_id
     and e.all_day
-    and e.all_day_zone is null;
+    and e.all_day_zone is null
+    and e.all_day_start_date is not null;
 end;
 $$;
 

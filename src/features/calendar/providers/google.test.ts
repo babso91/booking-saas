@@ -641,8 +641,9 @@ describe("id_token claims", () => {
     ["from another issuer", { iss: "https://evil.test" }],
     ["without subject", { sub: "" }],
     ["with a non-string email", { email: 42 }],
+    ["with an empty audience list", { aud: [] }],
     [
-      "with several audiences and no azp (OpenID Connect Core 3.1.3.7)",
+      "with another audience next to ours",
       { aud: ["other.apps.googleusercontent.com", "CLIENT"] },
     ],
   ] as [string, Record<string, unknown>][])(
@@ -660,17 +661,28 @@ describe("id_token claims", () => {
     },
   );
 
-  it("accepts several audiences when azp is our client", async () => {
+  it("refuses another audience next to ours, even with azp = our client", async () => {
     fake.idTokenClaims = {
-      aud: ["other.apps.googleusercontent.com", fake.clientId],
+      aud: [fake.clientId, "other.apps.googleusercontent.com"],
       azp: fake.clientId,
     };
-    await expect(connect()).resolves.toMatchObject({
-      account: { id: account.sub },
-    });
+    await expect(connect()).rejects.toMatchObject({ kind: "bad_request" });
   });
 
-  it("accepts a valid audience list and a little clock skew", async () => {
+  it("accepts aud = our client as a string or a one-element list, with or without azp", async () => {
+    for (const claims of [
+      { aud: fake.clientId },
+      { aud: fake.clientId, azp: fake.clientId },
+      { aud: [fake.clientId] },
+    ]) {
+      fake.idTokenClaims = claims;
+      await expect(connect()).resolves.toMatchObject({
+        account: { id: account.sub },
+      });
+    }
+  });
+
+  it("accepts a one-element audience list and a little clock skew", async () => {
     fake.idTokenClaims = {
       aud: [fake.clientId],
       exp: now() - 60,

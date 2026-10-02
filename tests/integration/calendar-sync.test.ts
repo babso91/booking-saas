@@ -2927,3 +2927,228 @@ describe("activation of a blocking calendar", () => {
     ).toMatchObject({ blocking: false, protecting: false, lastSyncedAt: null });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Third hardening round (audit of d560094): no business-zone fallback,
+// strict zones, bounded refresh, best-effort remote disconnection.
+// ---------------------------------------------------------------------------
+
+describe("calendars without a zone of their own", () => {
+  it("cannot become blocking; existing availability is untouched", async () => {
+    const s = await setup();
+    fake.setCalendars(s.account.sub, [
+      {
+        id: s.account.email,
+        summary: "Personnel",
+        timeZone: "UTC",
+        primary: true,
+      },
+      { id: work(s), summary: "Travail", timeZone: "UTC" },
+      {
+        id: `nozone-${s.account.sub}`,
+        summary: "Sans fuseau",
+        timeZone: undefined as unknown as string,
+      },
+    ]);
+    await connect(s);
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    const before = await slots(s);
+
+    const listed = await calendarsOf(s);
+    const noZone = listed.find((item) => item.name === "Sans fuseau")!;
+    expect(noZone).toMatchObject({ timezone: null, selectable: false });
+    sessionClient = s.owner.client;
+    expect(
+      failed(
+        await updateBlockingCalendarsAction({
+          calendarIds: [
+            noZone.id,
+            ...listed.filter((c) => c.blocking).map((c) => c.id),
+          ],
+        }),
+      ),
+    ).toBe("calendar_not_selectable");
+    expect(await eventIds(s)).toEqual(["a"]);
+    expect(await slots(s)).toEqual(before);
+  });
+});
+
+describe("strict zones end to end", () => {
+  it("one event with an unknown zone among 249 valid ones: page refused, cache and cursor kept, never synced", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), {
+      id: "x",
+      start: { dateTime: `${D}T09:00:00`, timeZone: "Europe/Paris" },
+      end: { dateTime: `${D}T10:00:00`, timeZone: "Europe/Paris" },
+    });
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    const cached = await storedEvents(s);
+    const before = await syncState(calendarId);
+
+    const items: unknown[] = Array.from({ length: 249 }, (_, index) => ({
+      id: `new-${index}`,
+      start: { dateTime: at(D2, "10:00") },
+      end: { dateTime: at(D2, "11:00") },
+    }));
+    items.splice(100, 0, {
+      id: "x",
+      start: { dateTime: `${D}T09:00:00`, timeZone: "Europe/Pariss" },
+      end: { dateTime: `${D}T10:00:00`, timeZone: "Europe/Pariss" },
+    });
+    fake.failNext((url) => url.pathname.endsWith("/events"), 200, 1, {
+      items,
+      nextSyncToken: "sync-999",
+      timeZone: "UTC",
+    });
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("error");
+
+    expect(await storedEvents(s)).toEqual(cached);
+    expect(await syncState(calendarId)).toMatchObject({
+      sync_status: "error",
+      last_error: "provider_protocol",
+      sync_token: before.sync_token,
+      generation: before.generation,
+    });
+  });
+});
+
+describe("token refresh budget", () => {
+  async function holdConnectionRow(s: Setup) {
+    const holder = await openTransaction();
+    await holder.connection.query(
+      "select 1 from public.calendar_connections where business_id = $1 for update",
+      [s.business.id],
+    );
+    return holder;
+  }
+
+  it("reading the credentials is bounded by the caller's deadline (re-encryption blocked)", async () => {
+    const s = await setup();
+    await connect(s);
+    const connection = await connectionRow(s);
+    const formerKey = process.env.CALENDAR_TOKEN_ENCRYPTION_KEY!;
+    const holder = await holdConnectionRow(s);
+    try {
+      process.env.CALENDAR_TOKEN_ENCRYPTION_KEY =
+        randomBytes(32).toString("base64");
+      process.env.CALENDAR_TOKEN_PREVIOUS_KEYS = formerKey;
+
+      let started = Date.now();
+      await expect(
+        getAccessToken(getCalendarDeps(), connection.id, {
+          deadline: Date.now() + 1000,
+        }),
+      ).rejects.toMatchObject({ kind: "unavailable" });
+      expect(Date.now() - started).toBeLessThan(2000);
+
+      // Without a deadline, the blocked re-encryption gives up (lock
+      // timeout) and the read still answers with the stored token.
+      started = Date.now();
+      expect(await getAccessToken(getCalendarDeps(), connection.id)).toMatch(
+        /^at-/,
+      );
+      expect(Date.now() - started).toBeLessThan(6000);
+    } finally {
+      await closeTransaction(holder, "rollback");
+      process.env.CALENDAR_TOKEN_ENCRYPTION_KEY = formerKey;
+      delete process.env.CALENDAR_TOKEN_PREVIOUS_KEYS;
+    }
+  });
+
+  it("a blocked write: the caller leaves at its deadline, the shared refresh ends, nothing late is written, a new refresh works", async () => {
+    const s = await setup();
+    await connect(s);
+    const connection = await connectionRow(s);
+    await expireStoredAccessToken(s);
+    const stale = await secretsState(s);
+    const refreshes = () =>
+      fake.count(
+        (url, method) => url.pathname === "/token" && method === "POST",
+      );
+    const before = refreshes();
+
+    const holder = await holdConnectionRow(s);
+    let started = Date.now();
+    await expect(
+      getAccessToken(getCalendarDeps(), connection.id, {
+        deadline: Date.now() + 1000,
+      }),
+    ).rejects.toMatchObject({ kind: "unavailable" });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(refreshes() - before).toBe(1);
+
+    // The shared refresh itself ends (lock timeout): a caller without a
+    // deadline that joins it gets its failure, not an endless wait.
+    started = Date.now();
+    await expect(
+      getAccessToken(getCalendarDeps(), connection.id),
+    ).rejects.toBeDefined();
+    expect(Date.now() - started).toBeLessThan(6000);
+    await closeTransaction(holder, "rollback");
+
+    // Nothing was written late.
+    expect(await secretsState(s)).toMatchObject({
+      access_token_ciphertext: stale.access_token_ciphertext,
+      secret_version: stale.secret_version,
+    });
+    // The single-flight entry is gone: a new refresh starts and stores.
+    expect(await getAccessToken(getCalendarDeps(), connection.id)).toMatch(
+      /^at-/,
+    );
+    expect(refreshes() - before).toBeGreaterThanOrEqual(2);
+    expect((await secretsState(s)).access_token_ciphertext).not.toBe(
+      stale.access_token_ciphertext,
+    );
+  });
+});
+
+describe("a committed disconnection is a success", () => {
+  async function disconnected(s: Setup) {
+    sessionClient = s.owner.client;
+    ok(await disconnectGoogleCalendarAction());
+    expect((await connectionRow(s)).status).toBe("disconnected");
+    expect(await secretsState(s).catch(() => undefined)).toBeUndefined();
+    expect(await storedEvents(s)).toEqual([]);
+    expect(await providerCalendarIds(s)).toEqual([]);
+  }
+
+  it("even when preparing the remote revocation fails", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
+    await select(s, ["Travail"]);
+    rpcHooks.set("calendar_begin_revocation", {
+      before: async () => {
+        throw new Error("database unavailable");
+      },
+    });
+    await disconnected(s);
+    expect(fake.revoked).toEqual([]);
+  });
+
+  it("even when stopping channels and revoking fail at Google", async () => {
+    const s = await setup();
+    await connect(s);
+    await select(s, ["Travail"]);
+    fake.failNext((url) => url.pathname.endsWith("/channels/stop"), 403, 5, {
+      error: { errors: [{ reason: "forbidden" }] },
+    });
+    fake.failNext((url) => url.pathname === "/revoke", 500, 10);
+    await disconnected(s);
+  });
+
+  it("even when marking the revocation done fails", async () => {
+    const s = await setup();
+    await connect(s);
+    rpcHooks.set("calendar_revocation_done", {
+      before: async () => {
+        throw new Error("database unavailable");
+      },
+    });
+    await disconnected(s);
+    expect(fake.revoked).toHaveLength(1);
+  });
+});

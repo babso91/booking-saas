@@ -1,6 +1,6 @@
 # Contrat — intégration calendrier (V1 : Google → Booking)
 
-Ce document décrit le backend de l'intégration calendrier livré par les migrations `20261003090000_calendar_inbound_sync.sql`, `20261004090000_calendar_sync_hardening.sql` (incarnations, claims, générations, fuseaux, équité) et `20261005090000_calendar_sync_hardening_2.sql` (reprojection atomique des fuseaux, CAS des secrets, fenêtre de révocation, intervalles stricts). Il sert de contrat à la future UI et au déploiement.
+Ce document décrit le backend de l'intégration calendrier livré par les migrations `20261003090000_calendar_inbound_sync.sql`, `20261004090000_calendar_sync_hardening.sql` (incarnations, claims, générations, fuseaux, équité) `20261005090000_calendar_sync_hardening_2.sql` (reprojection atomique des fuseaux, CAS des secrets, fenêtre de révocation, intervalles stricts) et `20261006090000_calendar_sync_hardening_3.sql` (aucun repli sur le fuseau du business, fuseaux stricts, lignes historiques préservées, attentes de verrou bornées). Il sert de contrat à la future UI et au déploiement.
 
 ## Principes
 
@@ -60,7 +60,7 @@ Index : `gist (business_id, busy_window) where busy` pour le chevauchement. La d
   1. le `state` est consommé par l'utilisateur connecté (même utilisateur, non expiré, jamais utilisé) ;
   2. le business du `state` doit être celui de la session ;
   3. le code est échangé avec le vérificateur ;
-  4. l'`id_token` est contrôlé : `aud` (chaîne, ou liste de chaînes contenant le client) ; avec plusieurs audiences, `azp` est exigé (OpenID Connect Core §3.1.3.7) ; `azp`, s'il est présent, égal au client ; `iss` Google, `sub` non vide, `exp` non dépassé et `iat` non futur (tolérance de 5 minutes), `email` éventuel de type chaîne ;
+  4. l'`id_token` est contrôlé : **audience unique**, égale à notre client (chaîne, ou liste réduite à `[client]`) — Google : « Verify that the value of the aud claim in the ID token is equal to your app's client ID » ; aucune autre audience n'est acceptée, même accompagnée de `azp = client` ; `azp`, s'il est présent, égal au client ; `iss` Google, `sub` non vide, `exp` non dépassé et `iat` non futur (tolérance de 5 minutes), `email` éventuel de type chaîne ;
   5. les scopes sont vérifiés ;
   6. la liste des calendriers est lue ;
   7. connexion, secrets et calendriers sont enregistrés **dans une seule transaction**.
@@ -125,6 +125,17 @@ Deux identifiants rendent toute réponse tardive inoffensive. Chaque écriture l
 
 - **Échéance globale.** Une passe de sync a une échéance absolue (budget, 25 s par défaut). Chaque appel Google reçoit le temps restant : délai de tentative réduit à ce temps, aucune attente de retry au-delà, aucun appel après. Le bail dure le budget plus 30 s : une passe se termine toujours avant que son bail puisse être repris.
 - **Rafraîchissement partagé.** Un rafraîchissement de token est partagé par les appelants de la même incarnation et a son propre budget (30 s), indépendant de celui qui l'a lancé. Chaque appelant borne seulement **sa propre attente** à son échéance (`awaitWithDeadline`) : un worker dont le budget expire s'arrête (`stale`), le rafraîchissement continue pour les autres. Testé : rafraîchissement bloqué, worker à 1,5 s qui sort à l'heure, second appelant servi ensuite, un seul appel `/token`.
+
+  **Budget complet.** Le budget couvre toute la chaîne :
+  1. **lecture des identifiants** : bornée par l'échéance de l'appelant. Le rechiffrement paresseux qu'elle peut déclencher est opportuniste : en cas d'échec ou de refus, la lecture continue ;
+  2. **appel `/token`** : borné par le budget partagé ;
+  3. **écriture CAS du résultat** : les écritures de secrets ont `lock_timeout = 3 s` en SQL, donc PostgreSQL abandonne lui-même une écriture bloquée, sans écriture tardive ;
+  4. **libération de l'entrée _single-flight_** : garantie au plus tard à la fin du budget.
+
+  Un délai côté TypeScript n'annule pas une requête SQL déjà partie. Ce que l'appelant a cessé d'attendre ne peut donc qu'échouer (verrou), ou réussir sans dommage : CAS sur l'incarnation, et un token valide de la même incarnation avec sa propre expiration. Tests :
+  - ligne de connexion verrouillée pendant une lecture avec rotation de clé : sortie à l'échéance ; sans échéance, réponse après l'abandon du rechiffrement ;
+  - écriture bloquée : l'appelant sort à l'heure, le refresh partagé échoue au `lock_timeout`, rien n'est écrit, puis un nouveau refresh démarre et enregistre.
+
 - **Tentative de full sync et claim.** La **génération identifie la tentative logique** (sa fenêtre et son curseur de page sont persistés) ; le **claim protège les écritures de la passe en cours**. Une tentative peut donc être reprise par une autre passe, avec un autre claim, tant qu'elle a moins d'une heure. Cette heure est notre propre plafond, pas une garantie de Google sur la durée de vie d'un `pageToken` : si Google refuse le curseur repris (410 ou 400), la tentative est abandonnée sans balayage et une nouvelle full sync, avec une génération neuve, repart de la page 1.
 
 ## Token d'accès
@@ -220,8 +231,22 @@ Un événement que PostgreSQL ne sait pas placer, ou dont l'intervalle résolu e
 
 **Instants.**
 
-- _Événements avec heure._ Un `dateTime` avec décalage ou `Z` est pris tel quel. Sans décalage, il est lu dans son `timeZone`, ou à défaut dans le fuseau du calendrier, par PostgreSQL.
-- _Événements « journée entière »._ `[start.date, end.date)`, avec une date de fin exclusive, devient `[local_day_start(start), local_day_start(end))` dans le fuseau de l'événement, sinon du calendrier, sinon du business. Une journée de 23 h, 25 h, Havana ou une date Apia inexistante (vide) sont gérées. Le fuseau du calendrier peut différer de celui du business.
+- _Événements avec heure._ Un `dateTime` avec décalage ou `Z` est pris tel quel. Sans décalage, il est lu par PostgreSQL dans son propre `timeZone`, qui est alors obligatoire (règle de Google). Il n'y a pas de repli sur le fuseau du calendrier.
+- _Événements « journée entière »._ `[start.date, end.date)`, avec une date de fin exclusive, devient `[local_day_start(start), local_day_start(end))` dans le fuseau de l'événement, sinon dans celui du calendrier. Une journée de 23 h, 25 h, Havana ou une date Apia inexistante (vide) sont gérées. Le fuseau du calendrier peut différer de celui du business.
+
+**Aucun repli sur le fuseau du business.** Google documente `calendarList.timeZone` comme « Optional ». Un repli sur `businesses.timezone` rendrait la copie dépendante d'un fuseau dont les changements ne sont pas suivis : un changement Paris → New York laisserait `03/10 01:00Z` réservable sous une journée entière du 2 octobre. Ce repli est donc supprimé :
+
+- un calendrier sans fuseau connu de PostgreSQL n'est pas sélectionnable (`selectable: false`, `calendar_not_selectable`), sans toucher aux disponibilités existantes ;
+- une journée entière ne peut être placée que dans son propre fuseau ou celui de son calendrier (sinon `invalid_input`) ;
+- rien dans la copie ne dépend du fuseau du business, dont un changement ne déplace donc aucune période (testé).
+
+**Fuseaux stricts.** Un fuseau **absent** suit les règles ci-dessus. Un fuseau **présent mais inconnu** de PostgreSQL (`Europe/Pariss`, `Mars/Olympus`, chaîne vide) est une erreur de protocole :
+
+- **dans une borne d'événement** : la page entière échoue, l'ancienne période reste exactement en place, le curseur ne bouge pas, aucun balayage, jamais `synced` ;
+- **dans une page d'événements** : même chose ;
+- **dans la liste des calendriers, pour un calendrier sélectionné** : il garde sa copie et son ancien fuseau, passe `error` (`unknown_timezone`) et sa sync est invalidée.
+
+Choix explicite : un fuseau inconnu à côté d'un décalage explicite fait aussi échouer l'événement, même si le décalage suffirait à résoudre l'instant ; la réponse est malformée. Une date civile valide qui n'existe pas dans un fuseau connu (Apia) n'est pas une erreur : elle n'occupe aucun temps.
 
 **Changement de fuseau du calendrier, sans sous-blocage.** Le fuseau fait partie de la copie. Chaque événement « journée entière » garde ses **dates civiles** (`all_day_start_date`, `all_day_end_date`) et son propre fuseau s'il en a un (`all_day_zone`).
 
@@ -233,7 +258,15 @@ Quand Google annonce un autre fuseau, par la liste des calendriers (`refresh`) o
 
 Il n'existe donc aucun instant où une réservation verrait l'ancienne projection seule : dès que le changement est connu, les périodes bloquées sont celles du nouveau fuseau. Exemple testé : journée du 2 octobre, Paris → New York ; la projection passe de `01/10 22:00Z → 02/10 22:00Z` à `02/10 04:00Z → 03/10 04:00Z` dans la transaction de détection, et le créneau `03/10 01:00Z` n'est plus proposé ni réservable pendant `stale`. Idem New York → Paris. Une réservation qui attend le verrou pendant le changement voit la nouvelle projection (testé avec deux transactions réelles). La full sync à génération neuve qui suit ne fait que confirmer la copie.
 
-Les événements avec heure portent un instant (décalage, ou leur propre `timeZone`) et ne bougent pas ; une journée entière avec son propre fuseau non plus. Un fuseau inconnu de PostgreSQL est ignoré.
+Les événements avec heure portent un instant (décalage, ou leur propre `timeZone`) et ne bougent pas ; une journée entière avec son propre fuseau non plus.
+
+**Lignes historiques (dates civiles inconnues).** Les journées entières stockées avant `20261005090000` n'ont que leur fenêtre UTC, seule donnée certaine. Leur date civile et leur fuseau d'origine (l'événement pouvait avoir le sien) ne sont pas reconstructibles. Elles sont donc :
+
+- conservées telles quelles, avec des dates civiles nulles ;
+- élargies de 26 h de chaque côté si le fuseau du calendrier change avant leur resynchronisation (écart maximal entre deux fuseaux) : sur-blocage, jamais sous-blocage ;
+- remplacées par des lignes canoniques uniquement par la full sync que la migration force sur chaque calendrier concerné, même s'il n'en a qu'une seule.
+
+Ce chemin est vérifié par un test d'upgrade sur une base peuplée (`npm run test:upgrade`) : remise au schéma `20261004090000`, lignes historiques (Paris 23 h et 25 h, Havana, fuseau propre Paris dans un calendrier Lagos, fuseau du calendrier égal ou différent de l'historique, ligne unique), puis migrations suivantes, contrôle des fenêtres UTC, puis full sync.
 
 **Un seul worker par calendrier.** Le bail et le claim l'assurent. Une demande qui arrive pendant une sync marque `resync_requested` : le worker refait une passe, avec 3 passes au plus. Ainsi, 50 notifications identiques coûtent quelques passes, pas 50.
 
@@ -309,6 +342,8 @@ Google et PostgreSQL ne partagent pas de transaction. Une petite fenêtre est in
 
 1. **En local, immédiatement, dans une transaction sous le verrou.** Les périodes, les calendriers, les curseurs, les canaux et les secrets sont supprimés, la connexion passe `disconnected` et reçoit une nouvelle incarnation (toute opération en cours devient sans effet). La disponibilité n'est plus bloquée et aucun rendez-vous n'est touché.
 2. **Chez Google, au mieux, dans la fenêtre fixée par la déconnexion.** Les canaux sont arrêtés et le refresh token est révoqué, ce qui révoque l'autorisation. Un échec est seulement journalisé, car les canaux expirent d'eux-mêmes.
+
+**Succès de l'action.** Une fois la transaction locale validée, l'action réussit. La préparation de la révocation (`calendar_begin_revocation`), l'arrêt des canaux, `/revoke` et `calendar_revocation_done` sont au mieux : un échec est journalisé, jamais renvoyé à l'UI. Testé pour chacun de ces échecs : action réussie, connexion déconnectée, secrets supprimés, aucune période restante.
 
 **Révocation tardive.** Chez Google, révoquer un token révoque l'autorisation du compte pour l'application : une révocation qui arriverait après une reconnexion du même compte révoquerait la nouvelle. Le droit de révoquer est donc lié à la déconnexion elle-même, jamais à l'heure où le code appelant reprend la main :
 
@@ -405,7 +440,9 @@ Tout ce qui est propre à Google se trouve dans `providers/google.ts`. Le domain
 ## Limites connues
 
 - **Canaux d'un compte remplacé.** Quand un autre compte remplace la connexion, les canaux de l'ancien compte ne sont pas arrêtés chez Google (ses identifiants sont remplacés dans la même transaction) : leurs notifications sont ignorées (réponse 204 uniforme) jusqu'à leur expiration (au plus 7 jours).
-- **Fuseau du business.** Un calendrier sans fuseau connu suit celui du business ; Google donne toujours un fuseau de calendrier, mais un changement du fuseau du business ne reprojette pas les journées entières de tels calendriers avant leur prochaine full sync.
+- **Calendriers sans fuseau.** Un calendrier que Google liste sans fuseau, ou avec un fuseau inconnu de PostgreSQL, ne peut pas être sélectionné.
+- **Lignes historiques.** Jusqu'à la full sync que la migration force, les journées entières stockées avant les dates civiles gardent leur fenêtre UTC. Elles sont élargies si le fuseau change entre-temps : sur-blocage temporaire.
+- **Base ayant appliqué l'ancienne `20261005090000`.** Les journées entières supprimées par sa première version ne peuvent pas être restaurées par une migration, car il ne reste rien d'elles. `20261006090000` force une full sync de chaque calendrier déjà synchronisé, et Google les réimporte.
 - **Fenêtre de révocation.** La révocation n'est tentée que dans la minute qui suit la déconnexion ; au-delà (serveur très lent), elle est abandonnée et l'autorisation reste valide chez Google jusqu'à ce que la professionnelle la retire elle-même.
 
 ## Évolutions prévues
