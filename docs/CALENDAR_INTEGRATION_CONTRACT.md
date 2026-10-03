@@ -247,48 +247,36 @@ Un événement que PostgreSQL ne sait pas placer, ou dont l'intervalle résolu e
 **Aucun repli sur le fuseau du business.** Google documente `calendarList.timeZone` comme « Optional ». Un repli sur `businesses.timezone` rendrait la copie dépendante d'un fuseau dont les changements ne sont pas suivis : un changement Paris → New York laisserait `03/10 01:00Z` réservable sous une journée entière du 2 octobre. Ce repli est donc supprimé :
 
 - un calendrier sans fuseau connu de PostgreSQL n'est pas sélectionnable (`selectable: false`, `calendar_not_selectable`), sans toucher aux disponibilités existantes ;
-- une journée entière ne peut être placée que dans son propre fuseau ou celui de son calendrier (sinon `invalid_input`) ;
+- une journée entière n'est placée exactement que dans son propre fuseau ou celui de son calendrier ; sans fuseau connu et fiable, elle est élargie à tous les fuseaux (voir ci-dessous) ;
 - rien dans la copie ne dépend du fuseau du business, dont un changement ne déplace donc aucune période (testé).
 
-**Fuseaux stricts.** Un fuseau **absent** suit les règles ci-dessus. Un fuseau **présent mais inconnu** de PostgreSQL (`Europe/Pariss`, `Mars/Olympus`, chaîne vide) est une erreur de protocole :
+**Fuseaux inconnus : jamais de repli, jamais de gel.** Un fuseau **absent** suit les règles ci-dessus. Un fuseau **présent mais inconnu** de PostgreSQL n'est jamais remplacé par un autre fuseau, ni ignoré, ni rejeté en silence. Il peut s'agir d'une faute de frappe ou, plus probablement, d'un fuseau IANA plus récent que la tzdata de la base, comme `America/Ciudad_Juarez`. La règle est la même pour un événement et pour un calendrier :
 
-- **dans une borne d'événement** : la page entière échoue, l'ancienne période reste exactement en place, le curseur ne bouge pas, aucun balayage, jamais `synced` ;
-- **dans une page d'événements** : même chose ;
-- **dans la liste des calendriers** : le fuseau du calendrier devient **non fiable** (voir ci-dessous).
+- **décalage explicite** : l'instant exact est pris dans le décalage ;
+- **pas de décalage** : la période est **élargie à tous les fuseaux possibles**, de UTC+14 à UTC−12. Pour une heure murale, `[début − 14 h, fin + 12 h)` en UTC ; pour une journée entière, de minuit à UTC+14 le jour de début jusqu'à minuit à UTC−12 le jour de fin. On bloque un peu trop, jamais trop peu.
 
-**Confiance dans le fuseau d'un calendrier** (`external_calendars.timezone_trust`, `trusted` ou `untrusted`). Quand la liste des calendriers donne un fuseau présent mais inconnu, le calendrier passe `untrusted` :
+Seuls restent des erreurs de protocole : un `dateTime` sans décalage **ni** fuseau (Google en exige un) et des bornes inversées. Une date civile valide qui n'existe pas dans un fuseau connu (Apia) n'occupe aucun temps.
 
-- sa copie est gardée et continue de bloquer ;
-- sélectionné, il passe `error` (`untrusted_timezone`) et sa sync est invalidée ;
-- il ne peut plus être réclamé ni écrit, et la tâche périodique ne le planifie plus : aucune page appliquée, aucun balayage, aucun curseur avancé, jamais de retour à `synced` ;
-- aucune page d'événements ne peut résoudre des événements avec l'ancien fuseau local, même si elle n'a pas de `timeZone` ou en porte un valide ;
-- il n'est pas sélectionnable ; le DTO expose `timezoneTrusted: false`.
+Les récurrences ne dépendent d'aucun fuseau chez nous : Google développe lui-même les séries (`singleEvents=true`), chaque occurrence arrive avec ses propres bornes et il n'y a aucun moteur RRULE ici.
 
-Seule une nouvelle liste des calendriers avec un fuseau connu de PostgreSQL rétablit `trusted`. Le calendrier passe alors `stale` et sa sync est invalidée : une full sync complète, avec une génération neuve, précède tout retour à `synced`. Si ce fuseau diffère de l'ancien, les journées entières sont reprojetées dans la même transaction, sans jamais revenir silencieusement à l'ancien fuseau. Testé en SQL (Paris → `Europe/Pariss` → page sans fuseau ; retour par Paris ; retour par New York) et de bout en bout.
+**Confiance dans le fuseau d'un calendrier** (`external_calendars.timezone_trust`, `trusted` ou `untrusted`). Quand la liste des calendriers, ou une page d'événements, donne pour le calendrier un fuseau inconnu, le calendrier passe `untrusted` :
 
-Choix explicite : un fuseau inconnu à côté d'un décalage explicite fait aussi échouer l'événement, même si le décalage suffirait à résoudre l'instant ; la réponse est malformée. Une date civile valide qui n'existe pas dans un fuseau connu (Apia) n'est pas une erreur : elle n'occupe aucun temps.
+- **pas de gel** : il continue d'être synchronisé ;
+  - ses événements avec décalage restent exacts ;
+  - ses journées entières sans fuseau propre sont élargies tout de suite pour la copie existante, puis par une full sync ;
+  - un nouveau rendez-vous pris dans Google bloque donc toujours ;
+- **statut** : il ne passe jamais `synced` mais `degraded` (synchronisé avec une marge, `last_error = untrusted_timezone`). Le DTO expose `timezoneTrusted: false` et `syncStatus: "degraded"`. Les libellés (`src/features/calendar/client/sync-status-copy.ts`) affichent « Synchronisé avec une marge : fuseau horaire non reconnu », avec `healthy: false`. Aucune logique ne lit `degraded` comme `synced`. `protecting` reste vrai : la copie est complète et ne bloque que davantage ;
+- **sélection** : il n'est pas sélectionnable tant qu'il est `untrusted` ;
+- **journalisation** : le fuseau reçu est journalisé (`calendar_timezone_untrusted`, nom IANA et identifiant du calendrier, rien de secret), si bien qu'une tzdata en retard se voit tout de suite ;
+- **relecture périodique** : la tâche périodique relit la liste des calendriers des connexions qui ont un calendrier `untrusted`, au plus toutes les 6 heures par connexion (`calendar_list_checked_at`, horodaté à chaque tentative, même en échec).
 
-**Changement de fuseau du calendrier, sans sous-blocage.** Le fuseau fait partie de la copie. Chaque événement « journée entière » garde ses **dates civiles** (`all_day_start_date`, `all_day_end_date`) et son propre fuseau s'il en a un (`all_day_zone`).
+Seule une liste des calendriers avec un fuseau connu de PostgreSQL rétablit `trusted` ; une page d'événements ne le fait jamais, même avec un fuseau valide. Le rétablissement se passe ainsi :
 
-Quand Google annonce un autre fuseau, par la liste des calendriers (`refresh`) ou par une page d'événements (`timeZone`), **dans la même transaction, sous le verrou de planning** :
+- les journées entières sont reprojetées **exactement** dans la même transaction ;
+- le calendrier passe `stale` et une full sync à génération neuve précède le retour à `synced` ;
+- jamais de retour silencieux à l'ancien fuseau.
 
-1. le fuseau est mis à jour ;
-2. toutes les périodes « journée entière » qui suivent le fuseau du calendrier sont **reprojetées par PostgreSQL** dans le nouveau fuseau (`private.reproject_all_day`) ;
-3. le curseur et toute full sync en cours sont effacés, le claim révoqué (liste) ou la page refusée (`timezone_changed`), et le calendrier passe `stale`.
-
-Il n'existe donc aucun instant où une réservation verrait l'ancienne projection seule : dès que le changement est connu, les périodes bloquées sont celles du nouveau fuseau. Exemple testé : journée du 2 octobre, Paris → New York ; la projection passe de `01/10 22:00Z → 02/10 22:00Z` à `02/10 04:00Z → 03/10 04:00Z` dans la transaction de détection, et le créneau `03/10 01:00Z` n'est plus proposé ni réservable pendant `stale`. Idem New York → Paris. Une réservation qui attend le verrou pendant le changement voit la nouvelle projection (testé avec deux transactions réelles). La full sync à génération neuve qui suit ne fait que confirmer la copie.
-
-Les événements avec heure portent un instant (décalage, ou leur propre `timeZone`) et ne bougent pas ; une journée entière avec son propre fuseau non plus.
-
-**Lignes historiques (dates civiles inconnues).** Les journées entières stockées avant `20261005090000` n'ont que leur fenêtre UTC, seule donnée certaine. Leur date civile et leur fuseau d'origine (l'événement pouvait avoir le sien) ne sont pas reconstructibles. Elles sont donc :
-
-- conservées telles quelles, avec des dates civiles nulles ;
-- élargies de 26 h de chaque côté si le fuseau du calendrier change avant leur resynchronisation (écart maximal entre deux fuseaux) : sur-blocage, jamais sous-blocage ;
-- remplacées par des lignes canoniques uniquement par la full sync que la migration force sur chaque calendrier concerné, même s'il n'en a qu'une seule.
-
-Ce chemin est vérifié par un test d'upgrade sur une base peuplée (`npm run test:upgrade`) : remise au schéma `20261004090000`, lignes historiques (Paris 23 h et 25 h, Havana, fuseau propre Paris dans un calendrier Lagos, fuseau du calendrier égal ou différent de l'historique, ligne unique), puis migrations suivantes, contrôle des fenêtres UTC, puis full sync.
-
-**Un seul worker par calendrier.** Le bail et le claim l'assurent. Une demande qui arrive pendant une sync marque `resync_requested` : le worker refait une passe, avec 3 passes au plus. Ainsi, 50 notifications identiques coûtent quelques passes, pas 50.
+Testé en SQL et de bout en bout, relecture par la tâche périodique comprise. **Manque connu** : il n'existe pas encore d'écran des calendriers connectés ni de notification ou d'email pour les erreurs de sync ; seuls le DTO, les libellés et les journaux le signalent.
 
 ## Statuts
 
@@ -297,6 +285,7 @@ Ce chemin est vérifié par un test d'upgrade sur une base peuplée (`npm run te
 | `pending`     | sélectionné, jamais synchronisé (ou reconnexion en attente)                                   | vide, ou celle d'avant la reconnexion               |
 | `syncing`     | une passe détient le claim                                                                    | inchangée jusqu'à la fin                            |
 | `synced`      | dernière passe complète : la copie correspond au curseur                                      | complète pour la fenêtre                            |
+| `degraded`    | dernière passe complète, mais fuseau du calendrier non fiable (`untrusted_timezone`)          | complète, périodes sans décalage élargies           |
 | `stale`       | copie connue en retard : fuseau changé, passe interrompue par son budget, passe sans résultat | gardée, bloque ; full sync ou reprise due           |
 | `error`       | dernière passe en échec (Google indisponible, protocole, token…), `last_error` porte le code  | gardée, bloque                                      |
 | `incomplete`  | calendrier au-delà de la sync bornée (`too_many_events`)                                      | ancienne copie + pages lues, bloque, jamais balayée |
@@ -460,7 +449,7 @@ Tout ce qui est propre à Google se trouve dans `providers/google.ts`. Le domain
 ## Limites connues
 
 - **Canaux d'un compte remplacé.** Quand un autre compte remplace la connexion, les canaux de l'ancien compte ne sont pas arrêtés chez Google (ses identifiants sont remplacés dans la même transaction) : leurs notifications sont ignorées (réponse 204 uniforme) jusqu'à leur expiration (au plus 7 jours).
-- **Calendriers sans fuseau.** Un calendrier que Google liste sans fuseau, ou avec un fuseau inconnu de PostgreSQL, ne peut pas être sélectionné.
+- **Calendriers sans fuseau.** Un calendrier que Google liste sans fuseau, ou avec un fuseau inconnu de PostgreSQL, ne peut pas être sélectionné. S'il l'était déjà, il continue d'être synchronisé avec une marge (`degraded`) jusqu'à ce qu'un fuseau connu revienne. Si la tzdata de PostgreSQL ne connaît pas un fuseau récent, la marge dure jusqu'à la mise à jour de PostgreSQL.
 - **Lignes historiques.** Jusqu'à la full sync que la migration force, les journées entières stockées avant les dates civiles gardent leur fenêtre UTC. Elles sont élargies si le fuseau change entre-temps : sur-blocage temporaire.
 - **Première version de `20261005090000` : non supportée.** Elle n'a été exécutée que localement et sur des bases CI éphémères, jamais sur `main` ni sur une base persistante (production ou staging). Elle a été corrigée directement dans cette PR. Le seul chemin d'upgrade supporté est `20261004090000` → `20261005090000` corrigée → migrations suivantes, et il est vérifié par `npm run test:upgrade`. Une base de développement qui a appliqué l'ancienne version doit être réinitialisée (`npm run db:reset`).
 - **Fenêtre de révocation.** La révocation n'est tentée que dans la minute qui suit la déconnexion ; au-delà (serveur très lent), elle est abandonnée et l'autorisation reste valide chez Google jusqu'à ce que la professionnelle la retire elle-même.

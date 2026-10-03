@@ -170,13 +170,13 @@ isOneToOne: false
                   ]
                 },"calendar_connections": {
                   Row: {
-                    "account_email": string | null,"business_id": string,"connected_by": string | null,"created_at": string,"credential_generation": string,"id": string,"last_error": string | null,"last_synced_at": string | null,"provider": string,"provider_account_id": string,"revocation_authorized_until": string | null,"revocation_pending_until": string | null,"scopes": (string)[],"status": string,"updated_at": string,"version": number
+                    "account_email": string | null,"business_id": string,"calendar_list_checked_at": string | null,"connected_by": string | null,"created_at": string,"credential_generation": string,"id": string,"last_error": string | null,"last_synced_at": string | null,"provider": string,"provider_account_id": string,"revocation_authorized_until": string | null,"revocation_pending_until": string | null,"scopes": (string)[],"status": string,"updated_at": string,"version": number
                   }
                   Insert: {
-                    "account_email"?: string | null,"business_id": string,"connected_by"?: string | null,"created_at"?: string,"credential_generation"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider": string,"provider_account_id": string,"revocation_authorized_until"?: string | null,"revocation_pending_until"?: string | null,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
+                    "account_email"?: string | null,"business_id": string,"calendar_list_checked_at"?: string | null,"connected_by"?: string | null,"created_at"?: string,"credential_generation"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider": string,"provider_account_id": string,"revocation_authorized_until"?: string | null,"revocation_pending_until"?: string | null,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "account_email"?: string | null,"business_id"?: string,"connected_by"?: string | null,"created_at"?: string,"credential_generation"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider"?: string,"provider_account_id"?: string,"revocation_authorized_until"?: string | null,"revocation_pending_until"?: string | null,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
+                    "account_email"?: string | null,"business_id"?: string,"calendar_list_checked_at"?: string | null,"connected_by"?: string | null,"created_at"?: string,"credential_generation"?: string,"id"?: string,"last_error"?: string | null,"last_synced_at"?: string | null,"provider"?: string,"provider_account_id"?: string,"revocation_authorized_until"?: string | null,"revocation_pending_until"?: string | null,"scopes"?: (string)[],"status"?: string,"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -475,6 +475,11 @@ isOneToOne: false
                            },
 "calendar_disconnect":
 { Args: { "p_connection_id": string,"p_generation": string }; Returns: Json
+                           },
+"calendar_due_calendar_lists":
+{ Args: { "p_limit"?: number }; Returns: {
+              "connection_id": string
+            }[]
                            },
 "calendar_due_work":
 { Args: { "p_limit"?: number,"p_with_channels"?: boolean }; Returns: {

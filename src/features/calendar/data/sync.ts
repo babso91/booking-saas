@@ -185,6 +185,7 @@ async function applyPage(
   if (result.reason === "timezone_changed") {
     logCalendar("calendar_timezone_changed", {
       calendarId: pass.claim.calendarId,
+      timezone: page.timezone?.slice(0, 64),
     });
     return "timezone_changed";
   }

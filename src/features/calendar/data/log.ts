@@ -12,6 +12,8 @@ type Fields = {
   status?: string;
   code?: string;
   count?: number;
+  /** An IANA zone name as the provider sent it (public, never a secret). */
+  timezone?: string;
 };
 
 export function logCalendar(

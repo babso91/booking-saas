@@ -65,7 +65,13 @@ export type ConnectedCalendarDto = {
    * copy kept and partial. Only `synced` means every event is known.
    */
   syncStatus:
-    "pending" | "syncing" | "synced" | "stale" | "error" | "incomplete";
+    | "pending"
+    | "syncing"
+    | "synced"
+    | "degraded"
+    | "stale"
+    | "error"
+    | "incomplete";
   lastSyncedAt: string | null;
   lastError: string | null;
 };
@@ -316,6 +322,7 @@ export async function completeConnect(
   );
   if (saveError) throw databaseException(saveError);
 
+  await logUntrustedZones(deps, connectionId as string, calendars);
   logCalendar("connected", {
     businessId: context.businessId,
     connectionId: connectionId as string,
@@ -336,19 +343,36 @@ export async function refreshCalendars(
   deps: CalendarDeps,
 ) {
   const connectionId = await activeConnectionId(context);
-  const generation = await currentGeneration(deps, connectionId);
-  if (!generation) throw new AppException("calendar_not_connected");
-  let calendars;
   try {
-    calendars = await withAccessToken(
-      deps,
-      connectionId,
-      (token) => deps.provider(PROVIDER).listCalendars(token),
-      { generation },
-    );
+    await refreshConnectionCalendars(deps, connectionId);
   } catch (error) {
     throw toCalendarException(error);
   }
+  return listConnectedCalendars(context);
+}
+
+/**
+ * Reads a connection's calendar list again and saves it for the incarnation
+ * it was read with (the professional's refresh, or the periodic job for
+ * connections holding untrusted calendars). A calendar list with a known
+ * zone is the only way an untrusted calendar becomes trusted again.
+ */
+export async function refreshConnectionCalendars(
+  deps: CalendarDeps,
+  connectionId: string,
+  options: { deadline?: number } = {},
+) {
+  const generation = await currentGeneration(deps, connectionId);
+  if (!generation) throw new AppException("calendar_not_connected");
+  const calendars = await withAccessToken(
+    deps,
+    connectionId,
+    (token) =>
+      deps
+        .provider(PROVIDER)
+        .listCalendars(token, { deadline: options.deadline }),
+    { generation, deadline: options.deadline },
+  );
   const { data: saved, error } = await deps.admin.rpc(
     "calendar_save_calendars",
     {
@@ -360,8 +384,41 @@ export async function refreshCalendars(
   if (error) throw databaseException(error);
   if (!saved) {
     logCalendar("calendars_refresh_superseded", { connectionId });
+    return;
   }
-  return listConnectedCalendars(context);
+  await logUntrustedZones(deps, connectionId, calendars);
+}
+
+/**
+ * Logs the zone value the provider sent for each calendar whose zone is
+ * untrusted (unknown to PostgreSQL's tzdata, or a typo): an outdated tzdata
+ * shows at once in the logs. Zone names are public identifiers.
+ */
+async function logUntrustedZones(
+  deps: CalendarDeps,
+  connectionId: string,
+  calendars: { id: string; timezone: string | null }[],
+) {
+  const { data, error } = await deps.admin
+    .from("external_calendars")
+    .select("id, provider_calendar_id")
+    .eq("connection_id", connectionId)
+    .eq("timezone_trust", "untrusted");
+  if (error || !data) return;
+  for (const row of data) {
+    const reported = calendars.find(
+      (calendar) => calendar.id === row.provider_calendar_id,
+    )?.timezone;
+    logCalendar(
+      "calendar_timezone_untrusted",
+      {
+        connectionId,
+        calendarId: row.id,
+        timezone: reported?.slice(0, 64) ?? "absent",
+      },
+      "warn",
+    );
+  }
 }
 
 /**

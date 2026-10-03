@@ -28,6 +28,7 @@ import { createManualAppointment } from "@/features/agenda/data/appointments";
 import { runCalendarJob } from "@/features/calendar/data/cron";
 import { getCalendarDeps } from "@/features/calendar/data/deps";
 import { syncCalendar } from "@/features/calendar/data/sync";
+import { describeSyncStatus } from "@/features/calendar/client/sync-status-copy";
 import { getAccessToken } from "@/features/calendar/data/tokens";
 import {
   decryptSecret,
@@ -3003,7 +3004,7 @@ describe("calendars without a zone of their own", () => {
 });
 
 describe("strict zones end to end", () => {
-  it("one event with an unknown zone among 249 valid ones: page refused, cache and cursor kept, never synced", async () => {
+  it("one event with an unknown zone among 249 valid ones: applied widened, nothing dropped or narrowed", async () => {
     const s = await setup();
     await connect(s);
     fake.putEvent(work(s), {
@@ -3013,8 +3014,7 @@ describe("strict zones end to end", () => {
     });
     await select(s, ["Travail"]);
     const calendarId = await blockingId(s);
-    const cached = await storedEvents(s);
-    const before = await syncState(calendarId);
+    const [cached] = await storedEvents(s);
 
     const items: unknown[] = Array.from({ length: 249 }, (_, index) => ({
       id: `new-${index}`,
@@ -3031,15 +3031,22 @@ describe("strict zones end to end", () => {
       nextSyncToken: "sync-999",
       timeZone: "UTC",
     });
-    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("error");
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
 
-    expect(await storedEvents(s)).toEqual(cached);
-    expect(await syncState(calendarId)).toMatchObject({
-      sync_status: "error",
-      last_error: "provider_protocol",
-      sync_token: before.sync_token,
-      generation: before.generation,
-    });
+    const stored = await storedEvents(s);
+    expect(stored).toHaveLength(250);
+    const x = stored.find((row) => row.provider_event_id === "x")!;
+    // Widened to every zone: contains the former exact period.
+    expect(x.starts_at.getTime()).toBeLessThanOrEqual(
+      cached!.starts_at.getTime(),
+    );
+    expect(x.ends_at.getTime()).toBeGreaterThanOrEqual(
+      cached!.ends_at.getTime(),
+    );
+    expect([x.starts_at.toISOString(), x.ends_at.toISOString()]).toEqual([
+      new Date(Date.parse(`${D}T09:00:00Z`) - 14 * 3_600_000).toISOString(),
+      new Date(Date.parse(`${D}T10:00:00Z`) + 12 * 3_600_000).toISOString(),
+    ]);
   });
 });
 
@@ -3187,7 +3194,7 @@ describe("a committed disconnection is a success", () => {
 // ---------------------------------------------------------------------------
 
 describe("trust in a calendar's zone, end to end", () => {
-  it("Europe/Pariss in the calendar list stops the calendar until a known zone comes back", async () => {
+  it("an untrusted calendar keeps syncing with a margin, shows it, and the periodic job restores it", async () => {
     const s = await setup();
     fake.setCalendars(s.account.sub, [
       {
@@ -3206,42 +3213,79 @@ describe("trust in a calendar's zone, end to end", () => {
     });
     await select(s, ["Travail"]);
     const calendarId = await blockingId(s);
-    const cached = await storedEvents(s);
+    const exactDay = await storedEvents(s);
 
-    fake.setTimeZone(work(s), "Europe/Pariss");
-    sessionClient = s.owner.client;
-    const listed = ok(await listConnectedCalendarsAction({ refresh: true }));
-    expect(listed.find((item) => item.id === calendarId)).toMatchObject({
-      timezoneTrusted: false,
-      selectable: false,
-      syncStatus: "error",
-      lastError: "untrusted_timezone",
-    });
-    await flush();
-
-    // No pass can run: no events page is even read (it would come without
-    // a usable zone), the copy stays, never synced.
-    const pages = () => fake.count(isEventsList);
-    const before = pages();
-    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("skipped");
-    expect(pages()).toBe(before);
-    expect(await storedEvents(s)).toEqual(cached);
-    expect((await syncState(calendarId)).sync_status).toBe("error");
-
-    // A known zone in the calendar list restores trust, then a full sync.
-    fake.setTimeZone(work(s), "Europe/Paris");
+    // Google reports a zone our tzdata does not know (e.g. a recent one).
+    fake.setTimeZone(work(s), "America/Ciudad_Juarezz");
     sessionClient = s.owner.client;
     ok(await listConnectedCalendarsAction({ refresh: true }));
     await flush();
+
+    // Still synced: a new timed event blocks exactly, a new all-day event
+    // over every zone, and the calendar shows it is not exact.
+    fake.putEvent(work(s), timed("meeting", D2, "10:00", "11:00"));
+    fake.putEvent(work(s), {
+      id: "off",
+      start: { date: D2 },
+      end: { date: dateInDays(12) },
+    });
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
+    const rows = Object.fromEntries(
+      (await storedEvents(s)).map((row) => [
+        row.provider_event_id,
+        [row.starts_at.toISOString(), row.ends_at.toISOString()],
+      ]),
+    );
+    expect(rows.meeting).toEqual([
+      new Date(at(D2, "10:00")).toISOString(),
+      new Date(at(D2, "11:00")).toISOString(),
+    ]);
+    const wide = (date: string, hours: number) =>
+      new Date(
+        Date.parse(`${date}T00:00:00Z`) + hours * 3_600_000,
+      ).toISOString();
+    expect(rows.off).toEqual([wide(D2, -14), wide(dateInDays(12), 12)]);
+    expect(rows.day).toEqual([wide(D, -14), wide(D2, 12)]);
+
+    const shown = (await calendarsOf(s)).find(
+      (item) => item.id === calendarId,
+    )!;
+    expect(shown).toMatchObject({
+      timezoneTrusted: false,
+      syncStatus: "degraded",
+      lastError: "untrusted_timezone",
+    });
+    expect(describeSyncStatus(shown)).toMatchObject({
+      label: "Synchronisé avec une marge : fuseau horaire non reconnu",
+      healthy: false,
+    });
+
+    // The periodic job reads the calendar list again (at most every 6 h):
+    // a known zone restores trust, exact projection, full sync, synced.
+    fake.setTimeZone(work(s), "Europe/Paris");
+    const lists = () =>
+      fake.count((url) => url.pathname.endsWith("/calendarList"));
+    let before = lists();
+    await runCalendarJob(getCalendarDeps(), { limit: 500, budgetMs: 100_000 });
+    expect(lists()).toBe(before); // read less than 6 h ago: not again
+    await db.query(
+      "update public.calendar_connections set calendar_list_checked_at = now() - interval '7 hours' where business_id = $1",
+      [s.business.id],
+    );
+    before = lists();
+    await runCalendarJob(getCalendarDeps(), { limit: 500, budgetMs: 100_000 });
+    expect(lists()).toBe(before + 1);
+
     expect(
       (await calendarsOf(s)).find((item) => item.id === calendarId),
     ).toMatchObject({
       timezoneTrusted: true,
       syncStatus: "synced",
-      protecting: true,
     });
-    expect((await syncState(calendarId)).generation).toBe(2);
-    expect(await storedEvents(s)).toEqual(cached);
+    const restored = await storedEvents(s);
+    expect(restored.find((row) => row.provider_event_id === "day")).toEqual(
+      exactDay.find((row) => row.provider_event_id === "day"),
+    );
   });
 });
 
