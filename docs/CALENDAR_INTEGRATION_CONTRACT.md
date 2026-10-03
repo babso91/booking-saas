@@ -186,7 +186,8 @@ Un événement dont PostgreSQL ne sait pas lire une borne (`dateTime` sans déca
 
 - bornes résolues inversées (ou heures murales inversées dans un même fuseau inconnu) : l'enveloppe est bloquée, l'événement est marqué approximatif, compté dans `adjusted` et journalisé (`calendar_event_bounds_adjusted`, identifiant du calendrier et nombre, rien d'autre) ; la page passe ;
 - journée entière inversée : de minuit UTC+14 du jour de fin à minuit UTC−12 du jour de début ;
-- intervalle réellement vide (même instant, ou même heure murale dans le même fuseau, ou même date civile) : ignoré, **sans supprimer** la copie existante de l'événement.
+- intervalle **certainement** vide (deux instants exacts identiques, ou même date civile) : information sûre de Google, l'événement n'occupe plus de temps. Rien n'est créé, et sa copie existante est supprimée explicitement, en incrémental comme en full sync : jamais gardée avec des bornes périmées, jamais laissée au balayage ;
+- même heure murale dans un fuseau inconnu, sans décalage : **pas** vide (une heure répétée ou une transition inconnue peut séparer les instants). L'enveloppe bloque, marquée approximative.
 
 L'adaptateur TypeScript ne rejette plus ces intervalles ; il les transmet à PostgreSQL (testé : contre-exemple New York / Los Angeles, et un événement réellement inversé parmi 249 valides qui n'empêche plus la page d'avancer).
 

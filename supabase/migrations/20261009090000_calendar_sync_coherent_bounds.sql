@@ -9,8 +9,11 @@
 --    they are still inverted once resolved, the envelope of every possible
 --    bound blocks (and is counted in `adjusted`, logged by the server);
 --    inverted all-day dates block every day between them in every zone. An
---    empty interval occupies no time but never erases a cached busy
---    period. Only unreadable bounds (no date, no offset and no zone) fail.
+--    interval is empty only when certainly so (one exact instant, or the
+--    same civil date): the event occupies no time any more and its cached
+--    row is removed explicitly (never left to a full sync's sweep). An
+--    equal wall clock in an unknown zone is not empty: its envelope
+--    blocks. Only unreadable bounds (no date, no offset and no zone) fail.
 -- 3. Approximate periods (widened or adjusted) are flagged on their row:
 --    a calendar holding one is 'degraded', never 'synced', even with a
 --    trusted zone; an exact re-projection clears the flag.
@@ -364,23 +367,24 @@ begin
         v_starts := least(v_start_lo, v_end_lo);
         v_ends := greatest(v_start_hi, v_end_hi);
         if v_ends <= v_starts then
+          -- Only when every bound is exact and both are the same instant
+          -- (an uncertain bound always spans 26 hours): certainly empty.
           v_empty := true;
         elsif v_end_hi <= v_start_lo then
           -- Inverted once resolved.
           v_approximate := true;
           v_adjusted := v_adjusted + 1;
-        elsif v_start_zone is not distinct from v_end_zone
+        elsif v_approximate
+          and v_start_zone is not distinct from v_end_zone
           and v_event->'start'->>'dateTime' !~ '(Z|z|[+-][0-9]{2}:?[0-9]{2})$'
-          and v_event->'end'->>'dateTime' !~ '(Z|z|[+-][0-9]{2}:?[0-9]{2})$' then
-          -- Same (unknown) zone on both sides: the wall clock decides.
-          if (v_event->'end'->>'dateTime')::timestamp
-             = (v_event->'start'->>'dateTime')::timestamp then
-            v_empty := true;
-          elsif (v_event->'end'->>'dateTime')::timestamp
-                < (v_event->'start'->>'dateTime')::timestamp then
-            v_approximate := true;
-            v_adjusted := v_adjusted + 1;
-          end if;
+          and v_event->'end'->>'dateTime' !~ '(Z|z|[+-][0-9]{2}:?[0-9]{2})$'
+          and (v_event->'end'->>'dateTime')::timestamp
+              < (v_event->'start'->>'dateTime')::timestamp then
+          -- Inverted wall clock in the same unknown zone: counted, but the
+          -- envelope still blocks. An equal wall clock proves nothing about
+          -- the instants (a repeated hour, an unknown transition): never
+          -- empty, the envelope blocks as approximate.
+          v_adjusted := v_adjusted + 1;
         end if;
       end if;
     exception
@@ -389,9 +393,16 @@ begin
         v_empty := false;
     end;
 
-    -- An empty interval occupies no time, but never erases a known busy
-    -- period: the cached row, if any, is kept.
+    -- A certainly empty interval (one exact instant, or the same civil
+    -- date) is sure information from the provider: the event occupies no
+    -- time any more. Its cached row, if any, is removed here, explicitly
+    -- (never kept with stale bounds, never left unseen for a full sync's
+    -- sweep); nothing is created.
     if v_empty then
+      delete from public.external_calendar_events e
+      where e.external_calendar_id = p_calendar_id and e.provider_event_id = v_id;
+      get diagnostics v_count = row_count;
+      v_deleted := v_deleted + v_count;
       v_skipped := v_skipped + 1;
       continue;
     end if;
