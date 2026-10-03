@@ -56,7 +56,7 @@ npm run db:reset   # rejoue toutes les migrations
 npm run test:db
 ```
 
-Les migrations qui transforment des données existantes ont deux preuves : base vierge (`npm run db:reset` puis `npm run test:db`) et upgrade d'une base peuplée (`npm run test:upgrade`, `tests/upgrade`). Ce dernier remet la base locale à un schéma antérieur, insère des données historiques, applique les migrations suivantes et vérifie les données. Il est destructif pour la base locale, qu'il laisse entièrement migrée.
+Les migrations qui transforment des données existantes ont deux preuves : base vierge (`npm run db:reset` puis `npm run test:db`) et upgrade d'une base peuplée (`npm run test:upgrade`, `tests/upgrade`). Ce dernier remet la base locale à un schéma antérieur, insère des données historiques, applique les migrations suivantes et vérifie les données. Il est destructif pour la base locale, qu'il laisse entièrement migrée. Le chemin d'upgrade supporté pour les migrations calendrier part de `20261004090000` ; une base locale qui aurait appliqué la première version (non publiée en production) de `20261005090000` doit être réinitialisée avec `npm run db:reset`.
 
 Le test E2E `tests/e2e` vérifie l'inscription avec confirmation email : lien reçu dans Mailpit (http://127.0.0.1:54324), `/auth/callback`, session puis `/onboarding`. Il démarre lui-même `next start` sur `http://localhost:3000` (port libre requis) :
 
@@ -139,5 +139,6 @@ Si une action échoue au niveau du transport, `callAction` interroge la page cou
 | `20261004090000_calendar_sync_hardening.sql`           | sync calendrier durcie : incarnations de connexion, claims de sync, générations jamais réutilisées, changement de fuseau, backoff et équité, `freeBusyReader`          |
 | `20261005090000_calendar_sync_hardening_2.sql`         | sync calendrier, 2ᵉ passe : reprojection atomique des journées entières au changement de fuseau, CAS des secrets, fenêtre de révocation persistée, intervalles stricts |
 | `20261006090000_calendar_sync_hardening_3.sql`         | sync calendrier, 3ᵉ passe : aucun repli sur le fuseau du business, fuseaux stricts, lignes historiques préservées et resynchronisées, attentes de verrou bornées       |
+| `20261007090000_calendar_sync_hardening_4.sql`         | sync calendrier, 4ᵉ passe : confiance dans le fuseau d'un calendrier, écriture du token rafraîchi décidée par PostgreSQL avant l'échéance                              |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.

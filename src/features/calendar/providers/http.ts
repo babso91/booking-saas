@@ -38,6 +38,37 @@ export function deadlineExceeded() {
   return new CalendarProviderError("unavailable", null, "Deadline exceeded");
 }
 
+/**
+ * Runs an operation within a deadline (epoch ms). Already expired: the
+ * operation is never started. Expiring meanwhile: the operation's signal is
+ * aborted and the caller gets `deadlineExceeded`, while the operation's own
+ * late answer or failure is still consumed (never an unhandled rejection).
+ * Aborting is a courtesy to the remote side; whatever was already sent must
+ * be made harmless by the callee (compare-and-set, deadlines in SQL).
+ */
+export function withDeadline<T>(
+  deadline: number | undefined,
+  run: (signal: AbortSignal | undefined) => PromiseLike<T>,
+): Promise<T> {
+  if (deadline === undefined) return Promise.resolve(run(undefined));
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return Promise.reject(deadlineExceeded());
+
+  const controller = new AbortController();
+  const operation = Promise.resolve(run(controller.signal));
+  operation.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    operation,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(deadlineExceeded());
+      }, remaining);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 export function isRetryableStatus(status: number) {
   return status === 429 || status >= 500;
 }

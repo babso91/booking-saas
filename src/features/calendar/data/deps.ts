@@ -21,6 +21,8 @@ export type CalendarDeps = {
   provider: (id: CalendarProviderId) => CalendarProvider;
   /** Current key first, then former keys (decryption only). */
   keys: SecretKey[];
+  /** Budget of a shared token refresh (default 30 s; shorter in tests). */
+  refreshBudgetMs?: number;
 };
 
 export function getCalendarDeps(): CalendarDeps {

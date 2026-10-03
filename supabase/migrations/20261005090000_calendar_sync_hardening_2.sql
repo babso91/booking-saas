@@ -77,7 +77,9 @@ alter table public.external_calendar_events
 -- every calendar holding one is invalidated: its next full sync replaces
 -- them with canonical rows (civil dates from Google). Nothing is deleted.
 -- (Corrected before merge: an earlier version of this migration rebuilt
--- the dates in the calendar zone and could delete valid busy periods.)
+-- the dates in the calendar zone and could delete valid busy periods. It
+-- only ever ran locally and on ephemeral CI databases; a development
+-- database that applied it must be reset. That version is not supported.)
 do $$
 declare
   v_calendar uuid;

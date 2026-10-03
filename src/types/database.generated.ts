@@ -258,13 +258,13 @@ isOneToOne: false
                   ]
                 },"external_calendars": {
                   Row: {
-                    "access_role": string | null,"business_id": string,"connection_id": string,"created_at": string,"id": string,"is_primary": boolean,"last_error": string | null,"last_synced_at": string | null,"name": string,"provider_calendar_id": string,"selected_for_blocking": boolean,"sync_status": string,"timezone": string | null,"updated_at": string
+                    "access_role": string | null,"business_id": string,"connection_id": string,"created_at": string,"id": string,"is_primary": boolean,"last_error": string | null,"last_synced_at": string | null,"name": string,"provider_calendar_id": string,"selected_for_blocking": boolean,"sync_status": string,"timezone": string | null,"timezone_trust": string,"updated_at": string
                   }
                   Insert: {
-                    "access_role"?: string | null,"business_id": string,"connection_id": string,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"last_error"?: string | null,"last_synced_at"?: string | null,"name": string,"provider_calendar_id": string,"selected_for_blocking"?: boolean,"sync_status"?: string,"timezone"?: string | null,"updated_at"?: string
+                    "access_role"?: string | null,"business_id": string,"connection_id": string,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"last_error"?: string | null,"last_synced_at"?: string | null,"name": string,"provider_calendar_id": string,"selected_for_blocking"?: boolean,"sync_status"?: string,"timezone"?: string | null,"timezone_trust"?: string,"updated_at"?: string
                   }
                   Update: {
-                    "access_role"?: string | null,"business_id"?: string,"connection_id"?: string,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"last_error"?: string | null,"last_synced_at"?: string | null,"name"?: string,"provider_calendar_id"?: string,"selected_for_blocking"?: boolean,"sync_status"?: string,"timezone"?: string | null,"updated_at"?: string
+                    "access_role"?: string | null,"business_id"?: string,"connection_id"?: string,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"last_error"?: string | null,"last_synced_at"?: string | null,"name"?: string,"provider_calendar_id"?: string,"selected_for_blocking"?: boolean,"sync_status"?: string,"timezone"?: string | null,"timezone_trust"?: string,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -523,7 +523,7 @@ isOneToOne: false
 { Args: { "p_calendar_id": string,"p_claim_id": string }; Returns: Json
                            },
 "calendar_store_access_token":
-{ Args: { "p_access_token_ciphertext": string,"p_access_token_expires_at": string,"p_connection_id": string,"p_generation": string }; Returns: boolean
+{ Args: { "p_access_token_ciphertext": string,"p_access_token_expires_at": string,"p_connection_id": string,"p_generation": string,"p_remaining_ms": number }; Returns: string
                            },
 "calendar_verify_notification":
 { Args: { "p_channel_id": string,"p_resource_id": string,"p_token_hash": string }; Returns: string

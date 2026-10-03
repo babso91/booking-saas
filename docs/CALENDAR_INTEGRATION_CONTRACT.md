@@ -1,6 +1,6 @@
 # Contrat — intégration calendrier (V1 : Google → Booking)
 
-Ce document décrit le backend de l'intégration calendrier livré par les migrations `20261003090000_calendar_inbound_sync.sql`, `20261004090000_calendar_sync_hardening.sql` (incarnations, claims, générations, fuseaux, équité) `20261005090000_calendar_sync_hardening_2.sql` (reprojection atomique des fuseaux, CAS des secrets, fenêtre de révocation, intervalles stricts) et `20261006090000_calendar_sync_hardening_3.sql` (aucun repli sur le fuseau du business, fuseaux stricts, lignes historiques préservées, attentes de verrou bornées). Il sert de contrat à la future UI et au déploiement.
+Ce document décrit le backend de l'intégration calendrier livré par les migrations `20261003090000_calendar_inbound_sync.sql`, `20261004090000_calendar_sync_hardening.sql` (incarnations, claims, générations, fuseaux, équité) `20261005090000_calendar_sync_hardening_2.sql` (reprojection atomique des fuseaux, CAS des secrets, fenêtre de révocation, intervalles stricts) `20261006090000_calendar_sync_hardening_3.sql` (aucun repli sur le fuseau du business, fuseaux stricts, lignes historiques préservées, attentes de verrou bornées) et `20261007090000_calendar_sync_hardening_4.sql` (confiance dans le fuseau d'un calendrier, écriture du token rafraîchi décidée par PostgreSQL avant l'échéance). Il sert de contrat à la future UI et au déploiement.
 
 ## Principes
 
@@ -129,12 +129,22 @@ Deux identifiants rendent toute réponse tardive inoffensive. Chaque écriture l
   **Budget complet.** Le budget couvre toute la chaîne :
   1. **lecture des identifiants** : bornée par l'échéance de l'appelant. Le rechiffrement paresseux qu'elle peut déclencher est opportuniste : en cas d'échec ou de refus, la lecture continue ;
   2. **appel `/token`** : borné par le budget partagé ;
-  3. **écriture CAS du résultat** : les écritures de secrets ont `lock_timeout = 3 s` en SQL, donc PostgreSQL abandonne lui-même une écriture bloquée, sans écriture tardive ;
+  3. **écriture CAS du résultat**, décidée par PostgreSQL avant l'échéance, sur sa propre horloge :
+     - le serveur envoie seulement la **durée restante**, mesurée avec l'horloge monotone (`performance.now()`), jamais une heure absolue ;
+     - dès son démarrage, `calendar_store_access_token` calcule `db_deadline = clock_timestamp() + durée restante − 250 ms`. La marge est retranchée, donc l'échéance base est un peu plus tôt que celle du serveur, pour couvrir le trajet serveur → base ;
+     - la fonction prend ses verrous dans l'ordre global (ligne de connexion `for share`, puis ligne des secrets `for update`) ;
+     - une fois tous les verrous tenus, plus rien n'est attendu : elle vérifie `clock_timestamp() < db_deadline`, puis seulement écrit ; la condition est répétée dans l'`UPDATE` ;
+     - résultat : `stored`, `stale` (autre incarnation) ou `expired`.
+
+     La garantie exacte est : **PostgreSQL prend la décision d'autoriser l'écriture avant la deadline DB**. Le `COMMIT` physique peut finir un instant après. `lock_timeout = 3 s` borne en plus toute attente de verrou ;
+
   4. **libération de l'entrée _single-flight_** : garantie au plus tard à la fin du budget.
 
-  Un délai côté TypeScript n'annule pas une requête SQL déjà partie. Ce que l'appelant a cessé d'attendre ne peut donc qu'échouer (verrou), ou réussir sans dommage : CAS sur l'incarnation, et un token valide de la même incarnation avec sa propre expiration. Tests :
+  **Annulation (`withDeadline`).** Un appel base dont l'échéance est déjà passée n'est jamais lancé. S'il la dépasse en cours de route, l'appelant reçoit le dépassement et la requête est annulée côté client (`AbortSignal`, `abortSignal()` de PostgREST). Sa résolution ou son rejet tardif reste consommé : jamais de `unhandledRejection`. Cette annulation ne remplace pas les protections SQL : un délai côté TypeScript n'annule pas forcément une requête déjà partie. Ce que l'appelant a cessé d'attendre ne peut donc qu'échouer (verrou, échéance base) ou réussir sans dommage (CAS sur l'incarnation, token valide de la même incarnation avec sa propre expiration). Tests :
   - ligne de connexion verrouillée pendant une lecture avec rotation de clé : sortie à l'échéance ; sans échéance, réponse après l'abandon du rechiffrement ;
-  - écriture bloquée : l'appelant sort à l'heure, le refresh partagé échoue au `lock_timeout`, rien n'est écrit, puis un nouveau refresh démarre et enregistre.
+  - écriture bloquée : l'appelant sort à l'heure, le refresh partagé échoue au `lock_timeout`, rien n'est écrit, puis un nouveau refresh démarre et enregistre ;
+  - échéance dépassée pendant l'attente du verrou des secrets (deux transactions réelles : échéance 0,5 s, verrou relâché vers 2 s) : `expired`, aucune modification (token, expiration, version) ; côté serveur, le refresh partagé se termine à son budget, rien n'est écrit plus tard et un nouveau refresh fonctionne ;
+  - échéance déjà passée : l'appel base n'est jamais lancé ; échéance dépassée en cours : signal annulé, aucun rejet non géré.
 
 - **Tentative de full sync et claim.** La **génération identifie la tentative logique** (sa fenêtre et son curseur de page sont persistés) ; le **claim protège les écritures de la passe en cours**. Une tentative peut donc être reprise par une autre passe, avec un autre claim, tant qu'elle a moins d'une heure. Cette heure est notre propre plafond, pas une garantie de Google sur la durée de vie d'un `pageToken` : si Google refuse le curseur repris (410 ou 400), la tentative est abandonnée sans balayage et une nouvelle full sync, avec une génération neuve, repart de la page 1.
 
@@ -244,7 +254,17 @@ Un événement que PostgreSQL ne sait pas placer, ou dont l'intervalle résolu e
 
 - **dans une borne d'événement** : la page entière échoue, l'ancienne période reste exactement en place, le curseur ne bouge pas, aucun balayage, jamais `synced` ;
 - **dans une page d'événements** : même chose ;
-- **dans la liste des calendriers, pour un calendrier sélectionné** : il garde sa copie et son ancien fuseau, passe `error` (`unknown_timezone`) et sa sync est invalidée.
+- **dans la liste des calendriers** : le fuseau du calendrier devient **non fiable** (voir ci-dessous).
+
+**Confiance dans le fuseau d'un calendrier** (`external_calendars.timezone_trust`, `trusted` ou `untrusted`). Quand la liste des calendriers donne un fuseau présent mais inconnu, le calendrier passe `untrusted` :
+
+- sa copie est gardée et continue de bloquer ;
+- sélectionné, il passe `error` (`untrusted_timezone`) et sa sync est invalidée ;
+- il ne peut plus être réclamé ni écrit, et la tâche périodique ne le planifie plus : aucune page appliquée, aucun balayage, aucun curseur avancé, jamais de retour à `synced` ;
+- aucune page d'événements ne peut résoudre des événements avec l'ancien fuseau local, même si elle n'a pas de `timeZone` ou en porte un valide ;
+- il n'est pas sélectionnable ; le DTO expose `timezoneTrusted: false`.
+
+Seule une nouvelle liste des calendriers avec un fuseau connu de PostgreSQL rétablit `trusted`. Le calendrier passe alors `stale` et sa sync est invalidée : une full sync complète, avec une génération neuve, précède tout retour à `synced`. Si ce fuseau diffère de l'ancien, les journées entières sont reprojetées dans la même transaction, sans jamais revenir silencieusement à l'ancien fuseau. Testé en SQL (Paris → `Europe/Pariss` → page sans fuseau ; retour par Paris ; retour par New York) et de bout en bout.
 
 Choix explicite : un fuseau inconnu à côté d'un décalage explicite fait aussi échouer l'événement, même si le décalage suffirait à résoudre l'instant ; la réponse est malformée. Une date civile valide qui n'existe pas dans un fuseau connu (Apia) n'est pas une erreur : elle n'occupe aucun temps.
 
@@ -442,7 +462,7 @@ Tout ce qui est propre à Google se trouve dans `providers/google.ts`. Le domain
 - **Canaux d'un compte remplacé.** Quand un autre compte remplace la connexion, les canaux de l'ancien compte ne sont pas arrêtés chez Google (ses identifiants sont remplacés dans la même transaction) : leurs notifications sont ignorées (réponse 204 uniforme) jusqu'à leur expiration (au plus 7 jours).
 - **Calendriers sans fuseau.** Un calendrier que Google liste sans fuseau, ou avec un fuseau inconnu de PostgreSQL, ne peut pas être sélectionné.
 - **Lignes historiques.** Jusqu'à la full sync que la migration force, les journées entières stockées avant les dates civiles gardent leur fenêtre UTC. Elles sont élargies si le fuseau change entre-temps : sur-blocage temporaire.
-- **Base ayant appliqué l'ancienne `20261005090000`.** Les journées entières supprimées par sa première version ne peuvent pas être restaurées par une migration, car il ne reste rien d'elles. `20261006090000` force une full sync de chaque calendrier déjà synchronisé, et Google les réimporte.
+- **Première version de `20261005090000` : non supportée.** Elle n'a été exécutée que localement et sur des bases CI éphémères, jamais sur `main` ni sur une base persistante (production ou staging). Elle a été corrigée directement dans cette PR. Le seul chemin d'upgrade supporté est `20261004090000` → `20261005090000` corrigée → migrations suivantes, et il est vérifié par `npm run test:upgrade`. Une base de développement qui a appliqué l'ancienne version doit être réinitialisée (`npm run db:reset`).
 - **Fenêtre de révocation.** La révocation n'est tentée que dans la minute qui suit la déconnexion ; au-delà (serveur très lent), elle est abandonnée et l'autorisation reste valide chez Google jusqu'à ce que la professionnelle la retire elle-même.
 
 ## Évolutions prévues

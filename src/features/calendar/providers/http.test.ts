@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { sendWithRetry, type RetryPolicy } from "./http";
+import { sendWithRetry, withDeadline, type RetryPolicy } from "./http";
 import { CalendarProviderError } from "./types";
 
 const policy = (
@@ -127,5 +127,40 @@ describe("sendWithRetry deadline", () => {
       }),
     ).rejects.toMatchObject({ kind: "unavailable" });
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("withDeadline", () => {
+  it("never starts an operation whose deadline passed", async () => {
+    const run = vi.fn(async () => "x");
+    await expect(withDeadline(Date.now() - 1, run)).rejects.toMatchObject({
+      kind: "unavailable",
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("aborts a late operation and consumes its late rejection", async () => {
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", listener);
+    let seen: AbortSignal | undefined;
+    await expect(
+      withDeadline(Date.now() + 50, (signal) => {
+        seen = signal;
+        return new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("late")), 200),
+        );
+      }),
+    ).rejects.toMatchObject({ kind: "unavailable" });
+    expect(seen?.aborted).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    process.off("unhandledRejection", listener);
+    expect(unhandled).toEqual([]);
+  });
+
+  it("returns the result of an operation that ends in time", async () => {
+    await expect(
+      withDeadline(Date.now() + 1000, async () => "done"),
+    ).resolves.toBe("done");
   });
 });

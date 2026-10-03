@@ -9,7 +9,10 @@ import {
   encryptSecret,
   secretKeyId,
 } from "@/lib/crypto/secret-box";
-import { deadlineExceeded } from "@/features/calendar/providers/http";
+import {
+  deadlineExceeded,
+  withDeadline,
+} from "@/features/calendar/providers/http";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 
@@ -42,6 +45,13 @@ import { logCalendar } from "./log";
 // compare-and-set, so a write the caller stopped waiting for either fails
 // or lands harmlessly (a valid token of the same incarnation, with its own
 // expiry).
+//
+// The refreshed token is written only if PostgreSQL decides so before the
+// budget ends, on its own clock: the remaining duration (measured here with
+// the monotonic clock, never an absolute time) is sent with the write, and
+// the function compares it with clock_timestamp() once its locks are held.
+// A database call whose deadline already passed is never started; one that
+// outlives it is aborted, and its late answer is always consumed.
 //
 // Every write is compare-and-set in SQL on the secrets row itself
 // (incarnation, and secret_version for a re-encryption): a stale writer
@@ -84,10 +94,13 @@ export type ConnectionSecrets = {
 export async function readConnectionSecrets(
   deps: CalendarDeps,
   connectionId: string,
+  signal?: AbortSignal,
 ): Promise<ConnectionSecrets | null> {
-  const { data, error } = await deps.admin.rpc("calendar_read_secrets", {
+  let read = deps.admin.rpc("calendar_read_secrets", {
     p_connection_id: connectionId,
   });
+  if (signal) read = read.abortSignal(signal);
+  const { data, error } = await read;
   if (error) throw databaseException(error);
   const row = data?.[0];
   if (!row) return null;
@@ -117,23 +130,22 @@ export async function readConnectionSecrets(
     (row.access_token_ciphertext &&
       secretKeyId(row.access_token_ciphertext) !== current)
   ) {
-    const { data: rewritten, error: rewriteError } = await deps.admin.rpc(
-      "calendar_reencrypt_secrets",
-      {
-        p_connection_id: connectionId,
-        p_generation: secrets.generation,
-        p_secret_version: secrets.secretVersion,
-        p_refresh_token_ciphertext: encryptSecret(
-          secrets.refreshToken,
-          aad,
-          deps.keys[0]!,
-        ),
-        // null: no access token stored.
-        p_access_token_ciphertext: (secrets.accessToken
-          ? encryptSecret(secrets.accessToken, aad, deps.keys[0]!)
-          : null) as string,
-      },
-    );
+    let rewrite = deps.admin.rpc("calendar_reencrypt_secrets", {
+      p_connection_id: connectionId,
+      p_generation: secrets.generation,
+      p_secret_version: secrets.secretVersion,
+      p_refresh_token_ciphertext: encryptSecret(
+        secrets.refreshToken,
+        aad,
+        deps.keys[0]!,
+      ),
+      // null: no access token stored.
+      p_access_token_ciphertext: (secrets.accessToken
+        ? encryptSecret(secrets.accessToken, aad, deps.keys[0]!)
+        : null) as string,
+    });
+    if (signal) rewrite = rewrite.abortSignal(signal);
+    const { data: rewritten, error: rewriteError } = await rewrite;
     // Opportunistic: a failed or refused re-encryption (lock timeout, newer
     // secrets) never fails the read; the next read tries again.
     if (rewriteError) {
@@ -191,13 +203,19 @@ async function refresh(
   deps: CalendarDeps,
   connectionId: string,
   secrets: ConnectionSecrets,
-  deadline: number,
+  budgetMs: number,
 ) {
+  // Remaining budget on the monotonic clock (immune to wall-clock jumps).
+  const started = performance.now();
+  const remaining = () => budgetMs - (performance.now() - started);
+
   let fresh;
   try {
     fresh = await deps
       .provider(secrets.provider)
-      .refreshAccessToken(secrets.refreshToken, { deadline });
+      .refreshAccessToken(secrets.refreshToken, {
+        deadline: Date.now() + remaining(),
+      });
   } catch (error) {
     if (
       error instanceof CalendarProviderError &&
@@ -219,23 +237,31 @@ async function refresh(
     throw error;
   }
 
-  const { data: stored, error } = await deps.admin.rpc(
-    "calendar_store_access_token",
-    {
-      p_connection_id: connectionId,
-      p_generation: secrets.generation,
-      p_access_token_ciphertext: encryptSecret(
-        fresh.accessToken,
-        tokenAad(secrets.businessId, secrets.provider),
-        deps.keys[0]!,
-      ),
-      p_access_token_expires_at: fresh.expiresAt.toISOString(),
+  const ciphertext = encryptSecret(
+    fresh.accessToken,
+    tokenAad(secrets.businessId, secrets.provider),
+    deps.keys[0]!,
+  );
+  const { data: stored, error } = await withDeadline(
+    Date.now() + remaining(),
+    (signal) => {
+      let write = deps.admin.rpc("calendar_store_access_token", {
+        p_connection_id: connectionId,
+        p_generation: secrets.generation,
+        p_access_token_ciphertext: ciphertext,
+        p_access_token_expires_at: fresh.expiresAt.toISOString(),
+        p_remaining_ms: Math.max(0, Math.floor(remaining())),
+      });
+      if (signal) write = write.abortSignal(signal);
+      return write;
     },
   );
   if (error) throw databaseException(error);
+  // The budget ended before PostgreSQL could decide to write.
+  if (stored === "expired") throw deadlineExceeded();
   // Reconnected or disconnected while refreshing: the token is of a former
   // incarnation, neither stored nor used.
-  if (!stored) throw new StaleCredentialsError();
+  if (stored !== "stored") throw new StaleCredentialsError();
 
   logCalendar("token_refreshed", { connectionId, provider: secrets.provider });
   return fresh.accessToken;
@@ -251,9 +277,8 @@ export async function getAccessToken(
   connectionId: string,
   options: TokenOptions & { forceRefresh?: boolean } = {},
 ): Promise<string> {
-  const secrets = await awaitWithDeadline(
-    readConnectionSecrets(deps, connectionId),
-    options.deadline,
+  const secrets = await withDeadline(options.deadline, (signal) =>
+    readConnectionSecrets(deps, connectionId, signal),
   );
   if (options.generation && secrets?.generation !== options.generation) {
     throw new StaleCredentialsError();
@@ -279,10 +304,10 @@ export async function getAccessToken(
   const key = `${connectionId}:${secrets.generation}`;
   let pending = inflight.get(key);
   if (!pending) {
-    const budgetEnd = Date.now() + REFRESH_BUDGET_MS;
+    const budgetMs = deps.refreshBudgetMs ?? REFRESH_BUDGET_MS;
     pending = awaitWithDeadline(
-      refresh(deps, connectionId, secrets, budgetEnd),
-      budgetEnd,
+      refresh(deps, connectionId, secrets, budgetMs),
+      Date.now() + budgetMs,
     ).finally(() => {
       if (inflight.get(key) === pending) inflight.delete(key);
     });

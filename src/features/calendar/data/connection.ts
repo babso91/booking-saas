@@ -45,6 +45,12 @@ export type ConnectedCalendarDto = {
    * without a known zone of its own (its all-day events cannot be placed).
    */
   selectable: boolean;
+  /**
+   * False when the provider reported a zone PostgreSQL does not know: the
+   * calendar keeps its copy but is not synced until a calendar list gives
+   * a known zone again.
+   */
+  timezoneTrusted: boolean;
   blocking: boolean;
   /**
    * True once a blocking calendar completed its first full sync: before
@@ -129,7 +135,7 @@ export async function listConnectedCalendars(
   const { data, error } = await context.client
     .from("external_calendars")
     .select(
-      "id, name, timezone, is_primary, access_role, selected_for_blocking, sync_status, last_synced_at, last_error",
+      "id, name, timezone, timezone_trust, is_primary, access_role, selected_for_blocking, sync_status, last_synced_at, last_error",
     )
     .eq("business_id", context.businessId)
     .order("is_primary", { ascending: false })
@@ -144,7 +150,9 @@ export async function listConnectedCalendars(
     accessRole: row.access_role,
     selectable:
       SELECTABLE_ROLES.has(row.access_role ?? "reader") &&
-      row.timezone !== null,
+      row.timezone !== null &&
+      row.timezone_trust === "trusted",
+    timezoneTrusted: row.timezone_trust === "trusted",
     blocking: row.selected_for_blocking,
     protecting: row.selected_for_blocking && row.last_synced_at !== null,
     syncStatus: row.sync_status as ConnectedCalendarDto["syncStatus"],

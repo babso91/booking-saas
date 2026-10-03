@@ -83,15 +83,41 @@ const rpcHooks = new Map<
   string,
   { before?: () => Promise<void>; after?: () => Promise<void> }
 >();
+/** RPCs the server code sent (name, abort signal if any), in order. */
+const rpcCalls: { name: string; signal?: AbortSignal }[] = [];
 const serverAdmin = new Proxy(admin, {
   get(target, property, receiver) {
     if (property !== "rpc") return Reflect.get(target, property, receiver);
-    return async (...args: Parameters<typeof admin.rpc>) => {
-      const hook = rpcHooks.get(args[0] as string);
-      await hook?.before?.();
-      const result = await target.rpc(...args);
-      await hook?.after?.();
-      return result;
+    // A thenable builder like PostgREST's, supporting abortSignal().
+    return (...args: Parameters<typeof admin.rpc>) => {
+      const call: { name: string; signal?: AbortSignal } = {
+        name: args[0] as string,
+      };
+      let running: Promise<unknown> | undefined;
+      const run = async () => {
+        rpcCalls.push(call);
+        const hook = rpcHooks.get(call.name);
+        await hook?.before?.();
+        let query = target.rpc(...args);
+        if (call.signal) query = query.abortSignal(call.signal);
+        const answer = await query;
+        await hook?.after?.();
+        return answer;
+      };
+      const builder = {
+        abortSignal(signal: AbortSignal) {
+          call.signal = signal;
+          return builder;
+        },
+        then(
+          resolve?: (value: unknown) => unknown,
+          reject?: (reason: unknown) => unknown,
+        ) {
+          running ??= run();
+          return running.then(resolve, reject);
+        },
+      };
+      return builder;
     };
   },
 });
@@ -142,6 +168,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   background.length = 0;
   rpcHooks.clear();
+  rpcCalls.length = 0;
 });
 
 async function flush() {
@@ -2518,7 +2545,7 @@ describe("credential writes are compare-and-set (two real transactions)", () => 
       [
         "refresh",
         (id, generation) => [
-          "select public.calendar_store_access_token($1, $2, 'stale-access', now() + interval '1 hour') as result",
+          "select public.calendar_store_access_token($1, $2, 'stale-access', now() + interval '1 hour', 60000) = 'stored' as result",
           [id, generation],
         ],
       ],
@@ -2580,7 +2607,7 @@ describe("credential writes are compare-and-set (two real transactions)", () => 
     expect(
       await result(
         writer.connection.query(
-          "select public.calendar_store_access_token($1, $2, 'first-access', now() + interval '1 hour') as result",
+          "select public.calendar_store_access_token($1, $2, 'first-access', now() + interval '1 hour', 60000) = 'stored' as result",
           [connection.id, connection.credential_generation],
         ),
       ),
@@ -2616,7 +2643,7 @@ describe("credential writes are compare-and-set (two real transactions)", () => 
     // The refresh holds the row; the re-encryption of what was read waits.
     const refresh = await openTransaction();
     await refresh.connection.query(
-      "select public.calendar_store_access_token($1, $2, 'refreshed', $3::timestamptz)",
+      "select public.calendar_store_access_token($1, $2, 'refreshed', $3::timestamptz, 60000)",
       [connection.id, connection.credential_generation, refreshedUntil],
     );
     const reencryption = await openTransaction();
@@ -2651,7 +2678,7 @@ describe("credential writes are compare-and-set (two real transactions)", () => 
     const refresh2 = await openTransaction();
     const refreshed = result(
       refresh2.connection.query(
-        "select public.calendar_store_access_token($1, $2, 'refreshed-2', '2031-01-01T00:00:00Z'::timestamptz) as result",
+        "select public.calendar_store_access_token($1, $2, 'refreshed-2', '2031-01-01T00:00:00Z'::timestamptz, 60000) = 'stored' as result",
         [connection.id, connection.credential_generation],
       ),
     );
@@ -2692,6 +2719,7 @@ describe("credential writes are compare-and-set (two real transactions)", () => 
               secretKey(newKey),
             ),
             p_access_token_expires_at: refreshedUntil.toISOString(),
+            p_remaining_ms: 60_000,
           });
         },
       });
@@ -3150,5 +3178,183 @@ describe("a committed disconnection is a success", () => {
     });
     await disconnected(s);
     expect(fake.revoked).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fourth round (audit of 6e2743c): zone trust, write deadline on the
+// database clock, cancellation of database calls.
+// ---------------------------------------------------------------------------
+
+describe("trust in a calendar's zone, end to end", () => {
+  it("Europe/Pariss in the calendar list stops the calendar until a known zone comes back", async () => {
+    const s = await setup();
+    fake.setCalendars(s.account.sub, [
+      {
+        id: s.account.email,
+        summary: "Personnel",
+        timeZone: "UTC",
+        primary: true,
+      },
+      { id: work(s), summary: "Travail", timeZone: "Europe/Paris" },
+    ]);
+    await connect(s);
+    fake.putEvent(work(s), {
+      id: "day",
+      start: { date: D },
+      end: { date: D2 },
+    });
+    await select(s, ["Travail"]);
+    const calendarId = await blockingId(s);
+    const cached = await storedEvents(s);
+
+    fake.setTimeZone(work(s), "Europe/Pariss");
+    sessionClient = s.owner.client;
+    const listed = ok(await listConnectedCalendarsAction({ refresh: true }));
+    expect(listed.find((item) => item.id === calendarId)).toMatchObject({
+      timezoneTrusted: false,
+      selectable: false,
+      syncStatus: "error",
+      lastError: "untrusted_timezone",
+    });
+    await flush();
+
+    // No pass can run: no events page is even read (it would come without
+    // a usable zone), the copy stays, never synced.
+    const pages = () => fake.count(isEventsList);
+    const before = pages();
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("skipped");
+    expect(pages()).toBe(before);
+    expect(await storedEvents(s)).toEqual(cached);
+    expect((await syncState(calendarId)).sync_status).toBe("error");
+
+    // A known zone in the calendar list restores trust, then a full sync.
+    fake.setTimeZone(work(s), "Europe/Paris");
+    sessionClient = s.owner.client;
+    ok(await listConnectedCalendarsAction({ refresh: true }));
+    await flush();
+    expect(
+      (await calendarsOf(s)).find((item) => item.id === calendarId),
+    ).toMatchObject({
+      timezoneTrusted: true,
+      syncStatus: "synced",
+      protecting: true,
+    });
+    expect((await syncState(calendarId)).generation).toBe(2);
+    expect(await storedEvents(s)).toEqual(cached);
+  });
+});
+
+describe("refreshed token written only before the deadline", () => {
+  it("SQL: a write whose deadline passes while it waits for the secrets row changes nothing (two real transactions)", async () => {
+    const s = await setup();
+    await connect(s);
+    const connection = await connectionRow(s);
+    const before = await secretsState(s);
+
+    const holder = await openTransaction();
+    await holder.connection.query(
+      "select 1 from private.calendar_secrets where connection_id = $1 for update",
+      [connection.id],
+    );
+    const writer = await openTransaction();
+    const written = result(
+      writer.connection.query(
+        "select public.calendar_store_access_token($1, $2, 'late-access', now() + interval '1 hour', 500) as result",
+        [connection.id, connection.credential_generation],
+      ),
+    );
+    await waitUntilBlocked(writer.pid);
+    // Released well after the 0.5 s deadline (minus its margin).
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await closeTransaction(holder, "rollback");
+
+    expect(await written).toBe("expired");
+    await closeTransaction(writer, "commit");
+    expect(await secretsState(s)).toEqual(before);
+  });
+
+  it("server code: the shared refresh ends at its budget, nothing is written later, a new refresh works", async () => {
+    const s = await setup();
+    await connect(s);
+    const connection = await connectionRow(s);
+    await expireStoredAccessToken(s);
+    const before = await secretsState(s);
+    const deps = { ...getCalendarDeps(), refreshBudgetMs: 800 };
+
+    const holder = await openTransaction();
+    await holder.connection.query(
+      "select 1 from private.calendar_secrets where connection_id = $1 for update",
+      [connection.id],
+    );
+    const started = Date.now();
+    await expect(getAccessToken(deps, connection.id)).rejects.toMatchObject({
+      kind: "unavailable",
+    });
+    expect(Date.now() - started).toBeLessThan(1800);
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await closeTransaction(holder, "rollback");
+    // Let the abandoned write reach its decision.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await secretsState(s)).toEqual(before);
+
+    // The single-flight entry is gone: a new refresh starts and stores.
+    expect(await getAccessToken(getCalendarDeps(), connection.id)).toMatch(
+      /^at-/,
+    );
+    expect(Number((await secretsState(s)).secret_version)).toBeGreaterThan(
+      Number(before.secret_version),
+    );
+  });
+});
+
+describe("database calls under a deadline", () => {
+  it("never starts a call whose deadline already passed", async () => {
+    const s = await setup();
+    await connect(s);
+    const connection = await connectionRow(s);
+    rpcCalls.length = 0;
+    await expect(
+      getAccessToken(getCalendarDeps(), connection.id, {
+        deadline: Date.now() - 1,
+      }),
+    ).rejects.toMatchObject({ kind: "unavailable" });
+    expect(rpcCalls.map((call) => call.name)).not.toContain(
+      "calendar_read_secrets",
+    );
+  });
+
+  it("aborts a call that outlives its deadline; its late outcome is consumed (no unhandled rejection)", async () => {
+    const s = await setup();
+    await connect(s);
+    const connection = await connectionRow(s);
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", listener);
+
+    const blocker = await openTransaction();
+    await blocker.connection.query(
+      "lock table private.calendar_secrets in access exclusive mode",
+    );
+    try {
+      rpcCalls.length = 0;
+      const started = Date.now();
+      await expect(
+        getAccessToken(getCalendarDeps(), connection.id, {
+          deadline: Date.now() + 500,
+        }),
+      ).rejects.toMatchObject({ kind: "unavailable" });
+      expect(Date.now() - started).toBeLessThan(1500);
+      const read = rpcCalls.find(
+        (call) => call.name === "calendar_read_secrets",
+      );
+      expect(read?.signal?.aborted).toBe(true);
+    } finally {
+      await closeTransaction(blocker, "rollback");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    process.off("unhandledRejection", listener);
+    expect(unhandled).toEqual([]);
   });
 });

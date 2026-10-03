@@ -894,36 +894,184 @@ describe("no business-zone fallback", () => {
     await applied(c, [allDay("day", "2026-10-02", "2026-10-03")]);
     expect(await busy(c)).toEqual(paris);
   });
+});
 
-  it("a selected calendar reported with an unknown zone keeps blocking, in error", async () => {
+describe("trust in a calendar's zone", () => {
+  /** The calendar list as Google reports it (one calendar). */
+  async function listReports(c: Calendar, zone: string) {
+    const { rows } = await db.query<{ saved: boolean }>(
+      `select public.calendar_save_calendars(k.id, k.credential_generation,
+                jsonb_build_array(jsonb_build_object('id', 'cal', 'name', 'Travail', 'timezone', $2::text))) as saved
+       from public.calendar_connections k
+       join public.external_calendars c on c.connection_id = k.id
+       where c.id = $1`,
+      [c.calendarId, zone],
+    );
+    expect(rows[0]!.saved).toBe(true);
+  }
+
+  async function state(c: Calendar) {
+    const { rows } = await db.query(
+      `select c.timezone, c.timezone_trust, c.sync_status, c.last_error,
+              s.sync_token, s.generation::int, s.claim_id
+       from public.external_calendars c
+       join private.external_calendar_sync s on s.calendar_id = c.id
+       where c.id = $1`,
+      [c.calendarId],
+    );
+    return rows[0];
+  }
+
+  const claim = async (c: Calendar) => {
+    const { rows } = await db.query<{
+      claim: { claimed: boolean; claimId: string } | null;
+    }>("select public.calendar_claim_sync($1) as claim", [c.calendarId]);
+    return rows[0]!.claim;
+  };
+
+  /** A whole full sync by a new claimant, with a fixed window. */
+  async function fullSync(c: Calendar, zone: string, events: unknown[]) {
+    const claimed = (await claim(c))!;
+    expect(claimed.claimed).toBe(true);
+    const { rows } = await db.query<{ start: { generation: number } }>(
+      "select public.calendar_start_full_sync($1, $2) as start",
+      [c.calendarId, claimed.claimId],
+    );
+    const generation = rows[0]!.start.generation;
+    await db.query(
+      `update private.external_calendar_sync
+       set full_window_start = '2010-01-01T00:00Z', full_window_end = '2030-01-01T00:00Z'
+       where calendar_id = $1`,
+      [c.calendarId],
+    );
+    const page = await db.query<{ result: { applied: boolean } }>(
+      "select public.calendar_apply_events($1, $2, $3, $4, $5::jsonb) as result",
+      [c.calendarId, claimed.claimId, generation, zone, JSON.stringify(events)],
+    );
+    expect(page.rows[0]!.result.applied).toBe(true);
+    const finished = await db.query<{ done: boolean }>(
+      "select public.calendar_finish_full_sync($1, $2, $3, 'sync-new') as done",
+      [c.calendarId, claimed.claimId, generation],
+    );
+    expect(finished.rows[0]!.done).toBe(true);
+    await db.query("select public.calendar_release_sync($1, $2, 'synced')", [
+      c.calendarId,
+      claimed.claimId,
+    ]);
+    return generation;
+  }
+
+  const day = allDay("day", "2026-10-02", "2026-10-03");
+  const paris = [
+    ["day", "2026-10-01T22:00:00.000Z", "2026-10-02T22:00:00.000Z", true],
+  ];
+  const newYork = [
+    ["day", "2026-10-02T04:00:00.000Z", "2026-10-03T04:00:00.000Z", true],
+  ];
+
+  async function untrustedParis() {
     const c = await calendar({
       businessZone: "UTC",
       calendarZone: "Europe/Paris",
     });
-    await applied(c, [allDay("day", "2026-10-02", "2026-10-03")]);
-    const before = await busy(c);
-    const { rows } = await db.query<{ saved: boolean }>(
-      `select public.calendar_save_calendars(k.id, k.credential_generation,
-                jsonb_build_array(jsonb_build_object('id', 'cal', 'name', 'Travail', 'timezone', 'Europe/Pariss'))) as saved
-       from public.calendar_connections k
-       join public.external_calendars c on c.connection_id = k.id
-       where c.id = $1`,
-      [c.calendarId],
-    );
-    expect(rows[0]!.saved).toBe(true);
-    expect(await busy(c)).toEqual(before);
-    const state = await db.query(
-      `select c.timezone, c.sync_status, c.last_error, c.selected_for_blocking, s.sync_token
-       from public.external_calendars c
-       join private.external_calendar_sync s on s.calendar_id = c.id where c.id = $1`,
-      [c.calendarId],
-    );
-    expect(state.rows[0]).toEqual({
+    await applied(c, [day]);
+    expect(await busy(c)).toEqual(paris);
+    await listReports(c, "Europe/Pariss");
+    return c;
+  }
+
+  it("Paris trusted → Europe/Pariss → events without a zone: never synced again, cache intact", async () => {
+    const c = await untrustedParis();
+    expect(await state(c)).toEqual({
       timezone: "Europe/Paris",
+      timezone_trust: "untrusted",
       sync_status: "error",
-      last_error: "unknown_timezone",
-      selected_for_blocking: true,
+      last_error: "untrusted_timezone",
       sync_token: null,
+      generation: 1,
+      claim_id: null,
+    });
+    expect(await busy(c)).toEqual(paris);
+
+    // The former claim is revoked: its page (no zone) is not applied.
+    expect(
+      await apply(c, [allDay("other", "2026-10-05", "2026-10-06")]),
+    ).toEqual({
+      applied: false,
+      reason: "stale_claim",
+    });
+    // Nobody can claim it, the job does not schedule it.
+    expect(await claim(c)).toBeNull();
+    const due = await db.query(
+      "select 1 from public.calendar_due_work(500, true) where calendar_id = $1",
+      [c.calendarId],
+    );
+    expect(due.rowCount).toBe(0);
+    // Not even with a claim forced in place: no page, no cursor, no sweep.
+    await db.query(
+      "update private.external_calendar_sync set claim_id = $2, lease_until = now() + interval '1 minute' where calendar_id = $1",
+      [c.calendarId, c.claimId],
+    );
+    expect(await apply(c, [day], "Europe/Paris")).toMatchObject({
+      applied: false,
+    });
+    const finished = await db.query<{ done: boolean }>(
+      "select public.calendar_finish_incremental_sync($1, $2, 'sync-x') as done",
+      [c.calendarId, c.claimId],
+    );
+    expect(finished.rows[0]!.done).toBe(false);
+    expect(await busy(c)).toEqual(paris);
+    expect(await state(c)).toMatchObject({
+      timezone_trust: "untrusted",
+      sync_status: "error",
+      sync_token: null,
+    });
+  });
+
+  it("untrusted → calendar list with Paris: trusted again, full sync (new generation), then synced", async () => {
+    const c = await untrustedParis();
+    await listReports(c, "Europe/Paris");
+    expect(await state(c)).toMatchObject({
+      timezone: "Europe/Paris",
+      timezone_trust: "trusted",
+      sync_status: "stale",
+      sync_token: null,
+    });
+    const generation = await fullSync(c, "Europe/Paris", [day]);
+    expect(generation).toBeGreaterThan(1);
+    expect(await busy(c)).toEqual(paris);
+    expect(await state(c)).toMatchObject({
+      timezone_trust: "trusted",
+      sync_status: "synced",
+      sync_token: "sync-new",
+    });
+  });
+
+  it("untrusted → calendar list with New York: re-projected at once, full sync, never Paris again", async () => {
+    const c = await untrustedParis();
+    await listReports(c, "America/New_York");
+    expect(await state(c)).toMatchObject({
+      timezone: "America/New_York",
+      timezone_trust: "trusted",
+      sync_status: "stale",
+    });
+    expect(await busy(c)).toEqual(newYork);
+    // A page claiming Paris is a zone change, not a way back to Paris.
+    const claimed = (await claim(c))!;
+    const { rows } = await db.query<{ start: { generation: number } }>(
+      "select public.calendar_start_full_sync($1, $2) as start",
+      [c.calendarId, claimed.claimId],
+    );
+    await db.query("select public.calendar_release_sync($1, $2, 'stale')", [
+      c.calendarId,
+      claimed.claimId,
+    ]);
+    expect(rows[0]!.start.generation).toBeGreaterThan(1);
+    await fullSync(c, "America/New_York", [day]);
+    expect(await busy(c)).toEqual(newYork);
+    expect(await state(c)).toMatchObject({
+      timezone: "America/New_York",
+      sync_status: "synced",
     });
   });
 });
