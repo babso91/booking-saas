@@ -175,13 +175,20 @@ Les 4xx ne sont jamais retentés. Un 403 `rateLimitExceeded` est classé `rate_l
 - `items` n'est pas un tableau, ou un élément n'est pas un objet avec un `id` non vide ;
 - un événement non annulé n'a pas `start` et `end` du même type (`date` `AAAA-MM-JJ` existante, ou `dateTime` RFC 3339 valide : heure 00–23, minutes et secondes valides, décalage ±14:00 au plus) ;
 - un `dateTime` n'a ni décalage ni `timeZone` (règle de Google) ;
-- l'intervalle est vide ou inversé : `end ≤ start` pour deux dates civiles, ou pour deux `dateTime` avec décalage (comparés en instants) ; sans décalage, PostgreSQL fait le même contrôle dans le fuseau de l'événement ;
 - un champ dont dépend le blocage est mal typé ou inconnu : `status` (`confirmed`, `tentative`, `cancelled`), `transparency` (`opaque`, `transparent`), `eventType` (chaîne non vide ; un type inconnu bloque, sens sûr), `recurringEventId`, `etag`, `updated` (RFC 3339 avec décalage) ;
 - `attendees` n'est pas un tableau d'objets, un `self` n'est pas un booléen (`"false"` ou `1` sont refusés, jamais interprétés), ou un `responseStatus` n'est pas `needsAction`, `declined`, `tentative` ou `accepted` ;
 - la liste des calendriers est vide, malformée, ou plus longue que les 4 pages lues (une liste tronquée supprimerait des calendriers existants) ;
 - une réponse de token n'a pas d'`access_token` ou un `expires_in` invalide ; une réponse `watch` n'a pas la ressource, l'id ou l'expiration attendus.
 
-Un événement que PostgreSQL ne sait pas placer, ou dont l'intervalle résolu est vide ou inversé, fait aussi échouer la page entière (`invalid_input`) : jamais supprimé, jamais considéré libre. Dans tous ces cas la passe s'arrête en `error` (`provider_protocol`) : **aucun événement de la page appliqué, aucun ancien événement supprimé, aucun balayage**, copie locale et curseur conservés, ancienne génération intacte (testé avec un seul événement invalide parmi 249 valides).
+Un événement dont PostgreSQL ne sait pas lire une borne (`dateTime` sans décalage ni fuseau) fait aussi échouer la page entière (`invalid_input`) : jamais supprimé, jamais considéré libre. Dans tous ces cas la passe s'arrête en `error` (`provider_protocol`) : **aucun événement de la page appliqué, aucun ancien événement supprimé, aucun balayage**, copie locale et curseur conservés, ancienne génération intacte (testé).
+
+**Bornes incohérentes : jamais de rollback de page.** Un intervalle vide ou inversé n'est pas une erreur de protocole : seules ses bornes **résolues** comptent, jamais les heures murales. Chaque borne est résolue dans son propre fuseau (`10:00 America/New_York → 09:00 America/Los_Angeles` couvre bien 14:00Z → 16:00Z) ; une borne dans un fuseau inconnu donne une plage de possibles (−14 h / +12 h). PostgreSQL bloque toujours l'**enveloppe** : du plus petit au plus grand instant possible des deux bornes.
+
+- bornes résolues inversées (ou heures murales inversées dans un même fuseau inconnu) : l'enveloppe est bloquée, l'événement est marqué approximatif, compté dans `adjusted` et journalisé (`calendar_event_bounds_adjusted`, identifiant du calendrier et nombre, rien d'autre) ; la page passe ;
+- journée entière inversée : de minuit UTC+14 du jour de fin à minuit UTC−12 du jour de début ;
+- intervalle réellement vide (même instant, ou même heure murale dans le même fuseau, ou même date civile) : ignoré, **sans supprimer** la copie existante de l'événement.
+
+L'adaptateur TypeScript ne rejette plus ces intervalles ; il les transmet à PostgreSQL (testé : contre-exemple New York / Los Angeles, et un événement réellement inversé parmi 249 valides qui n'empêche plus la page d'avancer).
 
 À distinguer : une **date civile valide qui n'existe pas localement** (Apia, 30 décembre 2011) n'est pas une erreur de protocole. Sa projection est vide et, selon la politique existante, elle n'occupe aucun temps.
 
@@ -255,7 +262,7 @@ Un événement que PostgreSQL ne sait pas placer, ou dont l'intervalle résolu e
 - **décalage explicite** : l'instant exact est pris dans le décalage ;
 - **pas de décalage** : la période est **élargie à tous les fuseaux possibles**, de UTC+14 à UTC−12. Pour une heure murale, `[début − 14 h, fin + 12 h)` en UTC ; pour une journée entière, de minuit à UTC+14 le jour de début jusqu'à minuit à UTC−12 le jour de fin. On bloque un peu trop, jamais trop peu.
 
-Seuls restent des erreurs de protocole : un `dateTime` sans décalage **ni** fuseau (Google en exige un) et des bornes inversées. Une date civile valide qui n'existe pas dans un fuseau connu (Apia) n'occupe aucun temps.
+Seul reste une erreur de protocole un `dateTime` sans décalage **ni** fuseau (Google en exige un) ; des bornes inversées suivent la règle de l'enveloppe ci-dessus. Une date civile valide qui n'existe pas dans un fuseau connu (Apia) n'occupe aucun temps.
 
 Les récurrences ne dépendent d'aucun fuseau chez nous : Google développe lui-même les séries (`singleEvents=true`), chaque occurrence arrive avec ses propres bornes et il n'y a aucun moteur RRULE ici.
 
@@ -268,7 +275,7 @@ Les récurrences ne dépendent d'aucun fuseau chez nous : Google développe lui-
 - **statut** : il ne passe jamais `synced` mais `degraded` (synchronisé avec une marge, `last_error = untrusted_timezone`). Le DTO expose `timezoneTrusted: false` et `syncStatus: "degraded"`. Les libellés (`src/features/calendar/client/sync-status-copy.ts`) affichent « Synchronisé avec une marge : fuseau horaire non reconnu », avec `healthy: false`. Aucune logique ne lit `degraded` comme `synced`. `protecting` reste vrai : la copie est complète et ne bloque que davantage ;
 - **sélection** : il n'est pas sélectionnable tant qu'il est `untrusted` ;
 - **journalisation** : le fuseau reçu est journalisé (`calendar_timezone_untrusted`, nom IANA et identifiant du calendrier, rien de secret), si bien qu'une tzdata en retard se voit tout de suite ;
-- **relecture périodique** : la tâche périodique relit la liste des calendriers des connexions qui ont un calendrier `untrusted`, au plus toutes les 6 heures par connexion (`calendar_list_checked_at`, horodaté à chaque tentative, même en échec).
+- **relecture périodique** : la tâche périodique relit la liste des calendriers des connexions qui ont un calendrier `untrusted`, au plus toutes les 6 heures par connexion (`calendar_list_checked_at`). La sélection des connexions dues n'horodate rien : chaque connexion est horodatée au moment où son traitement commence vraiment (`calendar_begin_calendar_list_check`), même s'il échoue ensuite ; celles que le budget de la tâche ne permet pas d'atteindre restent dues.
 
 Seule une liste des calendriers avec un fuseau connu de PostgreSQL rétablit `trusted` ; une page d'événements ne le fait jamais, même avec un fuseau valide. Le rétablissement se passe ainsi :
 
@@ -280,15 +287,19 @@ Testé en SQL et de bout en bout, relecture par la tâche périodique comprise. 
 
 ## Statuts
 
-| `sync_status` | Sens                                                                                          | Copie locale                                        |
-| ------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `pending`     | sélectionné, jamais synchronisé (ou reconnexion en attente)                                   | vide, ou celle d'avant la reconnexion               |
-| `syncing`     | une passe détient le claim                                                                    | inchangée jusqu'à la fin                            |
-| `synced`      | dernière passe complète : la copie correspond au curseur                                      | complète pour la fenêtre                            |
-| `degraded`    | dernière passe complète, mais fuseau du calendrier non fiable (`untrusted_timezone`)          | complète, périodes sans décalage élargies           |
-| `stale`       | copie connue en retard : fuseau changé, passe interrompue par son budget, passe sans résultat | gardée, bloque ; full sync ou reprise due           |
-| `error`       | dernière passe en échec (Google indisponible, protocole, token…), `last_error` porte le code  | gardée, bloque                                      |
-| `incomplete`  | calendrier au-delà de la sync bornée (`too_many_events`)                                      | ancienne copie + pages lues, bloque, jamais balayée |
+| `sync_status` | Sens                                                                                                                                   | Copie locale                                        |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `pending`     | sélectionné, jamais synchronisé (ou reconnexion en attente)                                                                            | vide, ou celle d'avant la reconnexion               |
+| `syncing`     | une passe détient le claim                                                                                                             | inchangée jusqu'à la fin                            |
+| `synced`      | dernière passe complète : la copie correspond au curseur                                                                               | complète pour la fenêtre                            |
+| `degraded`    | dernière passe complète, mais avec marge : fuseau non fiable (`untrusted_timezone`) ou événements approximatifs (`approximate_events`) | complète, périodes incertaines élargies             |
+| `stale`       | copie connue en retard : fuseau changé, passe interrompue par son budget, passe sans résultat                                          | gardée, bloque ; full sync ou reprise due           |
+| `error`       | dernière passe en échec (Google indisponible, protocole, token…), `last_error` porte le code                                           | gardée, bloque                                      |
+| `incomplete`  | calendrier au-delà de la sync bornée (`too_many_events`)                                                                               | ancienne copie + pages lues, bloque, jamais balayée |
+
+**`degraded` dans un calendrier fiable.** Chaque événement porte `approximate` : vrai quand sa période a été élargie (fuseau propre inconnu, calendrier non fiable, ligne historique sans dates civiles) ou ajustée (bornes inversées). Une passe complète d'un calendrier fiable qui contient au moins un tel événement finit `degraded` avec `last_error = approximate_events`, jamais `synced`. Le libellé est alors « Synchronisé avec une marge ».
+
+**Priorité des statuts.** `degraded` n'est posé que par une passe complète réussie : `error` et `incomplete` restent prioritaires en SQL, et `describeSyncStatus` n'affiche la marge de fuseau que si le statut est `degraded` (testé : `error` ou `incomplete` sur un calendrier non fiable ne parlent jamais de « marge »).
 
 La connexion a son propre statut : `active`, `reauth_required` (copie gardée, plus de sync), `disconnected` (tout supprimé).
 

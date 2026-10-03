@@ -24,6 +24,13 @@ export async function runCalendarJob(
   });
   for (const { connection_id: connectionId } of lists ?? []) {
     if (deadline - Date.now() < 5000) break;
+    // Stamped only now, when it is really read (6 hours until the next
+    // attempt, whatever the outcome); one left unread stays due.
+    const { data: started } = await deps.admin.rpc(
+      "calendar_begin_calendar_list_check",
+      { p_connection_id: connectionId },
+    );
+    if (!started) continue;
     await refreshConnectionCalendars(deps, connectionId, {
       deadline: Math.min(deadline, Date.now() + 15_000),
     }).catch(() =>

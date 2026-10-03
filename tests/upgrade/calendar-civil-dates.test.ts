@@ -90,9 +90,11 @@ async function rows(calendarId: string) {
     all_day_start_date: string | null;
     all_day_end_date: string | null;
     all_day_zone: string | null;
+    approximate: boolean;
   }>(
     `select provider_event_id, starts_at, ends_at, all_day,
-            all_day_start_date::text, all_day_end_date::text, all_day_zone
+            all_day_start_date::text, all_day_end_date::text, all_day_zone,
+            approximate
      from public.external_calendar_events
      where external_calendar_id = $1 order by starts_at`,
     [calendarId],
@@ -194,6 +196,8 @@ describe("upgrading a database holding all-day busy periods", () => {
         all_day_start_date: null,
         all_day_end_date: null,
         all_day_zone: null,
+        // Civil dates unknown: the period counts as approximate.
+        approximate: true,
       });
     }
     // Availability still sees them as busy.
@@ -211,6 +215,7 @@ describe("upgrading a database holding all-day busy periods", () => {
       "2026-10-20T08:00:00.000Z",
       "2026-10-20T09:00:00.000Z",
     ]);
+    expect(timed.approximate).toBe(false);
   });
 
   it("forces a full sync of every calendar holding one, even a single row", async () => {
@@ -280,6 +285,7 @@ describe("upgrading a database holding all-day busy periods", () => {
         all_day_start_date: item.canonical.dates[0],
         all_day_end_date: item.canonical.dates[1],
         all_day_zone: item.canonical.zone,
+        approximate: false,
       });
       const expected =
         item.key === "paris-25h"

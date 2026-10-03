@@ -442,28 +442,6 @@ describe("strict protocol", () => {
     ...(
       [
         [
-          "an empty timed interval",
-          {
-            start: { dateTime: "2026-10-01T10:00:00Z" },
-            end: { dateTime: "2026-10-01T10:00:00Z" },
-          },
-        ],
-        [
-          "an inverted timed interval (offsets)",
-          {
-            start: { dateTime: "2026-10-01T12:00:00+02:00" },
-            end: { dateTime: "2026-10-01T09:30:00Z" },
-          },
-        ],
-        [
-          "an inverted all-day interval",
-          { start: { date: "2026-10-03" }, end: { date: "2026-10-02" } },
-        ],
-        [
-          "an empty all-day interval",
-          { start: { date: "2026-10-02" }, end: { date: "2026-10-02" } },
-        ],
-        [
           "a date that does not exist",
           { start: { date: "2026-02-30" }, end: { date: "2026-03-01" } },
         ],
@@ -571,6 +549,42 @@ describe("strict protocol", () => {
       ["apia", false],
       ["declined", true],
       ["other-declined", false],
+    ]);
+  });
+
+  it("passes empty or inverted intervals on to PostgreSQL (bounds may be in different zones)", async () => {
+    const accessToken = await token();
+    fake.failNext(isEvents, 200, 1, {
+      items: [
+        {
+          id: "ny-la",
+          start: {
+            dateTime: "2026-10-01T10:00:00",
+            timeZone: "America/New_York",
+          },
+          end: {
+            dateTime: "2026-10-01T09:00:00",
+            timeZone: "America/Los_Angeles",
+          },
+        },
+        {
+          id: "inverted",
+          start: { dateTime: "2026-10-01T12:00:00+02:00" },
+          end: { dateTime: "2026-10-01T09:30:00Z" },
+        },
+        {
+          id: "empty",
+          start: { date: "2026-10-02" },
+          end: { date: "2026-10-02" },
+        },
+      ],
+      nextSyncToken: "s",
+    });
+    const page = await provider.listEvents(accessToken, "cal", full, null);
+    expect(page.events.map((event) => event.id)).toEqual([
+      "ny-la",
+      "inverted",
+      "empty",
     ]);
   });
 

@@ -239,13 +239,13 @@ isOneToOne: false
                   ]
                 },"external_calendar_events": {
                   Row: {
-                    "all_day": boolean,"all_day_end_date": string | null,"all_day_start_date": string | null,"all_day_zone": string | null,"business_id": string,"busy": boolean,"busy_window": unknown,"ends_at": string,"external_calendar_id": string,"id": string,"provider_etag": string | null,"provider_event_id": string,"provider_recurring_event_id": string | null,"provider_updated_at": string | null,"starts_at": string,"sync_generation": number,"synced_at": string
+                    "all_day": boolean,"all_day_end_date": string | null,"all_day_start_date": string | null,"all_day_zone": string | null,"approximate": boolean,"business_id": string,"busy": boolean,"busy_window": unknown,"ends_at": string,"external_calendar_id": string,"id": string,"provider_etag": string | null,"provider_event_id": string,"provider_recurring_event_id": string | null,"provider_updated_at": string | null,"starts_at": string,"sync_generation": number,"synced_at": string
                   }
                   Insert: {
-                    "all_day": boolean,"all_day_end_date"?: string | null,"all_day_start_date"?: string | null,"all_day_zone"?: string | null,"business_id": string,"busy": boolean,"busy_window"?: never,"ends_at": string,"external_calendar_id": string,"id"?: string,"provider_etag"?: string | null,"provider_event_id": string,"provider_recurring_event_id"?: string | null,"provider_updated_at"?: string | null,"starts_at": string,"sync_generation": number,"synced_at"?: string
+                    "all_day": boolean,"all_day_end_date"?: string | null,"all_day_start_date"?: string | null,"all_day_zone"?: string | null,"approximate"?: boolean,"business_id": string,"busy": boolean,"busy_window"?: never,"ends_at": string,"external_calendar_id": string,"id"?: string,"provider_etag"?: string | null,"provider_event_id": string,"provider_recurring_event_id"?: string | null,"provider_updated_at"?: string | null,"starts_at": string,"sync_generation": number,"synced_at"?: string
                   }
                   Update: {
-                    "all_day"?: boolean,"all_day_end_date"?: string | null,"all_day_start_date"?: string | null,"all_day_zone"?: string | null,"business_id"?: string,"busy"?: boolean,"busy_window"?: never,"ends_at"?: string,"external_calendar_id"?: string,"id"?: string,"provider_etag"?: string | null,"provider_event_id"?: string,"provider_recurring_event_id"?: string | null,"provider_updated_at"?: string | null,"starts_at"?: string,"sync_generation"?: number,"synced_at"?: string
+                    "all_day"?: boolean,"all_day_end_date"?: string | null,"all_day_start_date"?: string | null,"all_day_zone"?: string | null,"approximate"?: boolean,"business_id"?: string,"busy"?: boolean,"busy_window"?: never,"ends_at"?: string,"external_calendar_id"?: string,"id"?: string,"provider_etag"?: string | null,"provider_event_id"?: string,"provider_recurring_event_id"?: string | null,"provider_updated_at"?: string | null,"starts_at"?: string,"sync_generation"?: number,"synced_at"?: string
                   }
                   Relationships: [
                     {
@@ -453,6 +453,9 @@ isOneToOne: false
                            },
 "calendar_apply_events":
 { Args: { "p_calendar_id": string,"p_claim_id": string,"p_events": Json,"p_generation": number,"p_next_page_token"?: string,"p_provider_timezone": string }; Returns: Json
+                           },
+"calendar_begin_calendar_list_check":
+{ Args: { "p_connection_id": string }; Returns: boolean
                            },
 "calendar_begin_oauth":
 { Args: { "p_business_id": string,"p_code_verifier_ciphertext": string,"p_provider": string,"p_state_hash": string }; Returns: undefined

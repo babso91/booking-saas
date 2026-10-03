@@ -14,9 +14,9 @@ export const syncStatusCopy: Record<
   syncing: { label: "Synchronisation en cours", healthy: false },
   synced: { label: "Synchronisé", healthy: true },
   degraded: {
-    label: "Synchronisé avec une marge : fuseau horaire non reconnu",
+    label: "Synchronisé avec une marge",
     detail:
-      "Les créneaux de ce calendrier sont bloqués avec une marge de sécurité tant que son fuseau horaire n’est pas reconnu.",
+      "Certains horaires de ce calendrier sont incertains : ils sont bloqués avec une marge de sécurité.",
     healthy: false,
   },
   stale: { label: "Mise à jour en attente", healthy: false },
@@ -27,10 +27,26 @@ export const syncStatusCopy: Record<
   },
 };
 
-/** The label of a calendar's state; an untrusted zone always shows. */
+const untrustedZone = {
+  label: "Synchronisé avec une marge : fuseau horaire non reconnu",
+  detail:
+    "Les créneaux de ce calendrier sont bloqués avec une marge de sécurité tant que son fuseau horaire n’est pas reconnu.",
+  healthy: false,
+};
+
+/**
+ * The label of a calendar's state. The status decides (an error or an
+ * incomplete sync shows as such, whatever the zone); a margin explains
+ * why when the zone is not recognised.
+ */
 export function describeSyncStatus(
-  calendar: Pick<ConnectedCalendarDto, "syncStatus" | "timezoneTrusted">,
+  calendar: Pick<
+    ConnectedCalendarDto,
+    "syncStatus" | "timezoneTrusted" | "lastError"
+  >,
 ) {
-  if (!calendar.timezoneTrusted) return syncStatusCopy.degraded;
+  if (calendar.syncStatus === "degraded" && !calendar.timezoneTrusted) {
+    return untrustedZone;
+  }
   return syncStatusCopy[calendar.syncStatus];
 }

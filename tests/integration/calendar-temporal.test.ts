@@ -230,19 +230,10 @@ describe("timed events", () => {
       known: ["2026-10-02T08:00:00.000Z", "2026-10-02T09:00:00.000Z"],
     });
 
-    // Still malformed: no offset and no zone at all, or inverted bounds.
-    for (const event of [
-      local("none", undefined),
-      {
-        id: "inverted",
-        start: { dateTime: "2026-10-02T11:00:00", timeZone: "Europe/Pariss" },
-        end: { dateTime: "2026-10-02T10:00:00", timeZone: "Europe/Pariss" },
-      },
-    ]) {
-      await expect(apply(c, [event])).rejects.toMatchObject({
-        message: "invalid_input",
-      });
-    }
+    // Still malformed: no offset and no zone at all.
+    await expect(apply(c, [local("none", undefined)])).rejects.toMatchObject({
+      message: "invalid_input",
+    });
   });
 
   it("a cached event re-sent with an unknown zone is widened around its place, never narrowed (no fallback to UTC)", async () => {
@@ -406,7 +397,7 @@ describe("idempotence, order and window", () => {
     expect((await busy(c)).map((row) => row[0])).toEqual(["kept"]);
   });
 
-  it("an unreadable, empty, inverted or id-less event rejects the whole page (never silently dropped)", async () => {
+  it("an unreadable or id-less event rejects the whole page (never silently dropped)", async () => {
     const c = await calendar({ businessZone: "UTC", calendarZone: "UTC" });
     // A valid busy period already in the copy must survive every rejection.
     await applied(c, [
@@ -430,11 +421,6 @@ describe("idempotence, order and window", () => {
       { id: "", start: good.start, end: good.end },
       { start: good.start, end: good.end },
       { id: "no-end", start: good.start },
-      // Empty or inverted intervals, inverted civil dates, mixed bounds.
-      { id: "empty", start: good.start, end: good.start },
-      { id: "inverted", start: good.end, end: good.start },
-      allDay("inverted-day", "2026-10-03", "2026-10-02"),
-      allDay("empty-day", "2026-10-02", "2026-10-02"),
       { id: "mixed", start: { date: "2026-10-02" }, end: good.end },
       {
         id: "bad-offset",
@@ -446,21 +432,99 @@ describe("idempotence, order and window", () => {
         message: "invalid_input",
       });
     }
-    // Nothing of the rejected pages was applied, nothing was deleted.
     expect(await busy(c)).toEqual([
       ["cached", "2026-10-05T10:00:00.000Z", "2026-10-05T11:00:00.000Z", false],
     ]);
-    // Even a page that would move the cached event to an empty interval.
-    await expect(
-      apply(c, [
+  });
+
+  it("bounds are compared once resolved: New York 10:00 → Los Angeles 09:00 is 14:00Z → 16:00Z", async () => {
+    const c = await calendar({ businessZone: "UTC", calendarZone: "UTC" });
+    expect(
+      await apply(c, [
         {
-          id: "cached",
-          start: { dateTime: "2026-10-05T10:00:00Z" },
-          end: { dateTime: "2026-10-05T10:00:00Z" },
+          id: "ny-la",
+          start: {
+            dateTime: "2026-10-02T10:00:00",
+            timeZone: "America/New_York",
+          },
+          end: {
+            dateTime: "2026-10-02T09:00:00",
+            timeZone: "America/Los_Angeles",
+          },
         },
       ]),
-    ).rejects.toMatchObject({ message: "invalid_input" });
-    expect((await busy(c)).map((row) => row[0])).toEqual(["cached"]);
+    ).toMatchObject({ applied: true, adjusted: 0 });
+    expect(await busy(c)).toEqual([
+      ["ny-la", "2026-10-02T14:00:00.000Z", "2026-10-02T16:00:00.000Z", false],
+    ]);
+    // The slot 14:00Z → 15:00Z (and 15:00Z → 16:00Z) is not offered.
+    const offered = await slots(c, "2026-10-02");
+    expect(offered).not.toContain("2026-10-02T14:00:00.000Z");
+    expect(offered).not.toContain("2026-10-02T15:00:00.000Z");
+    expect(offered).toContain("2026-10-02T16:00:00.000Z");
+  });
+
+  it("incoherent bounds never fail the page: inverted ones block their envelope, empty ones never erase a busy period", async () => {
+    const c = await calendar({ businessZone: "UTC", calendarZone: "UTC" });
+    await applied(c, [
+      {
+        id: "cached",
+        start: { dateTime: "2026-10-05T10:00:00Z" },
+        end: { dateTime: "2026-10-05T11:00:00Z" },
+      },
+    ]);
+    const result = await apply(c, [
+      // Really inverted once resolved: the envelope blocks.
+      {
+        id: "inverted",
+        start: { dateTime: "2026-10-02T11:00:00Z" },
+        end: { dateTime: "2026-10-02T10:00:00Z" },
+      },
+      // Inverted wall clock in an unknown zone: every possible instant.
+      {
+        id: "unknown-inverted",
+        start: { dateTime: "2026-10-03T11:00:00", timeZone: "Europe/Pariss" },
+        end: { dateTime: "2026-10-03T10:00:00", timeZone: "Europe/Pariss" },
+      },
+      allDay("inverted-day", "2026-10-08", "2026-10-07"),
+      // Empty: occupies nothing, and the cached period stays.
+      {
+        id: "cached",
+        start: { dateTime: "2026-10-05T10:00:00Z" },
+        end: { dateTime: "2026-10-05T10:00:00Z" },
+      },
+      allDay("empty-day", "2026-10-09", "2026-10-09"),
+      // And a normal event of the same page still arrives.
+      {
+        id: "new",
+        start: { dateTime: "2026-10-04T10:00:00Z" },
+        end: { dateTime: "2026-10-04T11:00:00Z" },
+      },
+    ]);
+    expect(result).toMatchObject({ applied: true, adjusted: 3 });
+    expect(await busy(c)).toEqual([
+      [
+        "inverted",
+        "2026-10-02T10:00:00.000Z",
+        "2026-10-02T11:00:00.000Z",
+        false,
+      ],
+      [
+        // Between 10:00 and 11:00 wall clock, in any zone.
+        "unknown-inverted",
+        "2026-10-02T20:00:00.000Z",
+        "2026-10-03T23:00:00.000Z",
+        false,
+      ],
+      ["new", "2026-10-04T10:00:00.000Z", "2026-10-04T11:00:00.000Z", false],
+      ["cached", "2026-10-05T10:00:00.000Z", "2026-10-05T11:00:00.000Z", false],
+      [
+        "inverted-day",
+        "2026-10-06T10:00:00.000Z",
+        "2026-10-08T12:00:00.000Z",
+        true,
+      ],
+    ]);
   });
 
   it("a full sync's final sweep removes what was not seen again", async () => {
@@ -482,6 +546,13 @@ describe("idempotence, order and window", () => {
       [c.calendarId, c.claimId],
     );
     const generation = rows[0]!.start.generation;
+    // A fixed window: the run date must never matter.
+    await db.query(
+      `update private.external_calendar_sync
+       set full_window_start = '2010-01-01T00:00Z', full_window_end = '2030-01-01T00:00Z'
+       where calendar_id = $1`,
+      [c.calendarId],
+    );
     await db.query(
       "select public.calendar_apply_events($1, $2, $3, null, $4::jsonb, 'p2')",
       [
@@ -1063,5 +1134,55 @@ describe("trust in a calendar's zone", () => {
       timezone: "America/New_York",
       sync_status: "synced",
     });
+  });
+});
+
+describe("calendar lists read again by the periodic job", () => {
+  it("a connection is stamped only when its list is actually read; the others stay due", async () => {
+    const first = await calendar({
+      businessZone: "UTC",
+      calendarZone: "Europe/Paris",
+    });
+    const second = await calendar({
+      businessZone: "UTC",
+      calendarZone: "Europe/Paris",
+    });
+    const connectionOf = async (c: Calendar) =>
+      (
+        await db.query<{ id: string }>(
+          "select connection_id as id from public.external_calendars where id = $1",
+          [c.calendarId],
+        )
+      ).rows[0]!.id;
+    const ids = [await connectionOf(first), await connectionOf(second)];
+    await db.query(
+      "update public.external_calendars set timezone_trust = 'untrusted' where id = any($1::uuid[])",
+      [[first.calendarId, second.calendarId]],
+    );
+    const due = async () =>
+      (
+        await db.query<{ connection_id: string }>(
+          "select connection_id from public.calendar_due_calendar_lists(100)",
+        )
+      ).rows.map((row) => row.connection_id);
+
+    // Listing stamps nothing.
+    expect(await due()).toEqual(expect.arrayContaining(ids));
+    expect(await due()).toEqual(expect.arrayContaining(ids));
+
+    // The job starts reading the first one (budget then runs out).
+    const begin = async (id: string) =>
+      (
+        await db.query<{ started: boolean }>(
+          "select public.calendar_begin_calendar_list_check($1) as started",
+          [id],
+        )
+      ).rows[0]!.started;
+    expect(await begin(ids[0]!)).toBe(true);
+    expect(await begin(ids[0]!)).toBe(false);
+
+    const after = await due();
+    expect(after).not.toContain(ids[0]);
+    expect(after).toContain(ids[1]);
   });
 });

@@ -141,5 +141,6 @@ Si une action échoue au niveau du transport, `callAction` interroge la page cou
 | `20261006090000_calendar_sync_hardening_3.sql`         | sync calendrier, 3ᵉ passe : aucun repli sur le fuseau du business, fuseaux stricts, lignes historiques préservées et resynchronisées, attentes de verrou bornées       |
 | `20261007090000_calendar_sync_hardening_4.sql`         | sync calendrier, 4ᵉ passe : confiance dans le fuseau d'un calendrier, écriture du token rafraîchi décidée par PostgreSQL avant l'échéance                              |
 | `20261008090000_calendar_sync_untrusted_zone.sql`      | calendrier au fuseau non reconnu : synchronisation continue avec marge (`degraded`), relecture périodique de la liste des calendriers                                  |
+| `20261009090000_calendar_sync_coherent_bounds.sql`     | bornes résolues avant comparaison, enveloppe bloquée au lieu d'un rollback de page, événements approximatifs (`degraded`), horodatage de la relecture par connexion    |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.

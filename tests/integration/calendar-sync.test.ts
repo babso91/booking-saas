@@ -1875,20 +1875,6 @@ describe("strict provider protocol", () => {
       { items: [{ id: "x", status: "confirmed" }], nextSyncToken: "sync-999" },
     ],
     [
-      "an empty interval",
-      {
-        items: [{ ...timed("a", D, "10:00", "10:00") }],
-        nextSyncToken: "sync-999",
-      },
-    ],
-    [
-      "an inverted interval",
-      {
-        items: [{ ...timed("a", D, "10:00", "09:00") }],
-        nextSyncToken: "sync-999",
-      },
-    ],
-    [
       "an attendee self given as a string",
       {
         items: [
@@ -2889,13 +2875,12 @@ describe("orphan channel cleanup", () => {
 });
 
 describe("strict events: semantically invalid events fail the page", () => {
-  it("one invalid event among 249 valid ones: nothing applied, nothing deleted, cursor kept", async () => {
+  it("one inverted event among 249 valid ones: the page is applied, the inverted one blocks its envelope", async () => {
     const s = await setup();
     await connect(s);
     fake.putEvent(work(s), timed("a", D, "09:00", "10:00"));
     await select(s, ["Travail"]);
     const calendarId = await blockingId(s);
-    const before = await syncState(calendarId);
 
     const items: unknown[] = Array.from({ length: 249 }, (_, index) => ({
       id: `new-${index}`,
@@ -2913,13 +2898,18 @@ describe("strict events: semantically invalid events fail the page", () => {
       items,
       nextSyncToken: "sync-999",
     });
-    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("error");
-    expect(await eventIds(s)).toEqual(["a"]);
+    expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
+    const stored = await storedEvents(s);
+    expect(stored).toHaveLength(250);
+    expect(stored.find((row) => row.provider_event_id === "a")).toMatchObject({
+      starts_at: new Date(at(D, "09:00")),
+      ends_at: new Date(at(D, "10:00")),
+    });
+    // An adjusted (approximate) period: synced with a margin, not synced.
     expect(await syncState(calendarId)).toMatchObject({
-      sync_status: "error",
-      last_error: "provider_protocol",
-      sync_token: before.sync_token,
-      generation: before.generation,
+      sync_status: "degraded",
+      last_error: "approximate_events",
+      sync_token: "sync-999",
     });
     expect(await slots(s)).not.toContain(`${D}T09:00:00.000Z`);
   });

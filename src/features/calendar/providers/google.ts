@@ -37,7 +37,8 @@ import {
 // (`protocol` error otherwise): unparsable JSON, a page without exactly one
 // of nextPageToken / nextSyncToken, items that are not an array, an event
 // without id or readable bounds, an empty, malformed or truncated calendar
-// list. A malformed answer must never look like "no events" (the final sweep
+// list. Bounds that are readable but incoherent (inverted, empty) are left
+// to PostgreSQL, which blocks conservatively instead of failing the page. A malformed answer must never look like "no events" (the final sweep
 // would empty the local copy) or "no calendars" (they would be removed).
 
 export const GOOGLE_SCOPES = [
@@ -264,21 +265,10 @@ function parseEvent(item: unknown): ProviderEvent {
     if (!start || !end || start.kind !== end.kind) {
       throw protocolError("Malformed event bounds");
     }
-    // Empty or inverted intervals. All-day: civil dates compare as
-    // strings. Timed: compared here when both carry an offset (absolute
-    // instants), otherwise by PostgreSQL in the event's zone.
-    if (
-      (start.kind === "date" &&
-        end.kind === "date" &&
-        end.date <= start.date) ||
-      (start.kind === "dateTime" &&
-        end.kind === "dateTime" &&
-        start.zoned &&
-        end.zoned &&
-        Date.parse(end.dateTime) <= Date.parse(start.dateTime))
-    ) {
-      throw protocolError("Empty or inverted event interval");
-    }
+    // Empty or inverted intervals are not rejected here: an event's bounds
+    // may be in different zones (10:00 New York → 09:00 Los Angeles is a
+    // valid two-hour event), so PostgreSQL compares them once resolved and
+    // widens what stays incoherent instead of failing the page.
   }
   return toProviderEvent(item as GoogleEvent)!;
 }

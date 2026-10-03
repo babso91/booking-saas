@@ -180,8 +180,19 @@ async function applyPage(
       p_events: page.events.map(toApplied),
       p_next_page_token: page.nextPageToken as string,
     }),
-  )) as { applied: boolean; reason?: string };
-  if (result.applied) return "applied";
+  )) as { applied: boolean; reason?: string; adjusted?: number };
+  if (result.applied) {
+    // Incoherent bounds blocked conservatively (envelope of every possible
+    // instant) instead of failing the page.
+    if (result.adjusted) {
+      logCalendar(
+        "calendar_event_bounds_adjusted",
+        { calendarId: pass.claim.calendarId, count: result.adjusted },
+        "warn",
+      );
+    }
+    return "applied";
+  }
   if (result.reason === "timezone_changed") {
     logCalendar("calendar_timezone_changed", {
       calendarId: pass.claim.calendarId,
