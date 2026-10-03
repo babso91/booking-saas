@@ -586,8 +586,13 @@ describe("idempotence, order and window", () => {
 
 describe("empty intervals during a full sync", () => {
   // A full sync with a fixed window (the run date never matters): start,
-  // one provider page, finish with the sweep.
-  async function fullSync(c: Calendar, events: unknown[]) {
+  // one provider page, finish with the sweep (after an optional check of
+  // the state between the page and the sweep).
+  async function fullSync(
+    c: Calendar,
+    events: unknown[],
+    beforeSweep?: () => Promise<void>,
+  ) {
     const { rows } = await db.query<{ start: { generation: number } }>(
       "select public.calendar_start_full_sync($1, $2) as start",
       [c.calendarId, c.claimId],
@@ -604,6 +609,7 @@ describe("empty intervals during a full sync", () => {
       [c.calendarId, c.claimId, generation, JSON.stringify(events)],
     );
     expect(page.rows[0]!.result.applied).toBe(true);
+    await beforeSweep?.();
     const finished = await db.query<{ done: boolean }>(
       "select public.calendar_finish_full_sync($1, $2, $3, 'sync-full') as done",
       [c.calendarId, c.claimId, generation],
@@ -648,24 +654,32 @@ describe("empty intervals during a full sync", () => {
     const c = await calendar({ businessZone: "UTC", calendarZone: "UTC" });
     await applied(c, [
       exact("x", "2026-10-05"),
-      exact("kept", "2026-10-06"),
-      exact("gone", "2026-10-07"),
+      exact("y", "2026-10-06"),
+      exact("z", "2026-10-07"),
     ]);
     expect(await slots(c, "2026-10-05")).not.toContain(
       "2026-10-05T10:00:00.000Z",
     );
-    await fullSync(c, [
-      // One exact instant, written with two coherent offsets.
-      {
-        id: "x",
-        start: { dateTime: "2026-10-05T12:00:00+02:00" },
-        end: { dateTime: "2026-10-05T10:00:00Z" },
+    await fullSync(
+      c,
+      [
+        // One exact instant, written with two coherent offsets.
+        {
+          id: "x",
+          start: { dateTime: "2026-10-05T12:00:00+02:00" },
+          end: { dateTime: "2026-10-05T10:00:00Z" },
+        },
+        exact("y", "2026-10-06"),
+        // "z" is not in Google's answer any more.
+      ],
+      async () => {
+        // Right after the page: X removed, Y and Z still there.
+        expect((await rows(c)).map((row) => row[0])).toEqual(["y", "z"]);
       },
-      exact("kept", "2026-10-06"),
-      // "gone" is not in Google's answer any more.
-    ]);
+    );
+    // After the sweep: Z gone too.
     expect(await rows(c)).toEqual([
-      ["kept", "2026-10-06T10:00:00.000Z", "2026-10-06T11:00:00.000Z", false],
+      ["y", "2026-10-06T10:00:00.000Z", "2026-10-06T11:00:00.000Z", false],
     ]);
     expect(await slots(c, "2026-10-05")).toContain("2026-10-05T10:00:00.000Z");
     expect(await slots(c, "2026-10-06")).not.toContain(
@@ -717,6 +731,82 @@ describe("empty intervals during a full sync", () => {
       "2026-10-05T10:00:00.000Z",
     );
     expect(await cursor(c)).toBe("sync-full");
+  });
+
+  it("Paris 25 Oct, 02:30 → 02:30 without offset is never empty (02:30 happens twice): X kept as an approximate envelope, the slot stays blocked", async () => {
+    const c = await calendar({ businessZone: "UTC", calendarZone: "UTC" });
+    // X: 02:30 summer time → 02:30 winter time, one real hour.
+    await applied(c, [
+      {
+        id: "x",
+        start: { dateTime: "2026-10-25T02:30:00+02:00" },
+        end: { dateTime: "2026-10-25T02:30:00+01:00" },
+      },
+    ]);
+    expect(await rows(c)).toEqual([
+      ["x", "2026-10-25T00:30:00.000Z", "2026-10-25T01:30:00.000Z", false],
+    ]);
+    const withoutOffset = {
+      id: "x",
+      start: { dateTime: "2026-10-25T02:30:00", timeZone: "Europe/Paris" },
+      end: { dateTime: "2026-10-25T02:30:00", timeZone: "Europe/Paris" },
+    };
+    // 02:30 wall clock in any zone, UTC+14 … UTC−12.
+    const envelope = [
+      "x",
+      "2026-10-24T12:30:00.000Z",
+      "2026-10-25T14:30:00.000Z",
+      true,
+    ];
+    expect(await apply(c, [withoutOffset])).toMatchObject({
+      applied: true,
+      upserted: 1,
+      deleted: 0,
+    });
+    expect(await rows(c)).toEqual([envelope]);
+    await fullSync(c, [withoutOffset]);
+    expect(await rows(c)).toEqual([envelope]);
+    const offered = await slots(c, "2026-10-25");
+    expect(offered).not.toContain("2026-10-25T00:00:00.000Z");
+    expect(offered).not.toContain("2026-10-25T01:00:00.000Z");
+    expect(await cursor(c)).toBe("sync-full");
+  });
+
+  it("an older empty representation never removes a newer X, incrementally or through a full sync's sweep", async () => {
+    const c = await calendar({ businessZone: "UTC", calendarZone: "UTC" });
+    // X as of T2.
+    await applied(c, [
+      { ...exact("x", "2026-10-05"), updated: "2026-09-02T00:00:00Z" },
+    ]);
+    // An empty representation as of T1 < T2.
+    const older = {
+      id: "x",
+      updated: "2026-09-01T00:00:00Z",
+      start: { dateTime: "2026-10-05T10:00:00Z" },
+      end: { dateTime: "2026-10-05T10:00:00Z" },
+    };
+    const kept = [
+      ["x", "2026-10-05T10:00:00.000Z", "2026-10-05T11:00:00.000Z", false],
+    ];
+    expect(await apply(c, [older])).toMatchObject({
+      applied: true,
+      deleted: 0,
+    });
+    expect(await rows(c)).toEqual(kept);
+    expect(await slots(c, "2026-10-05")).not.toContain(
+      "2026-10-05T10:00:00.000Z",
+    );
+    // Kept and marked as seen: the sweep keeps it.
+    await fullSync(c, [older]);
+    expect(await rows(c)).toEqual(kept);
+    expect(await slots(c, "2026-10-05")).not.toContain(
+      "2026-10-05T10:00:00.000Z",
+    );
+    // A newer empty representation (T3) does remove it.
+    expect(
+      await apply(c, [{ ...older, updated: "2026-09-03T00:00:00Z" }]),
+    ).toMatchObject({ applied: true, deleted: 1 });
+    expect(await rows(c)).toEqual([]);
   });
 
   it("a certainly empty interval never creates anything", async () => {

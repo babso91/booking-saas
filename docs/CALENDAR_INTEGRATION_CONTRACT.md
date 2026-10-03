@@ -186,7 +186,8 @@ Un événement dont PostgreSQL ne sait pas lire une borne (`dateTime` sans déca
 
 - bornes résolues inversées (ou heures murales inversées dans un même fuseau inconnu) : l'enveloppe est bloquée, l'événement est marqué approximatif, compté dans `adjusted` et journalisé (`calendar_event_bounds_adjusted`, identifiant du calendrier et nombre, rien d'autre) ; la page passe ;
 - journée entière inversée : de minuit UTC+14 du jour de fin à minuit UTC−12 du jour de début ;
-- intervalle **certainement** vide (deux instants exacts identiques, ou même date civile) : information sûre de Google, l'événement n'occupe plus de temps. Rien n'est créé, et sa copie existante est supprimée explicitement, en incrémental comme en full sync : jamais gardée avec des bornes périmées, jamais laissée au balayage ;
+- intervalle **certainement** vide (un même instant donné par deux bornes **avec décalage explicite**, ou même date civile) : information sûre de Google, l'événement n'occupe plus de temps. Rien n'est créé, et sa copie existante est supprimée explicitement, en incrémental comme en full sync : jamais gardée avec des bornes périmées, jamais laissée au balayage. Même garde de fraîcheur qu'une mise à jour : une représentation plus ancienne (`updated`) ne supprime jamais une version plus récente, qui est gardée et marquée vue dans la génération courante (le balayage la conserve) ;
+- même instant **sans** décalage (heure murale résolue par PostgreSQL) : pas certainement vide, puisque 02:30 existe deux fois à Paris le 25 octobre. Chaque borne sans décalage est élargie à tous les fuseaux et l'enveloppe bloque, marquée approximative ;
 - même heure murale dans un fuseau inconnu, sans décalage : **pas** vide (une heure répétée ou une transition inconnue peut séparer les instants). L'enveloppe bloque, marquée approximative.
 
 L'adaptateur TypeScript ne rejette plus ces intervalles ; il les transmet à PostgreSQL (testé : contre-exemple New York / Los Angeles, et un événement réellement inversé parmi 249 valides qui n'empêche plus la page d'avancer).
@@ -460,6 +461,7 @@ Tout ce qui est propre à Google se trouve dans `providers/google.ts`. Le domain
 
 ## Limites connues
 
+- **Heure répétée sans décalage.** Un événement non vide dont une borne est donnée sans décalage pendant l'heure répétée d'un retour à l'heure d'hiver (une nuit par an, entre 2 h et 3 h à Paris) est placé sur l'instant que choisit PostgreSQL ; l'autre lecture possible n'est pas bloquée. Seul un intervalle de durée nulle dans ce cas est traité (jamais considéré vide, voir plus haut).
 - **Canaux d'un compte remplacé.** Quand un autre compte remplace la connexion, les canaux de l'ancien compte ne sont pas arrêtés chez Google (ses identifiants sont remplacés dans la même transaction) : leurs notifications sont ignorées (réponse 204 uniforme) jusqu'à leur expiration (au plus 7 jours).
 - **Calendriers sans fuseau.** Un calendrier que Google liste sans fuseau, ou avec un fuseau inconnu de PostgreSQL, ne peut pas être sélectionné. S'il l'était déjà, il continue d'être synchronisé avec une marge (`degraded`) jusqu'à ce qu'un fuseau connu revienne. Si la tzdata de PostgreSQL ne connaît pas un fuseau récent, la marge dure jusqu'à la mise à jour de PostgreSQL.
 - **Lignes historiques.** Jusqu'à la full sync que la migration force, les journées entières stockées avant les dates civiles gardent leur fenêtre UTC. Elles sont élargies si le fuseau change entre-temps : sur-blocage temporaire.

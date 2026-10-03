@@ -9,11 +9,13 @@
 --    they are still inverted once resolved, the envelope of every possible
 --    bound blocks (and is counted in `adjusted`, logged by the server);
 --    inverted all-day dates block every day between them in every zone. An
---    interval is empty only when certainly so (one exact instant, or the
---    same civil date): the event occupies no time any more and its cached
---    row is removed explicitly (never left to a full sync's sweep). An
---    equal wall clock in an unknown zone is not empty: its envelope
---    blocks. Only unreadable bounds (no date, no offset and no zone) fail.
+--    interval is empty only when certainly so (one instant given by two
+--    explicit offsets, or the same civil date): the event occupies no time
+--    any more and its cached row is removed explicitly, unless it is newer
+--    (then kept and marked as seen; never left to a full sync's sweep).
+--    Without an offset an equal instant is not certain (a repeated hour,
+--    an unknown zone): the envelope blocks, approximate. Only unreadable
+--    bounds (no date, no offset and no zone) fail.
 -- 3. Approximate periods (widened or adjusted) are flagged on their row:
 --    a calendar holding one is 'degraded', never 'synced', even with a
 --    trusted zone; an exact re-projection clears the flag.
@@ -367,9 +369,28 @@ begin
         v_starts := least(v_start_lo, v_end_lo);
         v_ends := greatest(v_start_hi, v_end_hi);
         if v_ends <= v_starts then
-          -- Only when every bound is exact and both are the same instant
-          -- (an uncertain bound always spans 26 hours): certainly empty.
-          v_empty := true;
+          -- Every bound exact and both the same instant. Certainly empty
+          -- only when both carry an explicit offset: without one,
+          -- PostgreSQL chose one of possibly two instants (02:30 happens
+          -- twice in Paris on 25 October). Never empty then: each bound
+          -- without offset is widened to every zone, and the envelope
+          -- blocks as approximate.
+          if v_event->'start'->>'dateTime' ~ '(Z|z|[+-][0-9]{2}:?[0-9]{2})$'
+            and v_event->'end'->>'dateTime' ~ '(Z|z|[+-][0-9]{2}:?[0-9]{2})$' then
+            v_empty := true;
+          else
+            if v_event->'start'->>'dateTime' !~ '(Z|z|[+-][0-9]{2}:?[0-9]{2})$' then
+              v_start_lo := ((v_event->'start'->>'dateTime')::timestamp at time zone 'UTC') - interval '14 hours';
+              v_start_hi := ((v_event->'start'->>'dateTime')::timestamp at time zone 'UTC') + interval '12 hours';
+            end if;
+            if v_event->'end'->>'dateTime' !~ '(Z|z|[+-][0-9]{2}:?[0-9]{2})$' then
+              v_end_lo := ((v_event->'end'->>'dateTime')::timestamp at time zone 'UTC') - interval '14 hours';
+              v_end_hi := ((v_event->'end'->>'dateTime')::timestamp at time zone 'UTC') + interval '12 hours';
+            end if;
+            v_starts := least(v_start_lo, v_end_lo);
+            v_ends := greatest(v_start_hi, v_end_hi);
+            v_approximate := true;
+          end if;
         elsif v_end_hi <= v_start_lo then
           -- Inverted once resolved.
           v_approximate := true;
@@ -393,16 +414,24 @@ begin
         v_empty := false;
     end;
 
-    -- A certainly empty interval (one exact instant, or the same civil
-    -- date) is sure information from the provider: the event occupies no
-    -- time any more. Its cached row, if any, is removed here, explicitly
-    -- (never kept with stale bounds, never left unseen for a full sync's
-    -- sweep); nothing is created.
+    -- A certainly empty interval (one instant given by two explicit
+    -- offsets, or the same civil date) is sure information from the
+    -- provider: the event occupies no time any more. Its cached row, if
+    -- any, is removed here, explicitly (never kept with stale bounds, never
+    -- left unseen for a full sync's sweep); nothing is created. Same
+    -- freshness rule as an update: an older representation never removes
+    -- a newer version, which is kept and marked as seen in this generation
+    -- (a full sync's sweep keeps it).
     if v_empty then
       delete from public.external_calendar_events e
-      where e.external_calendar_id = p_calendar_id and e.provider_event_id = v_id;
+      where e.external_calendar_id = p_calendar_id and e.provider_event_id = v_id
+        and (e.provider_updated_at is null or v_updated is null
+             or v_updated >= e.provider_updated_at);
       get diagnostics v_count = row_count;
       v_deleted := v_deleted + v_count;
+      update public.external_calendar_events e
+      set sync_generation = v_generation, synced_at = pg_catalog.now()
+      where e.external_calendar_id = p_calendar_id and e.provider_event_id = v_id;
       v_skipped := v_skipped + 1;
       continue;
     end if;
