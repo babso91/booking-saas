@@ -390,15 +390,11 @@ Google ne participe pas aux transactions PostgreSQL. Un événement créé chez 
 - en quelques secondes avec les notifications push ;
 - au plus après le rattrapage de 6 h, plus l'intervalle de la tâche, si une notification se perd.
 
-Une réservation faite dans cet intervalle est conservée. Le conflit est signalé et n'est jamais résolu automatiquement. Le futur miroir Booking → Google rendra aussi le rendez-vous visible côté Google.
+Une réservation faite dans cet intervalle est conservée. Le conflit est signalé et n'est jamais résolu automatiquement. Le miroir Booking → Google rend aussi le rendez-vous visible côté Google, une fois copié.
 
-### Export (prochaine PR)
+### Miroir Booking → Google (outbound core)
 
-Une intention d'export sera enregistrée transactionnellement avec la création, le déplacement ou l'annulation du rendez-vous, puis traitée par un worker serveur avec reprise et déduplication. Elle passera par une outbox calendrier distincte de `email_events`. Une panne du fournisseur ne remettra pas en cause le rendez-vous enregistré.
-
-Une association stable rendez-vous ↔ événement externe, avec un marqueur d'origine, évitera les boucles : un événement exporté puis relu dans un calendrier sélectionné ne sera pas compté une seconde fois comme indisponibilité. Le scope `calendar.events.owned` sera ajouté par autorisation incrémentale.
-
-Un déplacement ou une suppression manuelle de cette représentation chez Google ne modifiera pas le rendez-vous Booking. La divergence sera signalée.
+Booking reste la source de vérité : Google Calendar n'est qu'un miroir, dans un calendrier secondaire créé par l'application (scope `calendar.app.created`, ajouté par autorisation incrémentale au compte déjà connecté, même compte obligatoire). Un trigger sur `appointments` enregistre seulement un état souhaité (`private.appointment_calendar_mirrors`, un compteur de révision par rendez-vous) dans la transaction du rendez-vous, sur tous les chemins d'écriture ; aucun appel Google n'a lieu dans une transaction Booking ni sous le verrou de planning. Des workers l'appliquent après le commit (kick après la réponse, puis tâche périodique), avec des ids d'événement déterministes, un claim qui capture génération outbound, incarnation et révision, et une revérification SQL avant toute écriture locale. Le calendrier dédié est retrouvé par un marqueur après une réponse perdue. Il n'est jamais une source d'indisponibilité. S'il est supprimé, l'outbound passe `action_required` sans le recréer : les états souhaités continuent d'être enregistrés et sont rejoués après réactivation explicite. Contrat : [`docs/CALENDAR_INTEGRATION_CONTRACT.md`](CALENDAR_INTEGRATION_CONTRACT.md), migration `20261010090000_calendar_outbound_core.sql`.
 
 ## 9. Emails et tâches planifiées
 

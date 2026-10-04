@@ -16,6 +16,14 @@ import {
   type CalendarContext,
 } from "@/features/calendar/data/connection";
 import { getCalendarDeps } from "@/features/calendar/data/deps";
+import {
+  disableOutbound,
+  enableOutbound,
+  getOutboundStatus,
+  processOutbound,
+  retryOutbound,
+  startWriteAuthorization,
+} from "@/features/calendar/data/outbound";
 import { syncCalendar } from "@/features/calendar/data/sync";
 import {
   listCalendarConflictsSchema,
@@ -116,4 +124,85 @@ export async function listCalendarConflictsAction(input: unknown) {
     input,
     (context, range) => listConflicts(contextOf(context), range),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Outbound: appointments mirrored to a dedicated Google calendar. Same rules:
+// tenant from the session only. Contract: CALENDAR_INTEGRATION_CONTRACT.md.
+// ---------------------------------------------------------------------------
+
+/** Outbound state, separate from the inbound one (works without configuration). */
+export async function getCalendarOutboundStatusAction() {
+  return runBusinessAction(z.undefined(), undefined, (context) =>
+    getOutboundStatus(contextOf(context), getCalendarEnv() !== null),
+  );
+}
+
+/**
+ * Returns the Google consent URL that adds the write scope to the connected
+ * account (incremental authorization). Completing it enables outbound.
+ */
+export async function startGoogleCalendarWriteAuthorizationAction() {
+  return runBusinessAction(z.undefined(), undefined, (context) =>
+    startWriteAuthorization(contextOf(context), getCalendarDeps()),
+  );
+}
+
+async function enableOrAuthorize(context: CalendarContext) {
+  const deps = getCalendarDeps();
+  const current = await getOutboundStatus(context, true);
+  if (!current.writeAuthorized) {
+    const { authorizationUrl } = await startWriteAuthorization(context, deps);
+    return { status: current, authorizationUrl };
+  }
+  await enableOutbound(context);
+  runAfterResponse("outbound_enable", () =>
+    processOutbound(deps, { businessId: context.businessId }),
+  );
+  return {
+    status: await getOutboundStatus(context, true),
+    authorizationUrl: null,
+  };
+}
+
+/**
+ * Enables outbound: the dedicated calendar is created after the response.
+ * Without the write scope yet, returns the consent URL to open instead
+ * (`authorizationUrl`); completing it enables outbound.
+ */
+export async function enableCalendarOutboundAction() {
+  return runBusinessAction(z.undefined(), undefined, (context) =>
+    enableOrAuthorize(contextOf(context)),
+  );
+}
+
+/**
+ * After an action required (the dedicated calendar was deleted): a new
+ * dedicated calendar is created explicitly, and the changes recorded
+ * meanwhile are sent to it. Same contract as enabling.
+ */
+export async function reactivateCalendarOutboundAction() {
+  return runBusinessAction(z.undefined(), undefined, (context) =>
+    enableOrAuthorize(contextOf(context)),
+  );
+}
+
+/** Stops outbound at once. Events already in Google stay there. */
+export async function disableCalendarOutboundAction() {
+  return runBusinessAction(z.undefined(), undefined, async (context) => {
+    await disableOutbound(contextOf(context));
+    return getOutboundStatus(contextOf(context), getCalendarEnv() !== null);
+  });
+}
+
+/** Retries now the changes waiting for a backoff. */
+export async function retryCalendarOutboundAction() {
+  return runBusinessAction(z.undefined(), undefined, async (context) => {
+    const deps = getCalendarDeps();
+    await retryOutbound(contextOf(context));
+    runAfterResponse("outbound_retry", () =>
+      processOutbound(deps, { businessId: context.businessId }),
+    );
+    return getOutboundStatus(contextOf(context), true);
+  });
 }

@@ -29,6 +29,25 @@ export type ProviderCalendar = {
   timezone: string | null;
   primary: boolean;
   accessRole: string | null;
+  /**
+   * Marker of a calendar Booking created (read from its description), or
+   * null: such a calendar is a mirror, never an inbound blocking source.
+   */
+  bookingMarker: string | null;
+};
+
+/**
+ * An appointment as mirrored to the provider: canonical UTC instants from
+ * PostgreSQL, a minimal title, private metadata (no secret, no PII beyond
+ * the title). Never attendees, never notes.
+ */
+export type OutboundEvent = {
+  /** Deterministic provider event id. */
+  id: string;
+  summary: string;
+  startsAt: string;
+  endsAt: string;
+  privateProperties: Record<string, string>;
 };
 
 /**
@@ -74,6 +93,18 @@ export interface CalendarProvider {
     codeChallenge: string;
     redirectUri: string;
   }): string;
+  /**
+   * Incremental authorization of the write scope only, for the account
+   * already connected (`loginHint`: its provider account id).
+   */
+  writeAuthorizationUrl(input: {
+    state: string;
+    codeChallenge: string;
+    redirectUri: string;
+    loginHint: string;
+  }): string;
+  /** The scope that lets Booking write to the calendars it creates. */
+  readonly writeScope: string;
   exchangeCode(input: {
     code: string;
     codeVerifier: string;
@@ -116,6 +147,44 @@ export interface CalendarProvider {
     channel: ProviderChannel,
     options?: CallOptions,
   ): Promise<void>;
+
+  /**
+   * Creates a secondary calendar. Never retried here: a retry after a lost
+   * answer could create a second one (the caller looks for the marker
+   * first).
+   */
+  createCalendar(
+    accessToken: string,
+    calendar: { summary: string; description: string; timeZone: string },
+    options?: CallOptions,
+  ): Promise<{ id: string }>;
+  /** False when the calendar no longer exists (deleted). */
+  calendarExists(
+    accessToken: string,
+    calendarId: string,
+    options?: CallOptions,
+  ): Promise<boolean>;
+  /** Inserts with the deterministic id (409 `conflict` if it exists). */
+  insertEvent(
+    accessToken: string,
+    calendarId: string,
+    event: OutboundEvent,
+    options?: CallOptions,
+  ): Promise<void>;
+  /** Replaces the event (confirmed again if it was cancelled). */
+  updateEvent(
+    accessToken: string,
+    calendarId: string,
+    event: OutboundEvent,
+    options?: CallOptions,
+  ): Promise<void>;
+  /** Deletes the event; false when it was already gone (404/410). */
+  deleteEvent(
+    accessToken: string,
+    calendarId: string,
+    eventId: string,
+    options?: CallOptions,
+  ): Promise<boolean>;
 }
 
 export type ProviderErrorKind =
@@ -130,6 +199,8 @@ export type ProviderErrorKind =
   /** 5xx, timeout or network failure, after the bounded retries. */
   | "unavailable"
   | "not_found"
+  /** 409: the resource (event id) already exists. */
+  | "conflict"
   | "forbidden"
   | "bad_request"
   /**

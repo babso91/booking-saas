@@ -8,6 +8,7 @@ type Fields = {
   businessId?: string;
   connectionId?: string;
   calendarId?: string;
+  appointmentId?: string;
   provider?: string;
   status?: string;
   code?: string;

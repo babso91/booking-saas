@@ -30,6 +30,7 @@ import {
   updateBlockSchema,
 } from "@/features/agenda/schemas/agenda";
 import { runBusinessAction } from "@/features/businesses/actions/run-business-action";
+import { kickCalendarOutbound } from "@/features/calendar/data/outbound-kick";
 import { readBusinessToday } from "@/lib/time/business-time";
 import { z } from "zod";
 
@@ -91,8 +92,16 @@ export async function createAppointmentAction(input: unknown) {
   const result = await runBusinessAction(
     createAppointmentSchema,
     input,
-    ({ client, businessId, timezone }, data) =>
-      createManualAppointment(client, { businessId, timezone }, data),
+    async ({ client, businessId, timezone }, data) => {
+      const created = await createManualAppointment(
+        client,
+        { businessId, timezone },
+        data,
+      );
+      // Google mirror after the response (committed, never awaited here).
+      kickCalendarOutbound({ businessId });
+      return created;
+    },
   );
   if (result.ok) revalidateAgenda();
   return result;
@@ -102,8 +111,15 @@ export async function updateAppointmentAction(input: unknown) {
   const result = await runBusinessAction(
     updateAppointmentSchema,
     input,
-    ({ client, businessId, timezone }, data) =>
-      updateAppointment(client, { businessId, timezone }, data),
+    async ({ client, businessId, timezone }, data) => {
+      const updated = await updateAppointment(
+        client,
+        { businessId, timezone },
+        data,
+      );
+      kickCalendarOutbound({ businessId });
+      return updated;
+    },
   );
   if (result.ok) revalidateAgenda();
   return result;
@@ -113,8 +129,15 @@ export async function setAppointmentStatusAction(input: unknown) {
   const result = await runBusinessAction(
     setAppointmentStatusSchema,
     input,
-    ({ client, businessId, timezone }, data) =>
-      setAppointmentStatus(client, { businessId, timezone }, data),
+    async ({ client, businessId, timezone }, data) => {
+      const changed = await setAppointmentStatus(
+        client,
+        { businessId, timezone },
+        data,
+      );
+      kickCalendarOutbound({ businessId });
+      return changed;
+    },
   );
   if (result.ok) revalidateAgenda();
   return result;
@@ -125,8 +148,8 @@ export async function cancelAppointmentAction(input: unknown) {
   const result = await runBusinessAction(
     cancelAppointmentSchema,
     input,
-    ({ client, businessId, timezone }, data) =>
-      setAppointmentStatus(
+    async ({ client, businessId, timezone }, data) => {
+      const cancelled = await setAppointmentStatus(
         client,
         { businessId, timezone },
         {
@@ -135,7 +158,10 @@ export async function cancelAppointmentAction(input: unknown) {
           status: "cancelled",
           cancellationReason: data.reason,
         },
-      ),
+      );
+      kickCalendarOutbound({ businessId });
+      return cancelled;
+    },
   );
   if (result.ok) revalidateAgenda();
   return result;

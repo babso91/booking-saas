@@ -165,6 +165,15 @@ export const errorCopy: Record<
     title: "Accès non accordé",
     message: "Reconnecte-toi en autorisant l’accès à tes calendriers.",
   },
+  calendar_write_authorization_required: {
+    title: "Autorisation nécessaire",
+    message:
+      "Autorise Booking à écrire dans Google Agenda pour y copier tes rendez-vous.",
+  },
+  calendar_account_mismatch: {
+    title: "Autre compte Google",
+    message: "Autorise l’accès avec le compte Google déjà connecté à Booking.",
+  },
   oauth_state_invalid: {
     title: "Connexion expirée",
     message: "Cette demande de connexion n’est plus valable. Recommence.",

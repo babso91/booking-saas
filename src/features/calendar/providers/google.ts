@@ -9,6 +9,7 @@ import {
   CalendarProviderError,
   type CalendarProvider,
   type EventQuery,
+  type OutboundEvent,
   type ProviderCalendar,
   type ProviderEvent,
   type ProviderEventPage,
@@ -22,9 +23,17 @@ import {
 //   calendar.calendarlist.readonly        "See the list of Google calendars
 //                                          you're subscribed to"
 //   calendar.events.readonly              "View events on all your calendars"
-// Writing appointments to a chosen calendar (next PR) will add
-// calendar.events.owned through incremental authorization
-// (include_granted_scopes), not requested before it is used.
+// Outbound (appointments mirrored to Google) adds, through incremental
+// authorization (include_granted_scopes) and only when the professional
+// enables it:
+//   calendar.app.created                  "Make secondary Google calendars,
+//                                          and see, create, change, and
+//                                          delete events on them"
+// It covers calendars.insert and events insert/update/delete, on the
+// calendars the app created only: Booking can never write to another
+// calendar. A calendar's id cannot be chosen at creation; after a lost
+// answer, the dedicated calendar is found again in the calendar list (read
+// scope above) by the marker written in its description.
 //
 // Events are read with singleEvents=true: Google expands recurring series
 // into instances (no RRULE engine here), each with its own id and
@@ -56,7 +65,21 @@ const API = "https://www.googleapis.com/calendar/v3";
 const EVENT_FIELDS =
   "items(id,status,start,end,transparency,eventType,recurringEventId,etag,updated,attendees(self,responseStatus)),nextPageToken,nextSyncToken,timeZone";
 const CALENDAR_FIELDS =
-  "items(id,summary,summaryOverride,timeZone,primary,accessRole),nextPageToken";
+  "items(id,summary,summaryOverride,description,timeZone,primary,accessRole),nextPageToken";
+
+export const GOOGLE_WRITE_SCOPE =
+  "https://www.googleapis.com/auth/calendar.app.created";
+
+/** Marker of a calendar Booking created, in its description. */
+const BOOKING_MARKER =
+  /booking-saas:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/;
+
+export function bookingCalendarDescription(marker: string) {
+  return `Rendez-vous copiés depuis Booking. Booking reste la référence : une modification faite ici n’est pas reprise. Identifiant technique : booking-saas:${marker}`;
+}
+
+/** Google's custom event ids: base32hex (a-v, 0-9), 5 to 1024 characters. */
+const EVENT_ID = /^[a-v0-9]{5,1024}$/;
 
 /** Pages of the calendar list read at most (250 calendars per page). */
 const MAX_CALENDAR_PAGES = 4;
@@ -288,6 +311,8 @@ function errorFor(status: number, body: Record<string, unknown>) {
   if (status === 401)
     return new CalendarProviderError("unauthorized", status, "unauthorized");
   if (status === 410) return new CalendarProviderError("gone", status, "gone");
+  if (status === 409)
+    return new CalendarProviderError("conflict", status, "conflict");
   if (status === 404)
     return new CalendarProviderError("not_found", status, "not_found");
   if (
@@ -375,6 +400,41 @@ export function createGoogleCalendarProvider(options: {
     Authorization: `Bearer ${accessToken}`,
   });
 
+  const jsonRequest = (method: string, accessToken: string, body: unknown) => ({
+    method,
+    headers: { ...bearer(accessToken), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const eventUrl = (calendarId: string, eventId?: string) => {
+    const url = new URL(
+      `${API}/calendars/${encodeURIComponent(calendarId)}/events${
+        eventId ? `/${encodeURIComponent(eventId)}` : ""
+      }`,
+    );
+    // No notification: there is no attendee, and nobody is invited.
+    url.searchParams.set("sendUpdates", "none");
+    return url;
+  };
+
+  // Only the appointment's slot and a minimal title: no attendee (no
+  // invitation), no description, no notes, no contact detail. Opaque: the
+  // professional's other tools see the slot as busy.
+  const eventBody = (event: OutboundEvent) => ({
+    summary: event.summary,
+    start: { dateTime: event.startsAt },
+    end: { dateTime: event.endsAt },
+    status: "confirmed",
+    transparency: "opaque",
+    extendedProperties: { private: event.privateProperties },
+  });
+
+  const checkEventId = (eventId: string) => {
+    if (!EVENT_ID.test(eventId)) {
+      throw new CalendarProviderError("bad_request", null, "Invalid event id");
+    }
+  };
+
   return {
     id: "google",
     requiredScopes: GOOGLE_SCOPES.filter((scope) =>
@@ -394,6 +454,29 @@ export function createGoogleCalendarProvider(options: {
         access_type: "offline",
         prompt: "consent",
         include_granted_scopes: "true",
+        state,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
+      }).toString();
+      return url.toString();
+    },
+
+    writeScope: GOOGLE_WRITE_SCOPE,
+
+    writeAuthorizationUrl({ state, codeChallenge, redirectUri, loginHint }) {
+      const url = new URL(AUTH_URL);
+      url.search = new URLSearchParams({
+        client_id: options.clientId,
+        redirect_uri: redirectUri,
+        response_type: "code",
+        // The new scope only; openid returns the id_token that proves which
+        // account answered. Every scope granted before stays
+        // (include_granted_scopes).
+        scope: ["openid", GOOGLE_WRITE_SCOPE].join(" "),
+        access_type: "offline",
+        prompt: "consent",
+        include_granted_scopes: "true",
+        login_hint: loginHint,
         state,
         code_challenge: codeChallenge,
         code_challenge_method: "S256",
@@ -532,6 +615,10 @@ export function createGoogleCalendarProvider(options: {
             primary: item.primary === true,
             accessRole:
               typeof item.accessRole === "string" ? item.accessRole : null,
+            bookingMarker:
+              typeof item.description === "string"
+                ? (BOOKING_MARKER.exec(item.description)?.[1] ?? null)
+                : null,
           });
         }
         if (
@@ -628,6 +715,95 @@ export function createGoogleCalendarProvider(options: {
         throw protocolError("Incomplete watch response");
       }
       return { resourceId: body.resourceId, expiresAt: new Date(expiration) };
+    },
+
+    async createCalendar(accessToken, calendar, callOptions) {
+      // No automatic retry: a 5xx or a timeout may hide a calendar that was
+      // created; the caller looks for its marker before trying again.
+      const response = await sendWithRetry(
+        fetchImpl,
+        `${API}/calendars`,
+        jsonRequest("POST", accessToken, {
+          summary: calendar.summary,
+          description: calendar.description,
+          timeZone: calendar.timeZone,
+        }),
+        { ...retry, retries: 0 },
+        callOptions,
+      );
+      if (!response.ok) {
+        throw errorFor(response.status, await readFailure(response));
+      }
+      const body = await readSuccess(response);
+      if (!nonEmptyString(body.id)) {
+        throw protocolError("Incomplete calendar response");
+      }
+      return { id: body.id };
+    },
+
+    async calendarExists(accessToken, calendarId, callOptions) {
+      const url = new URL(`${API}/calendars/${encodeURIComponent(calendarId)}`);
+      url.searchParams.set("fields", "id");
+      const response = await sendWithRetry(
+        fetchImpl,
+        url.toString(),
+        { headers: bearer(accessToken) },
+        retry,
+        callOptions,
+      );
+      if (response.status === 404 || response.status === 410) {
+        await response.body?.cancel().catch(() => undefined);
+        return false;
+      }
+      if (!response.ok) {
+        throw errorFor(response.status, await readFailure(response));
+      }
+      const body = await readSuccess(response);
+      if (body.id !== calendarId) throw protocolError("Unexpected calendar");
+      return true;
+    },
+
+    // Retried on 5xx/429/timeouts: safe, the id is deterministic (a second
+    // insert of an event that was created answers 409).
+    async insertEvent(accessToken, calendarId, event, callOptions) {
+      checkEventId(event.id);
+      const body = await call(
+        eventUrl(calendarId).toString(),
+        jsonRequest("POST", accessToken, { id: event.id, ...eventBody(event) }),
+        callOptions,
+      );
+      if (body.id !== event.id) throw protocolError("Unexpected event");
+    },
+
+    async updateEvent(accessToken, calendarId, event, callOptions) {
+      checkEventId(event.id);
+      const body = await call(
+        eventUrl(calendarId, event.id).toString(),
+        jsonRequest("PUT", accessToken, eventBody(event)),
+        callOptions,
+      );
+      if (body.id !== event.id) throw protocolError("Unexpected event");
+    },
+
+    async deleteEvent(accessToken, calendarId, eventId, callOptions) {
+      checkEventId(eventId);
+      const response = await sendWithRetry(
+        fetchImpl,
+        eventUrl(calendarId, eventId).toString(),
+        { method: "DELETE", headers: bearer(accessToken) },
+        retry,
+        callOptions,
+      );
+      // 410: already deleted; 404: never existed or the calendar is gone.
+      if (response.status === 404 || response.status === 410) {
+        await response.body?.cancel().catch(() => undefined);
+        return false;
+      }
+      if (!response.ok) {
+        throw errorFor(response.status, await readFailure(response));
+      }
+      await response.body?.cancel().catch(() => undefined);
+      return true;
     },
 
     async stopChannel(accessToken, channel, callOptions) {

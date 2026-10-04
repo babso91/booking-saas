@@ -53,6 +53,11 @@ export type ConnectedCalendarDto = {
   timezoneTrusted: boolean;
   blocking: boolean;
   /**
+   * The dedicated calendar Booking created for its own appointments (or a
+   * former one): never selectable, never a source of busy periods.
+   */
+  bookingCalendar: boolean;
+  /**
    * True once a blocking calendar completed its first full sync: before
    * that ("activation en cours"), only the events already read block, and
    * the UI must not present the calendar as protecting availability.
@@ -103,6 +108,7 @@ const calendarItems = (
     timezone: string | null;
     primary: boolean;
     accessRole: string | null;
+    bookingMarker: string | null;
   }[],
 ) =>
   calendars.map((calendar) => ({
@@ -111,6 +117,7 @@ const calendarItems = (
     timezone: calendar.timezone,
     primary: calendar.primary,
     accessRole: calendar.accessRole,
+    bookingMarker: calendar.bookingMarker,
   }));
 
 async function connectionOf(context: CalendarContext) {
@@ -141,7 +148,7 @@ export async function listConnectedCalendars(
   const { data, error } = await context.client
     .from("external_calendars")
     .select(
-      "id, name, timezone, timezone_trust, is_primary, access_role, selected_for_blocking, sync_status, last_synced_at, last_error",
+      "id, name, timezone, timezone_trust, is_primary, access_role, selected_for_blocking, sync_status, last_synced_at, last_error, booking_outbound",
     )
     .eq("business_id", context.businessId)
     .order("is_primary", { ascending: false })
@@ -157,9 +164,11 @@ export async function listConnectedCalendars(
     selectable:
       SELECTABLE_ROLES.has(row.access_role ?? "reader") &&
       row.timezone !== null &&
-      row.timezone_trust === "trusted",
+      row.timezone_trust === "trusted" &&
+      !row.booking_outbound,
     timezoneTrusted: row.timezone_trust === "trusted",
     blocking: row.selected_for_blocking,
+    bookingCalendar: row.booking_outbound,
     protecting: row.selected_for_blocking && row.last_synced_at !== null,
     syncStatus: row.sync_status as ConnectedCalendarDto["syncStatus"],
     lastSyncedAt: row.last_synced_at,
@@ -192,6 +201,79 @@ export async function getCalendarIntegrationStatus(
 }
 
 /**
+ * Issues an OAuth state for `purpose`: a random state (only its hash is
+ * stored, bound to this user and business, 10 minutes, single use) and a
+ * PKCE verifier (stored encrypted).
+ */
+export async function beginOAuthState(
+  context: CalendarContext,
+  deps: CalendarDeps,
+  purpose: "connect" | "write",
+) {
+  const state = randomToken(32);
+  const stateHash = sha256Hex(state);
+  const codeVerifier = randomToken(48);
+  const codeChallenge = Buffer.from(
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(codeVerifier),
+    ),
+  ).toString("base64url");
+
+  const { error } = await context.client.rpc("calendar_begin_oauth", {
+    p_business_id: context.businessId,
+    p_provider: PROVIDER,
+    p_state_hash: stateHash,
+    p_code_verifier_ciphertext: encryptSecret(
+      codeVerifier,
+      verifierAad(stateHash),
+      deps.keys[0]!,
+    ),
+    p_purpose: purpose,
+  });
+  if (error) throw databaseException(error);
+  return { state, codeChallenge };
+}
+
+export type ConsumedOAuthState = {
+  provider: CalendarProviderId;
+  purpose: "connect" | "write";
+  codeVerifier: string;
+};
+
+/**
+ * Consumes an OAuth state for the signed-in user (same user, not expired,
+ * never used) and the session's business.
+ */
+export async function consumeOAuthState(
+  context: CalendarContext,
+  deps: CalendarDeps,
+  state: string,
+): Promise<ConsumedOAuthState> {
+  const stateHash = sha256Hex(state);
+  const { data: consumed, error } = await context.client.rpc(
+    "calendar_consume_oauth_state",
+    { p_state_hash: stateHash },
+  );
+  if (error) throw databaseException(error);
+  const row = consumed?.[0];
+  if (!row) throw new AppException("oauth_state_invalid");
+  // The session must still be on the business the state was issued for.
+  if (row.business_id !== context.businessId) {
+    throw new AppException("oauth_state_invalid");
+  }
+  return {
+    provider: row.provider as CalendarProviderId,
+    purpose: row.purpose === "write" ? "write" : "connect",
+    codeVerifier: decryptSecret(
+      row.code_verifier_ciphertext,
+      verifierAad(stateHash),
+      deps.keys,
+    ),
+  };
+}
+
+/**
  * Starts an OAuth connection: a random state (only its hash is stored, bound
  * to this user and business, 10 minutes, single use) and a PKCE verifier
  * (stored encrypted). Returns the provider URL to open.
@@ -216,27 +298,11 @@ export async function startConnect(
     throw new AppException("calendar_disconnect_in_progress");
   }
 
-  const state = randomToken(32);
-  const stateHash = sha256Hex(state);
-  const codeVerifier = randomToken(48);
-  const codeChallenge = Buffer.from(
-    await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(codeVerifier),
-    ),
-  ).toString("base64url");
-
-  const { error } = await context.client.rpc("calendar_begin_oauth", {
-    p_business_id: context.businessId,
-    p_provider: PROVIDER,
-    p_state_hash: stateHash,
-    p_code_verifier_ciphertext: encryptSecret(
-      codeVerifier,
-      verifierAad(stateHash),
-      deps.keys[0]!,
-    ),
-  });
-  if (error) throw databaseException(error);
+  const { state, codeChallenge } = await beginOAuthState(
+    context,
+    deps,
+    "connect",
+  );
 
   return {
     authorizationUrl: deps.provider(PROVIDER).authorizationUrl({
@@ -259,31 +325,28 @@ export async function completeConnect(
   deps: CalendarDeps,
   input: { state: string; code: string },
 ) {
-  const stateHash = sha256Hex(input.state);
-  const { data: consumed, error } = await context.client.rpc(
-    "calendar_consume_oauth_state",
-    { p_state_hash: stateHash },
-  );
-  if (error) throw databaseException(error);
-  const row = consumed?.[0];
-  if (!row) throw new AppException("oauth_state_invalid");
-  // The session must still be on the business the state was issued for.
-  if (row.business_id !== context.businessId) {
+  const consumed = await consumeOAuthState(context, deps, input.state);
+  if (consumed.purpose !== "connect") {
     throw new AppException("oauth_state_invalid");
   }
+  return finishConnect(context, deps, consumed, input.code);
+}
 
-  const provider = deps.provider(row.provider as CalendarProviderId);
-  const codeVerifier = decryptSecret(
-    row.code_verifier_ciphertext,
-    verifierAad(stateHash),
-    deps.keys,
-  );
+/** The connection step of a consumed `connect` state. */
+export async function finishConnect(
+  context: CalendarContext,
+  deps: CalendarDeps,
+  consumed: ConsumedOAuthState,
+  code: string,
+) {
+  const provider = deps.provider(consumed.provider);
+  const codeVerifier = consumed.codeVerifier;
 
   let tokens;
   let calendars;
   try {
     tokens = await provider.exchangeCode({
-      code: input.code,
+      code,
       codeVerifier,
       redirectUri: deps.env.GOOGLE_CALENDAR_REDIRECT_URI,
     });

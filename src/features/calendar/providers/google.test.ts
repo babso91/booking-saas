@@ -707,3 +707,142 @@ describe("id_token claims", () => {
     });
   });
 });
+
+describe("Google outbound (calendar.app.created)", () => {
+  async function writer() {
+    const url = provider.writeAuthorizationUrl({
+      state: "w",
+      codeChallenge: challenge,
+      redirectUri: REDIRECT,
+      loginHint: account.sub,
+    });
+    const { code } = fake.authorize(account, url);
+    return provider.exchangeCode({
+      code,
+      codeVerifier: verifier,
+      redirectUri: REDIRECT,
+    });
+  }
+
+  const event = (id: string) => ({
+    id,
+    summary: "Léa — Coupe",
+    startsAt: "2026-10-14T14:00:00+00:00",
+    endsAt: "2026-10-14T15:00:00+00:00",
+    privateProperties: { origin: "booking-saas", appointmentId: "a" },
+  });
+
+  it("asks for the write scope only, for the connected account", () => {
+    const url = new URL(
+      provider.writeAuthorizationUrl({
+        state: "w",
+        codeChallenge: challenge,
+        redirectUri: REDIRECT,
+        loginHint: account.sub,
+      }),
+    );
+    expect(url.searchParams.get("scope")).toBe(
+      "openid https://www.googleapis.com/auth/calendar.app.created",
+    );
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      include_granted_scopes: "true",
+      login_hint: account.sub,
+      access_type: "offline",
+      code_challenge_method: "S256",
+    });
+  });
+
+  it("creates a calendar without retrying (a lost answer is recovered by its marker)", async () => {
+    fake.setCalendars(account.sub, [
+      { id: account.email, summary: "Moi", timeZone: "UTC", primary: true },
+    ]);
+    const tokens = await writer();
+    fake.failNext((url) => url.pathname === "/calendar/v3/calendars", 503, 1);
+    await expect(
+      provider.createCalendar(tokens.accessToken, {
+        summary: "Rendez-vous — Studio",
+        description: "booking-saas:0b9c5a3e-1f2a-4c3d-9e8f-123456789abc",
+        timeZone: "Europe/Paris",
+      }),
+    ).rejects.toMatchObject({ kind: "unavailable" });
+    expect(fake.count((url) => url.pathname === "/calendar/v3/calendars")).toBe(
+      1,
+    );
+
+    const { id } = await provider.createCalendar(tokens.accessToken, {
+      summary: "Rendez-vous — Studio",
+      description: "booking-saas:0b9c5a3e-1f2a-4c3d-9e8f-123456789abc",
+      timeZone: "Europe/Paris",
+    });
+    const listed = await provider.listCalendars(tokens.accessToken);
+    expect(listed.find((calendar) => calendar.id === id)).toMatchObject({
+      bookingMarker: "0b9c5a3e-1f2a-4c3d-9e8f-123456789abc",
+    });
+    expect(
+      listed.find((calendar) => calendar.id === account.email)?.bookingMarker,
+    ).toBeNull();
+    expect(await provider.calendarExists(tokens.accessToken, id)).toBe(true);
+    fake.deleteCalendar(id);
+    expect(await provider.calendarExists(tokens.accessToken, id)).toBe(false);
+  });
+
+  it("inserts with a deterministic base32hex id, 409 on a second insert, update restores, delete is idempotent", async () => {
+    fake.setCalendars(account.sub, [
+      { id: account.email, summary: "Moi", timeZone: "UTC", primary: true },
+    ]);
+    const tokens = await writer();
+    const { id: calendarId } = await provider.createCalendar(
+      tokens.accessToken,
+      { summary: "R", description: "d", timeZone: "UTC" },
+    );
+    const id = "bk0123456789abcdef0123456789abcdef";
+    await provider.insertEvent(tokens.accessToken, calendarId, event(id));
+    await expect(
+      provider.insertEvent(tokens.accessToken, calendarId, event(id)),
+    ).rejects.toMatchObject({ kind: "conflict" });
+    expect(await provider.deleteEvent(tokens.accessToken, calendarId, id)).toBe(
+      true,
+    );
+    expect(await provider.deleteEvent(tokens.accessToken, calendarId, id)).toBe(
+      false,
+    );
+    await provider.updateEvent(tokens.accessToken, calendarId, event(id));
+    expect(fake.storedEvents(calendarId)).toMatchObject([
+      { id, status: "confirmed", summary: "Léa — Coupe" },
+    ]);
+    const insert = fake.requests.find(
+      (request) =>
+        request.method === "POST" && request.url.pathname.endsWith("/events"),
+    )!;
+    expect(insert.url.searchParams.get("sendUpdates")).toBe("none");
+    expect(JSON.parse(insert.body)).toEqual({
+      id,
+      summary: "Léa — Coupe",
+      start: { dateTime: "2026-10-14T14:00:00+00:00" },
+      end: { dateTime: "2026-10-14T15:00:00+00:00" },
+      status: "confirmed",
+      transparency: "opaque",
+      extendedProperties: {
+        private: { origin: "booking-saas", appointmentId: "a" },
+      },
+    });
+    // Never an id Google would refuse.
+    await expect(
+      provider.insertEvent(tokens.accessToken, calendarId, event("Bad-ID")),
+    ).rejects.toMatchObject({ kind: "bad_request" });
+  });
+
+  it("refuses writes to calendars the app did not create (403 forbidden)", async () => {
+    fake.setCalendars(account.sub, [
+      { id: account.email, summary: "Moi", timeZone: "UTC", primary: true },
+    ]);
+    const tokens = await writer();
+    await expect(
+      provider.insertEvent(
+        tokens.accessToken,
+        account.email,
+        event("bk0123456789abcdef0123456789abcdef"),
+      ),
+    ).rejects.toMatchObject({ kind: "forbidden" });
+  });
+});

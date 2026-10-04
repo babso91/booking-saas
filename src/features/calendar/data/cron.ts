@@ -3,6 +3,7 @@ import "server-only";
 import { refreshConnectionCalendars } from "./connection";
 import type { CalendarDeps } from "./deps";
 import { logCalendar } from "./log";
+import { processOutbound, type OutboundRunResult } from "./outbound";
 import { syncCalendar, type SyncOutcome } from "./sync";
 
 // The periodic job (POST /api/cron/calendar, every 15 minutes at deploy):
@@ -12,6 +13,8 @@ import { syncCalendar, type SyncOutcome } from "./sync";
 // First, the calendar lists of connections holding untrusted calendars are
 // read again (at most every 6 hours per connection): a known zone coming
 // back restores trust, and the calendar is then fully synced in this run.
+// Last, outbound: dedicated calendars to create and due mirrors (durable
+// catch-up of what the background kicks did not apply).
 
 export async function runCalendarJob(
   deps: CalendarDeps,
@@ -60,6 +63,16 @@ export async function runCalendarJob(
       }),
     });
   }
+  let outbound: OutboundRunResult | null = null;
+  const left = deadline - Date.now();
+  if (left > 5000) {
+    outbound = await processOutbound(deps, { budgetMs: left - 1000 }).catch(
+      () => {
+        logCalendar("outbound_job_failed", {}, "error");
+        return null;
+      },
+    );
+  }
   logCalendar("job_done", { count: results.length });
-  return { due: data.length, processed: results };
+  return { due: data.length, processed: results, outbound };
 }

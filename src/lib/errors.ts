@@ -54,6 +54,10 @@ export const appErrorMessages = {
     "La déconnexion précédente est en cours de finalisation. Merci de réessayer dans deux minutes.",
   calendar_scope_missing:
     "L’accès à vos calendriers n’a pas été accordé. Reconnectez-vous en autorisant l’accès demandé.",
+  calendar_write_authorization_required:
+    "Booking n’a pas encore l’autorisation d’écrire dans Google Agenda. Autorisez l’accès pour activer la copie de vos rendez-vous.",
+  calendar_account_mismatch:
+    "Ce compte Google n’est pas celui qui est connecté. Autorisez l’accès avec le même compte Google.",
   oauth_state_invalid:
     "Cette demande de connexion a expiré ou a déjà été utilisée. Recommencez la connexion.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
@@ -136,6 +140,8 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   calendar_not_selectable: 400,
   calendar_disconnect_in_progress: 409,
   calendar_scope_missing: 400,
+  calendar_write_authorization_required: 409,
+  calendar_account_mismatch: 409,
   oauth_state_invalid: 400,
   internal: 500,
 };
