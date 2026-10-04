@@ -70,12 +70,16 @@ const CALENDAR_FIELDS =
 export const GOOGLE_WRITE_SCOPE =
   "https://www.googleapis.com/auth/calendar.app.created";
 
-/** Marker of a calendar Booking created, in its description. */
-const BOOKING_MARKER =
-  /booking-saas:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/;
+/**
+ * Marker of a calendar Booking created, in its description: the business's
+ * marker and the creation attempt's nonce. Discovery only (a description
+ * can be copied): never a proof of ownership.
+ */
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const BOOKING_MARKER = new RegExp(`booking-saas:(${UUID})(?::(${UUID}))?`);
 
-export function bookingCalendarDescription(marker: string) {
-  return `Rendez-vous copiés depuis Booking. Booking reste la référence : une modification faite ici n’est pas reprise. Identifiant technique : booking-saas:${marker}`;
+export function bookingCalendarDescription(marker: string, nonce: string) {
+  return `Rendez-vous copiés depuis Booking. Booking reste la référence : une modification faite ici n’est pas reprise. Identifiant technique : booking-saas:${marker}:${nonce}`;
 }
 
 /** Google's custom event ids: base32hex (a-v, 0-9), 5 to 1024 characters. */
@@ -340,6 +344,15 @@ function errorFor(status: number, body: Record<string, unknown>) {
     status,
     oauthError ?? reason ?? "bad_request",
   );
+}
+
+function bookingMarkerOf(description: unknown) {
+  const match =
+    typeof description === "string" ? BOOKING_MARKER.exec(description) : null;
+  return {
+    bookingMarker: match?.[1] ?? null,
+    bookingNonce: match?.[2] ?? null,
+  };
 }
 
 export function toProviderEvent(event: GoogleEvent): ProviderEvent | null {
@@ -623,10 +636,7 @@ export function createGoogleCalendarProvider(options: {
             primary: item.primary === true,
             accessRole:
               typeof item.accessRole === "string" ? item.accessRole : null,
-            bookingMarker:
-              typeof item.description === "string"
-                ? (BOOKING_MARKER.exec(item.description)?.[1] ?? null)
-                : null,
+            ...bookingMarkerOf(item.description),
           });
         }
         if (

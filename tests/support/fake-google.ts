@@ -113,6 +113,12 @@ export class FakeGoogle {
   private seq = 0;
   /** When true, the consent screen grants everything but the write scope. */
   denyWriteScope = false;
+  /**
+   * When true, calendars created from now on stay out of calendarList
+   * (Google's list not up to date yet) until revealCalendars().
+   */
+  hideNewCalendars = false;
+  private hidden = new Set<string>();
   private codes = new Map<
     string,
     {
@@ -198,6 +204,19 @@ export class FakeGoogle {
    */
   loseAnswer(match: (url: URL, method: string) => boolean, times = 1) {
     this.lostAnswers.push({ match, times });
+  }
+
+  revealCalendars() {
+    this.hidden.clear();
+  }
+
+  /** The professional edits a calendar's description in Google. */
+  setDescription(calendarId: string, description: string) {
+    for (const list of this.calendars.values()) {
+      for (const calendar of list) {
+        if (calendar.id === calendarId) calendar.description = description;
+      }
+    }
   }
 
   /** Calendars an account created through the app (outbound). */
@@ -486,7 +505,9 @@ export class FakeGoogle {
     if (outbound) return outbound;
 
     if (url.pathname === "/calendar/v3/users/me/calendarList") {
-      const all = this.calendars.get(account.sub) ?? [];
+      const all = (this.calendars.get(account.sub) ?? []).filter(
+        (calendar) => !this.hidden.has(calendar.id),
+      );
       const offset = Number(url.searchParams.get("pageToken") ?? 0);
       const size = Math.min(this.pageSize, 250);
       const items = all.slice(offset, offset + size);
@@ -580,6 +601,7 @@ export class FakeGoogle {
       });
       this.calendars.set(bearer.account.sub, list);
       this.events.set(id, new Map());
+      if (this.hideNewCalendars) this.hidden.add(id);
       return json({ id, summary: request.summary });
     }
 

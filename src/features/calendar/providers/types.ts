@@ -30,10 +30,12 @@ export type ProviderCalendar = {
   primary: boolean;
   accessRole: string | null;
   /**
-   * Marker of a calendar Booking created (read from its description), or
-   * null: such a calendar is a mirror, never an inbound blocking source.
+   * Marker and creation nonce read from the description of a calendar
+   * Booking may have created. Discovery only: a description can be copied,
+   * so this never proves ownership nor excludes a calendar from blocking.
    */
   bookingMarker: string | null;
+  bookingNonce: string | null;
 };
 
 /**

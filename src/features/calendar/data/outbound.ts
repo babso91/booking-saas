@@ -17,7 +17,11 @@ import {
 } from "./connection";
 import { tokenAad, type CalendarDeps } from "./deps";
 import { logCalendar } from "./log";
-import { StaleCredentialsError, withAccessToken } from "./tokens";
+import {
+  getAccessToken,
+  StaleCredentialsError,
+  withAccessToken,
+} from "./tokens";
 
 // Outbound: Booking appointments mirrored to a dedicated Google calendar the
 // app creates (scope calendar.app.created). Booking stays the source of
@@ -65,13 +69,15 @@ export type CalendarOutboundStatusDto = {
   /**
    * What the professional must do: authorize_write (grant the write scope),
    * reconnect (the Google connection expired), reactivate (the dedicated
-   * calendar was deleted: create a new one explicitly), enable_again (the
+   * calendar was deleted, or its creation could not be confirmed: start a
+   * new attempt explicitly, which looks for it first), enable_again (the
    * connection now uses another Google account).
    */
   actionRequired:
     "authorize_write" | "reconnect" | "reactivate" | "enable_again" | null;
   reason:
     | "calendar_deleted"
+    | "calendar_creation_uncertain"
     | "write_authorization_required"
     | "account_changed"
     | "reauth_required"
@@ -89,6 +95,7 @@ type RawStatus = {
   status: CalendarOutboundState;
   actionCode:
     | "calendar_deleted"
+    | "calendar_creation_uncertain"
     | "write_authorization_required"
     | "account_changed"
     | null;
@@ -130,7 +137,10 @@ export function toOutboundStatusDto(
   } else if (raw.status === "action_required") {
     health = "action_required";
     actionRequired = "reactivate";
-    reason = "calendar_deleted";
+    reason =
+      raw.actionCode === "calendar_creation_uncertain"
+        ? "calendar_creation_uncertain"
+        : "calendar_deleted";
   } else if (raw.status === "creating") {
     health = "pending";
   } else if (raw.errorCount > 0) {
@@ -328,23 +338,81 @@ type CreationClaim = {
   connectionId: string;
   credentialGeneration: string;
   marker: string;
+  nonce: string;
   businessName: string;
   timezone: string;
+  /** An insert of this attempt was sent, its outcome unknown. */
   requested: boolean;
+  /** Calendars of this account adopted before (proven), most recent first. */
+  knownCalendarIds: string[];
 };
-
-/** The claim lost its authority between two steps: nothing is recorded. */
-class SupersededError extends Error {}
 
 export type CreationOutcome =
   "created" | "recovered" | "busy" | "superseded" | "retry" | "action_required";
 
+type CreationFailure =
+  "definite" | "ambiguous" | "not_found" | "multiple" | "forbidden" | "retry";
+
 /**
- * Creates the dedicated calendar, or finds it again. Idempotent across lost
- * answers: the calendar list is always searched for this configuration's
- * marker first (a creation whose answer was lost is adopted, never created
- * twice), and the creation itself is recorded before it is sent and never
- * retried automatically. One worker at a time per business (claim).
+ * Proves that Booking may write to a candidate calendar, through the only
+ * capability calendar.app.created gives on the calendars the app created
+ * (and on no other): writing an event. A sentinel event, with an id of its
+ * own and no personal data, is written then removed at once. A personal
+ * calendar carrying a copied marker answers 403 (or 404): never adopted.
+ * The description (the marker) only lists the candidates.
+ */
+async function provesOwnership(
+  deps: CalendarDeps,
+  token: string,
+  calendarId: string,
+  nonce: string,
+  deadline: number,
+) {
+  const provider = deps.provider(PROVIDER);
+  const sentinel: OutboundEvent = {
+    id: `bkprobe${nonce.replace(/-/g, "")}`,
+    summary: "Booking",
+    startsAt: "2000-01-01T00:00:00Z",
+    endsAt: "2000-01-01T00:01:00Z",
+    privateProperties: { origin: "booking-saas", probe: "1" },
+  };
+  try {
+    try {
+      await provider.insertEvent(token, calendarId, sentinel, { deadline });
+    } catch (error) {
+      if (!isKind(error, "conflict")) throw error;
+      await provider.updateEvent(token, calendarId, sentinel, { deadline });
+    }
+  } catch (error) {
+    if (isKind(error, "forbidden", "not_found")) return false;
+    throw error;
+  }
+  await provider
+    .deleteEvent(token, calendarId, sentinel.id, { deadline })
+    .catch(() => undefined);
+  return true;
+}
+
+/**
+ * Creates the dedicated calendar, or finds it again, without ever creating
+ * two automatically. Google offers no idempotency key for calendars.insert,
+ * so:
+ *
+ * - every step starts by searching the calendar list: a calendar adopted
+ *   before (its id in the history) or a candidate carrying this business's
+ *   marker whose ownership is proven (sentinel write) is adopted. The
+ *   marker alone proves nothing; several proven candidates are never
+ *   chosen between (calendar_creation_uncertain);
+ * - the insert is recorded (committed) before it is sent, at most once per
+ *   attempt, and never retried by the HTTP client;
+ * - a certain failure (refused: 4xx, 429) lets the attempt insert again
+ *   later; an ambiguous one (timeout, network, 5xx, unreadable answer) only
+ *   allows bounded searches, then calendar_creation_uncertain. A new insert
+ *   needs a new, explicit attempt of the professional (which searches
+ *   first, too).
+ *
+ * One worker at a time per business (claim); every recorded outcome
+ * re-checks the claim's authority (claim, generation, credentials).
  */
 export async function ensureOutboundCalendar(
   deps: CalendarDeps,
@@ -360,99 +428,159 @@ export async function ensureOutboundCalendar(
   const claim = data as CreationClaim;
   const provider = deps.provider(PROVIDER);
   const deadline = options.deadline ?? Date.now() + 20_000;
+  const authority = {
+    p_business_id: businessId,
+    p_claim_id: claim.claimId,
+    p_generation: claim.generation,
+    p_credential_generation: claim.credentialGeneration,
+  };
 
-  try {
-    const found = await withAccessToken(
-      deps,
-      claim.connectionId,
-      async (token) => {
-        const calendars = await provider.listCalendars(token, { deadline });
-        const existing = calendars
-          .filter((calendar) => calendar.bookingMarker === claim.marker)
-          .map((calendar) => calendar.id)
-          .sort()[0];
-        if (existing) return { id: existing, created: false };
-
-        const { data: requested, error: requestError } = await deps.admin.rpc(
-          "calendar_outbound_mark_creation_requested",
-          {
-            p_business_id: businessId,
-            p_claim_id: claim.claimId,
-            p_generation: claim.generation,
-          },
-        );
-        if (requestError) throw databaseException(requestError);
-        if (!requested) throw new SupersededError();
-
-        const created = await provider.createCalendar(
-          token,
-          {
-            summary: `Rendez-vous — ${claim.businessName}`,
-            description: bookingCalendarDescription(claim.marker),
-            timeZone: claim.timezone,
-          },
-          { deadline },
-        );
-        return { id: created.id, created: true };
-      },
-      { generation: claim.credentialGeneration, deadline },
+  const fail = async (outcome: CreationFailure, code: string) => {
+    const { data: recorded, error: failError } = await deps.admin.rpc(
+      "calendar_outbound_creation_failed",
+      { ...authority, p_outcome: outcome, p_error: code },
     );
+    if (failError) throw databaseException(failError);
+    if (recorded === "superseded") return "superseded" as const;
+    logCalendar(
+      "outbound_calendar_failed",
+      { businessId, code, status: outcome },
+      recorded === "retry" ? "warn" : "error",
+    );
+    return recorded === "retry"
+      ? ("retry" as const)
+      : ("action_required" as const);
+  };
 
+  const adopt = async (calendarId: string, created: boolean) => {
     const { data: adopted, error: adoptError } = await deps.admin.rpc(
       "calendar_outbound_adopt_calendar",
-      {
-        p_business_id: businessId,
-        p_claim_id: claim.claimId,
-        p_generation: claim.generation,
-        p_credential_generation: claim.credentialGeneration,
-        p_provider_calendar_id: found.id,
-      },
+      { ...authority, p_provider_calendar_id: calendarId },
     );
     if (adoptError) throw databaseException(adoptError);
     if (!adopted) {
       logCalendar("outbound_calendar_superseded", { businessId }, "warn");
-      return "superseded";
+      return "superseded" as const;
     }
     logCalendar(
-      found.created
-        ? "outbound_calendar_created"
-        : "outbound_calendar_recovered",
+      created ? "outbound_calendar_created" : "outbound_calendar_recovered",
       { businessId },
     );
-    return found.created ? "created" : "recovered";
-  } catch (error) {
-    if (
-      error instanceof SupersededError ||
-      error instanceof StaleCredentialsError ||
-      (error instanceof AppException &&
-        (error.code === "calendar_reauth_required" ||
-          error.code === "calendar_not_connected"))
-    ) {
-      return "superseded";
-    }
-    const forbidden =
-      error instanceof CalendarProviderError && error.kind === "forbidden";
-    const code =
-      error instanceof CalendarProviderError ? error.kind : "internal";
-    const { error: failError } = await deps.admin.rpc(
-      "calendar_outbound_creation_failed",
-      {
-        p_business_id: businessId,
-        p_claim_id: claim.claimId,
-        p_generation: claim.generation,
-        p_error: code,
-        p_action_code: (forbidden
-          ? "write_authorization_required"
-          : null) as string,
+    return created ? ("created" as const) : ("recovered" as const);
+  };
+
+  const stale = (error: unknown) =>
+    error instanceof StaleCredentialsError ||
+    (error instanceof AppException &&
+      (error.code === "calendar_reauth_required" ||
+        error.code === "calendar_not_connected"));
+
+  // 1. Search (read-only, safe to run again after a token refresh).
+  let search;
+  try {
+    search = await withAccessToken(
+      deps,
+      claim.connectionId,
+      async (token) => {
+        const calendars = await provider.listCalendars(token, { deadline });
+        const visible = new Set(calendars.map((calendar) => calendar.id));
+        const known = claim.knownCalendarIds.filter((id) => visible.has(id));
+        const candidates = calendars
+          .filter(
+            (calendar) =>
+              calendar.bookingMarker === claim.marker &&
+              !claim.knownCalendarIds.includes(calendar.id),
+          )
+          // This attempt's nonce first; at most a few proofs per step.
+          .sort(
+            (a, b) =>
+              Number(b.bookingNonce === claim.nonce) -
+                Number(a.bookingNonce === claim.nonce) ||
+              a.id.localeCompare(b.id),
+          )
+          .slice(0, 5);
+        const proven = [];
+        for (const candidate of candidates) {
+          if (
+            await provesOwnership(
+              deps,
+              token,
+              candidate.id,
+              claim.nonce,
+              deadline,
+            )
+          ) {
+            proven.push(candidate);
+          }
+        }
+        return { known, proven };
       },
+      { generation: claim.credentialGeneration, deadline },
     );
-    if (failError) throw databaseException(failError);
-    logCalendar(
-      "outbound_calendar_failed",
-      { businessId, code },
-      forbidden ? "warn" : "error",
+  } catch (error) {
+    if (stale(error)) return "superseded";
+    return fail(
+      "retry",
+      error instanceof CalendarProviderError ? error.kind : "internal",
     );
-    return forbidden ? "action_required" : "retry";
+  }
+
+  const current = search.proven.filter(
+    (candidate) => candidate.bookingNonce === claim.nonce,
+  );
+  if (current.length === 1) return adopt(current[0]!.id, false);
+  if (current.length > 1 || search.proven.length > 1) {
+    return fail("multiple", "multiple_candidates");
+  }
+  if (search.proven.length === 1) return adopt(search.proven[0]!.id, false);
+  if (search.known.length > 0) return adopt(search.known[0]!, false);
+  // An insert of this attempt may have created a calendar not listed yet:
+  // never a second insert, only searches.
+  if (claim.requested) return fail("not_found", "creation_not_found");
+
+  // 2. Insert, at most once for this attempt.
+  const { data: requested, error: requestError } = await deps.admin.rpc(
+    "calendar_outbound_mark_creation_requested",
+    authority,
+  );
+  if (requestError) throw databaseException(requestError);
+  if (!requested) return "superseded";
+
+  let token;
+  try {
+    token = await getAccessToken(deps, claim.connectionId, {
+      generation: claim.credentialGeneration,
+      deadline,
+    });
+  } catch (error) {
+    // Nothing was sent.
+    if (stale(error)) return "superseded";
+    return fail("definite", "token_unavailable");
+  }
+  try {
+    const created = await provider.createCalendar(
+      token,
+      {
+        summary: `Rendez-vous — ${claim.businessName}`,
+        description: bookingCalendarDescription(claim.marker, claim.nonce),
+        timeZone: claim.timezone,
+      },
+      { deadline },
+    );
+    return adopt(created.id, true);
+  } catch (error) {
+    if (!(error instanceof CalendarProviderError)) {
+      return fail("ambiguous", "internal");
+    }
+    if (error.kind === "forbidden") return fail("forbidden", error.kind);
+    // Refused before any processing: nothing was created.
+    const refused =
+      error.status !== null &&
+      error.status < 500 &&
+      ["unauthorized", "bad_request", "rate_limited", "not_found"].includes(
+        error.kind,
+      );
+    return fail(refused ? "definite" : "ambiguous", error.kind);
   }
 }
 
@@ -708,12 +836,15 @@ export async function processOutbound(
       const { data: marked } = await deps.admin.rpc(
         "calendar_outbound_mark_action_required",
         {
-          p_business_id: claim.businessId,
-          p_generation: claim.generation,
+          p_appointment_id: claim.appointmentId,
+          p_claim_id: claim.claimId,
           p_action_code: outcome.code,
         },
       );
-      if (marked) {
+      if (!marked) {
+        // A stale worker's late answer: no authority, nothing changed.
+        result.superseded += 1;
+      } else {
         result.actionRequired += 1;
         logCalendar(
           "outbound_action_required",

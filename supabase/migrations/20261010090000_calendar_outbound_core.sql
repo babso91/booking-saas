@@ -230,17 +230,27 @@ create table private.calendar_outbound (
   status text not null
     check (status in ('creating', 'active', 'action_required', 'disabled')),
   generation uuid not null default gen_random_uuid(),
-  -- Stable marker written in the dedicated calendar's description: the
-  -- calendar is found again after a lost creation answer (never by name).
+  -- Marker written in the dedicated calendar's description, with the
+  -- creation attempt's nonce (booking-saas:<marker>:<nonce>). Discovery
+  -- only: it lists candidates after a lost creation answer, never proves
+  -- ownership (a description can be copied); a candidate is adopted only
+  -- once our write permission on it is proven at the provider.
   calendar_marker uuid not null default gen_random_uuid(),
+  creation_nonce uuid not null default gen_random_uuid(),
   provider_calendar_id text check (pg_catalog.char_length(provider_calendar_id) <= 1024),
   action_code text check (action_code in (
-    'calendar_deleted', 'write_authorization_required', 'account_changed'
+    'calendar_deleted', 'write_authorization_required', 'account_changed',
+    'calendar_creation_uncertain'
   )),
   creation_claim_id uuid,
   creation_lease_until timestamptz,
+  -- Set before calendars.insert is sent, cleared only when its failure is
+  -- certain (the request was refused). Set: the outcome may be a calendar
+  -- Google created (lost answer); no other insert is ever sent for this
+  -- attempt, only searches (bounded, then calendar_creation_uncertain).
   creation_requested_at timestamptz,
   creation_attempts integer not null default 0,
+  creation_recovery_attempts integer not null default 0,
   creation_next_attempt_at timestamptz,
   last_error text check (pg_catalog.char_length(last_error) <= 64),
   enabled_at timestamptz,
@@ -464,8 +474,11 @@ alter table public.external_calendars
   add column booking_outbound boolean not null default false;
 grant select (booking_outbound) on public.external_calendars to authenticated;
 
--- Flags a calendar the app created for this business (by its id), and never
--- lets an app-created calendar be selected as a blocking source.
+-- `booking_outbound` is exactly the local, established knowledge: the
+-- calendar's id is in this business's history of calendars the app created
+-- and adopted (after proof at the provider). Never a description, a name
+-- or any text the professional can edit or copy. Such a calendar can never
+-- be selected as a blocking source.
 create function private.guard_outbound_calendar()
 returns trigger
 language plpgsql
@@ -473,16 +486,11 @@ security definer
 set search_path = ''
 as $$
 begin
-  if not new.booking_outbound and exists (
+  new.booking_outbound := exists (
     select 1 from private.calendar_outbound_calendars h
     where h.business_id = new.business_id
       and h.provider_calendar_id = new.provider_calendar_id
-  ) then
-    new.booking_outbound := true;
-  end if;
-  if tg_op = 'UPDATE' and old.booking_outbound then
-    new.booking_outbound := true;
-  end if;
+  );
   if new.booking_outbound and new.selected_for_blocking then
     if tg_op = 'UPDATE' and not old.selected_for_blocking then
       raise exception using errcode = 'P0001', message = 'calendar_not_selectable';
@@ -519,9 +527,9 @@ begin
 end;
 $$;
 
--- Same as 20261008 (calendar lists), plus: a calendar whose description
--- carries this business's marker, or whose id the app created for it, is
--- flagged `booking_outbound` and never blocks.
+-- Same as 20261008 (calendar lists), plus: a calendar whose id the app
+-- created and adopted for this business is flagged `booking_outbound`
+-- (trigger above) and never blocks. A description is never trusted.
 create or replace function private.save_calendars(p_connection_id uuid, p_business_id uuid, p_calendars jsonb)
 returns void
 language plpgsql
@@ -529,16 +537,11 @@ set search_path = ''
 as $$
 declare
   v_changed record;
-  v_marker text;
 begin
   if p_calendars is null or pg_catalog.jsonb_typeof(p_calendars) <> 'array'
     or pg_catalog.jsonb_array_length(p_calendars) > 250 then
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'calendars';
   end if;
-
-  select o.calendar_marker::text into v_marker
-  from private.calendar_outbound o
-  where o.business_id = p_business_id;
 
   -- When the list was last read (the periodic job reads it again for
   -- connections holding untrusted calendars). The connection row is
@@ -590,7 +593,7 @@ begin
 
   insert into public.external_calendars (
     business_id, connection_id, provider_calendar_id, name, timezone,
-    is_primary, access_role, booking_outbound
+    is_primary, access_role
   )
   select
     p_business_id,
@@ -599,16 +602,14 @@ begin
     pg_catalog.left(coalesce(nullif(item->>'name', ''), item->>'id'), 500),
     case when private.is_known_timezone(item->>'timezone') then item->>'timezone' end,
     coalesce((item->>'primary')::boolean, false),
-    pg_catalog.left(item->>'accessRole', 32),
-    coalesce(item->>'bookingMarker' = v_marker, false)
+    pg_catalog.left(item->>'accessRole', 32)
   from pg_catalog.jsonb_array_elements(p_calendars) item
   where coalesce(item->>'id', '') <> ''
   on conflict (connection_id, provider_calendar_id) do update
   set name = excluded.name,
       timezone = coalesce(excluded.timezone, public.external_calendars.timezone),
       is_primary = excluded.is_primary,
-      access_role = excluded.access_role,
-      booking_outbound = public.external_calendars.booking_outbound or excluded.booking_outbound;
+      access_role = excluded.access_role;
 
   -- A calendar now only shared as free/busy stops blocking.
   update public.external_calendars c
@@ -700,9 +701,16 @@ declare
 begin
   perform private.assert_agenda_access(p_business_id);
 
+  -- Lock order: connection row (share), then the outbound row. Everything
+  -- below uses the connection as read under the lock: a reconnection to
+  -- another account either committed before (its values are used here) or
+  -- waits for this transaction (and then disables this activation itself,
+  -- outbound_follow_connection). A value read before the lock is never the
+  -- authority.
   select c.* into v_connection
   from public.calendar_connections c
-  where c.business_id = p_business_id and c.provider = 'google';
+  where c.business_id = p_business_id and c.provider = 'google'
+  for share;
   if v_connection.id is null or v_connection.status = 'disconnected' then
     raise exception using errcode = 'P0001', message = 'calendar_not_connected';
   end if;
@@ -741,10 +749,14 @@ begin
         provider_account_id = v_connection.provider_account_id,
         provider_calendar_id = null,
         action_code = null,
+        -- A new, explicit creation attempt: its own nonce. It still starts
+        -- by looking for a calendar a former attempt may have created.
+        creation_nonce = gen_random_uuid(),
         creation_claim_id = null,
         creation_lease_until = null,
         creation_requested_at = null,
         creation_attempts = 0,
+        creation_recovery_attempts = 0,
         creation_next_attempt_at = null,
         last_error = null,
         enabled_at = pg_catalog.now()
@@ -834,9 +846,49 @@ as $$
   limit least(greatest(coalesce(p_limit, 20), 1), 100);
 $$;
 
+-- Whether a creation claim still has authority: same claim, outbound still
+-- creating under the captured generation, connection still the captured
+-- incarnation and account. Lock order: connection (share), outbound row.
+create function private.creation_claim_valid(
+  p_business_id uuid,
+  p_claim_id uuid,
+  p_generation uuid,
+  p_credential_generation uuid
+)
+returns boolean
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_connection public.calendar_connections;
+  v_outbound private.calendar_outbound;
+begin
+  select c.* into v_connection
+  from public.calendar_connections c
+  join private.calendar_outbound o on o.connection_id = c.id
+  where o.business_id = p_business_id
+  for share of c;
+
+  select o.* into v_outbound
+  from private.calendar_outbound o
+  where o.business_id = p_business_id
+  for update;
+
+  return v_outbound.status = 'creating'
+    and v_outbound.creation_claim_id = p_claim_id
+    and v_outbound.generation = p_generation
+    and v_connection.status = 'active'
+    and v_connection.credential_generation = p_credential_generation
+    and v_connection.provider_account_id = v_outbound.provider_account_id;
+end;
+$$;
+
 -- Claims the creation of the dedicated calendar (one worker at a time).
--- `requested`: a creation may already have reached Google (lost answer):
--- the worker looks for the marker before creating anything.
+-- `requested`: an insert of this attempt was sent and its outcome is
+-- unknown (a lost answer may hide a calendar Google created): the worker
+-- only searches, it never sends another insert for this attempt.
+-- `knownCalendarIds`: calendars of this account the app created and
+-- adopted before (proven), most recent first.
 create function public.calendar_outbound_begin_creation(p_business_id uuid)
 returns jsonb
 language plpgsql
@@ -852,7 +904,8 @@ begin
   select c.* into v_connection
   from public.calendar_connections c
   join private.calendar_outbound o on o.connection_id = c.id
-  where o.business_id = p_business_id;
+  where o.business_id = p_business_id
+  for share of c;
   if v_connection.id is null or v_connection.status <> 'active'
     or not private.has_write_scope(v_connection.scopes) then
     return null;
@@ -882,18 +935,28 @@ begin
     'connectionId', v_connection.id,
     'credentialGeneration', v_connection.credential_generation,
     'marker', v_outbound.calendar_marker,
+    'nonce', v_outbound.creation_nonce,
     'businessName', v_business.name,
     'timezone', v_business.timezone,
-    'requested', v_outbound.creation_requested_at is not null
+    'requested', v_outbound.creation_requested_at is not null,
+    'knownCalendarIds', (
+      select coalesce(pg_catalog.jsonb_agg(h.provider_calendar_id order by h.created_at desc), '[]'::jsonb)
+      from private.calendar_outbound_calendars h
+      where h.business_id = p_business_id
+        and h.provider_account_id = v_outbound.provider_account_id
+    )
   );
 end;
 $$;
 
--- Recorded before the creation request is sent (committed first).
+-- Recorded (and committed) before calendars.insert is sent. Once set for
+-- this attempt it is never granted again: false means no insert may be
+-- sent (another one already was, its outcome unknown).
 create function public.calendar_outbound_mark_creation_requested(
   p_business_id uuid,
   p_claim_id uuid,
-  p_generation uuid
+  p_generation uuid,
+  p_credential_generation uuid
 )
 returns boolean
 language plpgsql
@@ -901,21 +964,25 @@ security definer
 set search_path = ''
 as $$
 begin
+  if not private.creation_claim_valid(
+    p_business_id, p_claim_id, p_generation, p_credential_generation
+  ) then
+    return false;
+  end if;
   update private.calendar_outbound o
-  set creation_requested_at = coalesce(o.creation_requested_at, pg_catalog.now())
+  set creation_requested_at = pg_catalog.now()
   where o.business_id = p_business_id
-    and o.status = 'creating'
-    and o.creation_claim_id = p_claim_id
-    and o.generation = p_generation
+    and o.creation_requested_at is null
     and o.creation_lease_until > pg_catalog.now();
   return found;
 end;
 $$;
 
--- Adopts the dedicated calendar (created now, or found again by its
--- marker), only for the claim, generation and credentials that found it.
--- The calendar is flagged as never blocking at once, and the pending
--- desired states become due.
+-- Adopts the dedicated calendar (created now, or a candidate whose
+-- ownership was proven at the provider, or one adopted before), only for
+-- the claim, generation and credentials that found it. Its id joins the
+-- history at once (never an inbound blocking source), and every enrolled
+-- mirror converges to it.
 create function public.calendar_outbound_adopt_calendar(
   p_business_id uuid,
   p_claim_id uuid,
@@ -929,32 +996,20 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_connection public.calendar_connections;
   v_outbound private.calendar_outbound;
 begin
   if coalesce(pg_catalog.char_length(p_provider_calendar_id), 0) not between 1 and 1024 then
     raise exception using errcode = '22023', message = 'invalid_input';
   end if;
 
-  select c.* into v_connection
-  from public.calendar_connections c
-  join private.calendar_outbound o on o.connection_id = c.id
-  where o.business_id = p_business_id
-  for share of c;
-
-  select o.* into v_outbound
-  from private.calendar_outbound o
-  where o.business_id = p_business_id
-  for update;
-
-  if v_outbound.status is distinct from 'creating'
-    or v_outbound.creation_claim_id is distinct from p_claim_id
-    or v_outbound.generation <> p_generation
-    or v_connection.status <> 'active'
-    or v_connection.credential_generation <> p_credential_generation
-    or v_connection.provider_account_id <> v_outbound.provider_account_id then
+  if not private.creation_claim_valid(
+    p_business_id, p_claim_id, p_generation, p_credential_generation
+  ) then
     return false;
   end if;
+  select o.* into v_outbound
+  from private.calendar_outbound o
+  where o.business_id = p_business_id;
 
   insert into private.calendar_outbound_calendars (
     business_id, provider_calendar_id, provider_account_id
@@ -962,6 +1017,7 @@ begin
   values (p_business_id, p_provider_calendar_id, v_outbound.provider_account_id)
   on conflict do nothing;
 
+  -- Recomputed from the history (trigger), then cleaned.
   update public.external_calendars c
   set booking_outbound = true
   where c.business_id = p_business_id
@@ -976,6 +1032,7 @@ begin
       creation_lease_until = null,
       creation_requested_at = null,
       creation_attempts = 0,
+      creation_recovery_attempts = 0,
       creation_next_attempt_at = null,
       last_error = null
   where o.business_id = p_business_id;
@@ -1012,49 +1069,90 @@ begin
 end;
 $$;
 
--- A failed creation attempt: retried later (bounded backoff), or, when the
--- write authorization is missing, an action required from the professional.
+-- The outcome of a creation step that did not adopt a calendar, recorded
+-- only with the claim's full authority (claim, generation, credentials):
+--   definite   the insert was refused, nothing was created: the attempt
+--              may send an insert again (bounded backoff);
+--   ambiguous  the insert may have been processed (timeout, network, 5xx):
+--              no insert any more for this attempt, searches only;
+--   not_found  a search after an ambiguous insert found nothing: retried
+--              (bounded), then calendar_creation_uncertain;
+--   multiple   several proven candidates: never chosen arbitrarily,
+--              calendar_creation_uncertain;
+--   forbidden  the write scope is missing: write_authorization_required;
+--   retry      the search itself failed (provider unavailable).
 create function public.calendar_outbound_creation_failed(
   p_business_id uuid,
   p_claim_id uuid,
   p_generation uuid,
-  p_error text,
-  p_action_code text default null
+  p_credential_generation uuid,
+  p_outcome text,
+  p_error text
 )
-returns boolean
+returns text
 language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_outbound private.calendar_outbound;
+  v_action text;
 begin
-  if p_action_code is not null then
+  if p_outcome is null or p_outcome not in (
+    'definite', 'ambiguous', 'not_found', 'multiple', 'forbidden', 'retry'
+  ) then
+    raise exception using errcode = '22023', message = 'invalid_input';
+  end if;
+  if not private.creation_claim_valid(
+    p_business_id, p_claim_id, p_generation, p_credential_generation
+  ) then
+    return 'superseded';
+  end if;
+  select o.* into v_outbound
+  from private.calendar_outbound o
+  where o.business_id = p_business_id;
+
+  v_action := case
+    when p_outcome = 'forbidden' then 'write_authorization_required'
+    when p_outcome = 'multiple' then 'calendar_creation_uncertain'
+    when p_outcome = 'not_found' and v_outbound.creation_recovery_attempts + 1 >= 5
+      then 'calendar_creation_uncertain'
+  end;
+
+  if v_action is not null then
     update private.calendar_outbound o
     set status = 'action_required',
-        action_code = p_action_code,
+        action_code = v_action,
         generation = gen_random_uuid(),
         creation_claim_id = null,
         creation_lease_until = null,
         creation_next_attempt_at = null,
+        creation_recovery_attempts = o.creation_recovery_attempts
+          + case when p_outcome = 'not_found' then 1 else 0 end,
         last_error = pg_catalog.left(p_error, 64)
-    where o.business_id = p_business_id
-      and o.status = 'creating'
-      and o.creation_claim_id = p_claim_id
-      and o.generation = p_generation;
-    return found;
+    where o.business_id = p_business_id;
+    return v_action;
   end if;
 
   update private.calendar_outbound o
   set creation_claim_id = null,
       creation_lease_until = null,
-      creation_attempts = o.creation_attempts + 1,
-      creation_next_attempt_at = pg_catalog.now()
-        + least(interval '1 hour', interval '30 seconds' * power(2, least(o.creation_attempts, 7))),
+      creation_requested_at = case
+        when p_outcome = 'definite' then null else o.creation_requested_at
+      end,
+      creation_attempts = o.creation_attempts
+        + case when p_outcome in ('definite', 'retry') then 1 else 0 end,
+      creation_recovery_attempts = o.creation_recovery_attempts
+        + case when p_outcome = 'not_found' then 1 else 0 end,
+      creation_next_attempt_at = pg_catalog.now() + case
+        -- A calendar that may exist is looked for again soon, a few times.
+        when p_outcome in ('ambiguous', 'not_found')
+          then interval '1 minute' * power(2, least(o.creation_recovery_attempts, 4))
+        else least(interval '1 hour', interval '30 seconds' * power(2, least(o.creation_attempts, 7)))
+      end,
       last_error = pg_catalog.left(p_error, 64)
-  where o.business_id = p_business_id
-    and o.status = 'creating'
-    and o.creation_claim_id = p_claim_id
-    and o.generation = p_generation;
-  return found;
+  where o.business_id = p_business_id;
+  return 'retry';
 end;
 $$;
 
@@ -1290,12 +1388,14 @@ end;
 $$;
 
 -- A configuration-level failure (the dedicated calendar was deleted, the
--- write authorization is missing): outbound waits for the professional,
--- under a new generation (late answers of current workers have no
--- authority). Desired states keep being recorded; no mirror retries.
+-- write authorization is missing) found by a mirror worker: outbound waits
+-- for the professional, under a new generation. Only with the full
+-- authority of the worker's claim (claim, outbound generation, credential
+-- generation, account): a late answer of a stale worker changes nothing.
+-- Desired states keep being recorded; no mirror retries.
 create function public.calendar_outbound_mark_action_required(
-  p_business_id uuid,
-  p_generation uuid,
+  p_appointment_id uuid,
+  p_claim_id uuid,
   p_action_code text,
   p_error text default null
 )
@@ -1304,10 +1404,17 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_mirror private.appointment_calendar_mirrors;
 begin
   if p_action_code is null
     or p_action_code not in ('calendar_deleted', 'write_authorization_required') then
     raise exception using errcode = '22023', message = 'invalid_input';
+  end if;
+
+  v_mirror := private.mirror_claim_valid(p_appointment_id, p_claim_id);
+  if v_mirror.appointment_id is null then
+    return false;
   end if;
 
   update private.calendar_outbound o
@@ -1320,16 +1427,16 @@ begin
       creation_requested_at = null,
       creation_next_attempt_at = null,
       last_error = pg_catalog.left(coalesce(p_error, p_action_code), 64)
-  where o.business_id = p_business_id
-    and o.status in ('active', 'creating')
-    and o.generation = p_generation;
+  where o.business_id = v_mirror.business_id
+    and o.status = 'active'
+    and o.generation = v_mirror.claim_generation;
   if not found then
     return false;
   end if;
 
   update private.appointment_calendar_mirrors m
   set claim_id = null, lease_until = null
-  where m.business_id = p_business_id
+  where m.business_id = v_mirror.business_id
     and m.claim_id is not null;
   return true;
 end;
@@ -1348,6 +1455,7 @@ revoke all on function private.guard_outbound_calendar() from public;
 revoke all on function private.exclude_outbound_calendars(uuid) from public;
 revoke all on function private.outbound_status(uuid) from public;
 revoke all on function private.mirror_claim_valid(uuid, uuid) from public;
+revoke all on function private.creation_claim_valid(uuid, uuid, uuid, uuid) from public;
 
 do $$
 declare
@@ -1372,9 +1480,9 @@ begin
     'public.calendar_add_write_authorization(uuid, uuid, text, text[], text, text, timestamptz)',
     'public.calendar_outbound_due_creations(integer)',
     'public.calendar_outbound_begin_creation(uuid)',
-    'public.calendar_outbound_mark_creation_requested(uuid, uuid, uuid)',
+    'public.calendar_outbound_mark_creation_requested(uuid, uuid, uuid, uuid)',
     'public.calendar_outbound_adopt_calendar(uuid, uuid, uuid, uuid, text)',
-    'public.calendar_outbound_creation_failed(uuid, uuid, uuid, text, text)',
+    'public.calendar_outbound_creation_failed(uuid, uuid, uuid, uuid, text, text)',
     'public.calendar_outbound_claim_mirrors(integer, uuid, integer)',
     'public.calendar_outbound_complete_mirror(uuid, uuid, bigint)',
     'public.calendar_outbound_fail_mirror(uuid, uuid, text)',

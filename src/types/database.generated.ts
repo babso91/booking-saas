@@ -514,7 +514,7 @@ isOneToOne: false
 { Args: { "p_appointment_id": string,"p_claim_id": string,"p_revision": number }; Returns: string
                            },
 "calendar_outbound_creation_failed":
-{ Args: { "p_action_code"?: string,"p_business_id": string,"p_claim_id": string,"p_error": string,"p_generation": string }; Returns: boolean
+{ Args: { "p_business_id": string,"p_claim_id": string,"p_credential_generation": string,"p_error": string,"p_generation": string,"p_outcome": string }; Returns: string
                            },
 "calendar_outbound_disable":
 { Args: { "p_business_id": string }; Returns: Json
@@ -531,10 +531,10 @@ isOneToOne: false
 { Args: { "p_appointment_id": string,"p_claim_id": string,"p_error": string }; Returns: boolean
                            },
 "calendar_outbound_mark_action_required":
-{ Args: { "p_action_code": string,"p_business_id": string,"p_error"?: string,"p_generation": string }; Returns: boolean
+{ Args: { "p_action_code": string,"p_appointment_id": string,"p_claim_id": string,"p_error"?: string }; Returns: boolean
                            },
 "calendar_outbound_mark_creation_requested":
-{ Args: { "p_business_id": string,"p_claim_id": string,"p_generation": string }; Returns: boolean
+{ Args: { "p_business_id": string,"p_claim_id": string,"p_credential_generation": string,"p_generation": string }; Returns: boolean
                            },
 "calendar_outbound_retry":
 { Args: { "p_business_id": string }; Returns: Json

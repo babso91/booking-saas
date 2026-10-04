@@ -761,7 +761,8 @@ describe("Google outbound (calendar.app.created)", () => {
     await expect(
       provider.createCalendar(tokens.accessToken, {
         summary: "Rendez-vous — Studio",
-        description: "booking-saas:0b9c5a3e-1f2a-4c3d-9e8f-123456789abc",
+        description:
+          "booking-saas:0b9c5a3e-1f2a-4c3d-9e8f-123456789abc:1a2b3c4d-1f2a-4c3d-9e8f-123456789abc",
         timeZone: "Europe/Paris",
       }),
     ).rejects.toMatchObject({ kind: "unavailable" });
@@ -771,12 +772,14 @@ describe("Google outbound (calendar.app.created)", () => {
 
     const { id } = await provider.createCalendar(tokens.accessToken, {
       summary: "Rendez-vous — Studio",
-      description: "booking-saas:0b9c5a3e-1f2a-4c3d-9e8f-123456789abc",
+      description:
+        "booking-saas:0b9c5a3e-1f2a-4c3d-9e8f-123456789abc:1a2b3c4d-1f2a-4c3d-9e8f-123456789abc",
       timeZone: "Europe/Paris",
     });
     const listed = await provider.listCalendars(tokens.accessToken);
     expect(listed.find((calendar) => calendar.id === id)).toMatchObject({
       bookingMarker: "0b9c5a3e-1f2a-4c3d-9e8f-123456789abc",
+      bookingNonce: "1a2b3c4d-1f2a-4c3d-9e8f-123456789abc",
     });
     expect(
       listed.find((calendar) => calendar.id === account.email)?.bookingMarker,

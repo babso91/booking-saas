@@ -32,6 +32,7 @@ import {
   setAppointmentStatus,
   updateAppointment,
 } from "@/features/agenda/data/appointments";
+import { runCalendarJob } from "@/features/calendar/data/cron";
 import { getCalendarDeps } from "@/features/calendar/data/deps";
 import {
   ensureOutboundCalendar,
@@ -54,6 +55,13 @@ import {
   type Professional,
   type TestBusiness,
 } from "./support/fixtures";
+import {
+  closeTransaction,
+  openTransaction,
+  outcome,
+  waitUntilBlocked,
+  type OpenTransaction,
+} from "./support/transactions";
 
 // Outbound: Booking appointments mirrored to a dedicated Google calendar
 // created by the app. Google is the in-memory FakeGoogle reached through the
@@ -243,8 +251,42 @@ async function outboundRow(s: Setup) {
         provider_calendar_id: string | null;
         action_code: string | null;
         calendar_marker: string;
+        creation_nonce: string;
+        creation_requested_at: Date | null;
+        creation_recovery_attempts: number;
       }
     | undefined;
+}
+
+const forbiddenBody = (reason: string) => ({
+  error: { code: 403, errors: [{ reason }] },
+});
+
+async function busyIds(s: Setup) {
+  const { rows } = await db.query<{ id: string }>(
+    "select provider_event_id as id from public.external_calendar_events where business_id = $1 and busy order by 1",
+    [s.business.id],
+  );
+  return rows.map((row) => row.id);
+}
+
+async function slots(s: Setup, date = D) {
+  const { rows } = await db.query<{ starts_at: Date }>(
+    "select starts_at from private.available_slots($1, $2, $3::date, now())",
+    [s.business.id, s.service, date],
+  );
+  return rows.map((row) => row.starts_at.toISOString());
+}
+
+/** Another worker found the calendar deleted (as the SQL function does). */
+async function forceActionRequired(s: Setup) {
+  await db.query(
+    `update private.calendar_outbound
+     set status = 'action_required', action_code = 'calendar_deleted',
+         generation = gen_random_uuid(), provider_calendar_id = null
+     where business_id = $1`,
+    [s.business.id],
+  );
 }
 
 async function mirror(appointmentId: string) {
@@ -555,48 +597,27 @@ describe("dedicated calendar", () => {
     expect(appointment.status).toBe("confirmed");
   });
 
-  it("a calendar carrying this business's marker, or created for it before, is never selectable (lost creation, description edited)", async () => {
+  it("only a calendar the app created and adopted (its id in the history) is excluded; a description is never trusted", async () => {
     const s = await setup();
     const calendarId = await enabled(s);
     const row = await outboundRow(s);
-    fake.setCalendars(s.account.sub, [
-      {
-        id: s.account.email,
-        summary: "Personnel",
-        timeZone: "UTC",
-        primary: true,
-      },
-      // The dedicated calendar, its description edited by the professional:
-      // the marker is gone, its id is still known.
-      {
-        id: calendarId,
-        summary: "Mes rendez-vous",
-        timeZone: "UTC",
-        description: "Mes rendez-vous",
-        appCreated: true,
-      },
-      // A copy left by a creation whose answer was lost (never adopted).
-      {
-        id: "orphan@group.calendar.google.com",
-        summary: "Rendez-vous — copie",
-        timeZone: "UTC",
-        description: `booking-saas:${row!.calendar_marker}`,
-        appCreated: true,
-      },
-    ]);
+    // The dedicated calendar, its description edited by the professional:
+    // the marker is gone, its id is still known.
+    fake.setDescription(calendarId, "Mes rendez-vous");
+    // A personal calendar carrying a copy of the marker.
+    fake.setDescription(
+      `work-${s.account.sub}`,
+      `booking-saas:${row!.calendar_marker}:${row!.creation_nonce}`,
+    );
     sessionClient = s.owner.client;
     const calendars = ok(await listConnectedCalendarsAction({ refresh: true }));
     expect(
       calendars
         .filter((calendar) => calendar.bookingCalendar)
-        .map((calendar) => [calendar.name, calendar.selectable])
-        .sort(),
-    ).toEqual([
-      ["Mes rendez-vous", false],
-      ["Rendez-vous — copie", false],
-    ]);
+        .map((calendar) => calendar.id),
+    ).toHaveLength(1);
     expect(
-      calendars.find((calendar) => calendar.name === "Personnel"),
+      calendars.find((calendar) => calendar.name === "Travail"),
     ).toMatchObject({ bookingCalendar: false, selectable: true });
   });
 
@@ -990,11 +1011,7 @@ describe("concurrency and authority", () => {
     [
       "action required",
       async (s: Setup) => {
-        const row = await outboundRow(s);
-        await db.query(
-          "select public.calendar_outbound_mark_action_required($1, $2, 'calendar_deleted')",
-          [s.business.id, row!.generation],
-        );
+        await forceActionRequired(s);
       },
     ],
   ])(
@@ -1026,11 +1043,7 @@ describe("concurrency and authority", () => {
     await held.reached;
     // Meanwhile: the calendar is deleted, detected, and reactivated.
     fake.deleteCalendar(first);
-    const row = await outboundRow(s);
-    await db.query(
-      "select public.calendar_outbound_mark_action_required($1, $2, 'calendar_deleted')",
-      [s.business.id, row!.generation],
-    );
+    await forceActionRequired(s);
     sessionClient = s.owner.client;
     ok(await reactivateCalendarOutboundAction());
     background.length = 0;
@@ -1450,6 +1463,466 @@ describe("disconnect and reconnect", () => {
   });
 });
 
+describe("dedicated calendar creation with an ambiguous outcome", () => {
+  const isCreate = (url: URL, method: string) =>
+    url.pathname === "/calendar/v3/calendars" && method === "POST";
+  const createCalls = () => fake.count(isCreate);
+  /** The creation backoff elapsed (and any lease). */
+  const creationDue = (s: Setup) =>
+    db.query(
+      "update private.calendar_outbound set creation_next_attempt_at = null, creation_lease_until = null where business_id = $1",
+      [s.business.id],
+    );
+
+  it("answer lost and the calendar not listed yet: searches only, exactly one insert across workers and retries; once listed, the same calendar is adopted", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.loseAnswer(isCreate);
+    fake.hideNewCalendars = true;
+    expect(await authorizeWrite(s)).toBe("write_authorized");
+    await flush();
+    expect(createCalls()).toBe(1);
+    const row = await outboundRow(s);
+    expect(row).toMatchObject({
+      status: "creating",
+      provider_calendar_id: null,
+    });
+    expect(row!.creation_requested_at).not.toBeNull();
+
+    const deps = getCalendarDeps();
+    for (let pass = 0; pass < 3; pass += 1) {
+      await creationDue(s);
+      const outcomes = await Promise.all([
+        ensureOutboundCalendar(deps, s.business.id),
+        ensureOutboundCalendar(deps, s.business.id),
+      ]);
+      expect(outcomes.sort()).toEqual(["busy", "retry"]);
+    }
+    expect(createCalls()).toBe(1);
+
+    fake.revealCalendars();
+    await creationDue(s);
+    expect(await ensureOutboundCalendar(deps, s.business.id)).toBe("recovered");
+    const created = fake.appCalendars(s.account.sub);
+    expect(created).toHaveLength(1);
+    expect(await outboundRow(s)).toMatchObject({
+      status: "active",
+      provider_calendar_id: created[0]!.id,
+    });
+    expect(createCalls()).toBe(1);
+  });
+
+  it("answer lost and the calendar never found: bounded searches, then calendar_creation_uncertain, never a second automatic insert", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.loseAnswer(isCreate);
+    fake.hideNewCalendars = true;
+    expect(await authorizeWrite(s)).toBe("write_authorized");
+    await flush();
+    const deps = getCalendarDeps();
+    const outcomes = [];
+    for (let pass = 0; pass < 5; pass += 1) {
+      await creationDue(s);
+      outcomes.push(await ensureOutboundCalendar(deps, s.business.id));
+    }
+    expect(outcomes).toEqual([
+      "retry",
+      "retry",
+      "retry",
+      "retry",
+      "action_required",
+    ]);
+    expect(await outboundRow(s)).toMatchObject({
+      status: "action_required",
+      action_code: "calendar_creation_uncertain",
+    });
+    expect(await status(s)).toMatchObject({
+      health: "action_required",
+      actionRequired: "reactivate",
+      reason: "calendar_creation_uncertain",
+    });
+    // Nothing more happens on its own.
+    await run(s);
+    await run(s);
+    expect(createCalls()).toBe(1);
+
+    // The professional reactivates once Google lists it: a new, explicit
+    // attempt that searches first and adopts it (no second calendar).
+    fake.revealCalendars();
+    sessionClient = s.owner.client;
+    ok(await reactivateCalendarOutboundAction());
+    await flush();
+    expect(createCalls()).toBe(1);
+    expect(fake.appCalendars(s.account.sub)).toHaveLength(1);
+    expect(await outboundRow(s)).toMatchObject({
+      status: "active",
+      provider_calendar_id: fake.appCalendars(s.account.sub)[0]!.id,
+    });
+  });
+
+  it.each([400, 429])(
+    "a certain failure (%i, refused): the attempt may insert again, and recovers",
+    async (code) => {
+      const s = await setup();
+      await connect(s);
+      fake.failNext(
+        (url) => url.pathname === "/calendar/v3/calendars",
+        code,
+        1,
+        { error: { code } },
+      );
+      expect(await authorizeWrite(s)).toBe("write_authorized");
+      await flush();
+      expect(await outboundRow(s)).toMatchObject({
+        status: "creating",
+        creation_requested_at: null,
+      });
+      await creationDue(s);
+      expect(
+        await ensureOutboundCalendar(getCalendarDeps(), s.business.id),
+      ).toBe("created");
+      expect(createCalls()).toBe(2);
+      expect(fake.appCalendars(s.account.sub)).toHaveLength(1);
+    },
+  );
+
+  it("a personal blocking calendar with a copied marker stays blocking, keeps its busy periods and is never adopted; the real app-created calendar is, after its proof", async () => {
+    const s = await setup();
+    await connect(s);
+    const work = `work-${s.account.sub}`;
+    sessionClient = s.owner.client;
+    const listed = ok(await listConnectedCalendarsAction());
+    ok(
+      await updateBlockingCalendarsAction({
+        calendarIds: listed
+          .filter((calendar) => calendar.name === "Travail")
+          .map((calendar) => calendar.id),
+      }),
+    );
+    await flush();
+    fake.putEvent(work, {
+      id: "busy",
+      start: { dateTime: at(D, "10:00") },
+      end: { dateTime: at(D, "11:00") },
+    });
+    sessionClient = s.owner.client;
+    ok(await syncGoogleCalendarNowAction());
+    expect(await busyIds(s)).toEqual(["busy"]);
+    expect(await slots(s)).not.toContain(at(D, "10:00"));
+
+    // Creation answer lost, the real calendar not listed yet; the
+    // professional copies the exact marker into her personal calendar.
+    fake.loseAnswer(isCreate);
+    fake.hideNewCalendars = true;
+    expect(await authorizeWrite(s)).toBe("write_authorized");
+    await flush();
+    const row = await outboundRow(s);
+    fake.setDescription(
+      work,
+      `Travail booking-saas:${row!.calendar_marker}:${row!.creation_nonce}`,
+    );
+    sessionClient = s.owner.client;
+    const refreshed = ok(await listConnectedCalendarsAction({ refresh: true }));
+    expect(
+      refreshed.find((calendar) => calendar.name === "Travail"),
+    ).toMatchObject({ bookingCalendar: false, blocking: true });
+
+    // Recovery looks at it as a candidate, its proof is refused.
+    await creationDue(s);
+    expect(await ensureOutboundCalendar(getCalendarDeps(), s.business.id)).toBe(
+      "retry",
+    );
+    expect(
+      fake.count(
+        (url, method) =>
+          method === "POST" &&
+          decodeURIComponent(url.pathname) ===
+            `/calendar/v3/calendars/${work}/events`,
+      ),
+    ).toBeGreaterThan(0);
+    expect(await outboundRow(s)).toMatchObject({
+      status: "creating",
+      provider_calendar_id: null,
+    });
+    const { rows } = await db.query(
+      "select booking_outbound, selected_for_blocking from public.external_calendars where business_id = $1 and provider_calendar_id = $2",
+      [s.business.id, work],
+    );
+    expect(rows[0]).toEqual({
+      booking_outbound: false,
+      selected_for_blocking: true,
+    });
+    sessionClient = s.owner.client;
+    ok(await syncGoogleCalendarNowAction());
+    expect(await busyIds(s)).toEqual(["busy"]);
+    expect(await slots(s)).not.toContain(at(D, "10:00"));
+
+    // The real calendar shows up: proven, adopted, then excluded inbound.
+    fake.revealCalendars();
+    await creationDue(s);
+    expect(await ensureOutboundCalendar(getCalendarDeps(), s.business.id)).toBe(
+      "recovered",
+    );
+    const [real] = fake.appCalendars(s.account.sub);
+    expect((await outboundRow(s))!.provider_calendar_id).toBe(real!.id);
+    expect(createCalls()).toBe(1);
+    sessionClient = s.owner.client;
+    const after = ok(await listConnectedCalendarsAction({ refresh: true }));
+    expect(
+      after.filter((calendar) => calendar.bookingCalendar).map((c) => c.name),
+    ).toEqual([`Rendez-vous — ${s.name}`]);
+    expect(after.find((calendar) => calendar.name === "Travail")).toMatchObject(
+      {
+        bookingCalendar: false,
+        blocking: true,
+      },
+    );
+    ok(await syncGoogleCalendarNowAction());
+    expect(await busyIds(s)).toEqual(["busy"]);
+  });
+});
+
+describe("stale workers' late errors", () => {
+  it("a late 403 of a worker whose credentials were replaced (same-account reconnection) changes nothing", async () => {
+    const s = await setup();
+    const calendarId = await enabled(s);
+    const a = await createAppointment(s, "10:00");
+    const before = await outboundRow(s);
+    fake.failNext(
+      isInsertUrl,
+      403,
+      1,
+      forbiddenBody("insufficientPermissions"),
+    );
+    const held = fake.hold(isInsert);
+    const worker = run(s);
+    await held.reached;
+    await connect(s);
+    held.release();
+    expect(await worker).toMatchObject({ actionRequired: 0, superseded: 1 });
+    expect(await outboundRow(s)).toMatchObject({
+      status: "active",
+      action_code: null,
+      generation: before!.generation,
+      provider_calendar_id: calendarId,
+    });
+    // The current configuration goes on.
+    await db.query(
+      "update private.appointment_calendar_mirrors set lease_until = null where appointment_id = $1",
+      [a.id],
+    );
+    await run(s);
+    expect(liveEvents(calendarId).map((event) => event.id)).toEqual([
+      eventIdOf(a.id),
+    ]);
+  });
+
+  it("a late creation failure of a worker whose credentials were replaced changes nothing", async () => {
+    const s = await setup();
+    await connect(s);
+    expect(await authorizeWrite(s)).toBe("write_authorized");
+    background.length = 0;
+    const before = await outboundRow(s);
+    fake.failNext(
+      (url) => url.pathname === "/calendar/v3/calendars",
+      403,
+      1,
+      forbiddenBody("insufficientPermissions"),
+    );
+    const held = fake.hold(
+      (url, method) =>
+        url.pathname === "/calendar/v3/calendars" && method === "POST",
+    );
+    const worker = ensureOutboundCalendar(getCalendarDeps(), s.business.id);
+    await held.reached;
+    await connect(s);
+    held.release();
+    expect(await worker).toBe("superseded");
+    expect(await outboundRow(s)).toMatchObject({
+      status: "creating",
+      action_code: null,
+      generation: before!.generation,
+    });
+  });
+});
+
+describe("activation racing a reconnection to another account (real transactions)", () => {
+  const scopes = [
+    "openid",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    "https://www.googleapis.com/auth/calendar.events.readonly",
+    WRITE_SCOPE,
+  ];
+  const reconnectB = (transaction: OpenTransaction, s: Setup, sub: string) =>
+    transaction.connection.query(
+      `select public.calendar_save_connection($1, $2, 'google', $3, 'b@gmail.test', $4::text[], 'rt-b', 'at-b', now() + interval '1 hour', '[]'::jsonb)`,
+      [s.business.id, s.owner.userId, sub, scopes],
+    );
+  const enableIn = (transaction: OpenTransaction, s: Setup) =>
+    transaction.connection.query(
+      "select public.calendar_outbound_enable($1) as status",
+      [s.business.id],
+    );
+
+  async function disabledWithMirror() {
+    const s = await setup();
+    await enabled(s);
+    const a = await createAppointment(s, "10:00");
+    await run(s);
+    sessionClient = s.owner.client;
+    ok(await disableCalendarOutboundAction());
+    return { s, a };
+  }
+
+  it("the reconnection commits first: the activation waits and uses account B only", async () => {
+    const { s, a } = await disabledWithMirror();
+    const markerA = (await outboundRow(s))!.calendar_marker;
+    const reconnect = await openTransaction();
+    await reconnectB(reconnect, s, "sub-b-first");
+    const activation = await openTransaction({
+      userId: s.owner.userId,
+      role: "authenticated",
+    });
+    const pending = outcome(enableIn(activation, s));
+    await waitUntilBlocked(activation.pid);
+    await closeTransaction(reconnect, "commit");
+    expect(await pending).toBe("ok");
+    await closeTransaction(activation, "commit");
+
+    const row = await outboundRow(s);
+    expect(row).toMatchObject({
+      status: "creating",
+      provider_account_id: "sub-b-first",
+      provider_calendar_id: null,
+    });
+    expect(row!.calendar_marker).not.toBe(markerA);
+    const { rows } = await db.query(
+      "select provider_account_id from public.calendar_connections where business_id = $1",
+      [s.business.id],
+    );
+    expect(rows[0].provider_account_id).toBe("sub-b-first");
+    expect(await mirror(a.id)).toBeDefined();
+  });
+
+  it("the activation commits first: the reconnection waits, then disables it; a normal activation repairs it with account B", async () => {
+    const { s, a } = await disabledWithMirror();
+    const activation = await openTransaction({
+      userId: s.owner.userId,
+      role: "authenticated",
+    });
+    await enableIn(activation, s);
+    const reconnect = await openTransaction();
+    const pending = outcome(reconnectB(reconnect, s, "sub-b-second"));
+    await waitUntilBlocked(reconnect.pid);
+    await closeTransaction(activation, "commit");
+    expect(await pending).toBe("ok");
+    await closeTransaction(reconnect, "commit");
+
+    // Never "creating" with A's values under B's connection.
+    expect(await outboundRow(s)).toMatchObject({
+      status: "disabled",
+      action_code: "account_changed",
+      provider_calendar_id: null,
+    });
+    sessionClient = s.owner.client;
+    ok(await enableCalendarOutboundAction());
+    background.length = 0;
+    expect(await outboundRow(s)).toMatchObject({
+      status: "creating",
+      provider_account_id: "sub-b-second",
+    });
+    expect(await mirror(a.id)).toBeDefined();
+  });
+});
+
+describe("periodic job: fairness between inbound and outbound", () => {
+  /** This business only is due (others' leftovers stay out of the run). */
+  async function only(s: Setup) {
+    await db.query(
+      `update private.calendar_outbound
+       set status = 'disabled', action_code = null, provider_calendar_id = null,
+           generation = gen_random_uuid()
+       where business_id <> $1 and status <> 'disabled'`,
+      [s.business.id],
+    );
+    await db.query(
+      `delete from private.external_calendar_sync y using public.external_calendars c
+       where y.calendar_id = c.id and c.business_id <> $1`,
+      [s.business.id],
+    );
+    await db.query(
+      "update public.calendar_connections set calendar_list_checked_at = now() where business_id <> $1",
+      [s.business.id],
+    );
+  }
+
+  async function withBlockingWork(s: Setup) {
+    sessionClient = s.owner.client;
+    const listed = ok(await listConnectedCalendarsAction());
+    ok(
+      await updateBlockingCalendarsAction({
+        calendarIds: listed
+          .filter((calendar) => calendar.name === "Travail")
+          .map((calendar) => calendar.id),
+      }),
+    );
+    await flush();
+    await db.query(
+      "update public.external_calendars set last_synced_at = now() - interval '7 hours' where business_id = $1 and selected_for_blocking",
+      [s.business.id],
+    );
+  }
+
+  it("slow inbound syncs never take outbound's share of the run", async () => {
+    const s = await setup();
+    const calendarId = await enabled(s);
+    await withBlockingWork(s);
+    const a = await createAppointment(s, "10:00");
+    await only(s);
+    const work = `work-${s.account.sub}`;
+    const held = fake.hold(
+      (url, method) =>
+        method === "GET" &&
+        decodeURIComponent(url.pathname) ===
+          `/calendar/v3/calendars/${work}/events`,
+    );
+    const started = Date.now();
+    const result = await runCalendarJob(getCalendarDeps(), {
+      budgetMs: 12_000,
+    });
+    held.release();
+    expect(Date.now() - started).toBeLessThan(13_000);
+    expect(result.outbound).toMatchObject({ applied: 1 });
+    expect(liveEvents(calendarId).map((event) => event.id)).toEqual([
+      eventIdOf(a.id),
+    ]);
+  }, 40_000);
+
+  it("a slow outbound pass never takes inbound's share of the run", async () => {
+    const s = await setup();
+    await enabled(s);
+    await withBlockingWork(s);
+    await createAppointment(s, "10:00");
+    await only(s);
+    fake.putEvent(`work-${s.account.sub}`, {
+      id: "busy",
+      start: { dateTime: at(D, "15:00") },
+      end: { dateTime: at(D, "16:00") },
+    });
+    const held = fake.hold(isInsert);
+    const result = await runCalendarJob(getCalendarDeps(), {
+      budgetMs: 12_000,
+    });
+    held.release();
+    expect(result.processed).toEqual([
+      expect.objectContaining({ outcome: "synced" }),
+    ]);
+    expect(await busyIds(s)).toEqual(["busy"]);
+    // Outbound ran in its own slice, after inbound.
+    expect(result.outbound).not.toBeNull();
+  }, 40_000);
+});
+
 describe("tenant isolation", () => {
   it("a professional can neither read nor act on another business's outbound", async () => {
     const s = await setup();
@@ -1478,8 +1951,8 @@ describe("tenant isolation", () => {
     const { error: markError } = await intruder.owner.client.rpc(
       "calendar_outbound_mark_action_required",
       {
-        p_business_id: s.business.id,
-        p_generation: randomUUID(),
+        p_appointment_id: a.id,
+        p_claim_id: randomUUID(),
         p_action_code: "calendar_deleted",
       },
     );

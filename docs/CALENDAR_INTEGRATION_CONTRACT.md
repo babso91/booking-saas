@@ -407,17 +407,32 @@ L'autorisation d'écriture s'ajoute à la connexion existante (`startGoogleCalen
 
 À l'activation, Booking crée `Rendez-vous — <nom du business>`, unique destination du business. Aucun calendrier personnel n'est jamais choisi implicitement, il n'y a pas de sélecteur en V1. Son id Google est stocké (`private.calendar_outbound.provider_calendar_id`) et ajouté à l'historique des calendriers créés (`private.calendar_outbound_calendars`).
 
-**Création idempotente.** Google ne permet pas de choisir l'id d'un calendrier secondaire. Le cas « Google crée le calendrier, la réponse se perd, le worker recommence » est traité ainsi :
+**Création sans doublon automatique.** Google ne fournit aucune primitive d'idempotence forte pour `calendars.insert` : l'id d'un calendrier secondaire ne peut pas être choisi, et une réponse perdue peut cacher un calendrier créé que `calendarList` ne montre pas encore. Après un résultat réellement ambigu, Booking privilégie donc l'absence de doublon automatique plutôt qu'une recréation agressive.
 
-1. un marqueur stable (`calendar_marker`, uuid propre au business) est écrit dans la description du calendrier (`booking-saas:<uuid>`), jamais déduit du nom ;
-2. un seul worker à la fois réclame la création (claim et bail de 2 min en SQL) ;
-3. il lit d'abord la liste des calendriers et adopte celui qui porte le marqueur ;
-4. sinon, il enregistre `creation_requested_at` (commité) avant d'appeler `calendars.insert` ;
-5. `calendars.insert` n'est **jamais** relancé automatiquement par le client HTTP (un 5xx peut cacher une création réussie) ; l'échec est retenté plus tard avec backoff (30 s à 1 h), en recommençant par l'étape 3.
+1. **Un seul créateur à la fois** : claim et bail de 2 min en SQL.
+2. **Toujours chercher d'abord.** Le worker lit la liste des calendriers et retient deux sortes de calendriers :
+   - les calendriers déjà adoptés par ce business pour ce compte (id dans l'historique) ;
+   - les **candidats** dont la description porte `booking-saas:<marqueur du business>:<nonce>`. Le nonce est propre à chaque tentative de création ; les candidats portant celui de la tentative en cours passent en premier.
+3. **Le marqueur ne prouve rien.** Une description peut être copiée. Un candidat n'est adopté qu'après une **preuve positive** : l'écriture d'un événement sentinelle (id propre à la tentative, aucune donnée personnelle, `sendUpdates=none`, supprimé aussitôt). Avec nos scopes, seuls les calendriers créés par l'application acceptent une écriture : `calendar.app.created` ne couvre que ceux-là, et les autres scopes sont en lecture seule. Un calendrier personnel portant un marqueur copié répond 403 et n'est jamais adopté. La documentation de Google accepte aussi `calendar.app.created` pour `calendars.update`, mais cette preuve modifierait les métadonnées visibles du calendrier ; l'événement sentinelle teste exactement la capacité dont l'outbound dépend. Plusieurs candidats prouvés ne sont jamais départagés arbitrairement : `action_required` (`calendar_creation_uncertain`).
+4. **Au plus un insert par tentative.** `creation_requested_at` est enregistré et commité avant `calendars.insert`, et `mark_creation_requested` ne l'accorde qu'une fois par tentative. Le client HTTP ne relance jamais cet appel.
+5. **Échec certain** (requête refusée : 4xx, 429, ou token indisponible avant tout envoi) : `creation_requested_at` est effacé, et la tentative peut renvoyer un insert plus tard (backoff de 30 s à 1 h).
+6. **Résultat ambigu** (timeout, réseau, 5xx, réponse illisible) : plus aucun insert automatique pour cette tentative. Seules des recherches bornées suivent (5, espacées de 1 à 16 min), puis `action_required` (`calendar_creation_uncertain`).
+7. **Action explicite de la professionnelle** (réactiver) : nouvelle génération et nouveau nonce. La nouvelle tentative recommence par la recherche et adopte un calendrier perdu devenu visible (preuve faite) ; elle n'envoie un nouvel insert que si rien n'est trouvé.
 
-Testé : réponse perdue puis reprise → un seul calendrier ; trois initialisations concurrentes → un seul calendrier.
+Testé :
 
-**Jamais une source de disponibilité.** Un calendrier est marqué `booking_outbound` s'il porte le marqueur du business ou si son id figure dans l'historique (un ancien calendrier dédié reste exclu, même quand ce n'est plus la cible, même si sa description a été modifiée). Il n'est pas sélectionnable (`calendar_not_selectable`, garde SQL), son état de sync et ses périodes copiées sont supprimés, et le DTO expose `bookingCalendar: true`. Un rendez-vous Booking ne revient donc jamais comme indisponibilité externe (testé de bout en bout).
+- réponse perdue, calendrier invisible pendant plusieurs passages et deux workers concurrents : un seul insert, puis adoption du même calendrier quand il apparaît ;
+- jamais visible : 4 recherches, puis `calendar_creation_uncertain`, toujours un seul insert ; la réactivation retrouve le calendrier sans en créer un second ;
+- échec certain (400, 429) : nouvel insert permis, un seul calendrier ;
+- trois initialisations concurrentes : un seul calendrier.
+
+**Jamais une source de disponibilité, mais seulement sur preuve.** `booking_outbound` reflète uniquement la connaissance locale établie : l'id figure dans l'historique des calendriers que l'application a créés ou adoptés après preuve (`private.calendar_outbound_calendars`), calculé par trigger. Un tel calendrier :
+
+- n'est pas sélectionnable (`calendar_not_selectable`, garde SQL) ;
+- perd son état de sync et ses périodes copiées ;
+- est exposé dans le DTO avec `bookingCalendar: true`.
+
+Un rendez-vous Booking ne revient donc jamais comme indisponibilité externe (testé de bout en bout). Une description modifiée ne change rien pour un id connu. Un id inconnu ne devient jamais « Booking » à cause de sa description. Testé : un calendrier personnel bloquant qui porte une copie exacte du marqueur reste sélectionné, garde ses périodes occupées et continue de bloquer ; il n'est jamais adopté, sa preuve étant refusée. Le vrai calendrier, prouvé, est adopté puis exclu.
 
 ### Desired state (outbox)
 
@@ -457,7 +472,14 @@ L'état souhaité n'est pas recopié : le worker le dérive du rendez-vous au mo
 
 ### Générations et concurrence
 
-`private.calendar_outbound.generation` change à chaque changement d'autorité : activation ou réactivation, désactivation, passage en `action_required`, déconnexion, autre compte Google. Un worker capture avec son claim la génération outbound, l'incarnation des identifiants et la révision ; SQL revérifie le tout avant d'enregistrer le résultat (`complete_mirror`, `fail_mirror`). Sinon : `superseded`, aucune écriture locale. Les ids déterministes rendent sans danger une écriture Google tardive ou en double.
+`private.calendar_outbound.generation` change à chaque changement d'autorité : activation ou réactivation, désactivation, passage en `action_required`, déconnexion, autre compte Google. Un worker capture avec son claim la génération outbound, l'incarnation des identifiants et la révision ; SQL revérifie le tout avant d'enregistrer un résultat, **succès comme erreur** : `complete_mirror`, `fail_mirror`, `mark_action_required` (claim du miroir, génération, identifiants, compte) ; `mark_creation_requested`, `adopt_calendar`, `creation_failed` (claim de création, génération, identifiants, compte). Sinon : `superseded`, aucune écriture locale. Un worker périmé ne peut ni effacer la cible courante, ni passer la configuration en `action_required`, ni toucher à l'état de reprise (testé : 403 tardif et échec de création tardif après une reconnexion du même compte).
+
+**Activation.** `calendar_outbound_enable` verrouille la ligne de connexion (`for share`) avant la ligne outbound, dans l'ordre global, et n'utilise que les valeurs lues sous ce verrou. Deux cas en concurrence avec une reconnexion vers un autre compte :
+
+- la reconnexion est commitée d'abord : l'activation l'attend et active le compte B ;
+- l'activation est commitée d'abord : la reconnexion l'attend puis la désactive (`account_changed`), et une activation normale répare.
+
+Jamais d'état `creating` mêlant A et B. Testé avec de vraies transactions entrelacées. Les ids déterministes rendent sans danger une écriture Google tardive ou en double.
 
 Testé : création puis annulation avant le worker (aucun appel) ; création puis deux déplacements (une seule insertion, à l'heure finale) ; trois workers sur le même rendez-vous (un événement) ; révision enregistrée pendant l'appel Google (reste due, le dernier état gagne) ; worker en cours puis déconnexion, reconnexion, désactivation, `action_required` ou réactivation sur un nouveau calendrier (réponse tardive sans autorité) ; claim abandonné (expire, puis converge).
 
@@ -474,7 +496,7 @@ Testé : création puis annulation avant le worker (aucun appel) ; création pui
 | 409                                                                                                                                   | rendez-vous   | réconciliation par mise à jour                                                                                    |
 | réponse invalide                                                                                                                      | rendez-vous   | reprise                                                                                                           |
 
-Une erreur de configuration arrête tout le business à la première occurrence. Ses autres miroirs ne sont ni tentés ni retentés un par un. Testé avec 200 rendez-vous et un calendrier supprimé : 2 appels (l'insertion en 404 et la vérification du calendrier), puis plus aucun. Équité : au plus 10 miroirs par business et par passage, les plus anciens d'abord. Une erreur Google ne modifie jamais le rendez-vous.
+Une erreur de configuration arrête tout le business à la première occurrence. Ses autres miroirs ne sont ni tentés ni retentés un par un. Testé avec 200 rendez-vous et un calendrier supprimé : 2 appels (l'insertion en 404 et la vérification du calendrier), puis plus aucun. Équité : au plus 10 miroirs par business et par passage, les plus anciens d'abord. Dans la tâche périodique, l'inbound dispose au plus de 60 % du budget (listes et syncs) et l'outbound garde le reste ; des syncs lentes ne privent jamais l'outbound, et l'outbound passe après l'inbound, qu'il ne peut donc pas affamer (testé dans les deux sens). Une erreur Google ne modifie jamais le rendez-vous.
 
 ### Calendrier dédié supprimé : `action_required`
 
@@ -640,7 +662,7 @@ Tout ce qui est propre à Google se trouve dans `providers/google.ts`. Le domain
 - **Outbound : événements laissés chez Google.** Après une déconnexion, une désactivation ou un changement de compte, les événements déjà copiés restent dans l'ancien calendrier dédié (celui du compte A, par exemple) : aucun nettoyage distant en V1. Le nouveau calendrier, lui, reçoit tous les rendez-vous actifs enrôlés.
 - **Outbound : restauration d'un événement annulé.** Elle utilise `events.update` avec `status: confirmed` et le même id. La documentation de Google dit que ces événements peuvent être restaurés, sans nommer la méthode. Ce comportement est vérifié contre le faux Google seulement : une validation manuelle avec un vrai compte Google est requise avant l'ouverture aux clientes (créer, déplacer, annuler, reconfirmer un rendez-vous ; supprimer l'événement à la main puis modifier le rendez-vous ; supprimer le calendrier dédié puis réactiver). Changements faits pendant `disabled` : un rendez-vous déjà copié puis modifié pendant la désactivation est mis à jour à la réactivation (son miroir le suit) ; un rendez-vous créé pendant la désactivation n'est pas copié (#11b).
 - **Outbound : modifications manuelles dans Google.** Elles ne sont ni lues ni corrigées tant que le rendez-vous Booking ne change pas (#11b). Un événement supprimé à la main revient à la prochaine modification du rendez-vous.
-- **Outbound : cohérence de la liste des calendriers.** La récupération d'une création dont la réponse s'est perdue suppose que le calendrier apparaisse dans la liste avant la nouvelle tentative (au moins 30 s plus tard).
+- **Outbound : création au résultat ambigu.** Si le calendrier créé n'apparaît pas dans la liste pendant les recherches bornées (environ 15 min), l'outbound attend la professionnelle (`calendar_creation_uncertain`) plutôt que de risquer un doublon. Sa réactivation cherche encore avant de créer.
 - **Outbound : refresh token ancien.** Si Google n'envoie pas de nouveau refresh token, l'ancien est gardé ; un token d'accès rafraîchi sans le scope d'écriture fait passer l'outbound en `action_required` (`authorize_write`), jamais en boucle.
 - **Fenêtre de révocation.** La révocation n'est tentée que dans la minute qui suit la déconnexion ; au-delà (serveur très lent), elle est abandonnée et l'autorisation reste valide chez Google jusqu'à ce que la professionnelle la retire elle-même.
 

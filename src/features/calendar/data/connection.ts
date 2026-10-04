@@ -108,7 +108,6 @@ const calendarItems = (
     timezone: string | null;
     primary: boolean;
     accessRole: string | null;
-    bookingMarker: string | null;
   }[],
 ) =>
   calendars.map((calendar) => ({
@@ -117,7 +116,6 @@ const calendarItems = (
     timezone: calendar.timezone,
     primary: calendar.primary,
     accessRole: calendar.accessRole,
-    bookingMarker: calendar.bookingMarker,
   }));
 
 async function connectionOf(context: CalendarContext) {

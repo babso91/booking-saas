@@ -61,6 +61,21 @@ describe("outbound status", () => {
       ),
     ).toMatchObject({ health: "disabled", actionRequired: "enable_again" });
     expect(
+      toOutboundStatusDto(
+        {
+          ...raw,
+          status: "action_required",
+          actionCode: "calendar_creation_uncertain",
+          calendarCreated: false,
+        },
+        true,
+      ),
+    ).toMatchObject({
+      health: "action_required",
+      actionRequired: "reactivate",
+      reason: "calendar_creation_uncertain",
+    });
+    expect(
       toOutboundStatusDto({ ...raw, status: "creating" }, true).health,
     ).toBe("pending");
   });
