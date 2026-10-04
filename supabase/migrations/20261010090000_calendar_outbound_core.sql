@@ -980,7 +980,27 @@ begin
       last_error = null
   where o.business_id = p_business_id;
 
-  -- What was recorded meanwhile (action required, creation) is due now.
+  -- A new incarnation (another calendar: the former one was deleted, or
+  -- belongs to another Google account): every mirror already enrolled
+  -- whose appointment must still exist and whose event is not in this
+  -- calendar is replayed to it. Nothing of it is applied in the new target
+  -- (applied_revision 0); its latest desired revision is kept, and the
+  -- normal worker inserts it with the same deterministic id. A cancelled or
+  -- deleted appointment is never recreated. Driven by this business's
+  -- mirrors only: appointments are never scanned (never-enrolled ones are
+  -- the backfill's, #11b).
+  update private.appointment_calendar_mirrors m
+  set applied_revision = 0
+  from public.appointments a
+  where m.business_id = p_business_id
+    and a.id = m.appointment_id
+    and a.business_id = p_business_id
+    and a.status <> 'cancelled'
+    and m.applied_revision > 0
+    and m.provider_calendar_id is distinct from p_provider_calendar_id;
+
+  -- What was recorded meanwhile (action required, creation) and what is
+  -- replayed is due now.
   update private.appointment_calendar_mirrors m
   set next_attempt_at = pg_catalog.now(),
       attempts = 0,

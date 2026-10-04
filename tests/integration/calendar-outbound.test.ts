@@ -1156,22 +1156,39 @@ describe("dedicated calendar deleted by the professional", () => {
     });
   });
 
-  it("explicit reactivation: new calendar and generation, pending desired states replayed once, no general rescan", async () => {
+  it("explicit reactivation: new calendar and generation; every enrolled appointment still active converges there (synced before, moved or created meanwhile), cancelled ones are not recreated, no general rescan", async () => {
     const s = await setup();
+    // Before the very first activation: never enrolled (backfill #11b).
+    const never = await createAppointment(s, "08:00", "Old");
     const first = await enabled(s);
-    const untouched = await createAppointment(s, "09:00", "Ugo");
-    const moved = await createAppointment(s, "10:00", "Mia");
-    const cancelled = await createAppointment(s, "12:00", "Cy");
+    const a = await createAppointment(s, "09:00", "Ana");
+    const b = await createAppointment(s, "10:00", "Bea");
+    const c = await createAppointment(s, "12:00", "Cy");
     await run(s);
+    expect(liveEvents(first)).toHaveLength(3);
+    // Another tenant, synced as well: never concerned.
+    const neighbour = await setup();
+    const neighbourCalendar = await enabled(neighbour);
+    const n = await createAppointment(neighbour, "10:00", "Nil");
+    await run(neighbour);
+    const neighbourMirror = await mirror(n.id);
 
+    // Calendar 1 deleted by the professional: action required.
     fake.deleteCalendar(first);
-    await reschedule(s, moved.id, "11:00");
+    await reschedule(s, b.id, "11:00");
     await run(s);
     const before = await outboundRow(s);
-    expect(before!.status).toBe("action_required");
-    const fresh = await createAppointment(s, "15:00", "Neo");
-    await reschedule(s, moved.id, "16:00");
-    await changeStatus(s, cancelled.id, "cancelled");
+    expect(before).toMatchObject({
+      status: "action_required",
+      action_code: "calendar_deleted",
+    });
+    // Meanwhile: B moved again, C cancelled, D created, A unchanged.
+    const calls = providerCalls();
+    await reschedule(s, b.id, "16:00");
+    await changeStatus(s, c.id, "cancelled");
+    const d = await createAppointment(s, "15:00", "Dan");
+    await run(s);
+    expect(providerCalls()).toBe(calls);
     const inserts = fake.count(isInsert);
 
     sessionClient = s.owner.client;
@@ -1191,9 +1208,9 @@ describe("dedicated calendar deleted by the professional", () => {
     expect(
       fake.appCalendars(s.account.sub).map((calendar) => calendar.id),
     ).toEqual([second]);
-    // Exactly the pending work: the moved one (latest time) and the new one;
-    // the cancelled one had nothing in this calendar; the untouched one is
-    // not rescanned.
+    // A (synced before, unchanged), B (latest time), D (created meanwhile):
+    // same deterministic ids, one insert each. C is not recreated; the
+    // appointment never enrolled is not discovered.
     expect(
       liveEvents(second)
         .map((event) => [
@@ -1203,20 +1220,30 @@ describe("dedicated calendar deleted by the professional", () => {
         .sort(),
     ).toEqual(
       [
-        [eventIdOf(moved.id), at(D, "16:00")],
-        [eventIdOf(fresh.id), at(D, "15:00")],
+        [eventIdOf(a.id), at(D, "09:00")],
+        [eventIdOf(b.id), at(D, "16:00")],
+        [eventIdOf(d.id), at(D, "15:00")],
       ].sort(),
     );
-    expect(fake.count(isInsert) - inserts).toBe(2);
-    expect(liveEvents(second).map((event) => event.id)).not.toContain(
-      eventIdOf(untouched.id),
-    );
+    expect(fake.storedEvents(second)).toHaveLength(3);
+    expect(fake.count(isInsert) - inserts).toBe(3);
+    expect(await mirror(never.id)).toBeUndefined();
+    expect(await mirror(c.id)).toMatchObject({
+      desired_revision: "2",
+      applied_revision: "2",
+    });
     expect(await status(s)).toMatchObject({
       health: "healthy",
       pendingCount: 0,
     });
+    // Converged: nothing more to send.
     await run(s);
-    expect(fake.count(isInsert) - inserts).toBe(2);
+    expect(fake.count(isInsert) - inserts).toBe(3);
+    // The other tenant's mirror and calendar are untouched.
+    expect(await mirror(n.id)).toEqual(neighbourMirror);
+    expect(liveEvents(neighbourCalendar).map((event) => event.id)).toEqual([
+      eventIdOf(n.id),
+    ]);
   });
 });
 
@@ -1274,14 +1301,33 @@ describe("disconnect and reconnect", () => {
     expect((await outboundRow(s))!.provider_calendar_id).toBe(calendarId);
   });
 
-  it("reconnect with another account: account A's calendar never written with B's credentials; a new activation is needed", async () => {
+  it("account A → account B: A's configuration invalidated, B's credentials never touch A's calendar, A's workers no-op; explicit activation at B replays every enrolled active appointment, unchanged ones included", async () => {
     const s = await setup();
-    const calendarId = await enabled(s);
-    const a = await createAppointment(s, "10:00");
+    const calendarA = await enabled(s);
+    const a1 = await createAppointment(s, "09:00", "Un");
+    const a2 = await createAppointment(s, "10:00", "Deux");
+    const gone = await createAppointment(s, "12:00", "Trois");
     await run(s);
+    expect(liveEvents(calendarA)).toHaveLength(3);
+    const writesToA = () =>
+      fake.requests.filter(
+        (request) =>
+          decodeURIComponent(request.url.pathname).includes(calendarA) &&
+          request.method !== "GET",
+      ).length;
+
+    // A worker of A's incarnation is at Google when B replaces A.
+    const late = await createAppointment(s, "14:00", "Tard");
+    const held = fake.hold(isInsert);
+    const worker = run(s);
+    await held.reached;
     const other = newAccount();
     givePersonalCalendars(other);
     await connect(s, other);
+    held.release();
+    expect(await worker).toMatchObject({ applied: 0, superseded: 1 });
+    const toA = writesToA();
+    const generationAfterSwitch = (await outboundRow(s))!.generation;
     expect(await outboundRow(s)).toMatchObject({
       status: "disabled",
       action_code: "account_changed",
@@ -1291,27 +1337,46 @@ describe("disconnect and reconnect", () => {
       health: "disabled",
       actionRequired: "enable_again",
     });
-    const writesToA = () =>
-      fake.requests.filter(
-        (request) =>
-          decodeURIComponent(request.url.pathname).includes(calendarId) &&
-          request.method !== "GET",
-      ).length;
-    const toA = writesToA();
-    await reschedule(s, a.id, "11:00");
+    await changeStatus(s, gone.id, "cancelled");
     const writes = googleWrites();
     await run(s);
     expect(googleWrites()).toBe(writes);
 
-    // B grants the write scope; a new calendar in B's account.
+    // B grants the write scope (explicit activation): a new calendar at B.
     expect(await authorizeWrite(s, other)).toBe("write_authorized");
     await flush();
-    const [inB] = fake.appCalendars(other.sub);
-    expect(inB).toBeDefined();
-    expect(liveEvents(inB!.id).map((event) => event.id)).toEqual([
-      eventIdOf(a.id),
-    ]);
+    const row = await outboundRow(s);
+    const [calendarB] = fake.appCalendars(other.sub);
+    expect(row).toMatchObject({
+      status: "active",
+      provider_calendar_id: calendarB!.id,
+    });
+    expect(row!.generation).not.toBe(generationAfterSwitch);
+    // A1 and A2 replayed although unchanged, with the same ids; the late
+    // one too; the cancelled one is not recreated. No duplicate.
+    expect(
+      liveEvents(calendarB!.id)
+        .map((event) => event.id)
+        .sort(),
+    ).toEqual([eventIdOf(a1.id), eventIdOf(a2.id), eventIdOf(late.id)].sort());
+    expect(fake.storedEvents(calendarB!.id)).toHaveLength(3);
+    // Nothing written to A's calendar since B took over; its events stay
+    // there (no remote cleanup in V1).
     expect(writesToA()).toBe(toA);
+    expect(
+      liveEvents(calendarA)
+        .map((event) => event.id)
+        .sort(),
+    ).toEqual(
+      [
+        eventIdOf(a1.id),
+        eventIdOf(a2.id),
+        eventIdOf(gone.id),
+        eventIdOf(late.id),
+      ].sort(),
+    );
+    await run(s);
+    expect(fake.storedEvents(calendarB!.id)).toHaveLength(3);
   });
 });
 

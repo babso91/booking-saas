@@ -486,9 +486,32 @@ Décision V1 : Booking ne recrée **jamais** le calendrier de lui-même, car la 
 - **réactivation explicite** (`reactivateCalendarOutboundAction`) :
   1. nouvelle génération (les anciens workers perdent toute autorité) ;
   2. création ou récupération d'un calendrier dédié, selon la stratégie idempotente ;
-  3. les miroirs en attente (`desired_revision > applied_revision`) deviennent dus et convergent vers le nouveau calendrier. Un miroir dont l'événement était dans l'ancien calendrier est créé dans le nouveau s'il est actif, et ignoré s'il est annulé.
+  3. **replay** : tous les miroirs déjà enrôlés dont le rendez-vous doit toujours exister convergent vers le nouveau calendrier, qu'ils aient été synchronisés avant la suppression, modifiés ou créés pendant `action_required` (voir « Nouvelle incarnation : replay des miroirs enrôlés »).
 
-**Ce rejeu n'est pas le backfill (#11b).** Il ne relit pas la table des rendez-vous : il ne reprend que le travail déjà enregistré. Un rendez-vous déjà appliqué dans l'ancien calendrier et inchangé n'est pas recopié. Un rendez-vous antérieur à la toute première activation, sans miroir, reste hors périmètre (#11b). Testé : nouveau calendrier, nouvelle génération, exactement les rendez-vous en attente (dernier état), aucun doublon, aucun rescan.
+### Nouvelle incarnation : replay des miroirs enrôlés
+
+Invariant : après chaque nouvelle incarnation, le nouveau calendrier finit par contenir **tous les rendez-vous actifs déjà enrôlés** dans l'outbound, pas seulement ceux qui ont changé depuis. Une nouvelle incarnation, c'est l'adoption d'un calendrier dédié différent de celui où les événements avaient été écrits :
+
+- **calendrier supprimé** : `action_required`, puis réactivation et nouveau calendrier ;
+- **autre compte Google** : passage du compte A au compte B, puis activation explicite et nouveau calendrier chez B.
+
+Mécanisme, dans la transaction qui adopte le calendrier (`calendar_outbound_adopt_calendar`) :
+
+- la génération outbound a déjà changé à l'activation : les claims et workers de l'ancienne incarnation n'ont plus d'autorité ;
+- chaque miroir **de ce business** dont le rendez-vous existe et n'est pas annulé, et dont l'événement n'est pas dans le nouveau calendrier, repasse à `applied_revision = 0`. Sa dernière révision souhaitée est gardée ;
+- tous les miroirs en attente deviennent dus ; le worker normal les insère avec le même id déterministe. Il n'y a pas d'architecture de replay séparée ;
+- un rendez-vous annulé ou supprimé n'est jamais recréé dans le nouveau calendrier, pas même pour y être supprimé ensuite ;
+- si le calendrier adopté est le même (même compte, retrouvé par son marqueur), rien n'est rejoué : ses événements y sont déjà.
+
+**Replay (#11a) ≠ backfill (#11b).**
+
+- Le replay part uniquement des miroirs déjà enrôlés de ce business, en joignant leurs rendez-vous par clé primaire ; il ne parcourt jamais la table des rendez-vous.
+- Un rendez-vous antérieur à la toute première activation, sans miroir, n'est pas découvert : c'est le backfill borné de #11b.
+
+Testé :
+
+- **calendrier supprimé** : A synchronisé et inchangé, B déplacé pendant `action_required`, C annulé, D créé. Après réactivation : A, B (dernière heure) et D dans le nouveau calendrier, une insertion chacun ; C non recréé ; le rendez-vous jamais enrôlé n'est pas découvert ; le miroir d'un autre business est intact ;
+- **compte A → B** : A1 et A2 inchangés sont rejoués chez B avec les mêmes ids, sans doublon. Le worker de A en cours devient no-op ; aucune écriture vers le calendrier A ; ses événements y restent.
 
 ### `action_required`, désactivation et déconnexion
 
@@ -503,7 +526,7 @@ Décision V1 : Booking ne recrée **jamais** le calendrier de lui-même, car la 
 
 **Reconnexion avec le même compte.** L'outbound actif continue avec le même calendrier, sous la nouvelle incarnation. Après une déconnexion, l'activation retrouve l'ancien calendrier par son marqueur : jamais un second (testé).
 
-**Autre compte.** Les identifiants B ne sont jamais utilisés avec le calendrier A (testé).
+**Autre compte.** Les identifiants B ne sont jamais utilisés avec le calendrier A, et les workers de A deviennent no-op. L'activation explicite chez B crée un nouveau calendrier et rejoue tous les rendez-vous actifs enrôlés (testé). Les événements restés dans le calendrier de A ne sont pas nettoyés : limite V1.
 
 ### Statut pour l'UI (`CalendarOutboundStatusDto`)
 
@@ -614,7 +637,8 @@ Tout ce qui est propre à Google se trouve dans `providers/google.ts`. Le domain
 - **Calendriers sans fuseau.** Un calendrier que Google liste sans fuseau, ou avec un fuseau inconnu de PostgreSQL, ne peut pas être sélectionné. S'il l'était déjà, il continue d'être synchronisé avec une marge (`degraded`) jusqu'à ce qu'un fuseau connu revienne. Si la tzdata de PostgreSQL ne connaît pas un fuseau récent, la marge dure jusqu'à la mise à jour de PostgreSQL.
 - **Lignes historiques.** Jusqu'à la full sync que la migration force, les journées entières stockées avant les dates civiles gardent leur fenêtre UTC. Elles sont élargies si le fuseau change entre-temps : sur-blocage temporaire.
 - **Première version de `20261005090000` : non supportée.** Elle n'a été exécutée que localement et sur des bases CI éphémères, jamais sur `main` ni sur une base persistante (production ou staging). Elle a été corrigée directement dans cette PR. Le seul chemin d'upgrade supporté est `20261004090000` → `20261005090000` corrigée → migrations suivantes, et il est vérifié par `npm run test:upgrade`. Une base de développement qui a appliqué l'ancienne version doit être réinitialisée (`npm run db:reset`).
-- **Outbound : événements laissés chez Google.** Après une déconnexion, une désactivation ou un changement de compte, les événements déjà copiés restent dans l'ancien calendrier dédié : aucun nettoyage distant en V1. Changements faits pendant `disabled` : un rendez-vous déjà copié puis modifié pendant la désactivation est mis à jour à la réactivation (son miroir le suit) ; un rendez-vous créé pendant la désactivation n'est pas copié (#11b).
+- **Outbound : événements laissés chez Google.** Après une déconnexion, une désactivation ou un changement de compte, les événements déjà copiés restent dans l'ancien calendrier dédié (celui du compte A, par exemple) : aucun nettoyage distant en V1. Le nouveau calendrier, lui, reçoit tous les rendez-vous actifs enrôlés.
+- **Outbound : restauration d'un événement annulé.** Elle utilise `events.update` avec `status: confirmed` et le même id. La documentation de Google dit que ces événements peuvent être restaurés, sans nommer la méthode. Ce comportement est vérifié contre le faux Google seulement : une validation manuelle avec un vrai compte Google est requise avant l'ouverture aux clientes (créer, déplacer, annuler, reconfirmer un rendez-vous ; supprimer l'événement à la main puis modifier le rendez-vous ; supprimer le calendrier dédié puis réactiver). Changements faits pendant `disabled` : un rendez-vous déjà copié puis modifié pendant la désactivation est mis à jour à la réactivation (son miroir le suit) ; un rendez-vous créé pendant la désactivation n'est pas copié (#11b).
 - **Outbound : modifications manuelles dans Google.** Elles ne sont ni lues ni corrigées tant que le rendez-vous Booking ne change pas (#11b). Un événement supprimé à la main revient à la prochaine modification du rendez-vous.
 - **Outbound : cohérence de la liste des calendriers.** La récupération d'une création dont la réponse s'est perdue suppose que le calendrier apparaisse dans la liste avant la nouvelle tentative (au moins 30 s plus tard).
 - **Outbound : refresh token ancien.** Si Google n'envoie pas de nouveau refresh token, l'ancien est gardé ; un token d'accès rafraîchi sans le scope d'écriture fait passer l'outbound en `action_required` (`authorize_write`), jamais en boucle.
