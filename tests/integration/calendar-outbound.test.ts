@@ -352,6 +352,7 @@ const providerCalls = () =>
 
 const isInsert = (url: URL, method: string) =>
   method === "POST" && /\/events$/.test(url.pathname);
+const isInsertUrl = (url: URL) => /\/events$/.test(url.pathname);
 
 function liveEvents(calendarId: string) {
   return fake
@@ -1065,6 +1066,75 @@ describe("concurrency and authority", () => {
     await run(s);
     expect(liveEvents(calendarId)).toHaveLength(1);
   });
+});
+
+describe("403 from Google: a limit or a lost permission", () => {
+  const forbidden = (reason: string) => ({
+    error: { code: 403, errors: [{ reason }] },
+  });
+
+  it.each([
+    "rateLimitExceeded",
+    "userRateLimitExceeded",
+    "quotaExceeded",
+    "dailyLimitExceeded",
+  ])(
+    "403 %s is a rate limit: backoff like a 429, the business waits for this run, outbound stays active",
+    async (reason) => {
+      const s = await setup();
+      const calendarId = await enabled(s);
+      const a = await createAppointment(s, "10:00");
+      const b = await createAppointment(s, "12:00");
+      fake.failNext(isInsertUrl, 403, 1, forbidden(reason));
+      await run(s);
+      // One attempt, then the business is left alone for this run.
+      expect(fake.count(isInsert)).toBe(1);
+      const mirrors = [await mirror(a.id), await mirror(b.id)];
+      expect(
+        mirrors.map((row) => [row!.attempts, row!.last_error]).sort(),
+      ).toEqual([
+        [0, null],
+        [1, "rate_limited"],
+      ]);
+      expect(await outboundRow(s)).toMatchObject({
+        status: "active",
+        action_code: null,
+      });
+      expect(await status(s)).toMatchObject({ health: "retrying" });
+      // After the backoff (and the untried claim's lease), both converge.
+      await db.query(
+        "update private.appointment_calendar_mirrors set next_attempt_at = now(), lease_until = null where business_id = $1",
+        [s.business.id],
+      );
+      await run(s);
+      expect(liveEvents(calendarId)).toHaveLength(2);
+    },
+  );
+
+  it.each(["insufficientPermissions", "forbidden", "forbiddenForNonOrganizer"])(
+    "403 %s is a lost permission: action required at once, no retry storm",
+    async (reason) => {
+      const s = await setup();
+      await enabled(s);
+      const a = await createAppointment(s, "10:00");
+      await createAppointment(s, "12:00");
+      fake.failNext(isInsertUrl, 403, 1, forbidden(reason));
+      await run(s);
+      expect(fake.count(isInsert)).toBe(1);
+      expect(await outboundRow(s)).toMatchObject({
+        status: "action_required",
+        action_code: "write_authorization_required",
+      });
+      expect(await mirror(a.id)).toMatchObject({ attempts: 0 });
+      expect(await status(s)).toMatchObject({
+        health: "action_required",
+        actionRequired: "authorize_write",
+      });
+      const calls = providerCalls();
+      await run(s);
+      expect(providerCalls()).toBe(calls);
+    },
+  );
 });
 
 describe("dedicated calendar deleted by the professional", () => {

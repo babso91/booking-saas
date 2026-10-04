@@ -463,16 +463,16 @@ Testé : création puis annulation avant le worker (aucun appel) ; création pui
 
 ### Erreurs et reprises
 
-| Erreur                                                               | Portée        | Effet                                                                                            |
-| -------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------ |
-| réseau, réponse perdue, 5xx, 429 (après les reprises du client HTTP) | rendez-vous   | reprise avec backoff (30 s × 2ⁿ, ±20 %, au plus 6 h) ; un 429 arrête le business pour ce passage |
-| 401                                                                  | —             | token rafraîchi une fois, puis reprise                                                           |
-| `invalid_grant`                                                      | connexion     | `reauth_required` (contrat inbound) : plus aucun appel, état `reconnect`                         |
-| 403 (calendrier non créé par l'app, scope retiré)                    | configuration | `action_required` (`write_authorization_required`)                                               |
-| 404 sur le calendrier (vérifié par `calendars.get`)                  | configuration | `action_required` (`calendar_deleted`)                                                           |
-| 404 / 410 sur un événement à supprimer                               | rendez-vous   | succès                                                                                           |
-| 409                                                                  | rendez-vous   | réconciliation par mise à jour                                                                   |
-| réponse invalide                                                     | rendez-vous   | reprise                                                                                          |
+| Erreur                                                                                                                                | Portée        | Effet                                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| réseau, réponse perdue, 5xx, 429, 403 de limite (`rateLimitExceeded`, `userRateLimitExceeded`, `quotaExceeded`, `dailyLimitExceeded`) | rendez-vous   | reprise avec backoff (30 s × 2ⁿ, ±20 %, au plus 6 h) ; une limite (429 ou 403) arrête le business pour ce passage |
+| 401                                                                                                                                   | —             | token rafraîchi une fois, puis reprise                                                                            |
+| `invalid_grant`                                                                                                                       | connexion     | `reauth_required` (contrat inbound) : plus aucun appel, état `reconnect`                                          |
+| autre 403 (permission : calendrier non créé par l'app, scope retiré, `insufficientPermissions`, `forbiddenForNonOrganizer`…)          | configuration | `action_required` (`write_authorization_required`)                                                                |
+| 404 sur le calendrier (vérifié par `calendars.get`)                                                                                   | configuration | `action_required` (`calendar_deleted`)                                                                            |
+| 404 / 410 sur un événement à supprimer                                                                                                | rendez-vous   | succès                                                                                                            |
+| 409                                                                                                                                   | rendez-vous   | réconciliation par mise à jour                                                                                    |
+| réponse invalide                                                                                                                      | rendez-vous   | reprise                                                                                                           |
 
 Une erreur de configuration arrête tout le business à la première occurrence. Ses autres miroirs ne sont ni tentés ni retentés un par un. Testé avec 200 rendez-vous et un calendrier supprimé : 2 appels (l'insertion en 404 et la vérification du calendrier), puis plus aucun. Équité : au plus 10 miroirs par business et par passage, les plus anciens d'abord. Une erreur Google ne modifie jamais le rendez-vous.
 

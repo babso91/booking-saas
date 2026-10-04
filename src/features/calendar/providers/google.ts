@@ -296,6 +296,13 @@ function parseEvent(item: unknown): ProviderEvent {
   return toProviderEvent(item as GoogleEvent)!;
 }
 
+const RATE_LIMIT_REASONS = new Set([
+  "rateLimitExceeded",
+  "userRateLimitExceeded",
+  "quotaExceeded",
+  "dailyLimitExceeded",
+]);
+
 function errorFor(status: number, body: Record<string, unknown>) {
   const error = body.error;
   const oauthError = typeof error === "string" ? error : null;
@@ -315,10 +322,11 @@ function errorFor(status: number, body: Record<string, unknown>) {
     return new CalendarProviderError("conflict", status, "conflict");
   if (status === 404)
     return new CalendarProviderError("not_found", status, "not_found");
-  if (
-    status === 403 &&
-    (reason === "rateLimitExceeded" || reason === "userRateLimitExceeded")
-  ) {
+  // Google answers some limits with 403 (Calendar API errors guide:
+  // rateLimitExceeded, userRateLimitExceeded, quotaExceeded; plus the
+  // generic dailyLimitExceeded): a limit, retried with backoff like a 429,
+  // never a lost permission.
+  if (status === 403 && reason !== null && RATE_LIMIT_REASONS.has(reason)) {
     return new CalendarProviderError("rate_limited", status, reason);
   }
   if (status === 403)

@@ -832,6 +832,34 @@ describe("Google outbound (calendar.app.created)", () => {
     ).rejects.toMatchObject({ kind: "bad_request" });
   });
 
+  it.each([
+    ["rateLimitExceeded", "rate_limited"],
+    ["userRateLimitExceeded", "rate_limited"],
+    ["quotaExceeded", "rate_limited"],
+    ["dailyLimitExceeded", "rate_limited"],
+    ["insufficientPermissions", "forbidden"],
+    ["forbiddenForNonOrganizer", "forbidden"],
+  ])("403 %s is classified %s", async (reason, kind) => {
+    fake.setCalendars(account.sub, [
+      { id: account.email, summary: "Moi", timeZone: "UTC", primary: true },
+    ]);
+    const tokens = await writer();
+    const { id: calendarId } = await provider.createCalendar(
+      tokens.accessToken,
+      { summary: "R", description: "d", timeZone: "UTC" },
+    );
+    fake.failNext((url) => url.pathname.endsWith("/events"), 403, 1, {
+      error: { code: 403, errors: [{ reason }] },
+    });
+    await expect(
+      provider.insertEvent(
+        tokens.accessToken,
+        calendarId,
+        event("bk0123456789abcdef0123456789abcdef"),
+      ),
+    ).rejects.toMatchObject({ kind, status: 403 });
+  });
+
   it("refuses writes to calendars the app did not create (403 forbidden)", async () => {
     fake.setCalendars(account.sub, [
       { id: account.email, summary: "Moi", timeZone: "UTC", primary: true },
