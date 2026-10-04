@@ -49,6 +49,9 @@ jobs:
         run: |
           npm run db:types
           git diff --exit-code src/types/database.generated.ts
+      # Upgrade of a populated database (not only a fresh install): reset to
+      # an older schema, insert historical rows, migrate to the latest.
+      - run: npm run test:upgrade
       - run: npm run test:db
       # Sign-up → confirmation email → /auth/callback against `next start`.
       - run: npm run build

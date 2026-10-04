@@ -32,18 +32,19 @@ Le seed de démonstration est intentionnellement désactivé dans cette étape d
 
 ## Scripts
 
-| Commande           | Usage                                                |
-| ------------------ | ---------------------------------------------------- |
-| `npm run dev`      | serveur Next.js local                                |
-| `npm run build`    | build de production                                  |
-| `npm run check`    | format, lint, types et tests                         |
-| `npm run test`     | tests unitaires Vitest (sans base)                   |
-| `npm run test:db`  | tests d'intégration contre Supabase local            |
-| `npm run test:e2e` | parcours de confirmation email contre `next start`   |
-| `npm run db:start` | démarre Supabase local                               |
-| `npm run db:stop`  | arrête Supabase local                                |
-| `npm run db:reset` | rejoue les migrations locales                        |
-| `npm run db:types` | régénère les types TypeScript depuis le schéma local |
+| Commande               | Usage                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| `npm run dev`          | serveur Next.js local                                                                             |
+| `npm run build`        | build de production                                                                               |
+| `npm run check`        | format, lint, types et tests                                                                      |
+| `npm run test`         | tests unitaires Vitest (sans base)                                                                |
+| `npm run test:db`      | tests d'intégration contre Supabase local                                                         |
+| `npm run test:upgrade` | upgrade d'une base peuplée : remise à un ancien schéma, données historiques, migrations suivantes |
+| `npm run test:e2e`     | parcours de confirmation email contre `next start`                                                |
+| `npm run db:start`     | démarre Supabase local                                                                            |
+| `npm run db:stop`      | arrête Supabase local                                                                             |
+| `npm run db:reset`     | rejoue les migrations locales                                                                     |
+| `npm run db:types`     | régénère les types TypeScript depuis le schéma local                                              |
 
 ## Tests de base de données
 
@@ -54,6 +55,8 @@ npm run db:start   # une fois
 npm run db:reset   # rejoue toutes les migrations
 npm run test:db
 ```
+
+Les migrations qui transforment des données existantes ont deux preuves : base vierge (`npm run db:reset` puis `npm run test:db`) et upgrade d'une base peuplée (`npm run test:upgrade`, `tests/upgrade`). Ce dernier remet la base locale à un schéma antérieur, insère des données historiques, applique les migrations suivantes et vérifie les données. Il est destructif pour la base locale, qu'il laisse entièrement migrée. Le chemin d'upgrade supporté pour les migrations calendrier part de `20261004090000` ; une base locale qui aurait appliqué la première version (non publiée en production) de `20261005090000` doit être réinitialisée avec `npm run db:reset`.
 
 Le test E2E `tests/e2e` vérifie l'inscription avec confirmation email : lien reçu dans Mailpit (http://127.0.0.1:54324), `/auth/callback`, session puis `/onboarding`. Il démarre lui-même `next start` sur `http://localhost:3000` (port libre requis) :
 
@@ -89,6 +92,7 @@ Inclus :
 - API publique : `GET /api/public/businesses/[slug]`, `GET /api/public/businesses/[slug]/availability?serviceId=…&date=AAAA-MM-JJ`, `POST /api/bookings` ;
 - Server Actions professionnelles dans `src/features/*/actions` ;
 - authentification professionnelle (email + mot de passe), gardes de routage serveur et onboarding transactionnel : contrat UI dans [docs/AUTH_ONBOARDING_CONTRACT.md](docs/AUTH_ONBOARDING_CONTRACT.md).
+- intégration Google Calendar entrante (OAuth, sélection des calendriers bloquants, synchronisation complète, incrémentale et push, périodes occupées dans la disponibilité et la réservation) : contrat dans [docs/CALENDAR_INTEGRATION_CONTRACT.md](docs/CALENDAR_INTEGRATION_CONTRACT.md) ;
 - backend de l'agenda professionnel V1 (lecture d'une plage, rendez-vous manuels, déplacements, statuts, blocs, concurrence) : contrat UI dans [docs/PROFESSIONAL_AGENDA_CONTRACT.md](docs/PROFESSIONAL_AGENDA_CONTRACT.md).
 
 Non inclus : écrans métier (dont l'écran d'agenda), CRM, fidélité fonctionnelle, envoi des emails, relances, statistiques et seed.
@@ -120,16 +124,23 @@ Si une action échoue au niveau du transport, `callAction` interroge la page cou
 
 ## Migrations
 
-| Migration                                              | Contenu                                                                                                                                                      |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `20260927193000_initial_foundation.sql`                | modèle initial, RLS et politiques                                                                                                                            |
-| `20260927200000_harden_api_privileges.sql`             | retrait de `TRUNCATE`, privilèges anonymes et `EXECUTE` implicites ; schéma `private`                                                                        |
-| `20260927200100_scheduling_invariants.sql`             | fuseau validé, réglages par défaut, plages sans chevauchement, contrainte avec buffer                                                                        |
-| `20260927200200_availability_and_public_booking.sql`   | calcul des créneaux, RPC publiques de réservation, fonctions horaires et ordre des prestations                                                               |
-| `20260928090000_schedule_coordination.sql`             | verrou de planning commun, blocages refusés sur un rendez-vous, valeurs de réservation cohérentes, plages DST                                                |
-| `20260928190000_schedule_lock_order_and_isolation.sql` | remplacements atomiques (`replace_business_hours`, `reorder_services`), `READ COMMITTED` exigé pour les écritures de planning, ordre des verrous             |
-| `20260929090000_auth_onboarding.sql`                   | onboarding transactionnel et idempotent, normalisation et réservation des slugs, téléphone du business                                                       |
-| `20261001090000_unified_local_day.sql`                 | PostgreSQL autorité calendaire : jour civil réel, plages murales multi-segments, `business_time`, heures murales des créneaux, réservation à `now` explicite |
-| `20261002090000_business_time_now.sql`                 | `business_time` renvoie aussi `now` et `todayEndsAt` : durée restante du jour calculée par PostgreSQL seul                                                   |
+| Migration                                              | Contenu                                                                                                                                                                |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `20260927193000_initial_foundation.sql`                | modèle initial, RLS et politiques                                                                                                                                      |
+| `20260927200000_harden_api_privileges.sql`             | retrait de `TRUNCATE`, privilèges anonymes et `EXECUTE` implicites ; schéma `private`                                                                                  |
+| `20260927200100_scheduling_invariants.sql`             | fuseau validé, réglages par défaut, plages sans chevauchement, contrainte avec buffer                                                                                  |
+| `20260927200200_availability_and_public_booking.sql`   | calcul des créneaux, RPC publiques de réservation, fonctions horaires et ordre des prestations                                                                         |
+| `20260928090000_schedule_coordination.sql`             | verrou de planning commun, blocages refusés sur un rendez-vous, valeurs de réservation cohérentes, plages DST                                                          |
+| `20260928190000_schedule_lock_order_and_isolation.sql` | remplacements atomiques (`replace_business_hours`, `reorder_services`), `READ COMMITTED` exigé pour les écritures de planning, ordre des verrous                       |
+| `20260929090000_auth_onboarding.sql`                   | onboarding transactionnel et idempotent, normalisation et réservation des slugs, téléphone du business                                                                 |
+| `20261001090000_unified_local_day.sql`                 | PostgreSQL autorité calendaire : jour civil réel, plages murales multi-segments, `business_time`, heures murales des créneaux, réservation à `now` explicite           |
+| `20261002090000_business_time_now.sql`                 | `business_time` renvoie aussi `now` et `todayEndsAt` : durée restante du jour calculée par PostgreSQL seul                                                             |
+| `20261003090000_calendar_inbound_sync.sql`             | calendriers externes (Google → Booking) : connexions, secrets chiffrés, calendriers bloquants, périodes externes dans la disponibilité et la réservation               |
+| `20261004090000_calendar_sync_hardening.sql`           | sync calendrier durcie : incarnations de connexion, claims de sync, générations jamais réutilisées, changement de fuseau, backoff et équité, `freeBusyReader`          |
+| `20261005090000_calendar_sync_hardening_2.sql`         | sync calendrier, 2ᵉ passe : reprojection atomique des journées entières au changement de fuseau, CAS des secrets, fenêtre de révocation persistée, intervalles stricts |
+| `20261006090000_calendar_sync_hardening_3.sql`         | sync calendrier, 3ᵉ passe : aucun repli sur le fuseau du business, fuseaux stricts, lignes historiques préservées et resynchronisées, attentes de verrou bornées       |
+| `20261007090000_calendar_sync_hardening_4.sql`         | sync calendrier, 4ᵉ passe : confiance dans le fuseau d'un calendrier, écriture du token rafraîchi décidée par PostgreSQL avant l'échéance                              |
+| `20261008090000_calendar_sync_untrusted_zone.sql`      | calendrier au fuseau non reconnu : synchronisation continue avec marge (`degraded`), relecture périodique de la liste des calendriers                                  |
+| `20261009090000_calendar_sync_coherent_bounds.sql`     | bornes résolues avant comparaison, enveloppe bloquée au lieu d'un rollback de page, événements approximatifs (`degraded`), horodatage de la relecture par connexion    |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.

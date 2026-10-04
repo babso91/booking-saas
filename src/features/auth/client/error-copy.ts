@@ -130,6 +130,45 @@ export const errorCopy: Record<
     title: "Élément utilisé",
     message: "Cet élément est encore utilisé.",
   },
+  calendar_not_configured: {
+    title: "Calendrier indisponible",
+    message: "La synchronisation de calendrier n’est pas encore disponible.",
+  },
+  calendar_not_connected: {
+    title: "Aucun calendrier connecté",
+    message: "Connecte d’abord ton calendrier Google.",
+  },
+  calendar_reauth_required: {
+    title: "Connexion expirée",
+    message:
+      "Reconnecte ton calendrier Google pour reprendre la synchronisation.",
+  },
+  calendar_provider_unavailable: {
+    title: "Google ne répond pas",
+    message: "Réessaie dans quelques minutes.",
+  },
+  calendar_not_found: {
+    title: "Calendrier introuvable",
+    message: "Ce calendrier n’existe plus. Actualise la liste.",
+  },
+  calendar_not_selectable: {
+    title: "Calendrier non utilisable",
+    message:
+      "Ce calendrier ne partage que tes disponibilités : il ne peut pas bloquer tes créneaux.",
+  },
+  calendar_disconnect_in_progress: {
+    title: "Déconnexion en cours",
+    message:
+      "La déconnexion précédente se termine. Réessaie dans deux minutes.",
+  },
+  calendar_scope_missing: {
+    title: "Accès non accordé",
+    message: "Reconnecte-toi en autorisant l’accès à tes calendriers.",
+  },
+  oauth_state_invalid: {
+    title: "Connexion expirée",
+    message: "Cette demande de connexion n’est plus valable. Recommence.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {
