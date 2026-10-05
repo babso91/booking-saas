@@ -1069,6 +1069,13 @@ describe("the 'nothing to do' promise follows the real state", () => {
     },
   );
 
+  it("never when Google is connected but adding appointments is turned off", async () => {
+    await renderSettings(connected(), outbound()); // disabled, nothing required
+    expect(appointments().getByText("Activer la synchronisation")).toBeTruthy();
+    expect(screen.queryByText(PROMISE)).toBeNull();
+    expect(button("Déconnecter Google Calendar")).toBeTruthy();
+  });
+
   it("never while the Google connection must be renewed", async () => {
     await renderSettings(connected({}, "reauth_required"), HEALTHY);
     expect(screen.queryByText(PROMISE)).toBeNull();

@@ -290,8 +290,9 @@ export function calendarRowView(
 export type ConnectionState = "not_connected" | "active" | "reauth_required";
 
 /**
- * True only when nothing is waiting for the professional: Google connected
- * and usable, and no action required for the appointments. Derived from the
+ * True only when an automatic sync is really running and nothing is waiting
+ * for the professional: Google connected and usable, appointments copied
+ * (healthy, pending, retrying) and no action required. Derived from the
  * DTOs, never from what is displayed.
  */
 export function nothingToDo(
@@ -304,8 +305,9 @@ export function nothingToDo(
     case "healthy":
     case "pending":
     case "retrying":
-    case "disabled":
       return true;
+    // Booking → Google is off on purpose: nothing "updates automatically".
+    case "disabled":
     case "action_required":
       return false;
     default:

@@ -387,11 +387,10 @@ describe("the dedicated calendar's name is never made up", () => {
 describe("nothingToDo — the 'no action needed' promise", () => {
   const base = { health: "healthy" as const, actionRequired: null };
 
-  it("only when Google is connected and nothing is required", () => {
+  it("only when an automatic sync is running and nothing is required", () => {
     expect(nothingToDo("active", base)).toBe(true);
     expect(nothingToDo("active", { ...base, health: "pending" })).toBe(true);
     expect(nothingToDo("active", { ...base, health: "retrying" })).toBe(true);
-    expect(nothingToDo("active", { ...base, health: "disabled" })).toBe(true);
   });
 
   it.each([
@@ -414,6 +413,11 @@ describe("nothingToDo — the 'no action needed' promise", () => {
       "enable_again",
       "active",
       { health: "disabled", actionRequired: "enable_again" },
+    ],
+    [
+      "appointments copy turned off",
+      "active",
+      { health: "disabled", actionRequired: null },
     ],
     [
       "not connected",
