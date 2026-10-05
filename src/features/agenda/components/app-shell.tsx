@@ -6,6 +6,8 @@ import { useState, type ReactNode } from "react";
 import { BrandMark } from "@/components/shared/brand-mark";
 import {
   CalendarIcon,
+  CalendarSyncIcon,
+  ChevronRightIcon,
   ExternalIcon,
   GiftIcon,
   UserIcon,
@@ -17,6 +19,9 @@ import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 type Business = { name: string; slug: string };
+type Section = "agenda" | "calendar";
+
+const CALENDAR_SETTINGS = "/app/settings/calendar";
 
 // Only destinations that exist are links. Upcoming sections are shown as
 // such, without fake pages.
@@ -31,11 +36,22 @@ const upcoming = [
  */
 export function AppShell({
   business,
+  current = "agenda",
   children,
 }: {
   business: Business;
+  /** The section on screen (aria-current and highlight). */
+  current?: Section;
   children: ReactNode;
 }) {
+  const item = (section: Section) =>
+    cn(
+      "flex h-11 items-center gap-3 rounded-xl px-3 text-[15px] font-medium transition-colors",
+      current === section
+        ? "bg-ink text-paper-raised"
+        : "text-ink-soft hover:bg-sand hover:text-ink",
+    );
+
   const [accountOpen, setAccountOpen] = useState(false);
 
   return (
@@ -48,10 +64,17 @@ export function AppShell({
         <nav className="flex flex-col gap-1">
           <Link
             href="/app"
-            aria-current="page"
-            className="flex h-11 items-center gap-3 rounded-xl bg-ink px-3 text-[15px] font-medium text-paper-raised"
+            aria-current={current === "agenda" ? "page" : undefined}
+            className={item("agenda")}
           >
             <CalendarIcon size={18} /> Agenda
+          </Link>
+          <Link
+            href={CALENDAR_SETTINGS}
+            aria-current={current === "calendar" ? "page" : undefined}
+            className={item("calendar")}
+          >
+            <CalendarSyncIcon size={18} /> Google Calendar
           </Link>
           {upcoming.map(({ label, icon: Icon }) => (
             <span
@@ -90,8 +113,11 @@ export function AppShell({
       >
         <Link
           href="/app"
-          aria-current="page"
-          className="flex h-16 flex-col items-center justify-center gap-1 text-[11.5px] font-semibold text-ink"
+          aria-current={current === "agenda" ? "page" : undefined}
+          className={cn(
+            "flex h-16 flex-col items-center justify-center gap-1 text-[11.5px]",
+            current === "agenda" ? "font-semibold text-ink" : "text-ink-soft",
+          )}
         >
           <CalendarIcon size={21} /> Agenda
         </Link>
@@ -112,7 +138,8 @@ export function AppShell({
           type="button"
           onClick={() => setAccountOpen(true)}
           className={cn(
-            "flex h-16 cursor-pointer flex-col items-center justify-center gap-1 text-[11.5px] text-ink-soft",
+            "flex h-16 cursor-pointer flex-col items-center justify-center gap-1 text-[11.5px]",
+            current === "calendar" ? "font-semibold text-ink" : "text-ink-soft",
           )}
         >
           <UserIcon size={21} /> Compte
@@ -126,6 +153,16 @@ export function AppShell({
         description="Ton espace professionnel"
       >
         <div className="flex flex-col gap-4">
+          <Link
+            href={CALENDAR_SETTINGS}
+            onClick={() => setAccountOpen(false)}
+            aria-current={current === "calendar" ? "page" : undefined}
+            className="flex min-h-14 items-center gap-3 rounded-2xl border border-line bg-paper px-4 text-[15px] font-medium text-ink transition-colors hover:border-line-strong"
+          >
+            <CalendarSyncIcon size={20} className="text-ink-soft" />
+            <span className="flex-1">Google Calendar</span>
+            <ChevronRightIcon size={18} className="text-ink-muted" />
+          </Link>
           <PublicLink slug={business.slug} />
           <p className="text-[14px] text-ink-muted">
             Clientes et fidélité arrivent bientôt dans ton espace.

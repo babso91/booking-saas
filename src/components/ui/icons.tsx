@@ -112,6 +112,16 @@ export const CalendarIcon = (props: IconProps) => (
   </Icon>
 );
 
+/** A calendar kept in sync (settings entry of the calendar integration). */
+export const CalendarSyncIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M20.5 11V7.5A2.5 2.5 0 0 0 18 5H6a2.5 2.5 0 0 0-2.5 2.5V18A2.5 2.5 0 0 0 6 20.5h5" />
+    <path d="M3.5 10h17M8 3v4M16 3v4" />
+    <path d="M20.5 15.5a3.5 3.5 0 0 0-6.2-1.6M14 19a3.5 3.5 0 0 0 6.2 1.4" />
+    <path d="M14.3 12.4v1.6h1.6M20.2 21.8v-1.4h-1.5" />
+  </Icon>
+);
+
 export const CupIcon = (props: IconProps) => (
   <Icon {...props}>
     <path d="M4.5 9.5h11v4.5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5V9.5z" />

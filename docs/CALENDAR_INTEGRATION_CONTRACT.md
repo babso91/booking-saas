@@ -621,6 +621,19 @@ Toutes dérivent l'utilisateur et le business de la session. Aucune n'accepte d'
 - `oauth_state_invalid` (400) ;
 - plus les codes communs (`unauthenticated`, `forbidden`, `validation_error`…).
 
+## Écran de réglages (`/app/settings/calendar`)
+
+Une seule connexion Google, deux fonctions présentées séparément, jamais fusionnées en un statut global :
+
+- **Disponibilités** (Google → Booking) : liste des calendriers à cocher (`updateBlockingCalendarsAction`, ensemble complet). Le calendrier dédié de Booking (`bookingCalendar`) n'y figure jamais. Un calendrier sélectionné n'est présenté comme bloquant qu'une fois `protecting` ; avant, « Activation en cours… ». Les états `degraded`, `stale`, `error`, `incomplete` rappellent que les événements déjà connus continuent de bloquer.
+- **Rendez-vous** (Booking → Google) : aucun choix de calendrier destination. `health` et `actionRequired` sont traduits de façon exhaustive (`src/features/calendar/client/settings-copy.ts`) ; `reactivate` n'est jamais lancé automatiquement.
+- Le retour d'OAuth (`/api/calendar/google/callback`) ramène sur cet écran avec `?calendar=<résultat>`, affiché une fois puis retiré de l'adresse.
+- Après une action, l'écran relit l'état serveur ; quand quelque chose s'installe côté serveur (calendrier dédié en création, première sync), il relit au plus cinq fois (3 s, 8 s, 20 s, 45 s, 90 s), puis au retour sur l'onglet. Pas de polling.
+- Une lecture ne s'applique que si aucune action ni lecture plus récente n'a commencé depuis son départ (version client incrémentée avant et après chaque action) : une réponse tardive ne peut jamais réécrire la sélection, qui est envoyée comme un ensemble complet.
+- Si une lecture ultérieure échoue, les dernières données restent affichées, avec un avertissement et « Réessayer ». Une erreur pendant une confirmation (désactivation, déconnexion) s'affiche dans le dialogue.
+- Le calendrier dédié est nommé « Calendrier de rendez-vous Booking » : son nom réel chez Google n'est fourni par aucun DTO.
+- Aucun identifiant fournisseur, scope, génération ni code d'erreur brut n'est affiché.
+
 ## Configuration
 
 Les variables, uniquement côté serveur, sont décrites dans `.env.example`. Si l'une manque ou est invalide, l'intégration est désactivée : _fail closed_, avec `calendar_not_configured`, un webhook muet et une tâche périodique sans effet.
@@ -695,6 +708,5 @@ Tout ce qui est propre à Google se trouve dans `providers/google.ts`. Le domain
   - Réconciliation après modification manuelle dans Google.
   - Tâche de réconciliation exhaustive.
 - **UI.**
-  - Écran de connexion et de sélection.
   - Affichage des périodes externes dans l'agenda.
   - Signalement des conflits.

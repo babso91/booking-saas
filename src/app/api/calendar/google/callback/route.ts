@@ -16,6 +16,7 @@ import { getBusinessContext } from "@/features/businesses/data/business-context"
 import { sha256Hex } from "@/lib/crypto/secret-box";
 import { AppException } from "@/lib/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import type { CallbackResult } from "@/features/calendar/client/settings-copy";
 
 // GET /api/calendar/google/callback?state=…&code=… (or &error=access_denied)
 // OAuth redirect from Google. Server only: the code is exchanged here, tokens
@@ -26,19 +27,13 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-type Result =
-  | "connected"
-  | "write_authorized"
-  | "account_mismatch"
-  | "denied"
-  | "invalid_state"
-  | "scope_missing"
-  | "provider_unavailable"
-  | "not_configured"
-  | "disconnect_in_progress"
-  | "error";
+// The screen that shows these results maps every one of them (settings-copy).
+type Result = CallbackResult;
 
-function back(request: NextRequest, result: Result, path = "/app") {
+/** Where Google sends the professional back: the calendar settings. */
+const SETTINGS_PATH = "/app/settings/calendar";
+
+function back(request: NextRequest, result: Result, path = SETTINGS_PATH) {
   const url = new URL(path, request.nextUrl.origin);
   url.searchParams.set("calendar", result);
   return Response.redirect(url, 303);
