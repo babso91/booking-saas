@@ -354,6 +354,33 @@ type CreationFailure =
   "definite" | "ambiguous" | "not_found" | "multiple" | "forbidden" | "retry";
 
 /**
+ * Candidates (marker found, not adopted before) proven at most in one
+ * creation step. Beyond, the set cannot be decided within the step: nothing
+ * is chosen (calendar_creation_uncertain).
+ */
+const MAX_CANDIDATES = 5;
+
+/**
+ * Among `calendarIds`, those attributed to another business (or to this one
+ * under another Google account): never proven, never written to, never
+ * adopted. Advisory: the attribution itself is decided atomically in SQL by
+ * calendar_outbound_adopt_calendar.
+ */
+async function attributedElsewhere(
+  deps: CalendarDeps,
+  businessId: string,
+  calendarIds: string[],
+) {
+  if (calendarIds.length === 0) return new Set<string>();
+  const { data, error } = await deps.admin.rpc(
+    "calendar_outbound_attributed_elsewhere",
+    { p_business_id: businessId, p_provider_calendar_ids: calendarIds },
+  );
+  if (error) throw databaseException(error);
+  return new Set((data ?? []).map((row) => row.provider_calendar_id));
+}
+
+/**
  * Proves that Booking may write to a candidate calendar, through the only
  * capability calendar.app.created gives on the calendars the app created
  * (and on no other): writing an event. A sentinel event, with an id of its
@@ -398,11 +425,15 @@ async function provesOwnership(
  * two automatically. Google offers no idempotency key for calendars.insert,
  * so:
  *
- * - every step starts by searching the calendar list: a calendar adopted
- *   before (its id in the history) or a candidate carrying this business's
- *   marker whose ownership is proven (sentinel write) is adopted. The
- *   marker alone proves nothing; several proven candidates are never
- *   chosen between (calendar_creation_uncertain);
+ * - every step starts by searching the calendar list, and decides only once
+ *   the whole set of possible targets is known: the calendars this business
+ *   adopted before for this account (its history, a local proof) and the
+ *   candidates carrying its marker (any attempt's nonce). A candidate
+ *   attributed to another business is dropped before anything is sent to
+ *   it; every other one must pass the ownership proof (sentinel write); the
+ *   marker alone proves nothing. Exactly one valid target: adopted, and
+ *   only if SQL attributes it to this business. Several: never chosen
+ *   between (calendar_creation_uncertain);
  * - the insert is recorded (committed) before it is sent, at most once per
  *   attempt, and never retried by the HTTP client;
  * - a certain failure (refused: 4xx, 429) lets the attempt insert again
@@ -458,7 +489,13 @@ export async function ensureOutboundCalendar(
       { ...authority, p_provider_calendar_id: calendarId },
     );
     if (adoptError) throw databaseException(adoptError);
-    if (!adopted) {
+    if (adopted === "attributed_elsewhere") {
+      // Another business owns it (attributed meanwhile, a concurrent
+      // adoption included): never this one's. The next step searches
+      // again, without it.
+      return fail("retry", "calendar_attributed_elsewhere");
+    }
+    if (adopted !== "adopted") {
       logCalendar("outbound_calendar_superseded", { businessId }, "warn");
       return "superseded" as const;
     }
@@ -475,7 +512,9 @@ export async function ensureOutboundCalendar(
       (error.code === "calendar_reauth_required" ||
         error.code === "calendar_not_connected"));
 
-  // 1. Search (read-only, safe to run again after a token refresh).
+  // 1. Search (read-only but for the sentinels, safe to run again after a
+  // token refresh): the complete set of valid targets first, the decision
+  // after, never the other way round.
   let search;
   try {
     search = await withAccessToken(
@@ -484,36 +523,31 @@ export async function ensureOutboundCalendar(
       async (token) => {
         const calendars = await provider.listCalendars(token, { deadline });
         const visible = new Set(calendars.map((calendar) => calendar.id));
+        // Adopted before by this business for this account: valid as is.
         const known = claim.knownCalendarIds.filter((id) => visible.has(id));
-        const candidates = calendars
+        // Carrying the marker, whatever the attempt: candidates only. One
+        // attributed to another business gets nothing, not even a sentinel.
+        const marked = calendars
           .filter(
             (calendar) =>
               calendar.bookingMarker === claim.marker &&
               !claim.knownCalendarIds.includes(calendar.id),
           )
-          // This attempt's nonce first; at most a few proofs per step.
-          .sort(
-            (a, b) =>
-              Number(b.bookingNonce === claim.nonce) -
-                Number(a.bookingNonce === claim.nonce) ||
-              a.id.localeCompare(b.id),
-          )
-          .slice(0, 5);
-        const proven = [];
-        for (const candidate of candidates) {
-          if (
-            await provesOwnership(
-              deps,
-              token,
-              candidate.id,
-              claim.nonce,
-              deadline,
-            )
-          ) {
-            proven.push(candidate);
+          .map((calendar) => calendar.id)
+          .sort();
+        const elsewhere = await attributedElsewhere(deps, businessId, marked);
+        const candidates = marked.filter((id) => !elsewhere.has(id));
+        // Already ambiguous, or too many to decide in one step: no proof.
+        if (known.length > 1 || candidates.length > MAX_CANDIDATES) {
+          return { valid: known, undecided: true };
+        }
+        const valid = [...known];
+        for (const id of candidates) {
+          if (await provesOwnership(deps, token, id, claim.nonce, deadline)) {
+            valid.push(id);
           }
         }
-        return { known, proven };
+        return { valid, undecided: false };
       },
       { generation: claim.credentialGeneration, deadline },
     );
@@ -525,15 +559,11 @@ export async function ensureOutboundCalendar(
     );
   }
 
-  const current = search.proven.filter(
-    (candidate) => candidate.bookingNonce === claim.nonce,
-  );
-  if (current.length === 1) return adopt(current[0]!.id, false);
-  if (current.length > 1 || search.proven.length > 1) {
+  // Exactly one valid target, or none: never a choice between several.
+  if (search.undecided || search.valid.length > 1) {
     return fail("multiple", "multiple_candidates");
   }
-  if (search.proven.length === 1) return adopt(search.proven[0]!.id, false);
-  if (search.known.length > 0) return adopt(search.known[0]!, false);
+  if (search.valid.length === 1) return adopt(search.valid[0]!, false);
   // An insert of this attempt may have created a calendar not listed yet:
   // never a second insert, only searches.
   if (claim.requested) return fail("not_found", "creation_not_found");
@@ -739,12 +769,19 @@ export type OutboundRunResult = {
  * create, then due mirrors (claimed fairly across businesses). A
  * configuration-level failure stops the business at once (action
  * required): its other mirrors are not tried, nor retried one by one.
+ * Nothing new starts once `signal` is aborted (the periodic job's deadline).
  */
 export async function processOutbound(
   deps: CalendarDeps,
-  options: { businessId?: string; budgetMs?: number; limit?: number } = {},
+  options: {
+    businessId?: string;
+    budgetMs?: number;
+    limit?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<OutboundRunResult> {
   const deadline = Date.now() + (options.budgetMs ?? 25_000);
+  const aborted = () => options.signal?.aborted === true;
   const result: OutboundRunResult = {
     creations: 0,
     applied: 0,
@@ -765,13 +802,14 @@ export async function processOutbound(
     creations = (data ?? []).map((row) => row.business_id);
   }
   for (const businessId of creations) {
-    if (deadline - Date.now() < 5000) break;
+    if (aborted() || deadline - Date.now() < 5000) break;
     const outcome = await ensureOutboundCalendar(deps, businessId, {
       deadline: Math.min(deadline, Date.now() + 20_000),
     });
     if (outcome !== "busy") result.creations += 1;
     if (outcome === "action_required") result.actionRequired += 1;
   }
+  if (aborted()) return result;
 
   const { data, error } = await deps.admin.rpc(
     "calendar_outbound_claim_mirrors",
@@ -789,7 +827,7 @@ export async function processOutbound(
   const stopped = new Set<string>();
   for (const claim of claims) {
     if (stopped.has(claim.businessId)) continue;
-    if (deadline - Date.now() < 3000) break;
+    if (aborted() || deadline - Date.now() < 3000) break;
     const outcome = await applyMirror(
       deps,
       claim,

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { withDeadline } from "@/features/calendar/providers/http";
+
 import { refreshConnectionCalendars } from "./connection";
 import type { CalendarDeps } from "./deps";
 import { logCalendar } from "./log";
@@ -16,13 +18,87 @@ import { syncCalendar, type SyncOutcome } from "./sync";
 // Last, outbound: dedicated calendars to create and due mirrors (durable
 // catch-up of what the background kicks did not apply).
 //
-// Fairness between the two directions: inbound (lists and syncs) has at
-// most INBOUND_SHARE of the run's budget, so slow syncs can never consume
-// what outbound needs; outbound only gets what is left after inbound, so it
-// can never starve inbound either. Both progress at every run.
+// Fairness between the two directions: each one has a real deadline, not
+// only checks of the time between two operations. Inbound (lists and syncs)
+// ends at INBOUND_SHARE of the run's budget, whatever it is waiting for: its
+// signal is aborted, the job stops waiting (a late answer or failure is
+// still consumed, never an unhandled rejection) and outbound starts with
+// what is left, at least the rest of the budget. Outbound ends at the run's
+// deadline the same way, and only runs after inbound, so it can never take
+// inbound's share either. A database call abandoned this way may still
+// complete: every inbound and outbound write is a claim or a
+// compare-and-set in SQL, harmless when it lands late.
 
 /** Share of a run's budget inbound may use; outbound keeps the rest. */
 export const INBOUND_SHARE = 0.6;
+
+type InboundRun = {
+  due: number;
+  processed: { calendarId: string; reason: string; outcome: SyncOutcome }[];
+};
+
+/** A database call aborted with `signal`; never started once it is aborted. */
+function abortable<T extends { abortSignal(signal: AbortSignal): T }>(
+  query: T,
+  signal: AbortSignal | undefined,
+) {
+  return signal ? query.abortSignal(signal) : query;
+}
+
+async function runInbound(
+  deps: CalendarDeps,
+  run: InboundRun,
+  deadline: number,
+  signal: AbortSignal | undefined,
+  limit: number,
+) {
+  const stop = (margin: number) =>
+    signal?.aborted === true || deadline - Date.now() < margin;
+
+  const { data: lists } = await abortable(
+    deps.admin.rpc("calendar_due_calendar_lists", { p_limit: 20 }),
+    signal,
+  );
+  for (const { connection_id: connectionId } of lists ?? []) {
+    if (stop(5000)) break;
+    // Stamped only now, when it is really read (6 hours until the next
+    // attempt, whatever the outcome); one left unread stays due.
+    const { data: started } = await abortable(
+      deps.admin.rpc("calendar_begin_calendar_list_check", {
+        p_connection_id: connectionId,
+      }),
+      signal,
+    );
+    if (!started) continue;
+    await refreshConnectionCalendars(deps, connectionId, {
+      deadline: Math.min(deadline, Date.now() + 15_000),
+    }).catch(() =>
+      logCalendar("calendar_list_retry_failed", { connectionId }, "warn"),
+    );
+  }
+
+  const { data, error } = await abortable(
+    deps.admin.rpc("calendar_due_work", {
+      p_limit: limit,
+      p_with_channels: Boolean(deps.env.GOOGLE_CALENDAR_WEBHOOK_URL),
+    }),
+    signal,
+  );
+  if (error) throw error;
+  run.due = data.length;
+
+  for (const item of data) {
+    if (stop(2000)) break;
+    const outcome = await syncCalendar(deps, item.calendar_id, {
+      budgetMs: Math.min(deadline - Date.now(), 25_000),
+    });
+    run.processed.push({
+      calendarId: item.calendar_id,
+      reason: item.reason,
+      outcome,
+    });
+  }
+}
 
 export async function runCalendarJob(
   deps: CalendarDeps,
@@ -33,58 +109,35 @@ export async function runCalendarJob(
   const deadline = start + budget;
   const inboundDeadline = start + Math.floor(budget * INBOUND_SHARE);
 
-  const { data: lists } = await deps.admin.rpc("calendar_due_calendar_lists", {
-    p_limit: 20,
+  const inbound: InboundRun = { due: 0, processed: [] };
+  let inboundFailure: unknown = null;
+  await withDeadline(inboundDeadline, (signal) =>
+    runInbound(deps, inbound, inboundDeadline, signal, options.limit ?? 50),
+  ).catch((error: unknown) => {
+    if (Date.now() >= inboundDeadline) {
+      // Abandoned at its deadline: outbound keeps its share.
+      logCalendar("inbound_deadline_exceeded", {}, "warn");
+    } else {
+      // Reported once outbound has had its turn.
+      inboundFailure = error;
+    }
   });
-  for (const { connection_id: connectionId } of lists ?? []) {
-    if (inboundDeadline - Date.now() < 5000) break;
-    // Stamped only now, when it is really read (6 hours until the next
-    // attempt, whatever the outcome); one left unread stays due.
-    const { data: started } = await deps.admin.rpc(
-      "calendar_begin_calendar_list_check",
-      { p_connection_id: connectionId },
-    );
-    if (!started) continue;
-    await refreshConnectionCalendars(deps, connectionId, {
-      deadline: Math.min(inboundDeadline, Date.now() + 15_000),
-    }).catch(() =>
-      logCalendar("calendar_list_retry_failed", { connectionId }, "warn"),
-    );
-  }
+  // What inbound did within its share (a pass still running in the
+  // background is not reported).
+  const processed = [...inbound.processed];
 
-  const { data, error } = await deps.admin.rpc("calendar_due_work", {
-    p_limit: options.limit ?? 50,
-    p_with_channels: Boolean(deps.env.GOOGLE_CALENDAR_WEBHOOK_URL),
-  });
-  if (error) throw error;
-
-  const results: {
-    calendarId: string;
-    reason: string;
-    outcome: SyncOutcome;
-  }[] = [];
-  for (const item of data) {
-    const remaining = inboundDeadline - Date.now();
-    if (remaining < 2000) break;
-    results.push({
-      calendarId: item.calendar_id,
-      reason: item.reason,
-      outcome: await syncCalendar(deps, item.calendar_id, {
-        budgetMs: Math.min(remaining, 25_000),
-      }),
-    });
-  }
   let outbound: OutboundRunResult | null = null;
   // Outbound's own slice: at least (1 - INBOUND_SHARE) of the budget.
   const left = deadline - Date.now();
   if (left > 2000) {
-    outbound = await processOutbound(deps, { budgetMs: left - 500 }).catch(
-      () => {
-        logCalendar("outbound_job_failed", {}, "error");
-        return null;
-      },
-    );
+    outbound = await withDeadline(deadline, (signal) =>
+      processOutbound(deps, { budgetMs: left - 500, signal }),
+    ).catch(() => {
+      logCalendar("outbound_job_failed", {}, "error");
+      return null;
+    });
   }
-  logCalendar("job_done", { count: results.length });
-  return { due: data.length, processed: results, outbound };
+  if (inboundFailure) throw inboundFailure;
+  logCalendar("job_done", { count: processed.length });
+  return { due: inbound.due, processed, outbound };
 }

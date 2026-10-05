@@ -13,11 +13,14 @@
 -- captures it with its claim, together with the connection's credential
 -- generation and the desired revision; every local write that follows a
 -- provider answer re-checks all of them here: a stale worker writes
--- nothing.
+-- nothing. Every guard of authority is strictly true or false, never null.
 --
 -- Lock order (on top of the inbound one): schedule lock, connection row,
--- secrets, outbound row, mirror rows. Appointment transactions lock the
--- appointment then its mirror and only read the outbound row.
+-- secrets, outbound row, calendar attribution, mirror rows. A worker
+-- transition decided from a provider answer holds the connection row (share)
+-- and the outbound row from its check to its write: a reconnection either
+-- committed before (the worker is stale) or waits. Appointment transactions
+-- lock the appointment then its mirror and only read the outbound row.
 
 -- ---------------------------------------------------------------------------
 -- OAuth: a state is issued for a connection or for the write authorization
@@ -129,13 +132,18 @@ end;
 $$;
 
 -- The write scope, granted to the connection when present in its scopes.
+-- A guard of authority: strictly true or false, never null (an array
+-- holding a null element included).
 create function private.has_write_scope(p_scopes text[])
 returns boolean
 language sql
 immutable
 set search_path = ''
 as $$
-  select 'https://www.googleapis.com/auth/calendar.app.created' = any (coalesce(p_scopes, '{}'));
+  select coalesce(
+    'https://www.googleapis.com/auth/calendar.app.created' = any (p_scopes),
+    false
+  );
 $$;
 
 -- Adds the write authorization to the existing connection, for the same
@@ -267,15 +275,32 @@ create trigger calendar_outbound_set_updated_at
   before update on private.calendar_outbound
   for each row execute function public.set_updated_at();
 
--- Every dedicated calendar the app created or adopted for a business: never
--- an inbound blocking source, even once it is no longer the target.
+-- Every dedicated calendar the app created or adopted, and the business it
+-- belongs to: never an inbound blocking source of that business, even once
+-- it is no longer the target.
+--
+-- Invariant: a provider calendar belongs to one business only. The primary
+-- key (provider, provider_calendar_id) admits one business per calendar id,
+-- whatever else holds: the same Google account, the same OAuth application,
+-- a copied marker or a successful sentinel never give a calendar attributed
+-- to business A to business B. The attribution is decided by this key,
+-- atomically, when calendar_outbound_adopt_calendar inserts the row: of two
+-- concurrent adoptions of one id, the first to commit owns it and the other
+-- is refused. Rows are never deleted (a former target stays attributed, and
+-- filtered from its business's inbound); they only go with their business
+-- (reattribution after a business deletion: out of scope V1).
 create table private.calendar_outbound_calendars (
+  provider text not null default 'google' check (provider = 'google'),
+  provider_calendar_id text not null
+    check (pg_catalog.char_length(provider_calendar_id) between 1 and 1024),
   business_id uuid not null references public.businesses (id) on delete cascade,
-  provider_calendar_id text not null,
   provider_account_id text not null,
   created_at timestamptz not null default pg_catalog.now(),
-  primary key (business_id, provider_calendar_id)
+  primary key (provider, provider_calendar_id)
 );
+
+create index calendar_outbound_calendars_business_idx
+  on private.calendar_outbound_calendars (business_id, provider_calendar_id);
 
 -- One mirror per appointment: the durable desired state. The desired event
 -- is derived from the appointment itself when a worker runs (latest state
@@ -478,7 +503,9 @@ grant select (booking_outbound) on public.external_calendars to authenticated;
 -- calendar's id is in this business's history of calendars the app created
 -- and adopted (after proof at the provider). Never a description, a name
 -- or any text the professional can edit or copy. Such a calendar can never
--- be selected as a blocking source.
+-- be selected as a blocking source. A calendar attributed to another
+-- business (same Google account) is not this one's: here it stays an
+-- ordinary calendar, selectable and blocking when selected.
 create function private.guard_outbound_calendar()
 returns trigger
 language plpgsql
@@ -848,7 +875,14 @@ $$;
 
 -- Whether a creation claim still has authority: same claim, outbound still
 -- creating under the captured generation, connection still the captured
--- incarnation and account. Lock order: connection (share), outbound row.
+-- incarnation and account. Lock order: connection (share), outbound row;
+-- both stay locked until the caller's transaction ends, so its write is
+-- made under the authority checked here.
+--
+-- Strictly true or false, never null: a released claim (creation_claim_id
+-- null: a worker finished, another may have claimed and released since) or
+-- a missing row is a rejection. `=` and not `is not distinct from`: a null
+-- claim never matches a released one. Callers test `is not true`.
 create function private.creation_claim_valid(
   p_business_id uuid,
   p_claim_id uuid,
@@ -874,12 +908,15 @@ begin
   where o.business_id = p_business_id
   for update;
 
-  return v_outbound.status = 'creating'
-    and v_outbound.creation_claim_id = p_claim_id
-    and v_outbound.generation = p_generation
-    and v_connection.status = 'active'
-    and v_connection.credential_generation = p_credential_generation
-    and v_connection.provider_account_id = v_outbound.provider_account_id;
+  return coalesce(
+    v_outbound.status = 'creating'
+      and v_outbound.creation_claim_id = p_claim_id
+      and v_outbound.generation = p_generation
+      and v_connection.status = 'active'
+      and v_connection.credential_generation = p_credential_generation
+      and v_connection.provider_account_id = v_outbound.provider_account_id,
+    false
+  );
 end;
 $$;
 
@@ -964,9 +1001,9 @@ security definer
 set search_path = ''
 as $$
 begin
-  if not private.creation_claim_valid(
+  if private.creation_claim_valid(
     p_business_id, p_claim_id, p_generation, p_credential_generation
-  ) then
+  ) is not true then
     return false;
   end if;
   update private.calendar_outbound o
@@ -978,11 +1015,42 @@ begin
 end;
 $$;
 
+-- Which of these calendars this business may not adopt: their id is
+-- attributed to another business, or to this one under another Google
+-- account. Read by the creation worker before any provider write to a
+-- candidate (the sentinel included): a calendar of another business never
+-- receives anything from this one. Advisory only: the attribution itself is
+-- decided atomically by calendar_outbound_adopt_calendar.
+create function public.calendar_outbound_attributed_elsewhere(
+  p_business_id uuid,
+  p_provider_calendar_ids text[]
+)
+returns table (provider_calendar_id text)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select h.provider_calendar_id
+  from private.calendar_outbound_calendars h
+  left join private.calendar_outbound o on o.business_id = p_business_id
+  where h.provider = 'google'
+    and h.provider_calendar_id = any (p_provider_calendar_ids)
+    and (h.business_id <> p_business_id
+         or h.provider_account_id is distinct from o.provider_account_id)
+  order by h.provider_calendar_id;
+$$;
+
 -- Adopts the dedicated calendar (created now, or a candidate whose
 -- ownership was proven at the provider, or one adopted before), only for
--- the claim, generation and credentials that found it. Its id joins the
--- history at once (never an inbound blocking source), and every enrolled
--- mirror converges to it.
+-- the claim, generation and credentials that found it, and only if the
+-- calendar is, or becomes now, this business's own. Its attribution is
+-- decided here, atomically, by the history's key: a calendar attributed to
+-- another business (or to this one under another Google account) is
+-- refused, whatever the provider proved, and nothing is adopted, replayed
+-- or excluded for it ('attributed_elsewhere'). Otherwise its id is in the
+-- history from now on (never an inbound blocking source) and every enrolled
+-- mirror converges to it ('adopted'). Without authority: 'superseded'.
 create function public.calendar_outbound_adopt_calendar(
   p_business_id uuid,
   p_claim_id uuid,
@@ -990,32 +1058,48 @@ create function public.calendar_outbound_adopt_calendar(
   p_credential_generation uuid,
   p_provider_calendar_id text
 )
-returns boolean
+returns text
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
   v_outbound private.calendar_outbound;
+  v_owner private.calendar_outbound_calendars;
 begin
   if coalesce(pg_catalog.char_length(p_provider_calendar_id), 0) not between 1 and 1024 then
     raise exception using errcode = '22023', message = 'invalid_input';
   end if;
 
-  if not private.creation_claim_valid(
+  -- Connection (share) and outbound row, held until commit.
+  if private.creation_claim_valid(
     p_business_id, p_claim_id, p_generation, p_credential_generation
-  ) then
-    return false;
+  ) is not true then
+    return 'superseded';
   end if;
   select o.* into v_outbound
   from private.calendar_outbound o
   where o.business_id = p_business_id;
 
+  -- The attribution, never decided by an earlier read: the key admits one
+  -- row per calendar id. A concurrent adoption of the same id (another
+  -- business) waits on this insert, or this insert on its own, until that
+  -- transaction ends; the owner read next is the committed one.
   insert into private.calendar_outbound_calendars (
-    business_id, provider_calendar_id, provider_account_id
+    provider, provider_calendar_id, business_id, provider_account_id
   )
-  values (p_business_id, p_provider_calendar_id, v_outbound.provider_account_id)
-  on conflict do nothing;
+  values ('google', p_provider_calendar_id, p_business_id, v_outbound.provider_account_id)
+  on conflict (provider, provider_calendar_id) do nothing;
+
+  select h.* into v_owner
+  from private.calendar_outbound_calendars h
+  where h.provider = 'google'
+    and h.provider_calendar_id = p_provider_calendar_id
+  for key share;
+  if v_owner.business_id is distinct from p_business_id
+    or v_owner.provider_account_id is distinct from v_outbound.provider_account_id then
+    return 'attributed_elsewhere';
+  end if;
 
   -- Recomputed from the history (trigger), then cleaned.
   update public.external_calendars c
@@ -1065,7 +1149,7 @@ begin
       lease_until = null
   where m.business_id = p_business_id
     and m.desired_revision > m.applied_revision;
-  return true;
+  return 'adopted';
 end;
 $$;
 
@@ -1103,9 +1187,10 @@ begin
   ) then
     raise exception using errcode = '22023', message = 'invalid_input';
   end if;
-  if not private.creation_claim_valid(
+  -- Connection (share) and outbound row, held until the write below.
+  if private.creation_claim_valid(
     p_business_id, p_claim_id, p_generation, p_credential_generation
-  ) then
+  ) is not true then
     return 'superseded';
   end if;
   select o.* into v_outbound
@@ -1278,6 +1363,7 @@ $$;
 -- Whether a mirror's claim still has authority: same claim, outbound still
 -- active under the captured generation, connection still the captured
 -- incarnation. Locks the outbound row (share) then the mirror (order).
+-- Never for a null claim: a released mirror's claim is null too.
 create function private.mirror_claim_valid(
   p_appointment_id uuid,
   p_claim_id uuid
@@ -1318,7 +1404,9 @@ begin
       and c.provider_account_id = o.provider_account_id
   ) into v_valid;
 
-  if v_mirror.claim_id is distinct from p_claim_id or not v_valid then
+  if p_claim_id is null
+    or v_mirror.claim_id is distinct from p_claim_id
+    or v_valid is not true then
     return null;
   end if;
   return v_mirror;
@@ -1393,6 +1481,12 @@ $$;
 -- authority of the worker's claim (claim, outbound generation, credential
 -- generation, account): a late answer of a stale worker changes nothing.
 -- Desired states keep being recorded; no mirror retries.
+--
+-- The authority is held from the check to the write, in the global order:
+-- connection row (share), outbound row (update), mirror. A reconnection
+-- (new credential generation, same account included) either committed
+-- before the check, which then sees it (stale: nothing written), or waits
+-- for this transaction: it never slips between the check and the update.
 create function public.calendar_outbound_mark_action_required(
   p_appointment_id uuid,
   p_claim_id uuid,
@@ -1405,6 +1499,7 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_business_id uuid;
   v_mirror private.appointment_calendar_mirrors;
 begin
   if p_action_code is null
@@ -1412,6 +1507,26 @@ begin
     raise exception using errcode = '22023', message = 'invalid_input';
   end if;
 
+  select m.business_id into v_business_id
+  from private.appointment_calendar_mirrors m
+  where m.appointment_id = p_appointment_id;
+  if v_business_id is null then
+    return false;
+  end if;
+
+  -- 1. The connection row, before anything is checked.
+  perform 1
+  from public.calendar_connections c
+  join private.calendar_outbound o on o.connection_id = c.id
+  where o.business_id = v_business_id
+  for share of c;
+  -- 2. The outbound row, for the update below (never a share lock
+  -- upgraded later: two workers reporting at once would deadlock).
+  perform 1
+  from private.calendar_outbound o
+  where o.business_id = v_business_id
+  for update;
+  -- 3. The mirror, and the claim's authority read under those locks.
   v_mirror := private.mirror_claim_valid(p_appointment_id, p_claim_id);
   if v_mirror.appointment_id is null then
     return false;
@@ -1481,6 +1596,7 @@ begin
     'public.calendar_outbound_due_creations(integer)',
     'public.calendar_outbound_begin_creation(uuid)',
     'public.calendar_outbound_mark_creation_requested(uuid, uuid, uuid, uuid)',
+    'public.calendar_outbound_attributed_elsewhere(uuid, text[])',
     'public.calendar_outbound_adopt_calendar(uuid, uuid, uuid, uuid, text)',
     'public.calendar_outbound_creation_failed(uuid, uuid, uuid, uuid, text, text)',
     'public.calendar_outbound_claim_mirrors(integer, uuid, integer)',

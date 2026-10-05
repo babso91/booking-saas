@@ -219,6 +219,23 @@ export class FakeGoogle {
     }
   }
 
+  /** Adds a calendar to an account's list (an earlier attempt's, say). */
+  addCalendar(
+    sub: string,
+    calendar: {
+      id: string;
+      summary: string;
+      timeZone: string;
+      description?: string;
+      appCreated?: boolean;
+    },
+  ) {
+    const list = this.calendars.get(sub) ?? [];
+    list.push({ accessRole: "owner", ...calendar });
+    this.calendars.set(sub, list);
+    if (!this.events.has(calendar.id)) this.events.set(calendar.id, new Map());
+  }
+
   /** Calendars an account created through the app (outbound). */
   appCalendars(sub: string) {
     return (this.calendars.get(sub) ?? []).filter(

@@ -502,7 +502,12 @@ isOneToOne: false
 { Args: { "p_connection_id": string,"p_error": string,"p_generation": string }; Returns: boolean
                            },
 "calendar_outbound_adopt_calendar":
-{ Args: { "p_business_id": string,"p_claim_id": string,"p_credential_generation": string,"p_generation": string,"p_provider_calendar_id": string }; Returns: boolean
+{ Args: { "p_business_id": string,"p_claim_id": string,"p_credential_generation": string,"p_generation": string,"p_provider_calendar_id": string }; Returns: string
+                           },
+"calendar_outbound_attributed_elsewhere":
+{ Args: { "p_business_id": string,"p_provider_calendar_ids": (string)[] }; Returns: {
+              "provider_calendar_id": string
+            }[]
                            },
 "calendar_outbound_begin_creation":
 { Args: { "p_business_id": string }; Returns: Json

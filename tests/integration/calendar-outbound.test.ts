@@ -56,6 +56,7 @@ import {
   type TestBusiness,
 } from "./support/fixtures";
 import {
+  blockingPids,
   closeTransaction,
   openTransaction,
   outcome,
@@ -1463,17 +1464,74 @@ describe("disconnect and reconnect", () => {
   });
 });
 
-describe("dedicated calendar creation with an ambiguous outcome", () => {
-  const isCreate = (url: URL, method: string) =>
-    url.pathname === "/calendar/v3/calendars" && method === "POST";
-  const createCalls = () => fake.count(isCreate);
-  /** The creation backoff elapsed (and any lease). */
-  const creationDue = (s: Setup) =>
-    db.query(
-      "update private.calendar_outbound set creation_next_attempt_at = null, creation_lease_until = null where business_id = $1",
-      [s.business.id],
-    );
+const isCreate = (url: URL, method: string) =>
+  url.pathname === "/calendar/v3/calendars" && method === "POST";
+const createCalls = () => fake.count(isCreate);
+/** The creation backoff elapsed (and any lease). */
+const creationDue = (s: Setup) =>
+  db.query(
+    "update private.calendar_outbound set creation_next_attempt_at = null, creation_lease_until = null where business_id = $1",
+    [s.business.id],
+  );
+const newCalendarId = () =>
+  `${randomUUID().replace(/-/g, "")}@group.calendar.google.com`;
+/** Ownership proofs (sentinel events) sent to a calendar. */
+const proofsSentTo = (calendarId: string) =>
+  fake.requests.filter(
+    (request) =>
+      request.method === "POST" &&
+      decodeURIComponent(request.url.pathname) ===
+        `/calendar/v3/calendars/${calendarId}/events` &&
+      request.body.includes('"bkprobe'),
+  ).length;
+/** Calendar ids attributed to a business (its history). */
+async function attributedTo(s: Setup) {
+  const { rows } = await db.query<{ id: string }>(
+    "select provider_calendar_id as id from private.calendar_outbound_calendars where business_id = $1 order by 1",
+    [s.business.id],
+  );
+  return rows.map((row) => row.id);
+}
+/** The businesses a provider calendar id is attributed to. */
+async function ownersOf(calendarId: string) {
+  const { rows } = await db.query<{ id: string }>(
+    "select business_id as id from private.calendar_outbound_calendars where provider_calendar_id = $1",
+    [calendarId],
+  );
+  return rows.map((row) => row.id);
+}
+type CreationClaimRow = {
+  claimId: string;
+  generation: string;
+  credentialGeneration: string;
+};
+/** A creation worker's claim, taken directly (as the worker does first). */
+async function beginCreation(s: Setup) {
+  const { rows } = await db.query<{ claim: CreationClaimRow }>(
+    "select public.calendar_outbound_begin_creation($1) as claim",
+    [s.business.id],
+  );
+  return rows[0]!.claim;
+}
+async function adoptCalendar(
+  s: Setup,
+  claim: CreationClaimRow,
+  calendarId: string,
+) {
+  const { rows } = await db.query<{ result: string }>(
+    "select public.calendar_outbound_adopt_calendar($1, $2, $3, $4, $5) as result",
+    [
+      s.business.id,
+      claim.claimId,
+      claim.generation,
+      claim.credentialGeneration,
+      calendarId,
+    ],
+  );
+  return rows[0]!.result;
+}
 
+describe("dedicated calendar creation with an ambiguous outcome", () => {
   it("answer lost and the calendar not listed yet: searches only, exactly one insert across workers and retries; once listed, the same calendar is adopted", async () => {
     const s = await setup();
     await connect(s);
@@ -1680,6 +1738,290 @@ describe("dedicated calendar creation with an ambiguous outcome", () => {
     ok(await syncGoogleCalendarNowAction());
     expect(await busyIds(s)).toEqual(["busy"]);
   });
+
+  it("this attempt's calendar and an earlier attempt's both carry the marker and pass the proof: calendar_creation_uncertain, neither adopted", async () => {
+    const s = await setup();
+    await connect(s);
+    fake.loseAnswer(isCreate);
+    fake.hideNewCalendars = true;
+    expect(await authorizeWrite(s)).toBe("write_authorized");
+    await flush();
+    const row = await outboundRow(s);
+    const earlier = newCalendarId();
+    fake.addCalendar(s.account.sub, {
+      id: earlier,
+      summary: `Rendez-vous — ${s.name}`,
+      timeZone: "UTC",
+      description: `booking-saas:${row!.calendar_marker}:${randomUUID()}`,
+      appCreated: true,
+    });
+    fake.revealCalendars();
+    const current = fake
+      .appCalendars(s.account.sub)
+      .find((calendar) => calendar.id !== earlier)!;
+    expect(current.description).toContain(row!.creation_nonce);
+
+    await creationDue(s);
+    expect(await ensureOutboundCalendar(getCalendarDeps(), s.business.id)).toBe(
+      "action_required",
+    );
+    // Both proven, neither chosen (this attempt's nonce gives no priority).
+    expect(proofsSentTo(current.id)).toBeGreaterThan(0);
+    expect(proofsSentTo(earlier)).toBeGreaterThan(0);
+    expect(await outboundRow(s)).toMatchObject({
+      status: "action_required",
+      action_code: "calendar_creation_uncertain",
+      provider_calendar_id: null,
+    });
+    expect(await attributedTo(s)).toEqual([]);
+    expect(createCalls()).toBe(1);
+  });
+
+  it("a calendar adopted before is valid as is, yet never short-circuits another valid candidate: calendar_creation_uncertain", async () => {
+    const s = await setup();
+    const adopted = await enabled(s);
+    sessionClient = s.owner.client;
+    ok(await disableCalendarOutboundAction());
+    ok(await enableCalendarOutboundAction());
+    background.length = 0;
+    const row = await outboundRow(s);
+    const other = newCalendarId();
+    fake.addCalendar(s.account.sub, {
+      id: other,
+      summary: `Rendez-vous — ${s.name}`,
+      timeZone: "UTC",
+      description: `booking-saas:${row!.calendar_marker}:${randomUUID()}`,
+      appCreated: true,
+    });
+    expect(await ensureOutboundCalendar(getCalendarDeps(), s.business.id)).toBe(
+      "action_required",
+    );
+    expect(await outboundRow(s)).toMatchObject({
+      status: "action_required",
+      action_code: "calendar_creation_uncertain",
+      provider_calendar_id: null,
+    });
+    expect(await attributedTo(s)).toEqual([adopted]);
+
+    // The other one removed, a new attempt finds the adopted one again.
+    fake.deleteCalendar(other);
+    sessionClient = s.owner.client;
+    ok(await reactivateCalendarOutboundAction());
+    await flush();
+    expect(await outboundRow(s)).toMatchObject({
+      status: "active",
+      provider_calendar_id: adopted,
+    });
+    expect(createCalls()).toBe(1);
+  });
+});
+
+describe("a provider calendar belongs to one business only", () => {
+  /** A and B connected to the same Google account; A's calendar created. */
+  async function sameAccount() {
+    const a = await setup();
+    const b = await setup();
+    b.account = a.account;
+    const x = await enabled(a);
+    await connect(b, a.account);
+    return { a, b, x };
+  }
+
+  const writesTo = (calendarId: string) =>
+    fake.count(
+      (url, method) =>
+        method !== "GET" &&
+        decodeURIComponent(url.pathname).startsWith(
+          `/calendar/v3/calendars/${calendarId}`,
+        ),
+    );
+
+  it("same Google account: B never adopts A's calendar, even when it carries B's exact marker and nonce and a proof would succeed; A keeps it, nothing of B is written to it, B's inbound is untouched", async () => {
+    const { a, b, x } = await sameAccount();
+    const appointment = await createAppointment(a, "10:00");
+    await run(a);
+    // For B, X is an ordinary calendar of the account: B blocks on it.
+    sessionClient = b.owner.client;
+    const listed = ok(await listConnectedCalendarsAction());
+    const xAtB = listed.find(
+      (calendar) => calendar.name === `Rendez-vous — ${a.name}`,
+    )!;
+    expect(xAtB).toMatchObject({ bookingCalendar: false, selectable: true });
+    ok(await updateBlockingCalendarsAction({ calendarIds: [xAtB.id] }));
+    await flush();
+    expect(await busyIds(b)).toEqual([eventIdOf(appointment.id)]);
+
+    // B's own insert: answer lost, calendar not listed yet. Then X carries
+    // B's exact marker and this attempt's nonce.
+    fake.loseAnswer(isCreate);
+    fake.hideNewCalendars = true;
+    expect(await authorizeWrite(b, a.account)).toBe("write_authorized");
+    await flush();
+    const rowB = await outboundRow(b);
+    fake.setDescription(
+      x,
+      `booking-saas:${rowB!.calendar_marker}:${rowB!.creation_nonce}`,
+    );
+    const writes = writesTo(x);
+
+    const outcomes = [];
+    for (let pass = 0; pass < 5; pass += 1) {
+      await creationDue(b);
+      outcomes.push(
+        await ensureOutboundCalendar(getCalendarDeps(), b.business.id),
+      );
+    }
+    // X is never a candidate of B: B's searches find nothing, then stop.
+    expect(outcomes).toEqual([
+      "retry",
+      "retry",
+      "retry",
+      "retry",
+      "action_required",
+    ]);
+    expect(writesTo(x)).toBe(writes);
+    expect(proofsSentTo(x)).toBe(0);
+    expect(await ownersOf(x)).toEqual([a.business.id]);
+    expect(await outboundRow(a)).toMatchObject({
+      status: "active",
+      provider_calendar_id: x,
+    });
+    expect(await outboundRow(b)).toMatchObject({
+      status: "action_required",
+      action_code: "calendar_creation_uncertain",
+      provider_calendar_id: null,
+    });
+
+    // Even B's full authority cannot get it: the attribution is SQL's.
+    sessionClient = b.owner.client;
+    ok(await reactivateCalendarOutboundAction());
+    background.length = 0;
+    const claim = await beginCreation(b);
+    expect(await adoptCalendar(b, claim, x)).toBe("attributed_elsewhere");
+    expect(await ownersOf(x)).toEqual([a.business.id]);
+    expect(await outboundRow(b)).toMatchObject({
+      status: "creating",
+      provider_calendar_id: null,
+    });
+
+    // B's inbound: X still an ordinary calendar there, selected, blocking.
+    sessionClient = b.owner.client;
+    const after = ok(await listConnectedCalendarsAction({ refresh: true }));
+    expect(
+      after.find((calendar) => calendar.name === `Rendez-vous — ${a.name}`),
+    ).toMatchObject({ bookingCalendar: false, blocking: true });
+    ok(await syncGoogleCalendarNowAction());
+    expect(await busyIds(b)).toEqual([eventIdOf(appointment.id)]);
+  });
+
+  it("same Google account, nothing lost: B skips A's calendar carrying B's marker and creates a calendar of its own", async () => {
+    const { a, b, x } = await sameAccount();
+    expect(await authorizeWrite(b, a.account)).toBe("write_authorized");
+    // Before B's first step, X carries B's marker and nonce.
+    const rowB = await outboundRow(b);
+    fake.setDescription(
+      x,
+      `booking-saas:${rowB!.calendar_marker}:${rowB!.creation_nonce}`,
+    );
+    const writes = writesTo(x);
+    await flush();
+    const own = (await outboundRow(b))!.provider_calendar_id;
+    expect(own).not.toBeNull();
+    expect(own).not.toBe(x);
+    expect(writesTo(x)).toBe(writes);
+    expect(await ownersOf(x)).toEqual([a.business.id]);
+    expect(await ownersOf(own!)).toEqual([b.business.id]);
+  });
+
+  it.each(["commit", "rollback"] as const)(
+    "two businesses adopt the same calendar id at once (real transactions), the first one's transaction ending in %s: exactly one gets it, the other is refused",
+    async (ending) => {
+      const a = await setup();
+      const b = await setup();
+      b.account = a.account;
+      const claims: CreationClaimRow[] = [];
+      for (const s of [a, b]) {
+        await connect(s, a.account);
+        expect(await authorizeWrite(s, a.account)).toBe("write_authorized");
+        background.length = 0;
+        claims.push(await beginCreation(s));
+      }
+      const shared = newCalendarId();
+      const adoptIn = (
+        transaction: OpenTransaction,
+        s: Setup,
+        claim: CreationClaimRow,
+      ) =>
+        transaction.connection
+          .query<{ result: string }>(
+            "select public.calendar_outbound_adopt_calendar($1, $2, $3, $4, $5) as result",
+            [
+              s.business.id,
+              claim.claimId,
+              claim.generation,
+              claim.credentialGeneration,
+              shared,
+            ],
+          )
+          .then((answer) => answer.rows[0]!.result);
+
+      const first = await openTransaction();
+      expect(await adoptIn(first, a, claims[0]!)).toBe("adopted");
+      const second = await openTransaction();
+      const pending = adoptIn(second, b, claims[1]!);
+      // B waits on the key A inserted, never on a read made before.
+      await waitUntilBlocked(second.pid);
+      expect(await blockingPids(second.pid)).toContain(first.pid);
+      await closeTransaction(first, ending);
+      expect(await pending).toBe(
+        ending === "commit" ? "attributed_elsewhere" : "adopted",
+      );
+      await closeTransaction(second, "commit");
+
+      const [winner, loser] = ending === "commit" ? [a, b] : [b, a];
+      expect(await ownersOf(shared)).toEqual([winner.business.id]);
+      expect(await outboundRow(winner)).toMatchObject({
+        status: "active",
+        provider_calendar_id: shared,
+      });
+      expect(await outboundRow(loser)).toMatchObject({
+        status: "creating",
+        provider_calendar_id: null,
+      });
+      expect(await attributedTo(loser)).toEqual([]);
+    },
+  );
+
+  it("a calendar already attributed to this business is found again normally: same attribution, no new calendar", async () => {
+    const s = await setup();
+    const calendarId = await enabled(s);
+    sessionClient = s.owner.client;
+    ok(await disableCalendarOutboundAction());
+    ok(await enableCalendarOutboundAction());
+    await flush();
+    expect(await outboundRow(s)).toMatchObject({
+      status: "active",
+      provider_calendar_id: calendarId,
+    });
+    expect(fake.appCalendars(s.account.sub)).toHaveLength(1);
+    expect(createCalls()).toBe(1);
+    expect(await ownersOf(calendarId)).toEqual([s.business.id]);
+    // Its own calendar is never attributed elsewhere; adopting it again
+    // keeps the same single attribution.
+    const { rows } = await db.query(
+      "select * from public.calendar_outbound_attributed_elsewhere($1, $2)",
+      [s.business.id, [calendarId]],
+    );
+    expect(rows).toEqual([]);
+    await db.query(
+      "update private.calendar_outbound set status = 'creating', provider_calendar_id = null, generation = gen_random_uuid() where business_id = $1",
+      [s.business.id],
+    );
+    expect(await adoptCalendar(s, await beginCreation(s), calendarId)).toBe(
+      "adopted",
+    );
+    expect(await ownersOf(calendarId)).toEqual([s.business.id]);
+  });
 });
 
 describe("stale workers' late errors", () => {
@@ -1743,6 +2085,106 @@ describe("stale workers' late errors", () => {
       action_code: null,
       generation: before!.generation,
     });
+  });
+
+  it("an expired creation claim, back after the next claim was released (claim column null again): strictly rejected, nothing changes", async () => {
+    const s = await setup();
+    await connect(s);
+    expect(await authorizeWrite(s)).toBe("write_authorized");
+    background.length = 0;
+    // W1 claims C1; its lease expires.
+    const c1 = await beginCreation(s);
+    await db.query(
+      "update private.calendar_outbound set creation_lease_until = now() - interval '1 second' where business_id = $1",
+      [s.business.id],
+    );
+    // W2 claims C2, works (Google unavailable) and releases C2.
+    fake.failNext(
+      (url) => url.pathname === "/calendar/v3/users/me/calendarList",
+      503,
+      4,
+    );
+    expect(await ensureOutboundCalendar(getCalendarDeps(), s.business.id)).toBe(
+      "retry",
+    );
+    const released = await outboundRow(s);
+    expect(released).toMatchObject({
+      status: "creating",
+      creation_claim_id: null,
+    });
+
+    // The guard answers false, never null.
+    const authority = [
+      s.business.id,
+      c1.claimId,
+      c1.generation,
+      c1.credentialGeneration,
+    ];
+    const { rows: valid } = await db.query(
+      "select private.creation_claim_valid($1, $2, $3, $4) as valid",
+      authority,
+    );
+    expect(valid[0].valid).toBe(false);
+
+    // W1 comes back with C1: no adoption, no insert granted, no retry state,
+    // no action required, no target nor generation change.
+    const late = newCalendarId();
+    expect(await adoptCalendar(s, c1, late)).toBe("superseded");
+    const { rows: granted } = await db.query(
+      "select public.calendar_outbound_mark_creation_requested($1, $2, $3, $4) as granted",
+      authority,
+    );
+    expect(granted[0].granted).toBe(false);
+    for (const kind of [
+      "forbidden",
+      "multiple",
+      "not_found",
+      "definite",
+      "ambiguous",
+      "retry",
+    ]) {
+      const { rows } = await db.query(
+        "select public.calendar_outbound_creation_failed($1, $2, $3, $4, $5, 'late') as result",
+        [...authority, kind],
+      );
+      expect(rows[0].result).toBe("superseded");
+    }
+    expect(await outboundRow(s)).toEqual(released);
+    expect(await ownersOf(late)).toEqual([]);
+  });
+
+  it("guards of authority are strictly true or false: a null claim, a null scope or a missing row is a rejection", async () => {
+    const s = await setup();
+    await enabled(s);
+    const a = await createAppointment(s, "10:00");
+    await run(s);
+    const { rows } = await db.query(
+      `select private.has_write_scope(array[null]::text[]) as null_element,
+              private.has_write_scope(null) as no_scopes,
+              private.creation_claim_valid($1, null, null, null) as null_claim,
+              private.creation_claim_valid(gen_random_uuid(), gen_random_uuid(),
+                gen_random_uuid(), gen_random_uuid()) as no_row,
+              private.mirror_claim_valid($2, null) is null as mirror_refused`,
+      [s.business.id, a.id],
+    );
+    expect(rows[0]).toEqual({
+      null_element: false,
+      no_scopes: false,
+      null_claim: false,
+      no_row: false,
+      mirror_refused: true,
+    });
+    // A released mirror (claim null) never accepts a null claim.
+    const { data: completed } = await admin.rpc(
+      "calendar_outbound_complete_mirror",
+      {
+        p_appointment_id: a.id,
+        p_claim_id: null as unknown as string,
+        p_revision: 99,
+      },
+    );
+    expect(completed).toBe("superseded");
+    expect(await mirror(a.id)).toMatchObject({ applied_revision: "1" });
   });
 });
 
@@ -1835,6 +2277,186 @@ describe("activation racing a reconnection to another account (real transactions
   });
 });
 
+describe("a worker's global transition racing a same-account reconnection (real transactions)", () => {
+  const scopes = [
+    "openid",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    "https://www.googleapis.com/auth/calendar.events.readonly",
+    WRITE_SCOPE,
+  ];
+  /** Same Google account, new credentials: generation N → N+1. */
+  const reconnectSameAccount = (transaction: OpenTransaction, s: Setup) =>
+    transaction.connection.query(
+      `select public.calendar_save_connection($1, $2, 'google', $3, $4, $5::text[], 'rt-next', 'at-next', now() + interval '1 hour', '[]'::jsonb)`,
+      [s.business.id, s.owner.userId, s.account.sub, s.account.email, scopes],
+    );
+  async function credentialGeneration(s: Setup) {
+    const { rows } = await db.query<{ generation: string }>(
+      "select credential_generation as generation from public.calendar_connections where business_id = $1",
+      [s.business.id],
+    );
+    return rows[0]!.generation;
+  }
+  async function claimOf(appointmentId: string) {
+    const { rows } = await db.query<{ claim_id: string | null }>(
+      "select claim_id from private.appointment_calendar_mirrors where appointment_id = $1",
+      [appointmentId],
+    );
+    return rows[0]!.claim_id;
+  }
+
+  type MirrorClaimRow = {
+    appointmentId: string;
+    claimId: string;
+    credentialGeneration: string;
+  };
+  /** Active outbound; a worker of generation N claimed the mirror. */
+  async function claimedMirror() {
+    const s = await setup();
+    await enabled(s);
+    const a = await createAppointment(s, "10:00");
+    const { rows } = await db.query<{ claims: MirrorClaimRow[] }>(
+      "select public.calendar_outbound_claim_mirrors(10, $1, 10) as claims",
+      [s.business.id],
+    );
+    const claim = rows[0]!.claims[0]!;
+    expect(claim.appointmentId).toBe(a.id);
+    expect(claim.credentialGeneration).toBe(await credentialGeneration(s));
+    return { s, claim };
+  }
+  /** The worker's provider answer (403): a configuration-level failure. */
+  const markIn = (transaction: OpenTransaction, claim: MirrorClaimRow) =>
+    transaction.connection
+      .query<{ marked: boolean }>(
+        "select public.calendar_outbound_mark_action_required($1, $2, 'write_authorization_required', 'insufficientPermissions') as marked",
+        [claim.appointmentId, claim.claimId],
+      )
+      .then((answer) => answer.rows[0]!.marked);
+
+  it("mark_action_required, the worker first: inside its RPC it holds the connection, the reconnection waits; the transition is N's, N+1 comes after, and N's later answers change nothing", async () => {
+    const { s, claim } = await claimedMirror();
+    const n = claim.credentialGeneration;
+    // W stops inside the RPC, past its connection lock: another
+    // transaction holds the outbound row for a moment.
+    const holder = await openTransaction();
+    await holder.connection.query(
+      "select 1 from private.calendar_outbound where business_id = $1 for share",
+      [s.business.id],
+    );
+    const worker = await openTransaction();
+    const marking = markIn(worker, claim);
+    await waitUntilBlocked(worker.pid);
+    expect(await blockingPids(worker.pid)).toContain(holder.pid);
+    // The reconnection (N → N+1) waits for W's connection lock: it can no
+    // longer slip between W's check and W's write.
+    const reconnect = await openTransaction();
+    const reconnecting = outcome(reconnectSameAccount(reconnect, s));
+    await waitUntilBlocked(reconnect.pid);
+    expect(await blockingPids(reconnect.pid)).toContain(worker.pid);
+
+    await closeTransaction(holder, "commit");
+    expect(await marking).toBe(true);
+    await closeTransaction(worker, "commit");
+    expect(await reconnecting).toBe("ok");
+    await closeTransaction(reconnect, "commit");
+
+    // Serial order: N's transition (N was current), then N+1, which keeps
+    // the outbound configuration of the same account as it is.
+    expect(await credentialGeneration(s)).not.toBe(n);
+    const after = await outboundRow(s);
+    expect(after).toMatchObject({
+      status: "action_required",
+      action_code: "write_authorization_required",
+      provider_calendar_id: null,
+    });
+    // Any later answer of N, once N+1 exists: refused, nothing changes.
+    const { data: again } = await admin.rpc(
+      "calendar_outbound_mark_action_required",
+      {
+        p_appointment_id: claim.appointmentId,
+        p_claim_id: claim.claimId,
+        p_action_code: "calendar_deleted",
+      },
+    );
+    expect(again).toBe(false);
+    expect(await outboundRow(s)).toEqual(after);
+  });
+
+  it("mark_action_required, the reconnection first: the worker waits on the connection, then sees N+1 and writes nothing", async () => {
+    const { s, claim } = await claimedMirror();
+    const before = await outboundRow(s);
+    const reconnect = await openTransaction();
+    await reconnectSameAccount(reconnect, s);
+    const worker = await openTransaction();
+    const marking = markIn(worker, claim);
+    await waitUntilBlocked(worker.pid);
+    expect(await blockingPids(worker.pid)).toContain(reconnect.pid);
+    await closeTransaction(reconnect, "commit");
+    expect(await marking).toBe(false);
+    await closeTransaction(worker, "commit");
+
+    // N's error never reaches N+1: same status, generation, target.
+    expect(await credentialGeneration(s)).not.toBe(claim.credentialGeneration);
+    expect(await outboundRow(s)).toEqual(before);
+    expect(await claimOf(claim.appointmentId)).toBe(claim.claimId);
+  });
+
+  it("creation_failed holds the connection from its check to its write: a reconnection committed first makes it superseded; one arriving during it waits", async () => {
+    const s = await setup();
+    await connect(s);
+    expect(await authorizeWrite(s)).toBe("write_authorized");
+    background.length = 0;
+    const failIn = (transaction: OpenTransaction, claim: CreationClaimRow) =>
+      transaction.connection
+        .query<{ result: string }>(
+          "select public.calendar_outbound_creation_failed($1, $2, $3, $4, 'forbidden', 'insufficientPermissions') as result",
+          [
+            s.business.id,
+            claim.claimId,
+            claim.generation,
+            claim.credentialGeneration,
+          ],
+        )
+        .then((answer) => answer.rows[0]!.result);
+
+    // The reconnection first: the step waits, then finds N+1.
+    const stale = await beginCreation(s);
+    const before = await outboundRow(s);
+    const reconnect = await openTransaction();
+    await reconnectSameAccount(reconnect, s);
+    const worker = await openTransaction();
+    const failing = failIn(worker, stale);
+    await waitUntilBlocked(worker.pid);
+    expect(await blockingPids(worker.pid)).toContain(reconnect.pid);
+    await closeTransaction(reconnect, "commit");
+    expect(await failing).toBe("superseded");
+    await closeTransaction(worker, "commit");
+    expect(await outboundRow(s)).toMatchObject({
+      status: "creating",
+      action_code: null,
+      generation: before!.generation,
+    });
+
+    // The step first (a claim of N+1): the reconnection waits until the
+    // step's write is committed.
+    await creationDue(s);
+    const current = await beginCreation(s);
+    const step = await openTransaction();
+    expect(await failIn(step, current)).toBe("write_authorization_required");
+    const late = await openTransaction();
+    const reconnecting = outcome(reconnectSameAccount(late, s));
+    await waitUntilBlocked(late.pid);
+    expect(await blockingPids(late.pid)).toContain(step.pid);
+    await closeTransaction(step, "commit");
+    expect(await reconnecting).toBe("ok");
+    await closeTransaction(late, "commit");
+    expect(await outboundRow(s)).toMatchObject({
+      status: "action_required",
+      action_code: "write_authorization_required",
+    });
+  });
+});
+
 describe("periodic job: fairness between inbound and outbound", () => {
   /** This business only is due (others' leftovers stay out of the run). */
   async function only(s: Setup) {
@@ -1920,6 +2542,57 @@ describe("periodic job: fairness between inbound and outbound", () => {
     expect(await busyIds(s)).toEqual(["busy"]);
     // Outbound ran in its own slice, after inbound.
     expect(result.outbound).not.toBeNull();
+  }, 40_000);
+
+  it("an inbound database call that does not answer (a lock wait) is abandoned at inbound's deadline: outbound still gets its window, the late call lands harmlessly", async () => {
+    const s = await setup();
+    const calendarId = await enabled(s);
+    await withBlockingWork(s);
+    const a = await createAppointment(s, "10:00");
+    await only(s);
+    // The calendar's sync row is held: calendar_claim_sync waits for it.
+    const holder = await openTransaction();
+    await holder.connection.query(
+      `select 1 from private.external_calendar_sync y
+       join public.external_calendars c on c.id = y.calendar_id
+       where c.business_id = $1 and c.selected_for_blocking
+       for update of y`,
+      [s.business.id],
+    );
+    const started = Date.now();
+    const result = await runCalendarJob(getCalendarDeps(), {
+      budgetMs: 12_000,
+    });
+    expect(Date.now() - started).toBeLessThan(13_000);
+    // The sync never got its claim within inbound's share (a statement
+    // timeout of the stack may at most end the wait with an error).
+    expect(result.processed.map((item) => item.outcome)).not.toContain(
+      "synced",
+    );
+    expect(result.outbound).toMatchObject({ applied: 1 });
+    expect(liveEvents(calendarId).map((event) => event.id)).toEqual([
+      eventIdOf(a.id),
+    ]);
+
+    // Released: the abandoned call completes late (or was cancelled); its
+    // pass is past its deadline and stops without calling Google.
+    const calls = providerCalls();
+    await closeTransaction(holder, "rollback");
+    for (let attempt = 0; ; attempt += 1) {
+      const { rows } = await db.query<{ waiting: number; syncing: number }>(
+        `select
+           (select count(*)::int from pg_stat_activity
+            where pid <> pg_backend_pid() and state <> 'idle'
+              and query like '%calendar_claim_sync%') as waiting,
+           (select count(*)::int from public.external_calendars
+            where business_id = $1 and sync_status = 'syncing') as syncing`,
+        [s.business.id],
+      );
+      if (rows[0]!.waiting === 0 && rows[0]!.syncing === 0) break;
+      if (attempt > 200) throw new Error("the abandoned sync never ended");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(providerCalls()).toBe(calls);
   }, 40_000);
 });
 
