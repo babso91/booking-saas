@@ -3,7 +3,15 @@ import { createHash, randomUUID } from "node:crypto";
 // In-memory Google (OAuth 2.0 + Calendar API v3) for tests: authorization
 // codes with PKCE, refresh/revoke, calendarList and events.list with
 // pagination, sync tokens and 410, injected failures, watch/stop channels.
+// Outbound: incremental authorization (scopes granted per account, kept by
+// include_granted_scopes), calendars.insert/get (app-created calendars,
+// calendar.app.created required), events insert/update/delete with custom
+// ids (409 on an existing id, cancelled events kept and restorable), and
+// answers lost after the request was applied.
 // Only the behaviour the adapter relies on is modelled.
+
+export const WRITE_SCOPE =
+  "https://www.googleapis.com/auth/calendar.app.created";
 
 export type FakeEvent = {
   id: string;
@@ -15,6 +23,7 @@ export type FakeEvent = {
   recurringEventId?: string;
   attendees?: { self?: boolean; responseStatus?: string; email?: string }[];
   summary?: string;
+  extendedProperties?: { private?: Record<string, string> };
 };
 
 type StoredEvent = FakeEvent & { etag: string; updated: string; seq: number };
@@ -102,14 +111,32 @@ export class FakeGoogle {
   >();
 
   private seq = 0;
+  /** When true, the consent screen grants everything but the write scope. */
+  denyWriteScope = false;
+  /**
+   * When true, calendars created from now on stay out of calendarList
+   * (Google's list not up to date yet) until revealCalendars().
+   */
+  hideNewCalendars = false;
+  private hidden = new Set<string>();
   private codes = new Map<
     string,
-    { account: Account; challenge: string; redirectUri: string }
+    {
+      account: Account;
+      challenge: string;
+      redirectUri: string;
+      scopes: string[];
+    }
   >();
-  private refreshTokens = new Map<string, Account & { revoked: boolean }>();
+  /** Scopes granted per account beyond `grantedScopes` (incremental). */
+  private extraScopes = new Map<string, Set<string>>();
+  private refreshTokens = new Map<
+    string,
+    Account & { revoked: boolean; scopes: string[] }
+  >();
   private accessTokens = new Map<
     string,
-    { account: Account; expiresAt: number }
+    { account: Account; expiresAt: number; scopes: string[] }
   >();
   private calendars = new Map<
     string,
@@ -119,8 +146,14 @@ export class FakeGoogle {
       timeZone: string;
       primary?: boolean;
       accessRole: string;
+      description?: string;
+      appCreated?: boolean;
     }[]
   >();
+  private lostAnswers: {
+    match: (url: URL, method: string) => boolean;
+    times: number;
+  }[] = [];
   private events = new Map<string, Map<string, StoredEvent>>();
   private expiredSyncTokens = new Set<string>();
   private failures: Failure[] = [];
@@ -144,16 +177,88 @@ export class FakeGoogle {
     return { reached: reachedPromise, release };
   }
 
-  /** The authorization step: Google redirects back with this code. */
+  /**
+   * The authorization step: Google redirects back with this code. The
+   * requested scopes are granted to the account (all but the write scope
+   * when `denyWriteScope`), on top of what it granted before.
+   */
   authorize(account: Account, authorizationUrl: string) {
     const url = new URL(authorizationUrl);
     const code = `code-${randomUUID()}`;
+    const requested = (url.searchParams.get("scope") ?? "")
+      .split(" ")
+      .filter(Boolean);
     this.codes.set(code, {
       account,
       challenge: url.searchParams.get("code_challenge") ?? "",
       redirectUri: url.searchParams.get("redirect_uri") ?? "",
+      scopes: requested,
     });
     return { code, state: url.searchParams.get("state") ?? "" };
+  }
+
+  /**
+   * Applies the next matching request(s) but loses the answer (a network
+   * failure seen by the caller), as when a connection drops after Google
+   * processed the request.
+   */
+  loseAnswer(match: (url: URL, method: string) => boolean, times = 1) {
+    this.lostAnswers.push({ match, times });
+  }
+
+  revealCalendars() {
+    this.hidden.clear();
+  }
+
+  /** The professional edits a calendar's description in Google. */
+  setDescription(calendarId: string, description: string) {
+    for (const list of this.calendars.values()) {
+      for (const calendar of list) {
+        if (calendar.id === calendarId) calendar.description = description;
+      }
+    }
+  }
+
+  /** Adds a calendar to an account's list (an earlier attempt's, say). */
+  addCalendar(
+    sub: string,
+    calendar: {
+      id: string;
+      summary: string;
+      timeZone: string;
+      description?: string;
+      appCreated?: boolean;
+    },
+  ) {
+    const list = this.calendars.get(sub) ?? [];
+    list.push({ accessRole: "owner", ...calendar });
+    this.calendars.set(sub, list);
+    if (!this.events.has(calendar.id)) this.events.set(calendar.id, new Map());
+  }
+
+  /** Calendars an account created through the app (outbound). */
+  appCalendars(sub: string) {
+    return (this.calendars.get(sub) ?? []).filter(
+      (calendar) => calendar.appCreated,
+    );
+  }
+
+  /** The professional deletes a calendar in Google. */
+  deleteCalendar(calendarId: string) {
+    for (const [sub, list] of this.calendars) {
+      this.calendars.set(
+        sub,
+        list.filter((calendar) => calendar.id !== calendarId),
+      );
+    }
+    this.events.delete(calendarId);
+  }
+
+  /** Events stored in a calendar (cancelled ones included). */
+  storedEvents(calendarId: string) {
+    return [...(this.events.get(calendarId)?.values() ?? [])].sort(
+      (a, b) => a.seq - b.seq,
+    );
   }
 
   /** Changes a calendar's time zone (as in Google's settings). */
@@ -173,6 +278,8 @@ export class FakeGoogle {
       timeZone: string;
       primary?: boolean;
       accessRole?: string;
+      description?: string;
+      appCreated?: boolean;
     }[],
   ) {
     this.calendars.set(
@@ -241,20 +348,35 @@ export class FakeGoogle {
     const header = new Headers(init?.headers).get("authorization") ?? "";
     const token = header.replace(/^Bearer /, "");
     const entry = this.accessTokens.get(token);
-    return entry && entry.expiresAt > Date.now() ? entry.account : null;
+    return entry && entry.expiresAt > Date.now() ? entry : null;
   }
 
-  private issueTokens(account: Account, withRefresh: boolean) {
+  /** Every scope the account granted to the app (include_granted_scopes). */
+  private scopesOf(account: Account) {
+    return [
+      ...new Set([
+        ...this.grantedScopes,
+        ...(this.extraScopes.get(account.sub) ?? []),
+      ]),
+    ];
+  }
+
+  private issueTokens(
+    account: Account,
+    withRefresh: boolean,
+    scopes = this.scopesOf(account),
+  ) {
     const accessToken = `at-${randomUUID()}`;
     this.accessTokens.set(accessToken, {
       account,
       expiresAt: Date.now() + this.accessTokenLifetime * 1000,
+      scopes,
     });
     const body: Record<string, unknown> = {
       access_token: accessToken,
       expires_in: this.accessTokenLifetime,
       token_type: "Bearer",
-      scope: this.grantedScopes.join(" "),
+      scope: scopes.join(" "),
       id_token: jwt({
         iss: "https://accounts.google.com",
         aud: CLIENT_ID,
@@ -267,7 +389,11 @@ export class FakeGoogle {
     };
     if (withRefresh) {
       const refreshToken = `rt-${randomUUID()}`;
-      this.refreshTokens.set(refreshToken, { ...account, revoked: false });
+      this.refreshTokens.set(refreshToken, {
+        ...account,
+        revoked: false,
+        scopes,
+      });
       body.refresh_token = refreshToken;
     }
     return body;
@@ -290,6 +416,13 @@ export class FakeGoogle {
     for (const hook of this.hooks) await hook(url, method);
 
     const response = await this.answer(url, method, body, init);
+    const lost = this.lostAnswers.find(
+      (item) => item.times > 0 && item.match(url, method),
+    );
+    if (lost) {
+      lost.times -= 1;
+      throw new TypeError("fetch failed (answer lost)");
+    }
     const hold = this.holds.findIndex((item) => item.match(url, method));
     if (hold >= 0) {
       const [entry] = this.holds.splice(hold, 1);
@@ -342,13 +475,25 @@ export class FakeGoogle {
         ) {
           return json({ error: "invalid_grant" }, 400);
         }
+        if (entry.scopes.includes(WRITE_SCOPE) && !this.denyWriteScope) {
+          const extra = this.extraScopes.get(entry.account.sub) ?? new Set();
+          extra.add(WRITE_SCOPE);
+          this.extraScopes.set(entry.account.sub, extra);
+        }
         return json(this.issueTokens(entry.account, this.sendRefreshToken));
       }
       if (form.get("grant_type") === "refresh_token") {
         const entry = this.refreshTokens.get(form.get("refresh_token") ?? "");
         if (!entry || entry.revoked)
           return json({ error: "invalid_grant" }, 400);
-        return json(this.issueTokens(entry, false));
+        // Google: a refresh token grants what its authorization granted.
+        return json(
+          this.issueTokens(
+            { sub: entry.sub, email: entry.email },
+            false,
+            entry.scopes,
+          ),
+        );
       }
       return json({ error: "unsupported_grant_type" }, 400);
     }
@@ -365,15 +510,21 @@ export class FakeGoogle {
     if (url.host !== "www.googleapis.com")
       return json({ error: "not_found" }, 404);
 
-    const account = this.bearer(init);
-    if (!account)
+    const bearer = this.bearer(init);
+    if (!bearer)
       return json(
         { error: { code: 401, message: "Invalid Credentials" } },
         401,
       );
+    const account = bearer.account;
+
+    const outbound = this.outbound(url, method, body, bearer);
+    if (outbound) return outbound;
 
     if (url.pathname === "/calendar/v3/users/me/calendarList") {
-      const all = this.calendars.get(account.sub) ?? [];
+      const all = (this.calendars.get(account.sub) ?? []).filter(
+        (calendar) => !this.hidden.has(calendar.id),
+      );
       const offset = Number(url.searchParams.get("pageToken") ?? 0);
       const size = Math.min(this.pageSize, 250);
       const items = all.slice(offset, offset + size);
@@ -426,6 +577,116 @@ export class FakeGoogle {
     }
 
     return this.listEvents(calendarId, url);
+  }
+
+  /** Outbound endpoints (calendar.app.created), or null. */
+  private outbound(
+    url: URL,
+    method: string,
+    body: string,
+    bearer: { account: Account; scopes: string[] },
+  ): Response | null {
+    const insufficient = () =>
+      json(
+        {
+          error: {
+            code: 403,
+            errors: [{ reason: "insufficientPermissions" }],
+          },
+        },
+        403,
+      );
+    const canWrite = bearer.scopes.includes(WRITE_SCOPE);
+    const list = this.calendars.get(bearer.account.sub) ?? [];
+
+    if (url.pathname === "/calendar/v3/calendars" && method === "POST") {
+      if (!canWrite) return insufficient();
+      const request = JSON.parse(body) as {
+        summary?: string;
+        description?: string;
+        timeZone?: string;
+      };
+      if (!request.summary) return json({ error: { code: 400 } }, 400);
+      const id = `${randomUUID().replace(/-/g, "")}@group.calendar.google.com`;
+      list.push({
+        id,
+        summary: request.summary,
+        description: request.description,
+        timeZone: request.timeZone ?? "UTC",
+        accessRole: "owner",
+        appCreated: true,
+      });
+      this.calendars.set(bearer.account.sub, list);
+      this.events.set(id, new Map());
+      if (this.hideNewCalendars) this.hidden.add(id);
+      return json({ id, summary: request.summary });
+    }
+
+    const calendarMatch = /^\/calendar\/v3\/calendars\/([^/]+)$/.exec(
+      url.pathname,
+    );
+    if (calendarMatch && method === "GET") {
+      const id = decodeURIComponent(calendarMatch[1]!);
+      const calendar = list.find((item) => item.id === id);
+      if (!calendar) return json({ error: { code: 404 } }, 404);
+      if (!calendar.appCreated && !canWrite) return insufficient();
+      return json({ id });
+    }
+
+    const eventMatch =
+      /^\/calendar\/v3\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/.exec(
+        url.pathname,
+      );
+    if (!eventMatch || (method === "GET" && !eventMatch[2])) return null;
+    if (eventMatch[2] === "watch") return null;
+    const calendarId = decodeURIComponent(eventMatch[1]!);
+    const calendar = list.find((item) => item.id === calendarId);
+    if (!calendar) return json({ error: { code: 404 } }, 404);
+    // calendar.app.created: only the calendars the app created.
+    if (!canWrite || !calendar.appCreated) return insufficient();
+    const store = this.events.get(calendarId)!;
+
+    if (method === "POST" && !eventMatch[2]) {
+      const event = JSON.parse(body) as FakeEvent;
+      if (!/^[a-v0-9]{5,1024}$/.test(event.id)) {
+        return json({ error: { code: 400 } }, 400);
+      }
+      if (store.has(event.id)) {
+        return json(
+          { error: { code: 409, errors: [{ reason: "duplicate" }] } },
+          409,
+        );
+      }
+      this.putEvent(calendarId, { ...event, status: "confirmed" });
+      return json({ id: event.id });
+    }
+
+    const eventId = decodeURIComponent(eventMatch[2]!);
+    const existing = store.get(eventId);
+    if (method === "PUT") {
+      if (!existing) return json({ error: { code: 404 } }, 404);
+      const event = JSON.parse(body) as Omit<FakeEvent, "id">;
+      // A cancelled event of the organizer's calendar is restored.
+      this.putEvent(calendarId, {
+        ...event,
+        id: eventId,
+        status: event.status ?? "confirmed",
+      });
+      return json({ id: eventId });
+    }
+    if (method === "DELETE") {
+      if (!existing) return json({ error: { code: 404 } }, 404);
+      if (existing.status === "cancelled") {
+        return json({ error: { code: 410, message: "deleted" } }, 410);
+      }
+      this.putEvent(calendarId, { ...existing, status: "cancelled" });
+      return new Response(null, { status: 204 });
+    }
+    if (method === "GET") {
+      if (!existing) return json({ error: { code: 404 } }, 404);
+      return json(publicEvent(existing));
+    }
+    return null;
   }
 
   private listEvents(calendarId: string, url: URL) {

@@ -258,13 +258,13 @@ isOneToOne: false
                   ]
                 },"external_calendars": {
                   Row: {
-                    "access_role": string | null,"business_id": string,"connection_id": string,"created_at": string,"id": string,"is_primary": boolean,"last_error": string | null,"last_synced_at": string | null,"name": string,"provider_calendar_id": string,"selected_for_blocking": boolean,"sync_status": string,"timezone": string | null,"timezone_trust": string,"updated_at": string
+                    "access_role": string | null,"booking_outbound": boolean,"business_id": string,"connection_id": string,"created_at": string,"id": string,"is_primary": boolean,"last_error": string | null,"last_synced_at": string | null,"name": string,"provider_calendar_id": string,"selected_for_blocking": boolean,"sync_status": string,"timezone": string | null,"timezone_trust": string,"updated_at": string
                   }
                   Insert: {
-                    "access_role"?: string | null,"business_id": string,"connection_id": string,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"last_error"?: string | null,"last_synced_at"?: string | null,"name": string,"provider_calendar_id": string,"selected_for_blocking"?: boolean,"sync_status"?: string,"timezone"?: string | null,"timezone_trust"?: string,"updated_at"?: string
+                    "access_role"?: string | null,"booking_outbound"?: boolean,"business_id": string,"connection_id": string,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"last_error"?: string | null,"last_synced_at"?: string | null,"name": string,"provider_calendar_id": string,"selected_for_blocking"?: boolean,"sync_status"?: string,"timezone"?: string | null,"timezone_trust"?: string,"updated_at"?: string
                   }
                   Update: {
-                    "access_role"?: string | null,"business_id"?: string,"connection_id"?: string,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"last_error"?: string | null,"last_synced_at"?: string | null,"name"?: string,"provider_calendar_id"?: string,"selected_for_blocking"?: boolean,"sync_status"?: string,"timezone"?: string | null,"timezone_trust"?: string,"updated_at"?: string
+                    "access_role"?: string | null,"booking_outbound"?: boolean,"business_id"?: string,"connection_id"?: string,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"last_error"?: string | null,"last_synced_at"?: string | null,"name"?: string,"provider_calendar_id"?: string,"selected_for_blocking"?: boolean,"sync_status"?: string,"timezone"?: string | null,"timezone_trust"?: string,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -451,6 +451,9 @@ isOneToOne: false
 "business_time":
 { Args: { "p_business_id": string,"p_dates"?: (string)[],"p_instants"?: (string)[],"p_locals"?: (string)[],"p_open_ranges"?: boolean }; Returns: Json
                            },
+"calendar_add_write_authorization":
+{ Args: { "p_access_token_ciphertext": string,"p_access_token_expires_at": string,"p_business_id": string,"p_provider_account_id": string,"p_refresh_token_ciphertext": string,"p_scopes": (string)[],"p_user_id": string }; Returns: string
+                           },
 "calendar_apply_events":
 { Args: { "p_calendar_id": string,"p_claim_id": string,"p_events": Json,"p_generation": number,"p_next_page_token"?: string,"p_provider_timezone": string }; Returns: Json
                            },
@@ -458,7 +461,7 @@ isOneToOne: false
 { Args: { "p_connection_id": string }; Returns: boolean
                            },
 "calendar_begin_oauth":
-{ Args: { "p_business_id": string,"p_code_verifier_ciphertext": string,"p_provider": string,"p_state_hash": string }; Returns: undefined
+{ Args: { "p_business_id": string,"p_code_verifier_ciphertext": string,"p_provider": string,"p_purpose"?: string,"p_state_hash": string }; Returns: undefined
                            },
 "calendar_begin_revocation":
 { Args: { "p_connection_id": string,"p_generation": string }; Returns: number
@@ -473,7 +476,7 @@ isOneToOne: false
                            },
 "calendar_consume_oauth_state":
 { Args: { "p_state_hash": string }; Returns: {
-              "business_id": string,"code_verifier_ciphertext": string,"provider": string
+              "business_id": string,"code_verifier_ciphertext": string,"provider": string,"purpose": string
             }[]
                            },
 "calendar_disconnect":
@@ -497,6 +500,52 @@ isOneToOne: false
                            },
 "calendar_mark_reauth_required":
 { Args: { "p_connection_id": string,"p_error": string,"p_generation": string }; Returns: boolean
+                           },
+"calendar_outbound_adopt_calendar":
+{ Args: { "p_business_id": string,"p_claim_id": string,"p_credential_generation": string,"p_generation": string,"p_provider_calendar_id": string }; Returns: string
+                           },
+"calendar_outbound_attributed_elsewhere":
+{ Args: { "p_business_id": string,"p_provider_calendar_ids": (string)[] }; Returns: {
+              "provider_calendar_id": string
+            }[]
+                           },
+"calendar_outbound_begin_creation":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"calendar_outbound_claim_mirrors":
+{ Args: { "p_business_id"?: string,"p_limit"?: number,"p_per_business"?: number }; Returns: Json
+                           },
+"calendar_outbound_complete_mirror":
+{ Args: { "p_appointment_id": string,"p_claim_id": string,"p_revision": number }; Returns: string
+                           },
+"calendar_outbound_creation_failed":
+{ Args: { "p_business_id": string,"p_claim_id": string,"p_credential_generation": string,"p_error": string,"p_generation": string,"p_outcome": string }; Returns: string
+                           },
+"calendar_outbound_disable":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"calendar_outbound_due_creations":
+{ Args: { "p_limit"?: number }; Returns: {
+              "business_id": string
+            }[]
+                           },
+"calendar_outbound_enable":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"calendar_outbound_fail_mirror":
+{ Args: { "p_appointment_id": string,"p_claim_id": string,"p_error": string }; Returns: boolean
+                           },
+"calendar_outbound_mark_action_required":
+{ Args: { "p_action_code": string,"p_appointment_id": string,"p_claim_id": string,"p_error"?: string }; Returns: boolean
+                           },
+"calendar_outbound_mark_creation_requested":
+{ Args: { "p_business_id": string,"p_claim_id": string,"p_credential_generation": string,"p_generation": string }; Returns: boolean
+                           },
+"calendar_outbound_retry":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"calendar_outbound_status":
+{ Args: { "p_business_id": string }; Returns: Json
                            },
 "calendar_read_secrets":
 { Args: { "p_connection_id": string }; Returns: {

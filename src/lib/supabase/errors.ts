@@ -44,6 +44,9 @@ const domainMessages: Record<string, AppErrorCode> = {
   oauth_state_invalid: "oauth_state_invalid",
   oauth_state_expired: "oauth_state_invalid",
   calendar_refresh_token_missing: "calendar_reauth_required",
+  calendar_reauth_required: "calendar_reauth_required",
+  calendar_write_authorization_required:
+    "calendar_write_authorization_required",
 };
 
 // SQLSTATE classes produced by constraints and RLS.

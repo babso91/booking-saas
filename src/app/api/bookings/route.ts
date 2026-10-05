@@ -1,5 +1,6 @@
 import { createPublicBooking } from "@/features/appointments/data/public-booking";
 import { createPublicBookingSchema } from "@/features/appointments/schemas/public-booking";
+import { kickCalendarOutbound } from "@/features/calendar/data/outbound-kick";
 import { validationException } from "@/lib/errors";
 import { jsonError, jsonOk, readJsonBody } from "@/lib/http";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
@@ -21,6 +22,10 @@ export async function POST(request: Request) {
       createPublicSupabaseClient(),
       parsed.data,
     );
+
+    // The Google mirror never delays nor fails the booking: it runs after
+    // the response, from the committed desired state.
+    kickCalendarOutbound({ appointmentId: booking.appointmentId });
 
     return jsonOk({ booking }, { status: 201 });
   } catch (error) {

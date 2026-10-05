@@ -67,6 +67,15 @@ export async function waitUntilBlocked(pid: number) {
   throw new Error(`Backend ${pid} never blocked on a lock`);
 }
 
+/** The backends `pid` is waiting for. */
+export async function blockingPids(pid: number) {
+  const { rows } = await db.query<{ pids: number[] }>(
+    "select pg_blocking_pids($1) as pids",
+    [pid],
+  );
+  return rows[0]!.pids;
+}
+
 /** Settles a pending query into "ok" or its error message, never rejecting. */
 export function outcome(query: Promise<unknown>) {
   return query.then(

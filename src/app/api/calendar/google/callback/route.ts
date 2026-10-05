@@ -1,9 +1,16 @@
 import type { NextRequest } from "next/server";
 
 import { runAfterResponse } from "@/features/calendar/data/background";
-import { completeConnect } from "@/features/calendar/data/connection";
+import {
+  consumeOAuthState,
+  finishConnect,
+} from "@/features/calendar/data/connection";
 import { getCalendarDeps } from "@/features/calendar/data/deps";
 import { logCalendar } from "@/features/calendar/data/log";
+import {
+  completeWriteAuthorization,
+  processOutbound,
+} from "@/features/calendar/data/outbound";
 import { syncCalendar } from "@/features/calendar/data/sync";
 import { getBusinessContext } from "@/features/businesses/data/business-context";
 import { sha256Hex } from "@/lib/crypto/secret-box";
@@ -13,12 +20,16 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 // GET /api/calendar/google/callback?state=…&code=… (or &error=access_denied)
 // OAuth redirect from Google. Server only: the code is exchanged here, tokens
 // never reach the browser or a URL. Always answers with a redirect to a fixed
-// path of the app carrying a result code (never an open redirect).
+// path of the app carrying a result code (never an open redirect). The state
+// says what it completes: a connection, or the write authorization added to
+// the connected account (outbound).
 
 export const dynamic = "force-dynamic";
 
 type Result =
   | "connected"
+  | "write_authorized"
+  | "account_mismatch"
   | "denied"
   | "invalid_state"
   | "scope_missing"
@@ -40,6 +51,11 @@ function resultOf(error: unknown): Result {
       return "invalid_state";
     case "calendar_scope_missing":
       return "scope_missing";
+    // Write authorization answered by another Google account: refused.
+    case "calendar_account_mismatch":
+      return "account_mismatch";
+    case "calendar_not_connected":
+      return "invalid_state";
     case "calendar_provider_unavailable":
     case "calendar_reauth_required":
       return "provider_unavailable";
@@ -90,10 +106,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { connectionId } = await completeConnect(context, deps, {
-      state,
-      code,
-    });
+    const consumed = await consumeOAuthState(context, deps, state);
+    if (consumed.purpose === "write") {
+      await completeWriteAuthorization(context, deps, consumed, code);
+      // The dedicated calendar is created (or found again) after the
+      // response, then the pending mirrors are applied.
+      runAfterResponse("outbound_enable", () =>
+        processOutbound(deps, { businessId: context.businessId }),
+      );
+      return back(request, "write_authorized");
+    }
+
+    const { connectionId } = await finishConnect(context, deps, consumed, code);
 
     // Reconnection: calendars already selected sync again, after the response.
     runAfterResponse("reconnect_sync", async () => {
