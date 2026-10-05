@@ -45,4 +45,32 @@ describe("AppShell", () => {
     expect(dialog.getByRole("link", { name: /\/b\/studio-mila/ })).toBeTruthy();
     expect(dialog.getByRole("button", { name: /Se déconnecter/ })).toBeTruthy();
   });
+
+  it("leads to the Google Calendar settings, marked as the current page there", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppShell
+        business={{ name: "Studio Mila", slug: "studio-mila" }}
+        current="calendar"
+      >
+        <p>contenu</p>
+      </AppShell>,
+    );
+
+    const calendarLink = screen.getByRole("link", { name: /Google Calendar/ });
+    expect(calendarLink.getAttribute("href")).toBe("/app/settings/calendar");
+    expect(calendarLink.getAttribute("aria-current")).toBe("page");
+    screen
+      .getAllByRole("link", { name: /Agenda/ })
+      .forEach((link) => expect(link.getAttribute("aria-current")).toBeNull());
+
+    // Phones: from the account panel.
+    await user.click(screen.getByRole("button", { name: "Compte" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(
+      dialog
+        .getByRole("link", { name: /Google Calendar/ })
+        .getAttribute("href"),
+    ).toBe("/app/settings/calendar");
+  });
 });
