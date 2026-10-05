@@ -23,7 +23,6 @@ export default async function CalendarSettingsPage({
       current="calendar"
     >
       <CalendarSettings
-        businessName={business.name}
         callbackResult={typeof calendar === "string" ? calendar : null}
       />
     </AppShell>

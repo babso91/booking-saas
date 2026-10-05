@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -46,20 +45,20 @@ import { describeError } from "@/features/auth/client/error-copy";
 import type { ActionResult } from "@/lib/errors";
 import { cn } from "@/lib/cn";
 
+import { withoutCallbackResult } from "../client/callback-url";
 import { openGoogle } from "../client/navigate";
 import {
   blockingCandidates,
-  bookingCalendarName,
+  BOOKING_CALENDAR_LABEL,
   calendarRowView,
   callbackNotice,
   connectionState,
+  nothingToDo,
   outboundView,
   type CalendarRowView,
   type OutboundCta,
   type OutboundView,
 } from "../client/settings-copy";
-
-const SETTINGS_PATH = "/app/settings/calendar";
 
 /** Gentle re-reads while something settles server-side: no polling loop. */
 const SETTLE_DELAYS = [3_000, 8_000, 20_000, 45_000, 90_000];
@@ -91,13 +90,10 @@ type Failure = {
  * authority: no optimistic transition, every action re-reads its answer.
  */
 export function CalendarSettings({
-  businessName,
   callbackResult,
 }: {
-  businessName: string;
   callbackResult: string | null;
 }) {
-  const router = useRouter();
   const [inbound, setInbound] = useState<CalendarIntegrationStatusDto | null>(
     null,
   );
@@ -114,6 +110,13 @@ export function CalendarSettings({
   const alive = useRef(true);
   const busyRef = useRef<Busy | null>(null);
   const lastLoad = useRef(0);
+  // Version of the screen's server state. Every read captures it when it
+  // starts and is applied only if it is still current when it answers;
+  // every action bumps it before and after the Server Action. So a read
+  // that started before an action (or during it, possibly served before
+  // the action committed) can never overwrite what the action returned —
+  // which matters: the blocking selection is sent as a complete set.
+  const version = useRef(0);
 
   useEffect(() => {
     alive.current = true;
@@ -122,14 +125,20 @@ export function CalendarSettings({
     };
   }, []);
 
-  // The result of the OAuth round trip is shown once: drop it from the URL.
+  // The result of the OAuth round trip is shown once: drop only that
+  // parameter from the address (other parameters and the fragment stay).
   useEffect(() => {
-    if (callbackResult) router.replace(SETTINGS_PATH, { scroll: false });
-  }, [callbackResult, router]);
+    const next = withoutCallbackResult(window.location.href);
+    if (next) window.history.replaceState(window.history.state, "", next);
+  }, []);
 
   const apply = useCallback(
-    ([connection, appointments]: Awaited<ReturnType<typeof readStatuses>>) => {
-      if (!alive.current) return;
+    (
+      token: number,
+      [connection, appointments]: Awaited<ReturnType<typeof readStatuses>>,
+    ) => {
+      // Unmounted, or superseded by an action or a more recent read.
+      if (!alive.current || token !== version.current) return;
       if (connection.ok) setInbound(connection.data);
       if (appointments.ok) setOutbound(appointments.data);
       setLoadError(
@@ -145,12 +154,14 @@ export function CalendarSettings({
 
   const load = useCallback(() => {
     lastLoad.current = Date.now();
-    return readStatuses().then(apply);
+    const token = (version.current += 1);
+    return readStatuses().then((results) => apply(token, results));
   }, [apply]);
 
   useEffect(() => {
     lastLoad.current = Date.now();
-    void readStatuses().then(apply);
+    const token = (version.current += 1);
+    void readStatuses().then((results) => apply(token, results));
   }, [apply]);
 
   // Something is on its way server-side (dedicated calendar being created,
@@ -206,7 +217,12 @@ export function CalendarSettings({
     setBusy(name);
     setFailure(null);
     setNotice(null);
+    // Reads already sent no longer count…
+    version.current += 1;
     const result = await callAction(action);
+    // …nor do those sent while the action ran (the server may have answered
+    // them before the action committed). Anything read from now on is new.
+    version.current += 1;
     if (!alive.current) return;
     const outcome = result.ok ? await onSuccess(result.data) : undefined;
     if (!result.ok) setFailure({ where, error: result.error });
@@ -328,8 +344,18 @@ export function CalendarSettings({
       },
     );
 
+  // While a confirmation is open, its failure is shown in it: never behind
+  // the dialog, where the page is inert.
+  const dialogOwns = (where: Failure["where"]) =>
+    (confirm === "disable" && where === "appointments") ||
+    (confirm === "disconnect" && where === "connection");
+  const dialogError =
+    confirm && failure && dialogOwns(failure.where) ? (
+      <ActionError error={failure.error} reassure />
+    ) : null;
+
   const errorFor = (where: Failure["where"]) =>
-    failure?.where === where ? (
+    failure?.where === where && !dialogOwns(where) ? (
       <ActionError
         error={failure.error}
         reassure={where !== "availability"}
@@ -376,7 +402,28 @@ export function CalendarSettings({
           ) : (
             <SettingsSkeleton />
           )
-        ) : !inbound.available ? (
+        ) : null}
+
+        {inbound && loadError ? (
+          // A later read failed: the last known state stays usable.
+          <Notice
+            tone="warning"
+            title="Impossible d’actualiser Google Calendar"
+            action={
+              <button
+                type="button"
+                onClick={() => void load()}
+                className="cursor-pointer text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4"
+              >
+                Réessayer
+              </button>
+            }
+          >
+            Les informations affichées sont les dernières connues.
+          </Notice>
+        ) : null}
+
+        {!inbound ? null : !inbound.available ? (
           <Card>
             <CardIcon tone="idle">
               <CalendarSyncIcon size={22} />
@@ -438,7 +485,6 @@ export function CalendarSettings({
 
             <AppointmentsSection
               status={outbound}
-              businessName={businessName}
               busy={busy}
               onAction={(cta) => void outboundAction(cta)}
               onDisable={() => setConfirm("disable")}
@@ -450,10 +496,14 @@ export function CalendarSettings({
               aria-label="Compte Google"
               className="flex flex-col gap-3 border-t border-line pt-5 sm:flex-row sm:items-center sm:justify-between"
             >
-              <p className="text-[13.5px] text-ink-muted">
-                Booking n’a besoin d’aucune autre action de ta part : tout se
-                met à jour automatiquement.
-              </p>
+              {state && nothingToDo(state, outbound) ? (
+                <p className="text-[13.5px] text-ink-muted">
+                  Booking n’a besoin d’aucune autre action de ta part : tout se
+                  met à jour automatiquement.
+                </p>
+              ) : (
+                <span />
+              )}
               <button
                 type="button"
                 onClick={() => setConfirm("disconnect")}
@@ -479,6 +529,7 @@ export function CalendarSettings({
         <p className="text-[14px] text-ink-muted">
           Tes calendriers Google continueront de bloquer tes disponibilités.
         </p>
+        {confirm === "disable" ? dialogError : null}
       </ConfirmDialog>
 
       <ConfirmDialog
@@ -498,6 +549,9 @@ export function CalendarSettings({
             visibles.
           </li>
         </ul>
+        {confirm === "disconnect" ? (
+          <div className="mt-4">{dialogError}</div>
+        ) : null}
       </ConfirmDialog>
     </div>
   );
@@ -776,7 +830,6 @@ function OutboundIcon({ tone }: { tone: OutboundView["tone"] }) {
 
 function AppointmentsSection({
   status,
-  businessName,
   busy,
   onAction,
   onDisable,
@@ -784,14 +837,13 @@ function AppointmentsSection({
   error,
 }: {
   status: CalendarOutboundStatusDto | null;
-  businessName: string;
   busy: Busy | null;
   onAction: (cta: OutboundCta) => void;
   onDisable: () => void;
   onReload: () => void;
   error: ReactNode;
 }) {
-  const view = status ? outboundView(status, businessName) : null;
+  const view = status ? outboundView(status) : null;
   const busyFor = (cta: OutboundCta) =>
     busy === cta || (cta === "reconnect" && busy === "reconnect");
 
@@ -851,7 +903,7 @@ function AppointmentsSection({
             <div className="flex items-center gap-3 rounded-xl bg-paper-raised px-3.5 py-3 ring-1 ring-line">
               <CalendarIcon size={18} className="shrink-0 text-ink-soft" />
               <span className="min-w-0 flex-1 truncate text-[14.5px] font-medium text-ink">
-                {bookingCalendarName(businessName)}
+                {BOOKING_CALENDAR_LABEL}
               </span>
               <span className="shrink-0 rounded-full bg-sand px-2 py-0.5 text-[11.5px] font-medium text-ink-soft">
                 Géré par Booking

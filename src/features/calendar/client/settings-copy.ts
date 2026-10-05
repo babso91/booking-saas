@@ -17,9 +17,12 @@ function unreachable(value: never): never {
   throw new Error(`Unhandled calendar state: ${String(value)}`);
 }
 
-/** Name Booking gives the calendar it creates (outbound.ts). */
-export const bookingCalendarName = (businessName: string) =>
-  `Rendez-vous — ${businessName}`;
+/**
+ * How the dedicated calendar is named on screen. Its real name in Google is
+ * fixed when Booking creates it (and may be found again later): no DTO gives
+ * it, so the screen never pretends to know it.
+ */
+export const BOOKING_CALENDAR_LABEL = "Calendrier de rendez-vous Booking";
 
 // ---------------------------------------------------------------------------
 // Booking → Google (outbound)
@@ -45,9 +48,7 @@ export function outboundView(
     CalendarOutboundStatusDto,
     "health" | "state" | "actionRequired" | "reason" | "writeAuthorized"
   >,
-  businessName: string,
 ): OutboundView {
-  const calendar = bookingCalendarName(businessName);
   const reactivate = {
     cta: "reactivate",
     label: "Réactiver la synchronisation",
@@ -67,7 +68,7 @@ export function outboundView(
       return {
         tone: "idle",
         title: "Ajoute automatiquement tes rendez-vous à Google Calendar",
-        body: `Booking créera un calendrier séparé nommé « ${calendar} ». Tes autres calendriers Google ne seront pas modifiés.`,
+        body: "Booking créera dans Google un calendrier séparé, réservé à tes rendez-vous. Tes autres calendriers Google ne seront pas modifiés.",
         note: status.writeAuthorized
           ? undefined
           : "Google te demandera une autorisation supplémentaire.",
@@ -80,7 +81,7 @@ export function outboundView(
         return {
           tone: "progress",
           title: "Préparation de ton calendrier Google…",
-          body: `Booking crée « ${calendar} ». Cela peut prendre quelques instants : tes rendez-vous y seront ajoutés automatiquement.`,
+          body: "Booking prépare ton calendrier de rendez-vous. Cela peut prendre quelques instants : tes rendez-vous y seront ajoutés automatiquement.",
           showCalendar: false,
         };
       }
@@ -287,6 +288,30 @@ export function calendarRowView(
 }
 
 export type ConnectionState = "not_connected" | "active" | "reauth_required";
+
+/**
+ * True only when nothing is waiting for the professional: Google connected
+ * and usable, and no action required for the appointments. Derived from the
+ * DTOs, never from what is displayed.
+ */
+export function nothingToDo(
+  connection: ConnectionState,
+  outbound: Pick<CalendarOutboundStatusDto, "health" | "actionRequired"> | null,
+): boolean {
+  if (connection !== "active" || !outbound) return false;
+  if (outbound.actionRequired !== null) return false;
+  switch (outbound.health) {
+    case "healthy":
+    case "pending":
+    case "retrying":
+    case "disabled":
+      return true;
+    case "action_required":
+      return false;
+    default:
+      return unreachable(outbound.health);
+  }
+}
 
 export function connectionState(
   status: Pick<CalendarIntegrationStatusDto, "connection">,

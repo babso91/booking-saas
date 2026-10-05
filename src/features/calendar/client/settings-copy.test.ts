@@ -8,6 +8,7 @@ import {
   calendarRowView,
   callbackNotice,
   connectionState,
+  nothingToDo,
   outboundView,
   type CallbackResult,
 } from "./settings-copy";
@@ -68,22 +69,19 @@ const TECHNICAL =
   /calendar_|invalid_grant|_required|_uncertain|generation|provider|scope|token|oauth|outbound|inbound|mirror|retry count|\bid\b|http|rpc|error code/i;
 
 const view = (status: Partial<Outbound>) =>
-  outboundView(
-    {
-      health: "disabled",
-      state: "disabled",
-      actionRequired: null,
-      reason: null,
-      writeAuthorized: true,
-      ...status,
-    },
-    "Studio Mila",
-  );
+  outboundView({
+    health: "disabled",
+    state: "disabled",
+    actionRequired: null,
+    reason: null,
+    writeAuthorized: true,
+    ...status,
+  });
 
 describe("outboundView — Booking → Google", () => {
   it("maps every state the types allow to a recoverable screen, in plain words", () => {
     for (const status of everyOutbound) {
-      const result = outboundView(status, "Studio Mila");
+      const result = outboundView(status);
       const text = [result.title, result.body, result.note ?? ""].join(" ");
       expect(result.title.length, JSON.stringify(status)).toBeGreaterThan(0);
       expect(text, JSON.stringify(status)).not.toMatch(TECHNICAL);
@@ -95,12 +93,14 @@ describe("outboundView — Booking → Google", () => {
     }
   });
 
-  it("disabled: offers to enable, names the dedicated calendar, says other calendars are untouched", () => {
+  it("disabled: offers to enable, a separate calendar, other calendars untouched", () => {
     const result = view({});
     expect(result.title).toBe(
       "Ajoute automatiquement tes rendez-vous à Google Calendar",
     );
-    expect(result.body).toContain("« Rendez-vous — Studio Mila »");
+    expect(result.body).toContain(
+      "un calendrier séparé, réservé à tes rendez-vous",
+    );
     expect(result.body).toContain(
       "Tes autres calendriers Google ne seront pas modifiés",
     );
@@ -370,5 +370,66 @@ describe("back from Google", () => {
     expect(callbackNotice("toString")).toBeNull();
     expect(callbackNotice("<script>")).toBeNull();
     expect(callbackNotice(null)).toBeNull();
+  });
+});
+
+describe("the dedicated calendar's name is never made up", () => {
+  it("no state names it after the business: its real name in Google may differ", () => {
+    for (const status of everyOutbound) {
+      const result = outboundView(status);
+      expect(
+        [result.title, result.body, result.note ?? ""].join(" "),
+      ).not.toMatch(/Rendez-vous —|Studio/);
+    }
+  });
+});
+
+describe("nothingToDo — the 'no action needed' promise", () => {
+  const base = { health: "healthy" as const, actionRequired: null };
+
+  it("only when Google is connected and nothing is required", () => {
+    expect(nothingToDo("active", base)).toBe(true);
+    expect(nothingToDo("active", { ...base, health: "pending" })).toBe(true);
+    expect(nothingToDo("active", { ...base, health: "retrying" })).toBe(true);
+    expect(nothingToDo("active", { ...base, health: "disabled" })).toBe(true);
+  });
+
+  it.each([
+    [
+      "reconnect",
+      "reauth_required",
+      { health: "action_required", actionRequired: "reconnect" },
+    ],
+    [
+      "authorize_write",
+      "active",
+      { health: "action_required", actionRequired: "authorize_write" },
+    ],
+    [
+      "reactivate",
+      "active",
+      { health: "action_required", actionRequired: "reactivate" },
+    ],
+    [
+      "enable_again",
+      "active",
+      { health: "disabled", actionRequired: "enable_again" },
+    ],
+    [
+      "not connected",
+      "not_connected",
+      { health: "disabled", actionRequired: null },
+    ],
+    [
+      "connection to renew",
+      "reauth_required",
+      { health: "healthy", actionRequired: null },
+    ],
+  ] as const)("never with %s", (_label, connection, outbound) => {
+    expect(nothingToDo(connection, outbound)).toBe(false);
+  });
+
+  it("never when the appointments state could not be read", () => {
+    expect(nothingToDo("active", null)).toBe(false);
   });
 });

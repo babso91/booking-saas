@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup as cleanupRender,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -8,7 +15,6 @@ import type {
 } from "@/features/calendar/data/connection";
 import type { CalendarOutboundStatusDto } from "@/features/calendar/data/outbound";
 
-import { router } from "../../../../tests/support/next-router";
 import { CalendarSettings } from "./calendar-settings";
 
 const actions = {
@@ -54,11 +60,6 @@ const openGoogle = vi.fn();
 vi.mock("../client/navigate", () => ({
   openGoogle: (url: string) => openGoogle(url),
 }));
-vi.mock(
-  "next/navigation",
-  async () =>
-    (await import("../../../../tests/support/next-router")).nextNavigationMock,
-);
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (code: string) => ({
@@ -185,12 +186,7 @@ async function renderSettings(
 ) {
   actions.getCalendarIntegrationStatusAction.mockResolvedValue(ok(inbound));
   actions.getCalendarOutboundStatusAction.mockResolvedValue(ok(appointments));
-  const view = render(
-    <CalendarSettings
-      businessName="Studio Mila"
-      callbackResult={callbackResult}
-    />,
-  );
+  const view = render(<CalendarSettings callbackResult={callbackResult} />);
   await flush();
   return view;
 }
@@ -209,7 +205,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   Object.values(actions).forEach((mock) => mock.mockReset());
   openGoogle.mockReset();
-  router.replace.mockReset();
+  window.history.replaceState(null, "", "/app/settings/calendar");
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -405,7 +401,9 @@ describe("Booking → Google: appointments", () => {
       ),
     ).toBeTruthy();
     expect(
-      appointments().getByText(/« Rendez-vous — Studio Mila »/),
+      appointments().getByText(
+        /un calendrier séparé, réservé à tes rendez-vous/,
+      ),
     ).toBeTruthy();
     expect(appointments().queryByRole("combobox")).toBeNull(); // no destination to choose
     actions.enableCalendarOutboundAction.mockResolvedValue(
@@ -497,7 +495,9 @@ describe("Booking → Google: appointments", () => {
   it("healthy: active, the dedicated calendar managed by Booking, nothing technical", async () => {
     await renderSettings(connected(), { ...HEALTHY, pendingCount: 0 });
     expect(appointments().getByText("Synchronisation active")).toBeTruthy();
-    expect(appointments().getByText("Rendez-vous — Studio Mila")).toBeTruthy();
+    expect(
+      appointments().getByText("Calendrier de rendez-vous Booking"),
+    ).toBeTruthy();
     expect(appointments().getByText("Géré par Booking")).toBeTruthy();
     const text = document.body.textContent ?? "";
     expect(text).not.toMatch(
@@ -760,9 +760,7 @@ describe("errors and the way back from Google", () => {
       fail("internal"),
     );
     actions.getCalendarOutboundStatusAction.mockResolvedValue(fail("internal"));
-    render(
-      <CalendarSettings businessName="Studio Mila" callbackResult={null} />,
-    );
+    render(<CalendarSettings callbackResult={null} />);
     await flush();
     expect(screen.getByRole("alert")).toBeTruthy();
     actions.getCalendarIntegrationStatusAction.mockResolvedValue(
@@ -776,12 +774,18 @@ describe("errors and the way back from Google", () => {
     ).toBeTruthy();
   });
 
-  it("back from Google: the result is shown once and removed from the address", async () => {
+  it("back from Google: the result is shown once; only its parameter leaves the address", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/app/settings/calendar?calendar=connected&keep=1#availability",
+    );
     await renderSettings(connected(), HEALTHY, "connected");
     expect(screen.getByText("Google Calendar est connecté")).toBeTruthy();
-    expect(router.replace).toHaveBeenCalledWith("/app/settings/calendar", {
-      scroll: false,
-    });
+    const { pathname, search, hash } = window.location;
+    expect(`${pathname}${search}${hash}`).toBe(
+      "/app/settings/calendar?keep=1#availability",
+    );
     fireEvent.click(button("Compris"));
     expect(screen.queryByText("Google Calendar est connecté")).toBeNull();
   });
@@ -789,5 +793,284 @@ describe("errors and the way back from Google", () => {
   it("an unknown result in the address shows nothing", async () => {
     await renderSettings(connected(), HEALTHY, "<b>hello</b>");
     expect(screen.queryByText(/hello/)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex fix round 1
+// ---------------------------------------------------------------------------
+
+const TRAVAIL = calendar({
+  id: "00000000-0000-4000-8000-0000000000a5",
+  name: "Travail",
+});
+const ONLY_PERSO = connected({ calendars: [PERSO, SPORT, TRAVAIL, BOOKING] });
+const on = (item: ConnectedCalendarDto) => ({
+  ...item,
+  blocking: true,
+  protecting: true,
+  syncStatus: "synced" as const,
+});
+
+/** A refresh read (back on the tab) whose answer the test releases. */
+async function heldRefresh() {
+  let release!: (value: unknown) => void;
+  actions.getCalendarIntegrationStatusAction.mockReturnValueOnce(
+    new Promise((resolve) => (release = resolve)),
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(20_000); // past the wake-up interval
+  });
+  act(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  return release;
+}
+
+describe("a read never overwrites a more recent action or read", () => {
+  it("Codex: read [Perso] → Sport ON confirmed → the read answers late → Travail ON sends [Perso, Sport, Travail]", async () => {
+    await renderSettings(ONLY_PERSO, HEALTHY);
+    const reads = actions.getCalendarIntegrationStatusAction.mock.calls.length;
+    const lateRead = await heldRefresh(); // R1: started with only Perso
+    expect(actions.getCalendarIntegrationStatusAction.mock.calls.length).toBe(
+      reads + 1,
+    );
+
+    actions.updateBlockingCalendarsAction.mockResolvedValueOnce(
+      ok([PERSO, on(SPORT), TRAVAIL, BOOKING]),
+    );
+    fireEvent.click(switchFor("Sport")); // M
+    await flush();
+    expect(switchFor("Sport").checked).toBe(true);
+
+    lateRead(ok(ONLY_PERSO)); // R1 answers: [Perso]
+    await flush();
+    expect(switchFor("Sport").checked).toBe(true);
+
+    actions.updateBlockingCalendarsAction.mockResolvedValueOnce(
+      ok([PERSO, on(SPORT), on(TRAVAIL), BOOKING]),
+    );
+    fireEvent.click(switchFor("Travail"));
+    expect(actions.updateBlockingCalendarsAction).toHaveBeenLastCalledWith({
+      calendarIds: [PERSO.id, SPORT.id, TRAVAIL.id],
+    });
+    expect(actions.updateBlockingCalendarsAction).not.toHaveBeenCalledWith({
+      calendarIds: [PERSO.id, TRAVAIL.id],
+    });
+  });
+
+  it("a read sent while the action runs, answered after it, is ignored too", async () => {
+    await renderSettings(ONLY_PERSO, HEALTHY);
+    let confirm!: (value: unknown) => void;
+    actions.updateBlockingCalendarsAction.mockReturnValueOnce(
+      new Promise((resolve) => (confirm = resolve)),
+    );
+    fireEvent.click(switchFor("Sport"));
+    const duringRead = await heldRefresh(); // sent during the action
+
+    confirm(ok([PERSO, on(SPORT), TRAVAIL, BOOKING]));
+    await flush();
+    duringRead(ok(ONLY_PERSO)); // possibly served before the action committed
+    await flush();
+    expect(switchFor("Sport").checked).toBe(true);
+  });
+
+  it("an action that fails does not let an older read through either", async () => {
+    await renderSettings(
+      connected({ calendars: [PERSO, SPORT, BOOKING] }),
+      HEALTHY,
+    );
+    const oldRead = await heldRefresh();
+    actions.updateBlockingCalendarsAction.mockResolvedValueOnce(
+      fail("calendar_provider_unavailable"),
+    );
+    fireEvent.click(switchFor("Sport"));
+    await flush();
+    oldRead(
+      ok(connected({ calendars: [{ ...PERSO, blocking: false }, SPORT] })),
+    );
+    await flush();
+    // The screen keeps what it had; the failure is reported.
+    expect(switchFor("Camille").checked).toBe(true);
+    expect(availability().getByRole("alert")).toBeTruthy();
+  });
+
+  it("read A, then read B; B answers first, A late: A never replaces B", async () => {
+    await renderSettings(ONLY_PERSO, HEALTHY);
+    const readA = await heldRefresh();
+    const readB = await heldRefresh();
+
+    readB(ok(connected({ calendars: [PERSO, on(SPORT), TRAVAIL, BOOKING] })));
+    await flush();
+    expect(switchFor("Sport").checked).toBe(true);
+
+    readA(ok(ONLY_PERSO));
+    await flush();
+    expect(switchFor("Sport").checked).toBe(true);
+  });
+});
+
+describe("a failure inside an open confirmation stays in the dialog", () => {
+  it.each([
+    [
+      "disable",
+      "Désactiver l’ajout des rendez-vous",
+      "Désactiver",
+      "disableCalendarOutboundAction",
+    ],
+    [
+      "disconnect",
+      "Déconnecter Google Calendar",
+      "Déconnecter",
+      "disconnectGoogleCalendarAction",
+    ],
+  ] as const)(
+    "%s fails: the error and its actions are in the dialog, usable by keyboard",
+    async (_label, open, confirmLabel, action) => {
+      await renderSettings(connected(), HEALTHY);
+      fireEvent.click(button(open));
+      actions[action].mockResolvedValueOnce(
+        fail("calendar_provider_unavailable"),
+      );
+      const dialog = screen.getByRole("dialog");
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: confirmLabel }),
+      );
+      await flush();
+
+      // Still open, the error inside it, nothing behind the inert page.
+      expect(screen.getByRole("dialog")).toBe(dialog);
+      const alert = within(dialog).getByRole("alert");
+      expect(alert.textContent).toMatch(/Google ne répond pas/);
+      for (const element of screen.queryAllByRole("alert")) {
+        expect(dialog.contains(element)).toBe(true);
+        expect(element.closest("[inert]")).toBeNull();
+      }
+
+      // Retry and Retour reachable from the keyboard.
+      const retry = within(dialog).getByRole("button", { name: confirmLabel });
+      const back = within(dialog).getByRole("button", { name: "Retour" });
+      for (const control of [retry, back]) {
+        expect((control as HTMLButtonElement).disabled).toBe(false);
+        control.focus();
+        expect(document.activeElement).toBe(control);
+      }
+
+      // A retry that works closes the dialog.
+      actions[action].mockResolvedValueOnce(
+        action === "disableCalendarOutboundAction"
+          ? ok(outbound())
+          : ok({ disconnected: true }),
+      );
+      fireEvent.click(retry);
+      await flush();
+      expect(screen.queryByRole("dialog")).toBeNull();
+    },
+  );
+
+  it("an expired session inside the dialog: the sign-in link is in the dialog, not behind it", async () => {
+    await renderSettings(connected(), HEALTHY);
+    fireEvent.click(button("Déconnecter Google Calendar"));
+    actions.disconnectGoogleCalendarAction.mockResolvedValueOnce(
+      fail("unauthenticated"),
+    );
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Déconnecter" }),
+    );
+    await flush();
+    const links = screen.getAllByRole("link", { name: "Me reconnecter" });
+    expect(links).toHaveLength(1);
+    expect(dialog.contains(links[0]!)).toBe(true);
+    expect(links[0]!.closest("[inert]")).toBeNull();
+  });
+});
+
+describe("a later read that fails keeps the last known state, with a warning", () => {
+  it("stale but usable, retry, then the warning goes away", async () => {
+    await renderSettings(connected(), HEALTHY);
+    actions.getCalendarIntegrationStatusAction.mockResolvedValueOnce(
+      fail("internal"),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await flush();
+
+    expect(
+      screen.getByText("Impossible d’actualiser Google Calendar"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Les informations affichées sont les dernières connues.",
+      ),
+    ).toBeTruthy();
+    // The last known state is still there and usable.
+    expect(appointments().getByText("Synchronisation active")).toBeTruthy();
+    expect(switchFor("Camille").checked).toBe(true);
+    expect(switchFor("Sport").disabled).toBe(false);
+
+    actions.getCalendarIntegrationStatusAction.mockResolvedValue(
+      ok(connected()),
+    );
+    fireEvent.click(button("Réessayer"));
+    await flush();
+    expect(
+      screen.queryByText("Impossible d’actualiser Google Calendar"),
+    ).toBeNull();
+  });
+});
+
+describe("the dedicated calendar is not given a made-up name", () => {
+  it("whatever the business is called now, no 'Rendez-vous — <name>' is shown", async () => {
+    // Created as "Rendez-vous — Studio A"; the business is now "Studio B".
+    await renderSettings(connected(), HEALTHY);
+    expect(
+      appointments().getByText("Calendrier de rendez-vous Booking"),
+    ).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/Rendez-vous —/);
+  });
+});
+
+describe("the 'nothing to do' promise follows the real state", () => {
+  const PROMISE = /Booking n’a besoin d’aucune autre action de ta part/;
+  const required = (
+    actionRequired: CalendarOutboundStatusDto["actionRequired"],
+  ) =>
+    outbound({
+      enabled: true,
+      state: "action_required",
+      health: "action_required",
+      actionRequired,
+      reason: null,
+    });
+
+  it("shown when everything is automatic (healthy, retrying)", async () => {
+    await renderSettings(connected(), HEALTHY);
+    expect(screen.getByText(PROMISE)).toBeTruthy();
+    cleanupRender();
+    await renderSettings(
+      connected(),
+      outbound({ ...HEALTHY, health: "retrying", errorCount: 1 }),
+    );
+    expect(screen.getByText(PROMISE)).toBeTruthy();
+  });
+
+  it.each(["reconnect", "reactivate", "authorize_write"] as const)(
+    "never with %s",
+    async (actionRequired) => {
+      await renderSettings(connected(), required(actionRequired));
+      expect(screen.queryByText(PROMISE)).toBeNull();
+      // Disconnecting stays available.
+      expect(button("Déconnecter Google Calendar")).toBeTruthy();
+    },
+  );
+
+  it("never while the Google connection must be renewed", async () => {
+    await renderSettings(connected({}, "reauth_required"), HEALTHY);
+    expect(screen.queryByText(PROMISE)).toBeNull();
   });
 });
