@@ -53,7 +53,40 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 
-const FUTURE = dateInDays(20);
+/** UTC offset of `zone` at noon UTC of `date` (e.g. "GMT+02:00"). */
+function offsetAt(date: string, zone: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    timeZoneName: "longOffset",
+  })
+    .formatToParts(new Date(`${date}T12:00:00Z`))
+    .find((part) => part.type === "timeZoneName")!.value;
+}
+
+/**
+ * The first day from `days` days ahead that is an ordinary 24-hour day in
+ * the zones these tests use: the expectations below (opening ranges, 48
+ * half-hours a day) assume no DST change on that day. A plain "in 20 days"
+ * lands on a 25-hour day twice a year.
+ */
+function ordinaryDayOffset(days: number): number {
+  for (let offset = days; ; offset += 1) {
+    if (
+      ["Europe/Paris", "America/New_York"].every(
+        (zone) =>
+          offsetAt(dateInDays(offset - 1), zone) ===
+          offsetAt(dateInDays(offset + 1), zone),
+      )
+    ) {
+      return offset;
+    }
+  }
+}
+
+const FUTURE_OFFSET = ordinaryDayOffset(20);
+const FUTURE = dateInDays(FUTURE_OFFSET);
+/** Another ordinary day, after FUTURE. */
+const LATER = dateInDays(ordinaryDayOffset(FUTURE_OFFSET + 1));
 const PAST = dateInDays(-3);
 
 type Agenda = {
@@ -945,14 +978,14 @@ describe("editing and rescheduling", () => {
     const appointment = await createOk(a, "10:00");
 
     const moved = ok(
-      await edit(a, appointment, { time: "15:30", date: dateInDays(21) }),
+      await edit(a, appointment, { time: "15:30", date: LATER }),
     );
 
     expect(moved).toMatchObject({
       id: appointment.id,
       version: appointment.version + 1,
-      localStartsAt: `${dateInDays(21)}T15:30`,
-      localEndsAt: `${dateInDays(21)}T16:30`,
+      localStartsAt: `${LATER}T15:30`,
+      localEndsAt: `${LATER}T16:30`,
     });
     // The old time is free again.
     await createOk(a, "10:00");
@@ -1568,7 +1601,7 @@ describe("idempotency key", () => {
 
     for (const changed of [
       { time: "14:00" },
-      { date: dateInDays(21) },
+      { date: LATER },
       { serviceId: a.shortService },
       { client: { type: "existing", clientId: other } },
       { client: { type: "new", firstName: "Ghost", email } },
