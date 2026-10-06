@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { sendWithRetry, withDeadline, type RetryPolicy } from "./http";
+import {
+  sendWithRetry,
+  withDeadline,
+  withinDeadline,
+  type RetryPolicy,
+} from "./http";
 import { CalendarProviderError } from "./types";
 
 const policy = (
@@ -162,5 +167,93 @@ describe("withDeadline", () => {
     await expect(
       withDeadline(Date.now() + 1000, async () => "done"),
     ).resolves.toBe("done");
+  });
+});
+
+describe("withinDeadline: which came first, said explicitly", () => {
+  const sentinel = new Error("sentinel");
+
+  async function settle<T>(promise: Promise<T>) {
+    return promise.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+  }
+
+  it("A. its timer firing a millisecond before the clock reaches the deadline: the deadline, signal aborted", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      let signal!: AbortSignal;
+      const outcome = settle(
+        withinDeadline(Date.now() + 1000, (s) => {
+          signal = s;
+          return new Promise<never>(() => undefined);
+        }),
+      );
+      vi.setSystemTime(Date.now() - 1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await outcome).toEqual({ value: { expired: true } });
+      expect(signal.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("B. a real failure a millisecond before the deadline, looked at after the clock passed it: that failure, unchanged", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const start = Date.now();
+      let fail!: (error: Error) => void;
+      let signal!: AbortSignal;
+      const outcome = withinDeadline(start + 1000, (s) => {
+        signal = s;
+        return new Promise<never>((_, reject) => (fail = reject));
+      });
+      await vi.advanceTimersByTimeAsync(999);
+      vi.setSystemTime(start + 1001);
+      fail(sentinel);
+      expect(await settle(outcome)).toEqual({ error: sentinel });
+      expect(signal.aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("C. the deadline first, a real failure later: the deadline; the late failure is consumed", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      let fail!: (error: Error) => void;
+      const outcome = settle(
+        withinDeadline(Date.now() + 1000, () => {
+          return new Promise<never>((_, reject) => (fail = reject));
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await outcome).toEqual({ value: { expired: true } });
+      fail(sentinel);
+      vi.useRealTimers();
+      for (let turn = 0; turn < 5; turn += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      vi.useRealTimers();
+    }
+  });
+
+  it("a value before the deadline; an expired deadline never starts the run", async () => {
+    expect(await withinDeadline(Date.now() + 1000, async () => 42)).toEqual({
+      expired: false,
+      value: 42,
+    });
+    const run = vi.fn(async () => 1);
+    expect(await withinDeadline(Date.now() - 1, run)).toEqual({
+      expired: true,
+    });
+    expect(run).not.toHaveBeenCalled();
   });
 });

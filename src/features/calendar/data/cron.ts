@@ -1,6 +1,6 @@
 import "server-only";
 
-import { withDeadline } from "@/features/calendar/providers/http";
+import { withinDeadline } from "@/features/calendar/providers/http";
 
 import { refreshConnectionCalendars } from "./connection";
 import type { CalendarDeps } from "./deps";
@@ -31,6 +31,12 @@ import { syncCalendar, type SyncOutcome } from "./sync";
 
 /** Share of a run's budget inbound may use; outbound keeps the rest. */
 export const INBOUND_SHARE = 0.6;
+
+/** A run's budget (the route's limit leaves room for the response). */
+export const CALENDAR_JOB_BUDGET_MS = 50_000;
+
+/** Kept at the end of the run, after outbound's deadline. */
+export const OUTBOUND_TAIL_MS = 500;
 
 type InboundRun = {
   due: number;
@@ -104,35 +110,29 @@ export async function runCalendarJob(
   deps: CalendarDeps,
   options: { budgetMs?: number; limit?: number } = {},
 ) {
-  const budget = options.budgetMs ?? 50_000;
+  const budget = options.budgetMs ?? CALENDAR_JOB_BUDGET_MS;
   const start = Date.now();
   const deadline = start + budget;
   const inboundDeadline = start + Math.floor(budget * INBOUND_SHARE);
 
   const inbound: InboundRun = { due: 0, processed: [] };
   let inboundFailure: unknown = null;
-  let inboundSignal: AbortSignal | undefined;
-  await withDeadline(inboundDeadline, (signal) => {
-    inboundSignal = signal;
-    return runInbound(
-      deps,
-      inbound,
-      inboundDeadline,
-      signal,
-      options.limit ?? 50,
-    );
-  }).catch((error: unknown) => {
-    // Its deadline is known by its signal (aborted before the rejection),
-    // never by the clock alone: a timer may fire a millisecond before
-    // Date.now() reaches the deadline.
-    if (inboundSignal?.aborted || Date.now() >= inboundDeadline) {
+  // Which came first is said by withinDeadline itself, never inferred from
+  // the clock when the outcome is read: a real failure just before the
+  // deadline stays a failure, a timer firing a little early is the
+  // deadline.
+  await withinDeadline(inboundDeadline, (signal) =>
+    runInbound(deps, inbound, inboundDeadline, signal, options.limit ?? 50),
+  ).then(
+    (outcome) => {
       // Abandoned at its deadline: outbound keeps its share.
-      logCalendar("inbound_deadline_exceeded", {}, "warn");
-    } else {
+      if (outcome.expired) logCalendar("inbound_deadline_exceeded", {}, "warn");
+    },
+    (error: unknown) => {
       // Reported once outbound has had its turn.
       inboundFailure = error;
-    }
-  });
+    },
+  );
   // What inbound did within its share (a pass still running in the
   // background is not reported).
   const processed = [...inbound.processed];
@@ -141,12 +141,19 @@ export async function runCalendarJob(
   // Outbound's own slice: at least (1 - INBOUND_SHARE) of the budget.
   const left = deadline - Date.now();
   if (left > 2000) {
-    outbound = await withDeadline(deadline, (signal) =>
-      processOutbound(deps, { budgetMs: left - 500, signal }),
-    ).catch(() => {
-      logCalendar("outbound_job_failed", {}, "error");
-      return null;
-    });
+    outbound = await withinDeadline(deadline, (signal) =>
+      processOutbound(deps, { budgetMs: left - OUTBOUND_TAIL_MS, signal }),
+    ).then(
+      (outcome) => {
+        if (!outcome.expired) return outcome.value;
+        logCalendar("outbound_deadline_exceeded", {}, "warn");
+        return null;
+      },
+      () => {
+        logCalendar("outbound_job_failed", {}, "error");
+        return null;
+      },
+    );
   }
   if (inboundFailure) throw inboundFailure;
   logCalendar("job_done", { count: processed.length });

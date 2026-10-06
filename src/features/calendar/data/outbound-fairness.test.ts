@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CalendarDeps } from "./deps";
 import { logCalendar } from "./log";
-import { OUTBOUND_WRITE_SHARE, processOutbound } from "./outbound";
+import { outboundPhases, processOutbound } from "./outbound";
 import { backfillOutbound, reconcileOutbound } from "./reconcile";
 
-vi.mock("./reconcile", () => ({
+vi.mock("./reconcile", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./reconcile")>()),
   backfillOutbound: vi.fn(),
   reconcileOutbound: vi.fn(),
 }));
@@ -87,7 +88,7 @@ async function drain() {
 }
 
 const BUDGET = 25_000;
-const PRIORITY = Math.floor(BUDGET * OUTBOUND_WRITE_SHARE);
+const PRIORITY = outboundPhases(BUDGET).priorityMs;
 
 beforeEach(() => {
   unhandled.length = 0;

@@ -692,6 +692,18 @@ L'outbound garde au moins 40 % du budget de la tâche (`INBOUND_SHARE`, inchang�
 4. réconciliation, avec au moins le reste, et tout le temps que les écritures laissent ;
 5. de nouveau les écritures avec le temps que la réconciliation laisse, si elles avaient été coupées ou si des réparations viennent d'être enregistrées.
 
+**Budget.** La part de la réconciliation se déduit de ce qu'il lui faut pour démarrer. Une page exige 3 s restantes (`RECONCILIATION_PAGE_MIN_MS`), et une passe 3,5 s (`RECONCILIATION_MIN_START_MS` : le claim plus une page). La réserve vaut au moins `RECONCILIATION_RESERVE_MS` = minimum de démarrage + 0,5 s de marge d'ordonnancement, ou 25 % du budget outbound si c'est plus. Elle n'est accordée que si le budget peut aussi contenir une écriture (1,5 s). Un budget plus court ne réserve rien : les écritures gardent leur priorité, et la réconciliation ne démarre pas sans ses 3,5 s.
+
+Au plus petit budget réel (50 s de tâche, 30 s d'inbound, 0,5 s de marge, soit 19,5 s), cela donne 14,625 s d'écritures et 4,875 s de réconciliation. Testé avec le vrai ordonnanceur et le vrai réconciliateur.
+
+**Échéance ou panne.** Ce qui a gagné la course est donné explicitement par `withinDeadline` (`{ expired: true }`, ou la valeur, ou l'erreur réelle inchangée), jamais déduit de l'horloge au moment où l'on regarde le résultat :
+
+- un timer qui se déclenche une milliseconde avant que l'horloge n'atteigne l'échéance reste l'échéance ;
+- une vraie panne une milliseconde avant l'échéance reste une panne, journalisée ou remontée ;
+- une panne qui arrive après l'échéance est consommée sans bruit.
+
+Une erreur survenue alors que le passage entier a été abandonné par la tâche (signal parent annulé) n'est pas journalisée une seconde fois : la tâche a déjà signalé cet abandon.
+
 La phase prioritaire (créations, backfill, écritures) a une **échéance réelle**, comme les deux sens de la tâche, qui couvre aussi ses appels base de données (claim, découverte du travail dû, libérations). À l'échéance, son signal est annulé et l'orchestrateur cesse d'attendre. Une réponse ou un échec tardif est consommé, jamais un rejet non géré. Ce qui arrive en retard reste sans danger : un claim accordé trop tard n'est jamais utilisé, son bail (2 min) expire et le miroir est réclamé de nouveau, et tout résultat enregistré passe par l'autorité du claim. Une erreur de la phase prioritaire (erreur base, `statement_timeout` sur un verrou) est journalisée et ne supprime jamais le tour de la réconciliation. Testé : claim qui ne répond pas, réponse et échec tardifs, et claim bloqué par un vrai verrou PostgreSQL. Chaque appel Google porte l'échéance de sa phase. Un claim qu'un passage ne traitera pas (business arrêté, temps écoulé) est rendu tout de suite (`calendar_outbound_release_mirror`), sans attendre son bail. Un business arrêté (limite, `action_required`, autorité perdue) n'est plus réclamé dans le passage. Le kick après une action n'exécute que créations et écritures (un seul claim, comme avant).
 
 ### `action_required`, désactivation et déconnexion

@@ -40,6 +40,19 @@ export const RECONCILIATION_BUSINESSES_PER_RUN = 5;
 /** Pages (250 events each) listed at most per business and run; a longer
  * listing resumes at the next run from its stored page token. */
 export const RECONCILIATION_PAGES_PER_PASS = 4;
+/**
+ * Time a page needs left to be started: the listing call (bounded by the
+ * pass's deadline: it is aborted, never outlives it), the snapshot and the
+ * page record. With less, the pass stops and its cursor is kept.
+ */
+export const RECONCILIATION_PAGE_MIN_MS = 3000;
+/**
+ * Time a pass needs left to be started: claiming a business, then one
+ * page. The outbound scheduler derives the slice it reserves for
+ * reconciliation from it (outbound.ts, RECONCILIATION_RESERVE_MS), so a
+ * reserved slice is always one reconciliation can start in.
+ */
+export const RECONCILIATION_MIN_START_MS = RECONCILIATION_PAGE_MIN_MS + 500;
 /** Businesses and appointments enrolled at most per backfill run. */
 export const BACKFILL_BUSINESSES_PER_RUN = 5;
 export const BACKFILL_APPOINTMENTS_PER_BUSINESS = 100;
@@ -169,7 +182,7 @@ async function reconcileCalendar(
     if (
       page >= options.maxPages ||
       options.signal?.aborted === true ||
-      options.deadline - Date.now() < 3000
+      options.deadline - Date.now() < RECONCILIATION_PAGE_MIN_MS
     ) {
       // Stopped by this run's limits: resumed at the next one.
       await deps.admin.rpc(
@@ -317,7 +330,7 @@ export async function reconcileOutbound(
 
   while (handled.length < maxBusinesses) {
     if (options.signal?.aborted === true) break;
-    if (options.deadline - Date.now() < 5000) break;
+    if (options.deadline - Date.now() < RECONCILIATION_MIN_START_MS) break;
     const { data, error } = await abortable(
       deps.admin.rpc("calendar_outbound_claim_reconciliation", {
         p_exclude: handled,

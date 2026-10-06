@@ -69,6 +69,51 @@ export function withDeadline<T>(
   ]).finally(() => clearTimeout(timer));
 }
 
+/** What a run bounded by `withinDeadline` came to. */
+export type DeadlineOutcome<T> =
+  | { expired: false; value: T }
+  /** The deadline came first: the run's signal was aborted. */
+  | { expired: true };
+
+/**
+ * Runs an operation within a deadline (epoch ms) and says which came first,
+ * explicitly: never inferred from the clock when the outcome is read.
+ *
+ * - the deadline first: the run's signal is aborted and the outcome is
+ *   `{ expired: true }` (also when the timer fires a little before
+ *   Date.now() reads the deadline). The run's late answer or failure is
+ *   consumed, never an unhandled rejection;
+ * - the run first: its value (`{ expired: false }`), or its own error,
+ *   rejected unchanged, however late the caller looks at it;
+ * - already expired: the run is never started.
+ */
+export function withinDeadline<T>(
+  deadline: number,
+  run: (signal: AbortSignal) => PromiseLike<T>,
+): Promise<DeadlineOutcome<T>> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return Promise.resolve({ expired: true });
+
+  const controller = new AbortController();
+  let operation: Promise<T>;
+  try {
+    operation = Promise.resolve(run(controller.signal));
+  } catch (error) {
+    operation = Promise.reject(error);
+  }
+  operation.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    operation.then((value) => ({ expired: false as const, value })),
+    new Promise<{ expired: true }>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        resolve({ expired: true });
+      }, remaining);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 export function isRetryableStatus(status: number) {
   return status === 429 || status >= 500;
 }

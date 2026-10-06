@@ -6,7 +6,7 @@ import {
   type CalendarProviderId,
   type OutboundEvent,
 } from "@/features/calendar/providers/types";
-import { withDeadline } from "@/features/calendar/providers/http";
+import { withinDeadline } from "@/features/calendar/providers/http";
 import { encryptSecret } from "@/lib/crypto/secret-box";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
@@ -19,7 +19,11 @@ import {
 import { tokenAad, type CalendarDeps } from "./deps";
 import { logCalendar } from "./log";
 import { outboundEvent } from "./outbound-event";
-import { backfillOutbound, reconcileOutbound } from "./reconcile";
+import {
+  backfillOutbound,
+  RECONCILIATION_MIN_START_MS,
+  reconcileOutbound,
+} from "./reconcile";
 import {
   getAccessToken,
   StaleCredentialsError,
@@ -797,6 +801,31 @@ export type OutboundRunResult = {
  */
 export const OUTBOUND_WRITE_SHARE = 0.75;
 
+/**
+ * The slice reserved for reconciliation is at least what a pass needs to
+ * start (RECONCILIATION_MIN_START_MS) plus the scheduling slack between the
+ * priority deadline and its first check: a reserved slice is never one it
+ * refuses. Derived, never a second number to keep in step.
+ */
+export const RECONCILIATION_RESERVE_MS = RECONCILIATION_MIN_START_MS + 500;
+
+/**
+ * How an outbound budget of the periodic job is split. Writes have
+ * priority for OUTBOUND_WRITE_SHARE of it; reconciliation keeps the rest,
+ * raised to RECONCILIATION_RESERVE_MS when the budget can hold that next to
+ * a write. A budget too small for both reserves nothing: writes keep their
+ * priority and reconciliation only gets what they leave (it starts only
+ * with RECONCILIATION_MIN_START_MS left).
+ */
+export function outboundPhases(budget: number) {
+  const share = Math.floor(budget * (1 - OUTBOUND_WRITE_SHARE));
+  const reconciliationMs =
+    budget >= MIN_WRITE_MS + RECONCILIATION_RESERVE_MS
+      ? Math.max(share, RECONCILIATION_RESERVE_MS)
+      : share;
+  return { priorityMs: budget - reconciliationMs, reconciliationMs };
+}
+
 /** Mirrors claimed per batch by the periodic job (at most 3 of one
  * business), so that what a deadline leaves unprocessed is a few claims
  * (released), and businesses alternate. */
@@ -971,8 +1000,10 @@ function either(phase: AbortSignal | undefined, run: AbortSignal | undefined) {
  * the backfill and reconciliation, in two phases with real deadlines:
  *
  * 1. priority: creations, backfill (local enrollment, so that what it
- *    enrolls is written in the same run) and due writes, until
- *    OUTBOUND_WRITE_SHARE of the budget. The deadline covers every await
+ *    enrolls is written in the same run) and due writes, for
+ *    outboundPhases(budget).priorityMs (OUTBOUND_WRITE_SHARE of the
+ *    budget, less if needed to reserve a slice reconciliation can start
+ *    in). The deadline covers every await
  *    of the phase, database calls included: at the deadline the phase's
  *    signal is aborted and the run stops waiting for it (a late answer or
  *    failure is consumed, never an unhandled rejection). What lands late
@@ -1040,36 +1071,36 @@ export async function processOutbound(
     return result;
   }
 
-  const priorityDeadline = start + Math.floor(budget * OUTBOUND_WRITE_SHARE);
-  // A phase run with a real deadline; true when it was cut short by it.
-  // A failure of a write phase (a database error, a statement timeout on a
-  // lock) never takes reconciliation's turn either: it is logged, and what
-  // it left undone stays due for the next run.
+  const priorityDeadline = start + outboundPhases(budget).priorityMs;
+  // A phase run with a real deadline; true when it was cut short. Which
+  // came first is said by withinDeadline, never inferred from the clock:
+  // the phase's deadline is expected (a warning), a real failure is an
+  // error even when it happens a millisecond before the deadline. A
+  // failure never takes reconciliation's turn: what the phase left undone
+  // stays due for the next run. When the run itself was abandoned (its
+  // parent signal aborted at the periodic job's deadline), whatever fails
+  // afterwards is that abandonment, already reported by the job.
   const phase = (
     until: number,
     run: (signal?: AbortSignal) => Promise<boolean>,
-  ) => {
-    let phaseSignal: AbortSignal | undefined;
-    return withDeadline(until, (signal) => {
-      phaseSignal = signal;
-      return run(either(signal, options.signal));
-    }).catch((error: unknown) => {
-      // The phase's own deadline: its signal, aborted before the
-      // rejection (a timer may fire just before the clock reads it).
-      if (phaseSignal?.aborted || Date.now() >= until) {
+  ) =>
+    withinDeadline(until, (signal) => run(either(signal, options.signal))).then(
+      (outcome) => {
+        if (!outcome.expired) return outcome.value;
         logCalendar("outbound_phase_deadline_exceeded", {}, "warn");
-      } else {
-        logCalendar(
-          "outbound_writes_failed",
-          {
-            code: error instanceof AppException ? error.code : "internal",
-          },
-          "error",
-        );
-      }
-      return true;
-    });
-  };
+        return true;
+      },
+      (error: unknown) => {
+        if (!aborted()) {
+          logCalendar(
+            "outbound_writes_failed",
+            { code: error instanceof AppException ? error.code : "internal" },
+            "error",
+          );
+        }
+        return true;
+      },
+    );
 
   const cut = await phase(priorityDeadline, async (signal) => {
     const { data, error } = await abortable(
