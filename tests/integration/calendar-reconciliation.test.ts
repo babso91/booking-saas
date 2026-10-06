@@ -40,7 +40,7 @@ import type { ActionResult } from "@/lib/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 import type { Database } from "@/types/database.generated";
 
-import { FakeGoogle } from "../support/fake-google";
+import { FakeGoogle, pageOffsetOf } from "../support/fake-google";
 import {
   createBusiness,
   createClientRecord,
@@ -922,7 +922,7 @@ describe("full scans", () => {
     fake.purgeEvent(calendarId, eventIdOf(ids[3]!));
     fake.pageSize = 1;
     fake.failNext(
-      (url) => isListingUrl(url) && url.searchParams.get("pageToken") === "2",
+      (url) => isListingUrl(url) && pageOffsetOf(url) === 2,
       503,
       4,
     );
@@ -931,7 +931,7 @@ describe("full scans", () => {
     const failed = (await recon(s))!;
     expect(failed).toMatchObject({
       sync_token: null,
-      page_token: "2",
+      page_token: expect.stringMatching(/^p\d+-2$/),
       attempts: 1,
       claim_id: null,
       last_error: "unavailable",
@@ -959,7 +959,10 @@ describe("full scans", () => {
     fake.pageSize = 1;
     expect(await reconcile({ maxPages: 4 })).toMatchObject({ reconciled: 0 });
     const paused = (await recon(s))!;
-    expect(paused).toMatchObject({ page_token: "4", claim_id: null });
+    expect(paused).toMatchObject({
+      page_token: expect.stringMatching(/^p\d+-4$/),
+      claim_id: null,
+    });
     expect(paused.next_reconcile_at.getTime()).toBeLessThanOrEqual(Date.now());
     expect(await reconcile({ maxPages: 4 })).toMatchObject({
       reconciled: 1,
@@ -1158,7 +1161,7 @@ describe("authority and races", () => {
     },
   );
 
-  it("drift during a write: a page older than the write never records a repair", async () => {
+  it("stale snapshot: a page read before the write lands records at most one redundant repair, which settles", async () => {
     const s = await setup();
     const calendarId = await enabled(s);
     await only(s);
@@ -1171,9 +1174,184 @@ describe("authority and races", () => {
     await held.reached;
     await run(s);
     held.release();
-    expect(await pass).toMatchObject({ reconciled: 1, drifted: 0 });
-    expect(repairDue(await mirror(a.id))).toBe(false);
+    // Indistinguishable from a manual edit made after the write: repaired.
+    expect(await pass).toMatchObject({ reconciled: 1, drifted: 1 });
+    expect(repairDue(await mirror(a.id))).toBe(true);
+    expect(await mirror(a.id)).toMatchObject({
+      desired_revision: "2",
+      applied_revision: "2",
+    });
+    const patches = fake.count((_url, method) => method === "PATCH");
+    await run(s);
+    expect(fake.count((_url, method) => method === "PATCH")).toBe(patches + 1);
     expectCanonical(calendarId, a.id, "17:00");
+    // Booking's own write comes back identical: nothing more, no loop.
+    await due(s);
+    expect(await reconcile()).toMatchObject({ drifted: 0 });
+    const writes = googleWrites();
+    await run(s);
+    expect(googleWrites()).toBe(writes);
+    expect(repairDue(await mirror(a.id))).toBe(false);
+  });
+
+  it("BLOCKER: drift observed while the writer's answer is still pending is repaired after it completes, with an empty next listing", async () => {
+    const { s, calendarId, a } = await reconciled();
+    await reschedule(s, a.id, "17:00");
+    // The writer's patch is applied at Google; its answer is held.
+    const held = fake.hold((_url, method) => method === "PATCH");
+    const worker = run(s);
+    await held.reached;
+    expect(instant(storedEvent(calendarId, a.id)!.start.dateTime)).toBe(
+      at(D, "17:00"),
+    );
+    // The professional edits the event after that write.
+    fake.editEvent(calendarId, eventIdOf(a.id), { summary: "B" });
+    // Incremental listing: the mirror is still pending locally.
+    expect(await mirror(a.id)).toMatchObject({
+      desired_revision: "2",
+      applied_revision: "1",
+    });
+    expect(await reconcile()).toMatchObject({ reconciled: 1, drifted: 1 });
+    held.release();
+    expect(await worker).toMatchObject({ applied: 1 });
+    // The old success acknowledged its revision, not the newer drift.
+    const row = (await mirror(a.id))!;
+    expect(row).toMatchObject({ desired_revision: "2", applied_revision: "2" });
+    expect(repairDue(row)).toBe(true);
+    // Google has nothing new to say: the cursor consumed the edit.
+    await due(s);
+    const before = fake.requests.length;
+    expect(await reconcile()).toMatchObject({ drifted: 0 });
+    const listed = fake.requests
+      .slice(before)
+      .filter((request) => isListing(request.url, request.method));
+    expect(listed).toHaveLength(1);
+    // Convergence without any new remote change.
+    await run(s);
+    expectCanonical(calendarId, a.id, "17:00");
+    expect(repairDue(await mirror(a.id))).toBe(false);
+  });
+
+  it("BLOCKER: drift observed on a page requested before a write that completed meanwhile (applied_at >= page_started_at) is repaired", async () => {
+    const { s, calendarId, a } = await reconciled();
+    await reschedule(s, a.id, "17:00");
+    // When the listing request reaches Google: the writer completes, then
+    // the professional edits the event; the page shows that edit.
+    let once = true;
+    fake.hooks.push(async (url, method) => {
+      if (!once || !isListing(url, method)) return;
+      once = false;
+      expect(await run(s)).toMatchObject({ applied: 1 });
+      fake.editEvent(calendarId, eventIdOf(a.id), { summary: "B" });
+    });
+    expect(await reconcile()).toMatchObject({ drifted: 1 });
+    const { rows } = await db.query(
+      `select m.applied_at >= r.page_started_at as after
+       from private.appointment_calendar_mirrors m, private.calendar_outbound_reconciliation r
+       where m.appointment_id = $1 and r.business_id = $2`,
+      [a.id, s.business.id],
+    );
+    expect(rows[0].after).toBe(true);
+    expect(repairDue(await mirror(a.id))).toBe(true);
+    await due(s);
+    expect(await reconcile()).toMatchObject({ drifted: 0 });
+    await run(s);
+    expectCanonical(calendarId, a.id, "17:00");
+  });
+
+  it("R1 in flight, R2 observed meanwhile: the R1 success acknowledges R1 only, R2 is repaired next", async () => {
+    const { s, calendarId, a } = await reconciled();
+    fake.editEvent(calendarId, eventIdOf(a.id), { summary: "B" });
+    expect(await reconcile()).toMatchObject({ drifted: 1 });
+    const held = fake.hold((_url, method) => method === "PATCH");
+    const worker = run(s);
+    await held.reached;
+    expectCanonical(calendarId, a.id);
+    fake.editEvent(calendarId, eventIdOf(a.id), { summary: "C" });
+    await due(s);
+    expect(await reconcile()).toMatchObject({ drifted: 1 });
+    held.release();
+    await worker;
+    expect(await mirror(a.id)).toMatchObject({
+      repair_generation: "2",
+      repaired_generation: "1",
+    });
+    await run(s);
+    expectCanonical(calendarId, a.id);
+    expect(await mirror(a.id)).toMatchObject({ repaired_generation: "2" });
+  });
+
+  it("the cursor is never committed without the repairs it acknowledges: a failed page record keeps the change for the next pass", async () => {
+    const { s, calendarId, a } = await reconciled();
+    const token = (await recon(s))!.sync_token;
+    fake.editEvent(calendarId, eventIdOf(a.id), { summary: "B" });
+    const rpc = admin.rpc.bind(admin);
+    const spy = vi.spyOn(admin, "rpc").mockImplementation(((
+      name: string,
+      ...rest: unknown[]
+    ) =>
+      name === "calendar_outbound_reconciliation_page"
+        ? Promise.resolve({
+            data: null,
+            error: { message: "boom", code: "XX000", details: "", hint: "" },
+          })
+        : (rpc as (...args: unknown[]) => unknown)(name, ...rest)) as never);
+    await expect(reconcile()).rejects.toBeDefined();
+    spy.mockRestore();
+    expect((await recon(s))!.sync_token).toBe(token);
+    expect(repairDue(await mirror(a.id))).toBe(false);
+    // Its lease expires; the same change is listed and recorded again.
+    await db.query(
+      "update private.calendar_outbound_reconciliation set lease_until = now() - interval '1 second' where business_id = $1",
+      [s.business.id],
+    );
+    expect(await reconcile()).toMatchObject({ drifted: 1 });
+    await run(s);
+    expectCanonical(calendarId, a.id);
+  });
+
+  it("the page record is one transaction: a failing repair statement leaves cursor and mirrors untouched", async () => {
+    const { s, a } = await reconciled();
+    const token = (await recon(s))!.sync_token;
+    const { rows } = await db.query(
+      "select public.calendar_outbound_claim_reconciliation('{}') as claim",
+    );
+    const claim = rows[0].claim as { claimId: string };
+    const failed = await outcome(
+      db.query(
+        `select public.calendar_outbound_reconciliation_page($1, $2,
+           jsonb_build_array(jsonb_build_object('appointment_id', $3::text), jsonb_build_object('appointment_id', 'not-a-uuid')),
+           '{}', null, 'sync-new')`,
+        [s.business.id, claim.claimId, a.id],
+      ),
+    );
+    expect(failed).toMatch(/invalid input syntax for type uuid/);
+    expect((await recon(s))!.sync_token).toBe(token);
+    expect(await mirror(a.id)).toMatchObject({ repair_generation: "0" });
+  });
+
+  it("a manual edit between two pages of a full scan is seen by the next incremental listing and repaired", async () => {
+    const s = await setup();
+    const calendarId = await enabled(s);
+    await only(s);
+    const a = await createAppointment(s, "09:00");
+    await createAppointment(s, "11:00");
+    await createAppointment(s, "13:00");
+    await run(s);
+    fake.pageSize = 1;
+    // After page 1 (a), a is edited by hand.
+    let once = true;
+    fake.hooks.push((url, method) => {
+      if (once && isListing(url, method) && pageOffsetOf(url) === 1) {
+        once = false;
+        fake.editEvent(calendarId, eventIdOf(a.id), { summary: "B" });
+      }
+    });
+    expect(await reconcile()).toMatchObject({ reconciled: 1, drifted: 0 });
+    await due(s);
+    expect(await reconcile()).toMatchObject({ drifted: 1 });
+    await run(s);
+    expectCanonical(calendarId, a.id, "09:00");
   });
 
   it("a local change while the repair is at Google: the repair is acknowledged, the newer revision stays due", async () => {
@@ -1368,6 +1546,35 @@ describe("isolation and scheduling", () => {
     expect(result).toMatchObject({ applied: 0, retried: 1, reconciled: 1 });
     expect((await recon(s))!.provider_calendar_id).toBe(calendarId);
   }, 45_000);
+
+  it("a writer claim stuck on a database lock (statement timeout) never takes reconciliation's turn; the write is applied by the next run", async () => {
+    const s = await setup();
+    const calendarId = await enabled(s);
+    await only(s);
+    const a = await createAppointment(s, "10:00");
+    await run(s);
+    // b is due (never written): only the writer claims it. Its mirror is
+    // locked, so the claim waits in PostgreSQL until the role's statement
+    // timeout cancels it.
+    const b = await createAppointment(s, "14:00");
+    const locker = await openTransaction();
+    await locker.connection.query(
+      "select 1 from private.appointment_calendar_mirrors where appointment_id = $1 for update",
+      [b.id],
+    );
+    const started = Date.now();
+    const result = await maintain(24_000);
+    expect(result).toMatchObject({ applied: 0, reconciled: 1 });
+    expect(Date.now() - started).toBeLessThan(24_000);
+    expect((await recon(s))!.sync_token).toEqual(expect.any(String));
+    await closeTransaction(locker, "commit");
+
+    // The cancelled claim left nothing behind: the next run writes.
+    expect(await mirror(b.id)).toMatchObject({ applied_revision: "0" });
+    expect(await run(s)).toMatchObject({ applied: 1 });
+    expectCanonical(calendarId, a.id, "10:00");
+    expect(storedEvent(calendarId, b.id)!.status).toBe("confirmed");
+  }, 60_000);
 
   it("the periodic job end to end: backfill, writes, reconciliation and repair in one run", async () => {
     const s = await setup();

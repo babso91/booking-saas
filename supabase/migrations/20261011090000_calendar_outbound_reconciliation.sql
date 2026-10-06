@@ -697,8 +697,8 @@ $$;
 -- The local state of the listed events that are this business's mirrors
 -- (deterministic id; any other id is ignored), as the writer would derive
 -- it now: the comparison itself uses the writer's serializer. Read only.
---   pending   a revision is waiting for the writer: it rewrites the whole
---             event anyway, the listing is not compared;
+--   pending   a revision is waiting for the writer (informational: an
+--             observed difference is recorded all the same);
 --   active    the event must exist (appointment present, not cancelled);
 --   eligible  the appointment has not ended (or no longer exists): only
 --             those are repaired, history is left alone.
@@ -749,12 +749,18 @@ begin
 end;
 $$;
 
--- Records one listed page, only with the claim's full authority:
---   - drift found in it becomes a repair request of the mirror, only if the
---     mirror is still at the revision the comparison used, nothing is
---     pending, and no write was applied after the page was requested (the
---     page may predate it); a mirror changed since is rewritten by the
---     writer anyway, never repaired from a stale comparison;
+-- Records one listed page, only with the claim's full authority, in one
+-- transaction with the cursor it acknowledges (a failure records neither):
+--   - drift observed in it (an event Google returned whose managed fields
+--     differ) always becomes a repair request of the mirror, whatever the
+--     writer is doing: a revision pending, a write in flight or applied
+--     since the page was requested. The cursor stored below consumes that
+--     change at Google; skipping the repair would lose it for good. A
+--     repair only makes the writer reapply what Booking says now (never
+--     the remote state, never a revision marked applied); one made
+--     redundant by a write that landed after the page was read costs one
+--     idempotent update, and the next listing returns Booking's own write,
+--     which matches. Only ended appointments are left alone (history);
 --   - in a full scan, every listed event of a mirror is marked seen;
 --   - the last page (nextSyncToken) of a full scan decides the missing
 --     events: a mirror that must exist in this calendar, applied before the
@@ -798,26 +804,28 @@ begin
     return pg_catalog.jsonb_build_object('result', 'superseded', 'repairs', 0);
   end if;
 
+  -- A claimed writer acknowledges at most the repair generation it
+  -- captured (complete_mirror): this newer one stays due after it.
   update private.appointment_calendar_mirrors m
   set repair_generation = m.repair_generation + 1,
-      -- Already due (a repair waiting for its backoff): its schedule stays.
+      -- Already due (a revision or a repair, maybe waiting for a backoff):
+      -- its schedule stays.
       next_attempt_at = case
-        when m.repair_generation > m.repaired_generation then m.next_attempt_at
+        when m.desired_revision > m.applied_revision
+          or m.repair_generation > m.repaired_generation then m.next_attempt_at
         else pg_catalog.now()
       end,
       attempts = case
-        when m.repair_generation > m.repaired_generation then m.attempts
+        when m.desired_revision > m.applied_revision
+          or m.repair_generation > m.repaired_generation then m.attempts
         else 0
       end
   from (
-    select distinct d.appointment_id, d.revision
-    from pg_catalog.jsonb_to_recordset(p_drifted) as d(appointment_id uuid, revision bigint)
+    select distinct d.appointment_id
+    from pg_catalog.jsonb_to_recordset(p_drifted) as d(appointment_id uuid)
   ) d
   where m.appointment_id = d.appointment_id
     and m.business_id = p_business_id
-    and m.desired_revision = d.revision
-    and m.applied_revision = m.desired_revision
-    and coalesce(m.applied_at, '-infinity'::timestamptz) < v_row.page_started_at
     and not exists (
       select 1 from public.appointments a
       where a.id = m.appointment_id and a.ends_at <= pg_catalog.now()
@@ -844,7 +852,11 @@ begin
   end if;
 
   if v_row.sync_token is null then
-    -- The full scan is complete: what it never listed is missing.
+    -- The full scan is complete: what it never listed is missing. This is an
+    -- inference from absence, not an observation: it keeps its guards. A
+    -- mirror written after the scan started (it may have been created after
+    -- the scan passed its position) or with a revision pending (the writer
+    -- rewrites it, inserting it if absent) is not inferred missing.
     update private.appointment_calendar_mirrors m
     set repair_generation = m.repair_generation + 1,
         next_attempt_at = case

@@ -612,7 +612,7 @@ L'état est privé (`private.calendar_outbound_reconciliation`, une ligne par bu
 - la transparence : absente = `opaque`, la valeur par défaut que Google omet ;
 - les propriétés privées `origin` et `appointmentId`. `revision` est informative et n'est pas comparée.
 
-Les champs que Booking n'écrit pas (description, couleur, rappels) ne sont jamais comparés. Ne sont pas comparés non plus : un miroir avec une révision en attente (le writer réécrit tout l'événement de toute façon) et un rendez-vous terminé (l'historique n'est pas réparé).
+Les champs que Booking n'écrit pas (description, couleur, rappels) ne sont jamais comparés. Un rendez-vous terminé n'est pas comparé non plus : l'historique n'est pas réparé. Un miroir dont une révision est en attente, ou dont une écriture est en cours, **est** comparé, avec ce que Booking dit maintenant (voir ci-dessous).
 
 **Réparation**, dans le writer existant :
 
@@ -621,15 +621,19 @@ Les champs que Booking n'écrit pas (description, couleur, rappels) ne sont jama
 - présent → mise à jour partielle des champs gérés (`events.patch`), puis restauration (`events.update`) seulement si l'événement est supprimé chez Google : une dérive des seuls champs gérés n'efface jamais ce que la professionnelle a ajouté ;
 - absent → `events.delete`. Avec une réparation, la suppression se fait dans la cible même si aucune écriture n'y était enregistrée.
 
-La page n'est enregistrée qu'avec toute l'autorité du claim. Une dérive n'est retenue que si :
+**Une dérive observée n'est jamais perdue.** Le curseur enregistré avec une page consomme chez Google les changements qu'elle contient : une modification lue puis ignorée ne revient jamais dans une lecture incrémentale. Invariant : un changement de Google dont les champs gérés diffèrent de l'état Booking n'est acquitté par le curseur que si une demande de réparation qui le couvre est enregistrée dans la même transaction. La page n'est enregistrée qu'avec toute l'autorité du claim, en une seule transaction PostgreSQL (`calendar_outbound_reconciliation_page`) : réparations, marques du scan et curseur ensemble. Si l'enregistrement échoue, rien n'est enregistré ; le claim expire, et la page est relue depuis l'ancien curseur.
 
-- le miroir est encore à la révision comparée ;
-- rien n'est en attente ;
-- aucune écriture n'a été appliquée depuis la demande de la page (`applied_at < page_started_at`).
+La demande est donc enregistrée quel que soit l'état du writer :
 
-Une comparaison périmée ne ressuscite donc jamais un rendez-vous annulé dans Booking et n'acquitte jamais une révision plus récente.
+- révision en attente ;
+- écriture en cours chez Google ;
+- écriture appliquée après la demande de la page (`applied_at >= page_started_at`).
 
-**Événements manquants.** Un événement que Google ne liste plus du tout n'apparaît dans aucun flux incrémental. Il est détecté **seulement à la fin d'un scan complet réussi**, par la page qui porte le `nextSyncToken`. Est alors réparé tout miroir qui remplit toutes ces conditions :
+Un writer en vol acquitte au plus la génération de réparation capturée par son claim, donc la nouvelle reste due après son succès, et le writer normal réécrit ensuite les champs gérés. Une page lue avant qu'une écriture Booking n'arrive chez Google ne se distingue pas d'une modification manuelle faite après : elle produit au plus une mise à jour redondante et idempotente. La lecture suivante renvoie alors l'écriture de Booking elle-même, identique : pas de boucle.
+
+Une réparation ne fait que réappliquer ce que Booking dit au moment du claim du writer. Elle ne fait jamais de l'état distant un état souhaité, n'acquitte jamais une révision et ne ressuscite jamais un rendez-vous annulé dans Booking : un rendez-vous annulé entre-temps est supprimé chez Google.
+
+**Événements manquants.** Une suppression faite chez Google après le dernier curseur revient dans la lecture incrémentale suivante, comme un événement `cancelled` (Google renvoie les entrées supprimées depuis le token précédent). Elle est alors une dérive observée comme les autres. L'absence d'un événement que Google ne liste pas du tout est une **inférence**, faite seulement dans un scan complet : au premier passage, ou après un `410`. Elle est décidée **uniquement à la fin d'un scan complet réussi**, par la page qui porte le `nextSyncToken`. Est alors réparé tout miroir qui remplit toutes ces conditions (gardes propres à l'inférence, qui n'existent pas pour une dérive observée) :
 
 - son rendez-vous est actif et non terminé ;
 - il a été écrit dans ce calendrier avant le début du scan ;
@@ -661,7 +665,13 @@ Testé : chaque dérive est détectée en incrémental puis réparée, ce qui co
 - un annulé avant toute écriture mais présent dans la cible est retiré ;
 - les événements inconnus et ceux d'un autre business sont ignorés ;
 - les rendez-vous passés ne sont pas réparés ;
-- un événement purgé est trouvé par un scan complet après un 410 ;
+- un événement absent de toute liste est trouvé par le scan complet qui suit un 410 ;
+- dérive observée pendant qu'une réponse du writer est en attente, puis lecture suivante vide : réparé quand même ;
+- dérive observée sur une page demandée avant une écriture terminée entre-temps (`applied_at >= page_started_at`) : réparée ;
+- page lue avant l'écriture : au plus une mise à jour redondante, puis stable ;
+- R1 en vol, R2 observée : R1 acquittée seule, R2 réparée ensuite ;
+- échec de l'enregistrement d'une page : le curseur ne bouge pas, le changement est relu ;
+- modification entre deux pages d'un scan complet : vue par la lecture incrémentale suivante ;
 - un scan en échec partiel ne décide rien, puis reprend ;
 - une lecture longue est bornée et reprise ;
 - un miroir écrit après le début du scan n'est jamais déclaré manquant ;
@@ -682,7 +692,7 @@ L'outbound garde au moins 40 % du budget de la tâche (`INBOUND_SHARE`, inchang�
 4. réconciliation, avec au moins le reste, et tout le temps que les écritures laissent ;
 5. de nouveau les écritures avec le temps que la réconciliation laisse, si elles avaient été coupées ou si des réparations viennent d'être enregistrées.
 
-Chaque appel Google porte l'échéance de sa phase. Un claim qu'un passage ne traitera pas (business arrêté, temps écoulé) est rendu tout de suite (`calendar_outbound_release_mirror`), sans attendre son bail. Un business arrêté (limite, `action_required`, autorité perdue) n'est plus réclamé dans le passage. Le kick après une action n'exécute que créations et écritures (un seul claim, comme avant).
+La phase prioritaire (créations, backfill, écritures) a une **échéance réelle**, comme les deux sens de la tâche, qui couvre aussi ses appels base de données (claim, découverte du travail dû, libérations). À l'échéance, son signal est annulé et l'orchestrateur cesse d'attendre. Une réponse ou un échec tardif est consommé, jamais un rejet non géré. Ce qui arrive en retard reste sans danger : un claim accordé trop tard n'est jamais utilisé, son bail (2 min) expire et le miroir est réclamé de nouveau, et tout résultat enregistré passe par l'autorité du claim. Une erreur de la phase prioritaire (erreur base, `statement_timeout` sur un verrou) est journalisée et ne supprime jamais le tour de la réconciliation. Testé : claim qui ne répond pas, réponse et échec tardifs, et claim bloqué par un vrai verrou PostgreSQL. Chaque appel Google porte l'échéance de sa phase. Un claim qu'un passage ne traitera pas (business arrêté, temps écoulé) est rendu tout de suite (`calendar_outbound_release_mirror`), sans attendre son bail. Un business arrêté (limite, `action_required`, autorité perdue) n'est plus réclamé dans le passage. Le kick après une action n'exécute que créations et écritures (un seul claim, comme avant).
 
 ### `action_required`, désactivation et déconnexion
 
@@ -823,7 +833,7 @@ Tout ce qui est propre à Google se trouve dans `providers/google.ts`. Le domain
 - **Première version de `20261005090000` : non supportée.** Elle n'a été exécutée que localement et sur des bases CI éphémères, jamais sur `main` ni sur une base persistante (production ou staging). Elle a été corrigée directement dans cette PR. Le seul chemin d'upgrade supporté est `20261004090000` → `20261005090000` corrigée → migrations suivantes, et il est vérifié par `npm run test:upgrade`. Une base de développement qui a appliqué l'ancienne version doit être réinitialisée (`npm run db:reset`).
 - **Outbound : événements laissés chez Google.** Après une déconnexion, une désactivation ou un changement de compte, les événements déjà copiés restent dans l'ancien calendrier dédié (celui du compte A, par exemple) : aucun nettoyage distant en V1. Le nouveau calendrier, lui, reçoit tous les rendez-vous actifs enrôlés.
 - **Outbound : restauration d'un événement supprimé.** Elle réécrit l'événement canonique (`events.update`, `status: confirmed`, même id) quand une mise à jour partielle ne l'a pas restauré. La documentation de Google dit que ces événements peuvent être restaurés, sans nommer la méthode. Ce comportement est vérifié contre le faux Google seulement : voir la validation manuelle ci-dessous, obligatoire avant l'ouverture aux clientes. Les champs ajoutés à la main sur un événement ensuite supprimé chez Google ne sont pas conservés par la restauration.
-- **Outbound : délai de correction.** Une modification manuelle dans Google est corrigée au plus tard environ 45 minutes après la lecture incrémentale suivante (30 min d'intervalle, passage toutes les 15 min), plus les reprises. Un événement purgé par Google (il ne figure plus dans aucune liste) n'est retrouvé que par un scan complet, c'est-à-dire après un `410`. Une suppression faite entre deux pages d'un même scan complet est reprise par le flux incrémental seulement si Google l'y inclut : point à vérifier manuellement.
+- **Outbound : délai de correction.** Une modification ou une suppression manuelle dans Google est corrigée au plus tard environ 45 minutes après elle (30 min d'intervalle, passage toutes les 15 min), plus les reprises. Les suppressions arrivent par la lecture incrémentale (Google renvoie les entrées supprimées depuis le token précédent), y compris celles faites pendant la lecture paginée d'un scan complet. Un token devenu invalide répond `410` et provoque un nouveau scan complet. Aucun scan complet périodique n'est fait : le protocole de synchronisation ne l'exige pas.
 - **Outbound : rendez-vous passés.** Ni backfill ni réparation pour un rendez-vous terminé : l'historique chez Google reste tel quel.
 - **Outbound : création au résultat ambigu.** Si le calendrier créé n'apparaît pas dans la liste pendant les recherches bornées (environ 15 min), l'outbound attend la professionnelle (`calendar_creation_uncertain`) plutôt que de risquer un doublon. Sa réactivation cherche encore avant de créer.
 - **Outbound : refresh token ancien.** Si Google n'envoie pas de nouveau refresh token, l'ancien est gardé ; un token d'accès rafraîchi sans le scope d'écriture fait passer l'outbound en `action_required` (`authorize_write`), jamais en boucle.
@@ -850,7 +860,6 @@ Si l'un de ces points contredit la stratégie retenue (en particulier la restaur
 
 - **Outbound.**
   - Nettoyage des événements laissés dans un ancien calendrier dédié.
-  - Scan complet périodique de sécurité, même sans `410`.
 - **UI.**
   - Affichage des périodes externes dans l'agenda.
   - Signalement des conflits.

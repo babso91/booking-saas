@@ -6,6 +6,7 @@ import {
   type CalendarProviderId,
   type OutboundEvent,
 } from "@/features/calendar/providers/types";
+import { withDeadline } from "@/features/calendar/providers/http";
 import { encryptSecret } from "@/lib/crypto/secret-box";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
@@ -823,14 +824,17 @@ async function applyDueMirrors(
      * (a kick after a change: the change is due by the database's clock).
      */
     dueBefore: string | null;
-    aborted: () => boolean;
+    /** Aborted at the phase's or the run's deadline. */
+    signal?: AbortSignal;
   },
 ) {
+  const aborted = () => options.signal?.aborted === true;
   while (state.claimed < options.limit) {
-    if (options.aborted() || options.deadline - Date.now() < 3000) return true;
-    const { data, error } = await deps.admin.rpc(
-      "calendar_outbound_claim_mirrors",
-      {
+    if (aborted() || options.deadline - Date.now() < 3000) return true;
+    // Aborted with the phase: a claim granted late is never used (its lease
+    // expires and the mirror is claimed again).
+    const { data, error } = await abortable(
+      deps.admin.rpc("calendar_outbound_claim_mirrors", {
         p_limit: options.dueBefore
           ? Math.min(CLAIM_BATCH, options.limit - state.claimed)
           : options.limit,
@@ -838,7 +842,8 @@ async function applyDueMirrors(
         p_per_business: options.dueBefore ? CLAIM_PER_BUSINESS : 10,
         p_exclude: [...state.stopped],
         p_due_before: options.dueBefore as string,
-      },
+      }),
+      options.signal,
     );
     if (error) throw databaseException(error);
     const claims = (data ?? []) as MirrorClaim[];
@@ -849,17 +854,20 @@ async function applyDueMirrors(
     // limited) and claims the time left cannot cover: released untouched,
     // available to the next run at once.
     const release = (claim: MirrorClaim) =>
-      deps.admin.rpc("calendar_outbound_release_mirror", {
-        p_appointment_id: claim.appointmentId,
-        p_claim_id: claim.claimId,
-      });
+      abortable(
+        deps.admin.rpc("calendar_outbound_release_mirror", {
+          p_appointment_id: claim.appointmentId,
+          p_claim_id: claim.claimId,
+        }),
+        options.signal,
+      );
     for (const [index, claim] of claims.entries()) {
       if (state.stopped.has(claim.businessId)) {
         await release(claim);
         continue;
       }
-      if (options.aborted() || options.deadline - Date.now() < 3000) {
-        if (!options.aborted()) {
+      if (aborted() || options.deadline - Date.now() < 3000) {
+        if (!aborted()) {
           for (const left of claims.slice(index)) await release(left);
         }
         return true;
@@ -937,14 +945,39 @@ async function applyDueMirrors(
   return false;
 }
 
+/** A database call aborted with `signal`; never started once it is aborted. */
+function abortable<T extends { abortSignal(signal: AbortSignal): T }>(
+  query: T,
+  signal: AbortSignal | undefined,
+) {
+  return signal ? query.abortSignal(signal) : query;
+}
+
+/** Aborted when either is (the phase's own deadline, or the run's). */
+function either(phase: AbortSignal | undefined, run: AbortSignal | undefined) {
+  if (!phase) return run;
+  return run ? AbortSignal.any([phase, run]) : phase;
+}
+
 /**
  * Processes due outbound work, within a budget: dedicated calendars to
  * create, then due mirrors. From the periodic job (no `businessId`), also
- * the backfill (local enrollment, first: what it enrolls is written in the
- * same run) and reconciliation: writes have priority up to
- * OUTBOUND_WRITE_SHARE of the time left, reconciliation is guaranteed the
- * rest, and writes take back whatever reconciliation leaves. Nothing new
- * starts once `signal` is aborted (the periodic job's deadline).
+ * the backfill and reconciliation, in two phases with real deadlines:
+ *
+ * 1. priority: creations, backfill (local enrollment, so that what it
+ *    enrolls is written in the same run) and due writes, until
+ *    OUTBOUND_WRITE_SHARE of the budget. The deadline covers every await
+ *    of the phase, database calls included: at the deadline the phase's
+ *    signal is aborted and the run stops waiting for it (a late answer or
+ *    failure is consumed, never an unhandled rejection). What lands late
+ *    is harmless: claims expire and every recorded outcome is a
+ *    compare-and-set under the claim's authority;
+ * 2. reconciliation, guaranteed the rest of the budget;
+ * 3. writes again with whatever reconciliation leaves, if the priority
+ *    phase was cut short or repairs were just recorded.
+ *
+ * A failed write phase is logged and never skips reconciliation.
+ * Nothing new starts once `signal` is aborted (the periodic job's deadline).
  */
 export async function processOutbound(
   deps: CalendarDeps,
@@ -955,9 +988,10 @@ export async function processOutbound(
     signal?: AbortSignal;
   } = {},
 ): Promise<OutboundRunResult> {
-  const deadline = Date.now() + (options.budgetMs ?? 25_000);
+  const budget = options.budgetMs ?? 25_000;
+  const start = Date.now();
+  const deadline = start + budget;
   const aborted = () => options.signal?.aborted === true;
-  const maintenance = !options.businessId;
   const result: OutboundRunResult = {
     creations: 0,
     applied: 0,
@@ -968,56 +1002,83 @@ export async function processOutbound(
     reconciled: 0,
     drifted: 0,
   };
+  const writes = { claimed: 0, stopped: new Set<string>() };
+  const limit = options.limit ?? 50;
 
-  let creations: string[];
+  const createCalendars = async (
+    businessIds: string[],
+    until: number,
+    signal: AbortSignal | undefined,
+  ) => {
+    for (const businessId of businessIds) {
+      if (signal?.aborted || until - Date.now() < 5000) break;
+      const outcome = await ensureOutboundCalendar(deps, businessId, {
+        deadline: Math.min(until, Date.now() + 20_000),
+      });
+      if (outcome !== "busy") result.creations += 1;
+      if (outcome === "action_required") result.actionRequired += 1;
+    }
+  };
+
   if (options.businessId) {
-    creations = [options.businessId];
-  } else {
-    const { data, error } = await deps.admin.rpc(
-      "calendar_outbound_due_creations",
-      { p_limit: 20 },
-    );
-    if (error) throw databaseException(error);
-    creations = (data ?? []).map((row) => row.business_id);
-  }
-  for (const businessId of creations) {
-    if (aborted() || deadline - Date.now() < 5000) break;
-    const outcome = await ensureOutboundCalendar(deps, businessId, {
-      deadline: Math.min(deadline, Date.now() + 20_000),
-    });
-    if (outcome !== "busy") result.creations += 1;
-    if (outcome === "action_required") result.actionRequired += 1;
-  }
-  if (aborted()) return result;
-
-  if (maintenance) {
-    result.backfilled = await backfillOutbound(deps, options.signal);
-  }
-
-  const writes = {
-    claimed: 0,
-    stopped: new Set<string>(),
-  };
-  const writeOptions = {
-    businessId: options.businessId,
-    limit: options.limit ?? 50,
-    dueBefore: new Date().toISOString(),
-    aborted,
-  };
-  if (!maintenance) {
+    // A kick after a change: its own business only, one claim.
+    await createCalendars([options.businessId], deadline, options.signal);
+    if (aborted()) return result;
     await applyDueMirrors(deps, result, writes, {
-      ...writeOptions,
+      businessId: options.businessId,
+      limit,
       deadline,
       dueBefore: null,
+      signal: options.signal,
     });
     return result;
   }
 
-  const writesDeadline =
-    Date.now() + Math.floor((deadline - Date.now()) * OUTBOUND_WRITE_SHARE);
-  const cut = await applyDueMirrors(deps, result, writes, {
-    ...writeOptions,
-    deadline: writesDeadline,
+  const priorityDeadline = start + Math.floor(budget * OUTBOUND_WRITE_SHARE);
+  // A phase run with a real deadline; true when it was cut short by it.
+  // A failure of a write phase (a database error, a statement timeout on a
+  // lock) never takes reconciliation's turn either: it is logged, and what
+  // it left undone stays due for the next run.
+  const phase = (
+    until: number,
+    run: (signal?: AbortSignal) => Promise<boolean>,
+  ) =>
+    withDeadline(until, (signal) => run(either(signal, options.signal))).catch(
+      (error: unknown) => {
+        if (Date.now() >= until) {
+          logCalendar("outbound_phase_deadline_exceeded", {}, "warn");
+        } else {
+          logCalendar(
+            "outbound_writes_failed",
+            {
+              code: error instanceof AppException ? error.code : "internal",
+            },
+            "error",
+          );
+        }
+        return true;
+      },
+    );
+
+  const cut = await phase(priorityDeadline, async (signal) => {
+    const { data, error } = await abortable(
+      deps.admin.rpc("calendar_outbound_due_creations", { p_limit: 20 }),
+      signal,
+    );
+    if (error) throw databaseException(error);
+    await createCalendars(
+      (data ?? []).map((row) => row.business_id),
+      priorityDeadline,
+      signal,
+    );
+    if (signal?.aborted) return true;
+    result.backfilled = await backfillOutbound(deps, signal);
+    return applyDueMirrors(deps, result, writes, {
+      limit,
+      deadline: priorityDeadline,
+      dueBefore: new Date().toISOString(),
+      signal,
+    });
   });
   if (aborted()) return result;
 
@@ -1032,11 +1093,14 @@ export async function processOutbound(
   // Writes cut short by their share, or repairs just recorded: the time
   // reconciliation left is theirs.
   if ((cut || reconciliation.drifted > 0) && !aborted()) {
-    await applyDueMirrors(deps, result, writes, {
-      ...writeOptions,
-      deadline,
-      dueBefore: new Date().toISOString(),
-    });
+    await phase(deadline, (signal) =>
+      applyDueMirrors(deps, result, writes, {
+        limit,
+        deadline,
+        dueBefore: new Date().toISOString(),
+        signal,
+      }),
+    );
   }
   return result;
 }

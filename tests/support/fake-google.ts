@@ -3,6 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 // In-memory Google (OAuth 2.0 + Calendar API v3) for tests: authorization
 // codes with PKCE, refresh/revoke, calendarList and events.list with
 // pagination, sync tokens and 410, injected failures, watch/stop channels.
+// A paginated listing (full or incremental) is one coherent chain, as
+// Google's sync protocol guarantees: its first request takes a snapshot and
+// a change watermark, its page tokens read that snapshot (never an offset
+// into the collection as it is now), and its final sync token is the
+// watermark, so every change made while the pages were read shows up in
+// the next incremental listing.
 // Outbound: incremental authorization (scopes granted per account, kept by
 // include_granted_scopes), calendars.insert/get (app-created calendars,
 // calendar.app.created required), events insert/update/delete with custom
@@ -11,6 +17,13 @@ import { createHash, randomUUID } from "node:crypto";
 // nested objects merged, null removes, arrays replaced), and answers lost
 // after the request was applied.
 // Only the behaviour the adapter relies on is modelled.
+
+/** The position of a page token in its listing (tests). */
+export function pageOffsetOf(url: URL) {
+  const token = url.searchParams.get("pageToken");
+  const match = token ? /^p\d+-(\d+)$/.exec(token) : null;
+  return match ? Number(match[1]) : null;
+}
 
 export const WRITE_SCOPE =
   "https://www.googleapis.com/auth/calendar.app.created";
@@ -192,6 +205,12 @@ export class FakeGoogle {
   }[] = [];
   private events = new Map<string, Map<string, StoredEvent>>();
   private expiredSyncTokens = new Set<string>();
+  /** Listings being paginated: snapshot and change watermark. */
+  private listings = new Map<
+    string,
+    { items: StoredEvent[]; watermark: number }
+  >();
+  private listingSeq = 0;
   private failures: Failure[] = [];
   private holds: {
     match: (url: URL, method: string) => boolean;
@@ -818,17 +837,39 @@ export class FakeGoogle {
       );
     }
 
-    const offset = Number(url.searchParams.get("pageToken") ?? 0);
-    const page = items.slice(offset, offset + this.pageSize);
-    const last = offset + this.pageSize >= items.length;
+    let listing: { items: StoredEvent[]; watermark: number } | undefined;
+    let offset = 0;
+    const pageToken = url.searchParams.get("pageToken");
+    if (pageToken) {
+      const match = /^p(\d+)-(\d+)$/.exec(pageToken);
+      listing = match ? this.listings.get(match[1]!) : undefined;
+      if (!match || !listing) {
+        return json(
+          { error: { code: 400, message: "Invalid page token" } },
+          400,
+        );
+      }
+      offset = Number(match[2]);
+    } else {
+      // The listing's snapshot: what changes from now on is after its
+      // watermark, hence in the next incremental listing.
+      listing = { items, watermark: this.seq };
+      this.listingSeq += 1;
+      this.listings.set(String(this.listingSeq), listing);
+    }
+    const id = pageToken
+      ? /^p(\d+)-/.exec(pageToken)![1]
+      : String(this.listingSeq);
+    const page = listing.items.slice(offset, offset + this.pageSize);
+    const last = offset + this.pageSize >= listing.items.length;
     return json({
       timeZone: this.calendarsById(calendarId)?.timeZone ?? "UTC",
       items: page.map((event) =>
         publicEvent(event, url.searchParams.get("fields")),
       ),
       ...(last
-        ? { nextSyncToken: `sync-${this.seq}` }
-        : { nextPageToken: String(offset + this.pageSize) }),
+        ? { nextSyncToken: `sync-${listing.watermark}` }
+        : { nextPageToken: `p${id}-${offset + this.pageSize}` }),
     });
   }
 

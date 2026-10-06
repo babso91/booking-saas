@@ -251,20 +251,21 @@ async function reconcileCalendar(
       snapshot = (data ?? []) as SnapshotItem[];
     }
 
-    // Compared only for mirrors at rest (a pending revision is rewritten in
-    // full anyway) whose appointment has not ended.
+    // Every observed event of a mirror whose appointment has not ended is
+    // compared with what Booking says now, a pending revision or a write
+    // in flight included: the cursor recorded with this page consumes the
+    // change at Google, so a difference is recorded now or never (a
+    // redundant repair costs one idempotent update, a lost one is
+    // permanent drift).
     const differing = snapshot
-      .filter((item) => !item.pending && item.eligible)
+      .filter((item) => item.eligible)
       .filter((item) =>
         provider.ownedEventDiffers(
           item.active ? outboundEvent(item) : null,
           events.get(item.eventId)!,
         ),
       )
-      .map((item) => ({
-        appointment_id: item.appointmentId,
-        revision: item.revision,
-      }));
+      .map((item) => ({ appointment_id: item.appointmentId }));
 
     const { data: recorded, error: recordError } = await deps.admin.rpc(
       "calendar_outbound_reconciliation_page",
@@ -283,8 +284,8 @@ async function reconcileCalendar(
     };
     if (pageResult.result === "superseded")
       return { outcome: "superseded", drifted };
-    // Repairs actually recorded (a comparison made stale by a newer
-    // revision or write is not one), missing events of a full scan included.
+    // Repairs recorded (in the same transaction as the cursor), missing
+    // events of a full scan included.
     drifted += pageResult.repairs;
     if (pageResult.result === "done") return { outcome: "done", drifted };
     pageToken = listed.nextPageToken;

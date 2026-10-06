@@ -1153,3 +1153,119 @@ describe("partial update and restoration", () => {
     expect(provider.ownedEventDiffers(event, listed)).toBe(false);
   });
 });
+
+describe("fake Google: a paginated listing is one coherent chain", () => {
+  const timed = (id: string, hour: number) => ({
+    id,
+    summary: id,
+    start: { dateTime: `2026-10-14T${String(hour).padStart(2, "0")}:00:00Z` },
+    end: { dateTime: `2026-10-14T${String(hour + 1).padStart(2, "0")}:00:00Z` },
+  });
+
+  async function calendar() {
+    const tokens = await connect();
+    fake.setCalendars(account.sub, [
+      { id: "cal", summary: "Booking", timeZone: "UTC" },
+    ]);
+    fake.putEvent("cal", timed("evta1", 9));
+    fake.putEvent("cal", timed("evtb1", 10));
+    fake.putEvent("cal", timed("evtc1", 11));
+    fake.pageSize = 1;
+    return tokens.accessToken;
+  }
+
+  /** Every page of a listing; `between` runs after the first page. */
+  async function listAll(
+    token: string,
+    query: { kind: "full" } | { kind: "incremental"; syncToken: string },
+    between: () => void = () => undefined,
+  ) {
+    const seen: { id: string; status: string; summary: string | null }[] = [];
+    let pageToken: string | null = null;
+    for (let page = 0; page < 20; page += 1) {
+      const result = await provider.listOwnedEvents(
+        token,
+        "cal",
+        query,
+        pageToken,
+      );
+      seen.push(
+        ...result.events.map(({ id, status, summary }) => ({
+          id,
+          status,
+          summary,
+        })),
+      );
+      if (page === 0) between();
+      if (result.nextSyncToken)
+        return { seen, syncToken: result.nextSyncToken };
+      pageToken = result.nextPageToken;
+    }
+    throw new Error("listing never ended");
+  }
+
+  it.each([
+    [
+      "created",
+      () => fake.putEvent("cal", timed("evtd1", 12)),
+      { id: "evtd1", status: "confirmed" },
+    ],
+    [
+      "modified (already listed)",
+      () => fake.editEvent("cal", "evta1", { summary: "changed" }),
+      { id: "evta1", summary: "changed" },
+    ],
+    [
+      "deleted (not listed yet)",
+      () => fake.deleteEvent("cal", "evtc1"),
+      { id: "evtc1", status: "cancelled" },
+    ],
+  ])(
+    "full listing: an event %s between two pages is never lost — the next incremental listing returns it",
+    async (_label, change, expected) => {
+      const token = await calendar();
+      const full = await listAll(token, { kind: "full" }, change);
+      // The pages read one snapshot: every original event exactly once.
+      expect(full.seen.map((event) => event.id)).toEqual([
+        "evta1",
+        "evtb1",
+        "evtc1",
+      ]);
+      const next = await listAll(token, {
+        kind: "incremental",
+        syncToken: full.syncToken,
+      });
+      expect(next.seen).toEqual([expect.objectContaining(expected)]);
+    },
+  );
+
+  it("incremental listing: a change between its pages comes in the following incremental listing", async () => {
+    const token = await calendar();
+    const full = await listAll(token, { kind: "full" });
+    fake.editEvent("cal", "evta1", { summary: "a2" });
+    fake.editEvent("cal", "evtb1", { summary: "b2" });
+    const first = await listAll(
+      token,
+      { kind: "incremental", syncToken: full.syncToken },
+      () => fake.editEvent("cal", "evtc1", { summary: "c2" }),
+    );
+    expect(first.seen.map((event) => event.summary)).toEqual(["a2", "b2"]);
+    const second = await listAll(token, {
+      kind: "incremental",
+      syncToken: first.syncToken,
+    });
+    expect(second.seen.map((event) => event.summary)).toEqual(["c2"]);
+    const third = await listAll(token, {
+      kind: "incremental",
+      syncToken: second.syncToken,
+    });
+    expect(third.seen).toEqual([]);
+  });
+
+  it("a page token belongs to its listing: an unknown one is refused", async () => {
+    const token = await calendar();
+    await expect(
+      provider.listOwnedEvents(token, "cal", { kind: "full" }, "p999-1"),
+    ).rejects.toMatchObject({ kind: "bad_request" });
+  });
+});
