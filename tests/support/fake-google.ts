@@ -69,12 +69,14 @@ function aborted(signal: AbortSignal | null | undefined) {
   });
 }
 
-/** What the API returns for an event: no internal counter, no title (the
- * adapter asks for a field mask without it). */
-function publicEvent(event: StoredEvent) {
+/** What the API returns for an event: no internal counter; the title only
+ * when the field mask asks for it (inbound's does not, reconciliation's
+ * does). Google omits transparency when it is the default (opaque). */
+function publicEvent(event: StoredEvent, fields: string | null = null) {
   const copy: Partial<StoredEvent> = { ...event };
   delete copy.seq;
-  delete copy.summary;
+  if (!fields?.includes("summary")) delete copy.summary;
+  if (copy.transparency === "opaque") delete copy.transparency;
   return copy;
 }
 
@@ -311,6 +313,32 @@ export class FakeGoogle {
     const existing = this.events.get(calendarId)?.get(eventId);
     if (!existing) return;
     this.putEvent(calendarId, { ...existing, status: "cancelled" });
+  }
+
+  /**
+   * The professional edits an event in Google (a change for incremental
+   * sync): `change` is merged into the stored event.
+   */
+  editEvent(
+    calendarId: string,
+    eventId: string,
+    change: Partial<FakeEvent> & Record<string, unknown>,
+  ) {
+    const existing = this.events.get(calendarId)?.get(eventId);
+    if (!existing) throw new Error(`No event ${eventId}`);
+    const event: Partial<StoredEvent> = { ...existing, ...change };
+    delete event.etag;
+    delete event.updated;
+    delete event.seq;
+    this.putEvent(calendarId, event as FakeEvent);
+  }
+
+  /**
+   * An event Google no longer lists at all (a deleted event purged after a
+   * while): only a full listing can notice its absence.
+   */
+  purgeEvent(calendarId: string, eventId: string) {
+    this.events.get(calendarId)?.delete(eventId);
   }
 
   /** Makes the given sync token (or every token issued so far) answer 410. */
@@ -717,9 +745,11 @@ export class FakeGoogle {
       );
       const bound = (value: { date?: string; dateTime?: string }) =>
         Date.parse(value.dateTime ?? `${value.date}T00:00:00Z`);
+      // showDeleted: a full listing includes deleted (cancelled) events.
+      const showDeleted = url.searchParams.get("showDeleted") === "true";
       items = store.filter(
         (event) =>
-          event.status !== "cancelled" &&
+          (showDeleted || event.status !== "cancelled") &&
           bound(event.end) > timeMin - 86_400_000 &&
           bound(event.start) < timeMax + 86_400_000,
       );
@@ -730,7 +760,9 @@ export class FakeGoogle {
     const last = offset + this.pageSize >= items.length;
     return json({
       timeZone: this.calendarsById(calendarId)?.timeZone ?? "UTC",
-      items: page.map(publicEvent),
+      items: page.map((event) =>
+        publicEvent(event, url.searchParams.get("fields")),
+      ),
       ...(last
         ? { nextSyncToken: `sync-${this.seq}` }
         : { nextPageToken: String(offset + this.pageSize) }),

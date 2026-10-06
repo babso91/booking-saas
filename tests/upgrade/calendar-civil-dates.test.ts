@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -8,6 +7,10 @@ import {
   createProfessional,
   db,
 } from "../integration/support/fixtures";
+import { migrateUp, resetTo } from "./support";
+
+/** The schema this test starts from (before civil dates). */
+const BEFORE_CIVIL_DATES = "20261004090000";
 
 // Upgrade of a populated database (not a fresh install): busy periods
 // stored before civil dates existed (20261005090000) must survive the
@@ -134,6 +137,7 @@ async function fullSync(calendarId: string, zone: string, events: unknown[]) {
 }
 
 beforeAll(async () => {
+  resetTo(BEFORE_CIVIL_DATES);
   // Historical data, at the schema of 20261004090000.
   const owner = await createProfessional("upgrade");
   const business = await createBusiness(owner.userId, {
@@ -179,9 +183,7 @@ beforeAll(async () => {
   );
 
   // Then the rest of the migration chain, as a deployment applies it.
-  execFileSync("npx", ["supabase", "migration", "up", "--local"], {
-    stdio: "inherit",
-  });
+  migrateUp();
 });
 
 describe("upgrading a database holding all-day busy periods", () => {

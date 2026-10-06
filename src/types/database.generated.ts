@@ -509,14 +509,20 @@ isOneToOne: false
               "provider_calendar_id": string
             }[]
                            },
+"calendar_outbound_backfill":
+{ Args: { "p_businesses"?: number,"p_per_business"?: number }; Returns: Json
+                           },
 "calendar_outbound_begin_creation":
 { Args: { "p_business_id": string }; Returns: Json
                            },
 "calendar_outbound_claim_mirrors":
-{ Args: { "p_business_id"?: string,"p_limit"?: number,"p_per_business"?: number }; Returns: Json
+{ Args: { "p_business_id"?: string,"p_due_before"?: string,"p_exclude"?: (string)[],"p_limit"?: number,"p_per_business"?: number }; Returns: Json
+                           },
+"calendar_outbound_claim_reconciliation":
+{ Args: { "p_exclude"?: (string)[] }; Returns: Json
                            },
 "calendar_outbound_complete_mirror":
-{ Args: { "p_appointment_id": string,"p_claim_id": string,"p_revision": number }; Returns: string
+{ Args: { "p_appointment_id": string,"p_claim_id": string,"p_repair_generation"?: number,"p_revision": number }; Returns: string
                            },
 "calendar_outbound_creation_failed":
 { Args: { "p_business_id": string,"p_claim_id": string,"p_credential_generation": string,"p_error": string,"p_generation": string,"p_outcome": string }; Returns: string
@@ -540,6 +546,21 @@ isOneToOne: false
                            },
 "calendar_outbound_mark_creation_requested":
 { Args: { "p_business_id": string,"p_claim_id": string,"p_credential_generation": string,"p_generation": string }; Returns: boolean
+                           },
+"calendar_outbound_reconciliation_failed":
+{ Args: { "p_business_id": string,"p_claim_id": string,"p_error"?: string,"p_outcome": string }; Returns: string
+                           },
+"calendar_outbound_reconciliation_page":
+{ Args: { "p_business_id": string,"p_claim_id": string,"p_drifted": Json,"p_next_page_token": string,"p_next_sync_token": string,"p_seen_event_ids": (string)[] }; Returns: Json
+                           },
+"calendar_outbound_reconciliation_release":
+{ Args: { "p_business_id": string,"p_claim_id": string }; Returns: boolean
+                           },
+"calendar_outbound_reconciliation_snapshot":
+{ Args: { "p_business_id": string,"p_claim_id": string,"p_event_ids": (string)[] }; Returns: Json
+                           },
+"calendar_outbound_release_mirror":
+{ Args: { "p_appointment_id": string,"p_claim_id": string }; Returns: boolean
                            },
 "calendar_outbound_retry":
 { Args: { "p_business_id": string }; Returns: Json

@@ -74,6 +74,9 @@ const outboundResult = {
   retried: 0,
   superseded: 0,
   actionRequired: 0,
+  backfilled: 0,
+  reconciled: 0,
+  drifted: 0,
 };
 
 const unhandled: unknown[] = [];

@@ -877,3 +877,160 @@ describe("Google outbound (calendar.app.created)", () => {
     ).rejects.toMatchObject({ kind: "forbidden" });
   });
 });
+
+describe("reconciliation listing and comparison", () => {
+  const expected = {
+    id: "bk00000000000000000000000000000001",
+    summary: "Léa — Coupe",
+    startsAt: "2026-10-14T14:00:00+00:00",
+    endsAt: "2026-10-14T15:00:00+00:00",
+    privateProperties: {
+      origin: "booking-saas",
+      appointmentId: "a1",
+      revision: "3",
+    },
+  };
+  const listed = {
+    id: expected.id,
+    status: "confirmed",
+    summary: "Léa — Coupe",
+    start: { dateTime: "2026-10-14T14:00:00Z" },
+    end: { dateTime: "2026-10-14T15:00:00Z" },
+    transparency: null,
+    privateProperties: {
+      origin: "booking-saas",
+      appointmentId: "a1",
+      revision: "1",
+    },
+  };
+
+  it("lists every event (deleted included) with fixed parameters and the owned fields only; a sync token goes along, never a time bound", async () => {
+    const tokens = await connect();
+    fake.setCalendars(account.sub, [
+      { id: "cal", summary: "Booking", timeZone: "UTC" },
+    ]);
+    fake.putEvent("cal", {
+      id: expected.id,
+      summary: "Léa — Coupe",
+      start: { dateTime: expected.startsAt },
+      end: { dateTime: expected.endsAt },
+      extendedProperties: { private: { origin: "booking-saas" } },
+    });
+    fake.putEvent("cal", {
+      id: "gone1",
+      status: "cancelled",
+      start: { dateTime: expected.startsAt },
+      end: { dateTime: expected.endsAt },
+    });
+    const full = await provider.listOwnedEvents(
+      tokens.accessToken,
+      "cal",
+      { kind: "full" },
+      null,
+    );
+    expect(full.events.map((event) => [event.id, event.status])).toEqual([
+      [expected.id, "confirmed"],
+      ["gone1", "cancelled"],
+    ]);
+    expect(full.events[0]).toMatchObject({
+      summary: "Léa — Coupe",
+      privateProperties: { origin: "booking-saas" },
+    });
+    expect(full.nextSyncToken).toMatch(/^sync-/);
+    const first = fake.requests.at(-1)!.url;
+    expect(Object.fromEntries(first.searchParams)).toMatchObject({
+      showDeleted: "true",
+      maxResults: "250",
+    });
+    for (const absent of ["timeMin", "timeMax", "singleEvents", "orderBy"]) {
+      expect(first.searchParams.has(absent)).toBe(false);
+    }
+    expect(first.searchParams.get("fields")).not.toMatch(
+      /description|attendees/,
+    );
+
+    await provider.listOwnedEvents(
+      tokens.accessToken,
+      "cal",
+      { kind: "incremental", syncToken: full.nextSyncToken! },
+      null,
+    );
+    const next = fake.requests.at(-1)!.url;
+    expect(next.searchParams.get("syncToken")).toBe(full.nextSyncToken);
+    expect(next.searchParams.get("showDeleted")).toBe("true");
+    expect(next.searchParams.get("fields")).toBe(
+      first.searchParams.get("fields"),
+    );
+
+    fake.expireSyncTokens();
+    await expect(
+      provider.listOwnedEvents(
+        tokens.accessToken,
+        "cal",
+        { kind: "incremental", syncToken: full.nextSyncToken! },
+        null,
+      ),
+    ).rejects.toMatchObject({ kind: "gone" });
+  });
+
+  it.each([
+    ["items not a list", { items: {}, nextSyncToken: "s" }],
+    ["no cursor", { items: [] }],
+    ["both cursors", { items: [], nextSyncToken: "s", nextPageToken: "p" }],
+    ["an event without id", { items: [{}], nextSyncToken: "s" }],
+    [
+      "metadata of the wrong type",
+      {
+        items: [{ id: "x1234", extendedProperties: { private: { a: 1 } } }],
+        nextSyncToken: "s",
+      },
+    ],
+  ])("a malformed page fails as a whole (%s)", async (_label, body) => {
+    const tokens = await connect();
+    fake.setCalendars(account.sub, [
+      { id: "cal", summary: "Booking", timeZone: "UTC" },
+    ]);
+    fake.failNext(() => true, 200, 1, body);
+    await expect(
+      provider.listOwnedEvents(
+        tokens.accessToken,
+        "cal",
+        { kind: "full" },
+        null,
+      ),
+    ).rejects.toMatchObject({ kind: "protocol" });
+  });
+
+  it("compares the owned fields only, instants as instants", () => {
+    const differs = provider.ownedEventDiffers;
+    expect(differs(expected, listed)).toBe(false);
+    for (const same of [
+      { start: { dateTime: "2026-10-14T16:00:00+02:00" } },
+      { end: { dateTime: "2026-10-14T10:00:00.000-05:00" } },
+      { transparency: "opaque" },
+      { start: { dateTime: "2026-10-14T14:00:00Z", timeZone: "Asia/Tokyo" } },
+    ]) {
+      expect(differs(expected, { ...listed, ...same })).toBe(false);
+    }
+    for (const changed of [
+      { status: "cancelled" },
+      { status: "tentative" },
+      { summary: "Autre" },
+      { summary: null },
+      { transparency: "transparent" },
+      { start: { dateTime: "2026-10-14T14:01:00Z" } },
+      { end: { dateTime: "2026-10-14T15:00:00" } },
+      { start: { date: "2026-10-14" } },
+      { start: null },
+      { privateProperties: null },
+      {
+        privateProperties: { origin: "booking-saas", appointmentId: "other" },
+      },
+    ]) {
+      expect(differs(expected, { ...listed, ...changed })).toBe(true);
+    }
+    // Must not exist: only a live event differs.
+    expect(differs(null, { ...listed, status: "cancelled" })).toBe(false);
+    expect(differs(null, listed)).toBe(true);
+  });
+});
