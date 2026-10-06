@@ -801,6 +801,12 @@ export const OUTBOUND_WRITE_SHARE = 0.75;
  * business), so that what a deadline leaves unprocessed is a few claims
  * (released), and businesses alternate. */
 const CLAIM_BATCH = 10;
+/**
+ * Time a write needs left in its phase to be started (each provider call is
+ * bounded by the phase's deadline anyway): a short priority phase still
+ * writes, instead of leaving its whole slice unused.
+ */
+const MIN_WRITE_MS = 1500;
 const CLAIM_PER_BUSINESS = 3;
 
 /**
@@ -830,7 +836,7 @@ async function applyDueMirrors(
 ) {
   const aborted = () => options.signal?.aborted === true;
   while (state.claimed < options.limit) {
-    if (aborted() || options.deadline - Date.now() < 3000) return true;
+    if (aborted() || options.deadline - Date.now() < MIN_WRITE_MS) return true;
     // Aborted with the phase: a claim granted late is never used (its lease
     // expires and the mirror is claimed again).
     const { data, error } = await abortable(
@@ -866,7 +872,7 @@ async function applyDueMirrors(
         await release(claim);
         continue;
       }
-      if (aborted() || options.deadline - Date.now() < 3000) {
+      if (aborted() || options.deadline - Date.now() < MIN_WRITE_MS) {
         if (!aborted()) {
           for (const left of claims.slice(index)) await release(left);
         }
@@ -1042,23 +1048,28 @@ export async function processOutbound(
   const phase = (
     until: number,
     run: (signal?: AbortSignal) => Promise<boolean>,
-  ) =>
-    withDeadline(until, (signal) => run(either(signal, options.signal))).catch(
-      (error: unknown) => {
-        if (Date.now() >= until) {
-          logCalendar("outbound_phase_deadline_exceeded", {}, "warn");
-        } else {
-          logCalendar(
-            "outbound_writes_failed",
-            {
-              code: error instanceof AppException ? error.code : "internal",
-            },
-            "error",
-          );
-        }
-        return true;
-      },
-    );
+  ) => {
+    let phaseSignal: AbortSignal | undefined;
+    return withDeadline(until, (signal) => {
+      phaseSignal = signal;
+      return run(either(signal, options.signal));
+    }).catch((error: unknown) => {
+      // The phase's own deadline: its signal, aborted before the
+      // rejection (a timer may fire just before the clock reads it).
+      if (phaseSignal?.aborted || Date.now() >= until) {
+        logCalendar("outbound_phase_deadline_exceeded", {}, "warn");
+      } else {
+        logCalendar(
+          "outbound_writes_failed",
+          {
+            code: error instanceof AppException ? error.code : "internal",
+          },
+          "error",
+        );
+      }
+      return true;
+    });
+  };
 
   const cut = await phase(priorityDeadline, async (signal) => {
     const { data, error } = await abortable(

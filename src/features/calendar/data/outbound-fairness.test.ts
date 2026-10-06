@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CalendarDeps } from "./deps";
+import { logCalendar } from "./log";
 import { OUTBOUND_WRITE_SHARE, processOutbound } from "./outbound";
 import { backfillOutbound, reconcileOutbound } from "./reconcile";
 
@@ -127,6 +128,19 @@ describe("outbound: a slow writer database call cannot take reconciliation's sha
     expect(result).toMatchObject({ reconciled: 1, applied: 0 });
     await drain();
     expect(unhandled).toEqual([]);
+  });
+
+  it("the phase timer firing a millisecond before the clock reaches it is still the phase's deadline, not a write failure", async () => {
+    const claim = databaseCall(false);
+    const { deps } = depsWith(claim);
+    const run = processOutbound(deps, { budgetMs: BUDGET });
+    vi.setSystemTime(Date.now() - 1);
+    await vi.advanceTimersByTimeAsync(PRIORITY);
+    await run;
+    expect(reconcileOutbound).toHaveBeenCalledTimes(1);
+    const operations = vi.mocked(logCalendar).mock.calls.map(([op]) => op);
+    expect(operations).toContain("outbound_phase_deadline_exceeded");
+    expect(operations).not.toContain("outbound_writes_failed");
   });
 
   it("its late answer is consumed: the granted claims are never written (their leases expire)", async () => {

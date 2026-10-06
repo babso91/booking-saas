@@ -124,6 +124,26 @@ describe("periodic job: real deadlines per direction", () => {
     expect(unhandled).toEqual([]);
   });
 
+  it("inbound's deadline timer firing a millisecond before the clock reaches it is still its deadline, never an inbound failure", async () => {
+    const dueWork = databaseCall(false);
+    const { deps } = depsWith(dueWork);
+    vi.mocked(processOutbound).mockResolvedValue(outboundResult);
+
+    const job = runCalendarJob(deps, { budgetMs: 50_000 });
+    const settled = job.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    // Node's timers may fire just before Date.now() reads their deadline.
+    vi.setSystemTime(Date.now() - 1);
+    await vi.advanceTimersByTimeAsync(50_000 * INBOUND_SHARE);
+    expect(await settled).toEqual({
+      value: { due: 0, processed: [], outbound: outboundResult },
+    });
+    expect(dueWork.signal?.aborted).toBe(true);
+    expect(processOutbound).toHaveBeenCalledTimes(1);
+  });
+
   it("a late answer of the abandoned call is consumed: nothing starts after inbound's deadline", async () => {
     const dueWork = databaseCall(false);
     const { deps } = depsWith(dueWork);

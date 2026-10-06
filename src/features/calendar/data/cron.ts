@@ -111,10 +111,21 @@ export async function runCalendarJob(
 
   const inbound: InboundRun = { due: 0, processed: [] };
   let inboundFailure: unknown = null;
-  await withDeadline(inboundDeadline, (signal) =>
-    runInbound(deps, inbound, inboundDeadline, signal, options.limit ?? 50),
-  ).catch((error: unknown) => {
-    if (Date.now() >= inboundDeadline) {
+  let inboundSignal: AbortSignal | undefined;
+  await withDeadline(inboundDeadline, (signal) => {
+    inboundSignal = signal;
+    return runInbound(
+      deps,
+      inbound,
+      inboundDeadline,
+      signal,
+      options.limit ?? 50,
+    );
+  }).catch((error: unknown) => {
+    // Its deadline is known by its signal (aborted before the rejection),
+    // never by the clock alone: a timer may fire a millisecond before
+    // Date.now() reaches the deadline.
+    if (inboundSignal?.aborted || Date.now() >= inboundDeadline) {
       // Abandoned at its deadline: outbound keeps its share.
       logCalendar("inbound_deadline_exceeded", {}, "warn");
     } else {
