@@ -412,7 +412,7 @@ async function provesOwnership(
       await provider.insertEvent(token, calendarId, sentinel, { deadline });
     } catch (error) {
       if (!isKind(error, "conflict")) throw error;
-      await provider.updateEvent(token, calendarId, sentinel, { deadline });
+      await provider.restoreEvent(token, calendarId, sentinel, { deadline });
     }
   } catch (error) {
     if (isKind(error, "forbidden", "not_found")) return false;
@@ -691,14 +691,38 @@ async function applyMirror(
         }
 
         const event = outboundEvent(claim);
-        // Possibly written before (a lost answer included): update first.
-        // A cancelled event comes back with status confirmed, same id.
-        if (claim.previousCalendarId === target) {
+        // An event that exists under the deterministic id: only the
+        // managed fields are written (partial update), whatever the
+        // professional added stays. Deleted at Google (the patch leaves it
+        // cancelled, or Google answers 410): the dedicated restoration, a
+        // full rewrite of the canonical event. Never a read first.
+        // "missing": the id does not exist (never written, or purged).
+        const writeExisting = async (): Promise<"written" | "missing"> => {
           try {
-            await provider.updateEvent(token, target, event, callOptions);
-            return { kind: "applied" };
+            const { status } = await provider.patchEvent(
+              token,
+              target,
+              event,
+              callOptions,
+            );
+            if (status !== "cancelled") return "written";
           } catch (error) {
-            if (!isKind(error, "not_found", "gone")) throw error;
+            if (isKind(error, "not_found")) return "missing";
+            if (!isKind(error, "gone")) throw error;
+          }
+          try {
+            await provider.restoreEvent(token, target, event, callOptions);
+            return "written";
+          } catch (error) {
+            if (isKind(error, "not_found", "gone")) return "missing";
+            throw error;
+          }
+        };
+
+        // Possibly written before (a lost answer included): update first.
+        if (claim.previousCalendarId === target) {
+          if ((await writeExisting()) === "written") {
+            return { kind: "applied" };
           }
         }
         try {
@@ -708,8 +732,11 @@ async function applyMirror(
           // The deterministic id exists (an insert whose answer was lost,
           // or a deleted event): it is reconciled, never duplicated.
           if (isKind(error, "conflict")) {
-            await provider.updateEvent(token, target, event, callOptions);
-            return { kind: "applied" };
+            if ((await writeExisting()) === "written") {
+              return { kind: "applied" };
+            }
+            // Gone between the two answers: the next attempt inserts.
+            return { kind: "retry", code: "conflict" };
           }
           if (isKind(error, "not_found") && (await calendarGone())) {
             return { kind: "action_required", code: "calendar_deleted" };

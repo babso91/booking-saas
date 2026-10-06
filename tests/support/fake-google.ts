@@ -6,8 +6,10 @@ import { createHash, randomUUID } from "node:crypto";
 // Outbound: incremental authorization (scopes granted per account, kept by
 // include_granted_scopes), calendars.insert/get (app-created calendars,
 // calendar.app.created required), events insert/update/delete with custom
-// ids (409 on an existing id, cancelled events kept and restorable), and
-// answers lost after the request was applied.
+// ids (409 on an existing id, cancelled events kept and restorable),
+// events.patch with Google's merge semantics (fields not sent unchanged,
+// nested objects merged, null removes, arrays replaced), and answers lost
+// after the request was applied.
 // Only the behaviour the adapter relies on is modelled.
 
 export const WRITE_SCOPE =
@@ -24,11 +26,36 @@ export type FakeEvent = {
   attendees?: { self?: boolean; responseStatus?: string; email?: string }[];
   summary?: string;
   extendedProperties?: { private?: Record<string, string> };
+  // Fields only the professional sets (never written by Booking).
+  description?: string;
+  location?: string;
+  colorId?: string;
+  reminders?: unknown;
 };
 
 type StoredEvent = FakeEvent & { etag: string; updated: string; seq: number };
 
 type Account = { sub: string; email: string };
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Google's patch semantics on a JSON resource. */
+function mergePatch(
+  target: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...target };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete result[key];
+    else if (isObject(value) && isObject(result[key])) {
+      result[key] = mergePatch(result[key], value);
+    } else if (isObject(value)) {
+      result[key] = mergePatch({}, value);
+    } else result[key] = value;
+  }
+  return result;
+}
 
 type Failure = {
   match: (url: URL) => boolean;
@@ -113,6 +140,13 @@ export class FakeGoogle {
   >();
 
   private seq = 0;
+  /**
+   * What events.patch does to a deleted (cancelled) event, which Google's
+   * reference does not specify: `keeps_cancelled` (the fields are merged,
+   * the event stays deleted), `restores` (undeleted like by update), or
+   * `gone` (410). The writer must converge in every case.
+   */
+  patchOnCancelled: "keeps_cancelled" | "restores" | "gone" = "keeps_cancelled";
   /** When true, the consent screen grants everything but the write scope. */
   denyWriteScope = false;
   /**
@@ -691,6 +725,35 @@ export class FakeGoogle {
 
     const eventId = decodeURIComponent(eventMatch[2]!);
     const existing = store.get(eventId);
+    if (method === "PATCH") {
+      if (!existing) return json({ error: { code: 404 } }, 404);
+      if (existing.status === "cancelled" && this.patchOnCancelled === "gone") {
+        return json({ error: { code: 410, message: "deleted" } }, 410);
+      }
+      const current: Partial<StoredEvent> = { ...existing };
+      delete current.etag;
+      delete current.updated;
+      delete current.seq;
+      const patch = JSON.parse(body) as Record<string, unknown>;
+      const merged = mergePatch(
+        current as Record<string, unknown>,
+        patch,
+      ) as FakeEvent;
+      if (
+        existing.status === "cancelled" &&
+        this.patchOnCancelled === "keeps_cancelled"
+      ) {
+        merged.status = "cancelled";
+      }
+      this.putEvent(calendarId, { ...merged, id: eventId });
+      const fields = url.searchParams.get("fields");
+      const stored = store.get(eventId)!;
+      return json(
+        fields === "id,status"
+          ? { id: eventId, status: stored.status }
+          : publicEvent(stored, "summary"),
+      );
+    }
     if (method === "PUT") {
       if (!existing) return json({ error: { code: 404 } }, 404);
       const event = JSON.parse(body) as Omit<FakeEvent, "id">;

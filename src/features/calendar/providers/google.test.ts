@@ -809,7 +809,7 @@ describe("Google outbound (calendar.app.created)", () => {
     expect(await provider.deleteEvent(tokens.accessToken, calendarId, id)).toBe(
       false,
     );
-    await provider.updateEvent(tokens.accessToken, calendarId, event(id));
+    await provider.restoreEvent(tokens.accessToken, calendarId, event(id));
     expect(fake.storedEvents(calendarId)).toMatchObject([
       { id, status: "confirmed", summary: "Léa — Coupe" },
     ]);
@@ -1032,5 +1032,124 @@ describe("reconciliation listing and comparison", () => {
     // Must not exist: only a live event differs.
     expect(differs(null, { ...listed, status: "cancelled" })).toBe(false);
     expect(differs(null, listed)).toBe(true);
+  });
+});
+
+describe("partial update and restoration", () => {
+  const event = {
+    id: "bk0123456789abcdef0123456789abcdef",
+    summary: "Léa — Coupe",
+    startsAt: "2026-10-14T14:00:00+00:00",
+    endsAt: "2026-10-14T15:00:00+00:00",
+    privateProperties: {
+      origin: "booking-saas",
+      appointmentId: "a",
+      revision: "2",
+    },
+  };
+
+  async function calendarWithEvent() {
+    fake.setCalendars(account.sub, [
+      { id: account.email, summary: "Moi", timeZone: "UTC", primary: true },
+    ]);
+    const url = provider.writeAuthorizationUrl({
+      state: "w",
+      codeChallenge: challenge,
+      redirectUri: REDIRECT,
+      loginHint: account.sub,
+    });
+    const { code } = fake.authorize(account, url);
+    const tokens = await provider.exchangeCode({
+      code,
+      codeVerifier: verifier,
+      redirectUri: REDIRECT,
+    });
+    const { id: calendarId } = await provider.createCalendar(
+      tokens.accessToken,
+      { summary: "R", description: "d", timeZone: "UTC" },
+    );
+    await provider.insertEvent(tokens.accessToken, calendarId, event);
+    return { token: tokens.accessToken, calendarId };
+  }
+
+  it("patches the managed fields only: no unmanaged key, all-day date removed, private keys merged", async () => {
+    const { token, calendarId } = await calendarWithEvent();
+    fake.editEvent(calendarId, event.id, {
+      description: "Note",
+      colorId: "4",
+      start: { date: "2026-10-14" },
+      extendedProperties: { private: { other: "x" } },
+    });
+    expect(
+      await provider.patchEvent(token, calendarId, {
+        ...event,
+        summary: "Zoé — Coupe",
+      }),
+    ).toEqual({ status: "confirmed" });
+
+    const request = fake.requests.at(-1)!;
+    expect(request.method).toBe("PATCH");
+    expect(request.url.searchParams.get("sendUpdates")).toBe("none");
+    expect(request.url.searchParams.get("fields")).toBe("id,status");
+    expect(JSON.parse(request.body)).toEqual({
+      summary: "Zoé — Coupe",
+      start: { dateTime: event.startsAt, date: null },
+      end: { dateTime: event.endsAt, date: null },
+      status: "confirmed",
+      transparency: "opaque",
+      extendedProperties: { private: event.privateProperties },
+    });
+    const [stored] = fake.storedEvents(calendarId);
+    expect(stored).toMatchObject({
+      summary: "Zoé — Coupe",
+      description: "Note",
+      colorId: "4",
+      start: { dateTime: event.startsAt },
+      extendedProperties: {
+        private: { ...event.privateProperties, other: "x" },
+      },
+    });
+    expect(stored!.start.date).toBeUndefined();
+  });
+
+  it("reports a deleted event it did not restore; restoreEvent rewrites the canonical event (PUT)", async () => {
+    const { token, calendarId } = await calendarWithEvent();
+    await provider.deleteEvent(token, calendarId, event.id);
+    expect(await provider.patchEvent(token, calendarId, event)).toEqual({
+      status: "cancelled",
+    });
+    fake.patchOnCancelled = "gone";
+    await expect(
+      provider.patchEvent(token, calendarId, event),
+    ).rejects.toMatchObject({ kind: "gone" });
+    await provider.restoreEvent(token, calendarId, event);
+    expect(fake.requests.at(-1)!.method).toBe("PUT");
+    expect(fake.storedEvents(calendarId)).toMatchObject([
+      { id: event.id, status: "confirmed", summary: "Léa — Coupe" },
+    ]);
+    await expect(
+      provider.patchEvent(token, calendarId, { ...event, id: "bkmissing00" }),
+    ).rejects.toMatchObject({ kind: "not_found" });
+  });
+
+  it("a malformed patch answer is a protocol error", async () => {
+    const { token, calendarId } = await calendarWithEvent();
+    fake.failNext(() => true, 200, 1, { id: event.id });
+    await expect(
+      provider.patchEvent(token, calendarId, event),
+    ).rejects.toMatchObject({ kind: "protocol" });
+  });
+
+  it("unmanaged fields never differ", () => {
+    const listed = {
+      id: event.id,
+      status: "confirmed",
+      summary: event.summary,
+      start: { dateTime: event.startsAt },
+      end: { dateTime: event.endsAt },
+      transparency: null,
+      privateProperties: { ...event.privateProperties, other: "y" },
+    };
+    expect(provider.ownedEventDiffers(event, listed)).toBe(false);
   });
 });

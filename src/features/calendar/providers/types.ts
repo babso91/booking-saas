@@ -224,8 +224,27 @@ export interface CalendarProvider {
     event: OutboundEvent,
     options?: CallOptions,
   ): Promise<void>;
-  /** Replaces the event (confirmed again if it was cancelled). */
-  updateEvent(
+  /**
+   * Writes the Booking-managed fields of an existing event only (partial
+   * update): every field Booking does not own (description, location,
+   * colour, reminders, other private properties) is left as it is. Returns
+   * the event's status after the write: `cancelled` means the event is
+   * deleted at the provider and was not restored by this write (the caller
+   * then restores it). `not_found` when it never existed or is purged.
+   */
+  patchEvent(
+    accessToken: string,
+    calendarId: string,
+    event: OutboundEvent,
+    options?: CallOptions,
+  ): Promise<{ status: string }>;
+  /**
+   * Restoration of a deleted (cancelled) event: the whole event is
+   * rewritten as Booking's canonical event, confirmed, same id. Only for
+   * that exceptional case (it removes every field Booking does not own),
+   * and for the ownership probe's own event.
+   */
+  restoreEvent(
     accessToken: string,
     calendarId: string,
     event: OutboundEvent,

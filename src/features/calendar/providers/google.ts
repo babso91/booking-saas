@@ -436,11 +436,12 @@ export function toProviderEvent(event: GoogleEvent): ProviderEvent | null {
   };
 }
 
-// The canonical serializer: the body every write sends, and what
+// The canonical serializer: Booking's managed fields, the one definition
+// that inserts, partial updates and restorations send and that
 // reconciliation compares a listed event with. Only the appointment's slot
 // and a minimal title: no attendee (no invitation), no description, no
 // notes, no contact detail. Opaque: the professional's other tools see the
-// slot as busy.
+// slot as busy. Every other field of the event belongs to the professional.
 function eventBody(event: OutboundEvent) {
   return {
     summary: event.summary,
@@ -449,6 +450,28 @@ function eventBody(event: OutboundEvent) {
     status: "confirmed",
     transparency: "opaque",
     extendedProperties: { private: event.privateProperties },
+  };
+}
+
+/**
+ * The partial update (events.patch) of the managed fields. Google's patch
+ * semantics: fields not sent are unchanged, nested objects are merged key
+ * by key, a null value removes a key. So:
+ * - description, location, colour, reminders, attendees… are not sent and
+ *   stay as the professional set them;
+ * - `extendedProperties.private` is merged: Booking's keys (origin,
+ *   appointmentId, revision) are written, any other private key is kept;
+ * - `start` and `end` are merged too: `date: null` removes an all-day date
+ *   the professional may have set, so that the bound is the instant only
+ *   (a named `timeZone` is kept: with an explicit offset it does not change
+ *   the instant).
+ */
+function patchBody(event: OutboundEvent) {
+  const body = eventBody(event);
+  return {
+    ...body,
+    start: { ...body.start, date: null },
+    end: { ...body.end, date: null },
   };
 }
 
@@ -948,7 +971,27 @@ export function createGoogleCalendarProvider(options: {
       if (body.id !== event.id) throw protocolError("Unexpected event");
     },
 
-    async updateEvent(accessToken, calendarId, event, callOptions) {
+    // events.patch: one request (3 quota units instead of 1 for update),
+    // never a read before the write. Idempotent (same body): retried like
+    // an insert.
+    async patchEvent(accessToken, calendarId, event, callOptions) {
+      checkEventId(event.id);
+      const url = eventUrl(calendarId, event.id);
+      url.searchParams.set("fields", "id,status");
+      const body = await call(
+        url.toString(),
+        jsonRequest("PATCH", accessToken, patchBody(event)),
+        callOptions,
+      );
+      if (body.id !== event.id || !nonEmptyString(body.status)) {
+        throw protocolError("Unexpected event");
+      }
+      return { status: body.status };
+    },
+
+    // events.update (full replacement) with status confirmed: the
+    // restoration of a deleted event, never an ordinary update.
+    async restoreEvent(accessToken, calendarId, event, callOptions) {
       checkEventId(event.id);
       const body = await call(
         eventUrl(calendarId, event.id).toString(),

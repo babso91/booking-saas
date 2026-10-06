@@ -1180,7 +1180,7 @@ describe("authority and races", () => {
     const { s, calendarId, a } = await reconciled();
     fake.editEvent(calendarId, eventIdOf(a.id), { summary: "Autre" });
     await reconcile();
-    const held = fake.hold((url, method) => method === "PUT");
+    const held = fake.hold((url, method) => method === "PATCH");
     const worker = run(s);
     await held.reached;
     await reschedule(s, a.id, "17:00");
@@ -1197,7 +1197,7 @@ describe("authority and races", () => {
     const { s, calendarId, a } = await reconciled();
     fake.editEvent(calendarId, eventIdOf(a.id), { summary: "Autre" });
     await reconcile();
-    const held = fake.hold((url, method) => method === "PUT");
+    const held = fake.hold((url, method) => method === "PATCH");
     const worker = run(s);
     await held.reached;
     // A newer drift recorded while the repair is at Google.
@@ -1418,5 +1418,209 @@ describe("isolation and scheduling", () => {
     sessionClient = s.owner.client;
     const status = ok(await getCalendarOutboundStatusAction());
     expect(JSON.stringify(status)).not.toMatch(/sync-|syncToken|pageToken/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("fields Booking does not own are preserved", () => {
+  const patches = () => fake.count((_url, method) => method === "PATCH");
+  const puts = () => fake.count((_url, method) => method === "PUT");
+  const reminders = {
+    useDefault: false,
+    overrides: [{ method: "popup", minutes: 30 }],
+  };
+
+  it("A. description: the appointment moves, only the managed fields are written (one partial update, no read)", async () => {
+    const { s, calendarId, a } = await reconciled();
+    fake.editEvent(calendarId, eventIdOf(a.id), { description: "Code 1234" });
+    const reads = fake.count(
+      (url, method) =>
+        method === "GET" && url.pathname.includes(`/events/${eventIdOf(a.id)}`),
+    );
+    const [patchesBefore, putsBefore] = [patches(), puts()];
+    await reschedule(s, a.id, "17:00");
+    await run(s);
+    expectCanonical(calendarId, a.id, "17:00");
+    expect(storedEvent(calendarId, a.id)).toMatchObject({
+      description: "Code 1234",
+    });
+    expect(patches() - patchesBefore).toBe(1);
+    expect(puts()).toBe(putsBefore);
+    expect(
+      fake.count(
+        (url, method) =>
+          method === "GET" &&
+          url.pathname.includes(`/events/${eventIdOf(a.id)}`),
+      ),
+    ).toBe(reads);
+    const patch = fake.requests.filter((r) => r.method === "PATCH").at(-1)!;
+    expect(patch.url.searchParams.get("sendUpdates")).toBe("none");
+    expect(Object.keys(JSON.parse(patch.body)).sort()).toEqual([
+      "end",
+      "extendedProperties",
+      "start",
+      "status",
+      "summary",
+      "transparency",
+    ]);
+  });
+
+  it("B. colour: the title changes (client renamed), the colour stays", async () => {
+    const { s, calendarId, a } = await reconciled();
+    fake.editEvent(calendarId, eventIdOf(a.id), { colorId: "5" });
+    await db.query(
+      `update public.clients set first_name = 'Zoé'
+       where id = (select client_id from public.appointments where id = $1)`,
+      [a.id],
+    );
+    await run(s);
+    expect(storedEvent(calendarId, a.id)).toMatchObject({
+      summary: "Zoé — Coupe",
+      colorId: "5",
+      status: "confirmed",
+    });
+  });
+
+  it("C. reminders: a repair of the title keeps the professional's reminders", async () => {
+    const { s, calendarId, a } = await reconciled();
+    fake.editEvent(calendarId, eventIdOf(a.id), {
+      summary: "Autre",
+      reminders,
+    });
+    expect(await reconcile()).toMatchObject({ drifted: 1 });
+    await run(s);
+    expectCanonical(calendarId, a.id);
+    expect(storedEvent(calendarId, a.id)).toMatchObject({ reminders });
+  });
+
+  it("D. moved by hand and described: the time is repaired, the description kept; other private keys too", async () => {
+    const { s, calendarId, a } = await reconciled();
+    const own = storedEvent(calendarId, a.id)!.extendedProperties!.private!;
+    fake.editEvent(calendarId, eventIdOf(a.id), {
+      start: { dateTime: at(D, "12:00"), timeZone: "Europe/Paris" },
+      end: { dateTime: at(D, "13:00") },
+      description: "Déplacé",
+      extendedProperties: { private: { ...own, other: "kept" } },
+    });
+    expect(await reconcile()).toMatchObject({ drifted: 1 });
+    await run(s);
+    expectCanonical(calendarId, a.id);
+    expect(storedEvent(calendarId, a.id)).toMatchObject({
+      description: "Déplacé",
+      end: { dateTime: expect.any(String) },
+      extendedProperties: { private: { other: "kept" } },
+    });
+    expect(instant(storedEvent(calendarId, a.id)!.end.dateTime)).toBe(
+      at(D, "11:00"),
+    );
+  });
+
+  it("D'. turned all-day by hand: the repair removes the date and writes the instants", async () => {
+    const { s, calendarId, a } = await reconciled();
+    fake.editEvent(calendarId, eventIdOf(a.id), {
+      start: { date: D },
+      end: { date: D },
+      description: "Journée",
+    });
+    expect(await reconcile()).toMatchObject({ drifted: 1 });
+    await run(s);
+    expectCanonical(calendarId, a.id);
+    expect(storedEvent(calendarId, a.id)!.end.date).toBeUndefined();
+    expect(storedEvent(calendarId, a.id)!.description).toBe("Journée");
+  });
+
+  it("E. only unmanaged fields changed: no drift, no repair, no write", async () => {
+    const { calendarId, a } = await reconciled();
+    fake.editEvent(calendarId, eventIdOf(a.id), {
+      description: "Note",
+      location: "Salon 2",
+      colorId: "7",
+      reminders,
+    });
+    const writes = googleWrites();
+    expect(await reconcile()).toMatchObject({ drifted: 0 });
+    expect(repairDue(await mirror(a.id))).toBe(false);
+    expect(googleWrites()).toBe(writes);
+  });
+
+  it.each(["keeps_cancelled", "gone", "restores"] as const)(
+    "F. deleted in Google, appointment active (patch on a deleted event: %s): restored, never duplicated",
+    async (mode) => {
+      const { s, calendarId, a } = await reconciled();
+      fake.patchOnCancelled = mode;
+      fake.deleteEvent(calendarId, eventIdOf(a.id));
+      expect(await reconcile()).toMatchObject({ drifted: 1 });
+      const putsBefore = puts();
+      await run(s);
+      expectCanonical(calendarId, a.id);
+      expect(fake.storedEvents(calendarId)).toHaveLength(1);
+      // The dedicated restoration only when the partial update did not.
+      expect(puts() - putsBefore).toBe(mode === "restores" ? 0 : 1);
+      await due(s);
+      expect(await reconcile()).toMatchObject({ drifted: 0 });
+    },
+  );
+
+  it.each(["keeps_cancelled", "gone", "restores"] as const)(
+    "F'. deleted in Google, then moved in Booking before any listing (%s): restored at the new time",
+    async (mode) => {
+      const { s, calendarId, a } = await reconciled();
+      fake.patchOnCancelled = mode;
+      fake.deleteEvent(calendarId, eventIdOf(a.id));
+      await reschedule(s, a.id, "17:00");
+      await run(s);
+      expectCanonical(calendarId, a.id, "17:00");
+      expect(fake.storedEvents(calendarId)).toHaveLength(1);
+    },
+  );
+
+  it("G. deleted with its manual fields: the restoration recreates the canonical event (manual fields not promised)", async () => {
+    const { s, calendarId, a } = await reconciled();
+    fake.editEvent(calendarId, eventIdOf(a.id), { description: "Perdue" });
+    fake.deleteEvent(calendarId, eventIdOf(a.id));
+    await reconcile();
+    await run(s);
+    expectCanonical(calendarId, a.id);
+  });
+
+  it("purged in Google (no such id any more), then moved in Booking: inserted again with the same id", async () => {
+    const { s, calendarId, a } = await reconciled();
+    fake.purgeEvent(calendarId, eventIdOf(a.id));
+    await reschedule(s, a.id, "17:00");
+    await run(s);
+    expectCanonical(calendarId, a.id, "17:00");
+    expect(fake.storedEvents(calendarId)).toHaveLength(1);
+  });
+
+  it("H. partial update whose answers are lost: retried, converges, manual fields kept", async () => {
+    const { s, calendarId, a } = await reconciled();
+    fake.editEvent(calendarId, eventIdOf(a.id), { description: "Garde" });
+    await reschedule(s, a.id, "17:00");
+    fake.loseAnswer((_url, method) => method === "PATCH", 4);
+    expect(await run(s)).toMatchObject({ applied: 0, retried: 1 });
+    await db.query(
+      "update private.appointment_calendar_mirrors set next_attempt_at = now() where appointment_id = $1",
+      [a.id],
+    );
+    expect(await run(s)).toMatchObject({ applied: 1 });
+    expectCanonical(calendarId, a.id, "17:00");
+    expect(storedEvent(calendarId, a.id)!.description).toBe("Garde");
+    expect(fake.storedEvents(calendarId)).toHaveLength(1);
+  });
+
+  it("I. cancelled in Booking: removed in Google, never restored nor patched", async () => {
+    const { s, calendarId, a } = await reconciled();
+    fake.editEvent(calendarId, eventIdOf(a.id), { description: "x" });
+    const [patchesBefore, putsBefore] = [patches(), puts()];
+    await cancel(s, a.id);
+    await run(s);
+    expect(storedEvent(calendarId, a.id)!.status).toBe("cancelled");
+    await due(s);
+    expect(await reconcile()).toMatchObject({ drifted: 0 });
+    await run(s);
+    expect(storedEvent(calendarId, a.id)!.status).toBe("cancelled");
+    expect(patches()).toBe(patchesBefore);
+    expect(puts()).toBe(putsBefore);
   });
 });
