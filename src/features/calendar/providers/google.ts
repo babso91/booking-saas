@@ -1,5 +1,7 @@
 import {
+  deadlineExceeded,
   defaultRetryPolicy,
+  isDeadlineCut,
   sendWithRetry,
   type CallOptions,
   type FetchLike,
@@ -151,7 +153,10 @@ async function readSuccess(
   let body: unknown;
   try {
     body = await response.json();
-  } catch {
+  } catch (error) {
+    // The request's own deadline cut the body: a deadline, not a protocol
+    // failure (told by the abort's identity, never by the clock).
+    if (isDeadlineCut(response, error)) throw deadlineExceeded();
     throw protocolError("Unparsable response");
   }
   if (!isRecord(body)) throw protocolError("Unexpected response");

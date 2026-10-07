@@ -8,7 +8,7 @@ import {
   GOOGLE_SCOPES,
   toProviderEvent,
 } from "./google";
-import type { RetryPolicy } from "./http";
+import { DeadlineExceededError, type RetryPolicy } from "./http";
 
 const fastRetry: RetryPolicy = {
   retries: 2,
@@ -1267,5 +1267,35 @@ describe("fake Google: a paginated listing is one coherent chain", () => {
     await expect(
       provider.listOwnedEvents(token, "cal", { kind: "full" }, "p999-1"),
     ).rejects.toMatchObject({ kind: "bad_request" });
+  });
+});
+
+describe("deadline cut while reading an answer", () => {
+  it("a body cut by the call's own deadline is the deadline (DeadlineExceededError), not a protocol failure", async () => {
+    const slow = createGoogleCalendarProvider({
+      clientId: "c",
+      clientSecret: "s",
+      retry: { ...fastRetry, timeoutMs: 10_000 },
+      fetch: async (_url, init) => {
+        const signal = init!.signal!;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            signal.addEventListener("abort", () =>
+              controller.error(signal.reason),
+            );
+          },
+        });
+        return new Response(body, { status: 200 });
+      },
+    });
+    await expect(
+      slow.listEvents(
+        "token",
+        "cal",
+        { kind: "incremental", syncToken: "s1" },
+        null,
+        { deadline: Date.now() + 100 },
+      ),
+    ).rejects.toBeInstanceOf(DeadlineExceededError);
   });
 });

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  DeadlineExceededError,
+  isDeadlineCut,
   sendWithRetry,
   withDeadline,
   withinDeadline,
@@ -192,7 +194,9 @@ describe("withinDeadline: which came first, said explicitly", () => {
       );
       vi.setSystemTime(Date.now() - 1);
       await vi.advanceTimersByTimeAsync(1000);
-      expect(await outcome).toEqual({ value: { expired: true } });
+      expect(await outcome).toEqual({
+        value: { expired: true, cause: "deadline" },
+      });
       expect(signal.aborted).toBe(true);
     } finally {
       vi.useRealTimers();
@@ -232,7 +236,9 @@ describe("withinDeadline: which came first, said explicitly", () => {
         }),
       );
       await vi.advanceTimersByTimeAsync(1000);
-      expect(await outcome).toEqual({ value: { expired: true } });
+      expect(await outcome).toEqual({
+        value: { expired: true, cause: "deadline" },
+      });
       fail(sentinel);
       vi.useRealTimers();
       for (let turn = 0; turn < 5; turn += 1) {
@@ -253,7 +259,248 @@ describe("withinDeadline: which came first, said explicitly", () => {
     const run = vi.fn(async () => 1);
     expect(await withinDeadline(Date.now() - 1, run)).toEqual({
       expired: true,
+      cause: "deadline",
     });
     expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe("withinDeadline: parent signal, late settlements, timers", () => {
+  const sentinel = new Error("sentinel");
+  const pending = () => new Promise<never>(() => undefined);
+
+  async function withFakeTimers(test: () => Promise<void>) {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      await test();
+      vi.useRealTimers();
+      for (let turn = 0; turn < 5; turn += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      vi.useRealTimers();
+    }
+  }
+
+  it("the parent aborted first: cause parent, the run's signal aborted, the later local deadline changes nothing", () =>
+    withFakeTimers(async () => {
+      const parent = new AbortController();
+      let signal!: AbortSignal;
+      const outcome = withinDeadline(
+        Date.now() + 1000,
+        (s) => {
+          signal = s;
+          return pending();
+        },
+        parent.signal,
+      );
+      await vi.advanceTimersByTimeAsync(400);
+      parent.abort();
+      expect(await outcome).toEqual({ expired: true, cause: "parent" });
+      expect(signal.aborted).toBe(true);
+      // Its timer is gone: nothing fires at the local deadline.
+      expect(vi.getTimerCount()).toBe(0);
+    }));
+
+  it("a parent already aborted: the run is never started", async () => {
+    const parent = new AbortController();
+    parent.abort();
+    const run = vi.fn(async () => 1);
+    expect(await withinDeadline(Date.now() + 1000, run, parent.signal)).toEqual(
+      { expired: true, cause: "parent" },
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("a real failure first, the parent aborted afterwards: the failure, unchanged", () =>
+    withFakeTimers(async () => {
+      const parent = new AbortController();
+      let fail!: (error: Error) => void;
+      const outcome = withinDeadline(
+        Date.now() + 1000,
+        () => new Promise<never>((_, reject) => (fail = reject)),
+        parent.signal,
+      ).then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      await vi.advanceTimersByTimeAsync(500);
+      fail(sentinel);
+      // A millisecond later (the failure has settled the race by then).
+      await vi.advanceTimersByTimeAsync(1);
+      parent.abort();
+      expect(await outcome).toEqual({ error: sentinel });
+    }));
+
+  it("the parent aborted first, a real failure later: parent, the late failure consumed", () =>
+    withFakeTimers(async () => {
+      const parent = new AbortController();
+      let fail!: (error: Error) => void;
+      const outcome = withinDeadline(
+        Date.now() + 1000,
+        () => new Promise<never>((_, reject) => (fail = reject)),
+        parent.signal,
+      );
+      parent.abort();
+      expect(await outcome).toEqual({ expired: true, cause: "parent" });
+      fail(sentinel);
+    }));
+
+  it("the local deadline with the parent still active: cause deadline; the parent's listener is removed", () =>
+    withFakeTimers(async () => {
+      const parent = new AbortController();
+      const add = vi.spyOn(parent.signal, "addEventListener");
+      const remove = vi.spyOn(parent.signal, "removeEventListener");
+      const outcome = withinDeadline(
+        Date.now() + 1000,
+        () => pending(),
+        parent.signal,
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await outcome).toEqual({ expired: true, cause: "deadline" });
+      expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[0]![1]);
+      parent.abort();
+    }));
+
+  it("the deadline first, a late answer: the deadline, the answer consumed", () =>
+    withFakeTimers(async () => {
+      let answer!: (value: number) => void;
+      const outcome = withinDeadline(
+        Date.now() + 1000,
+        () => new Promise<number>((resolve) => (answer = resolve)),
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await outcome).toEqual({ expired: true, cause: "deadline" });
+      answer(7);
+    }));
+
+  it("settled early (answer or failure): its timer is cleared, nothing aborts it later", () =>
+    withFakeTimers(async () => {
+      const parent = new AbortController();
+      let signal!: AbortSignal;
+      expect(
+        await withinDeadline(
+          Date.now() + 1000,
+          async (s) => {
+            signal = s;
+            return 1;
+          },
+          parent.signal,
+        ),
+      ).toEqual({ expired: false, value: 1 });
+      expect(vi.getTimerCount()).toBe(0);
+      await expect(
+        withinDeadline(Date.now() + 1000, async () => {
+          throw sentinel;
+        }),
+      ).rejects.toBe(sentinel);
+      expect(vi.getTimerCount()).toBe(0);
+      parent.abort();
+      expect(signal.aborted).toBe(false);
+    }));
+});
+
+describe("sendWithRetry: the deadline is told by its own abort, never by the clock", () => {
+  const hanging = (_url: string, init?: RequestInit) =>
+    new Promise<Response>((_, reject) =>
+      init!.signal!.addEventListener("abort", () =>
+        reject(init!.signal!.reason),
+      ),
+    );
+
+  it("a fractional deadline still sends the request (whole-millisecond timeout)", async () => {
+    const fetch = vi.fn(async () => response(200));
+    const answered = await sendWithRetry(
+      fetch,
+      "https://x.test",
+      {},
+      { ...policy(), timeoutMs: 10_000 },
+      { deadline: Date.now() + 800.5 },
+    );
+    expect(answered.status).toBe(200);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("an attempt cut by the deadline-capped timeout: DeadlineExceededError", async () => {
+    await expect(
+      sendWithRetry(
+        vi.fn(hanging),
+        "https://x.test",
+        {},
+        { ...policy(), timeoutMs: 10_000 },
+        { deadline: Date.now() + 100 },
+      ),
+    ).rejects.toBeInstanceOf(DeadlineExceededError);
+  });
+
+  it("an attempt cut by its own timeout (the deadline far): retried, then a real unavailability", async () => {
+    const fetch = vi.fn(hanging);
+    const error = await sendWithRetry(
+      fetch,
+      "https://x.test",
+      {},
+      { ...policy(), retries: 1, timeoutMs: 30 },
+      { deadline: Date.now() + 60_000 },
+    ).catch((caught: unknown) => caught);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(error).toBeInstanceOf(CalendarProviderError);
+    expect(error).not.toBeInstanceOf(DeadlineExceededError);
+  });
+
+  it("an abort that is not ours, even with the deadline close: never the deadline", async () => {
+    const fetch = vi.fn(async () => {
+      throw new DOMException("aborted elsewhere", "AbortError");
+    });
+    const error = await sendWithRetry(
+      fetch,
+      "https://x.test",
+      {},
+      { ...policy(), retries: 0, timeoutMs: 10_000 },
+      { deadline: Date.now() + 5_000 },
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(CalendarProviderError);
+    expect(error).not.toBeInstanceOf(DeadlineExceededError);
+  });
+
+  it("a real failure answer near the deadline is returned as is (the caller sees the real status)", async () => {
+    const fetch = vi.fn(async () => response(400));
+    const answered = await sendWithRetry(
+      fetch,
+      "https://x.test",
+      {},
+      { ...policy(), timeoutMs: 10_000 },
+      { deadline: Date.now() + 5 },
+    );
+    expect(answered.status).toBe(400);
+  });
+
+  it("a body cut by the deadline-capped timeout is recognised as the deadline's", async () => {
+    const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      const signal = init!.signal!;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          // As fetch does: the body errors with the signal's abort reason.
+          signal.addEventListener("abort", () =>
+            controller.error(signal.reason),
+          );
+        },
+      });
+      return new Response(body, { status: 200 });
+    });
+    const answered = await sendWithRetry(
+      fetch,
+      "https://x.test",
+      {},
+      { ...policy(), timeoutMs: 10_000 },
+      { deadline: Date.now() + 100 },
+    );
+    const error = await answered.json().catch((caught: unknown) => caught);
+    expect(isDeadlineCut(answered, error)).toBe(true);
+    expect(isDeadlineCut(answered, new Error("other"))).toBe(false);
   });
 });

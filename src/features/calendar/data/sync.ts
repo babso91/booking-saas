@@ -7,6 +7,7 @@ import {
   type ProviderEventPage,
   type ProviderEvent,
 } from "@/features/calendar/providers/types";
+import { DeadlineExceededError } from "@/features/calendar/providers/http";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 
@@ -384,21 +385,24 @@ async function syncOnce(pass: SyncPass): Promise<void> {
   }
 }
 
-function failureOf(
-  error: unknown,
-  deadline: number,
-): { outcome: SyncOutcome; code: string } {
+export function failureOf(error: unknown): {
+  outcome: SyncOutcome;
+  code: string;
+} {
   if (error instanceof StopSync) {
     return { outcome: error.outcome, code: error.code };
   }
   if (error instanceof StaleCredentialsError) {
     return { outcome: "superseded", code: "stale_credentials" };
   }
+  // Cut by the pass deadline (the deadline mechanism says so: the error is
+  // its own, never inferred from the clock when it is examined): resumed by
+  // the next pass. A real failure stays a failure, however close to the
+  // deadline it came.
+  if (error instanceof DeadlineExceededError) {
+    return { outcome: "stale", code: "budget_exceeded" };
+  }
   if (error instanceof CalendarProviderError) {
-    // Cut by the pass deadline: resumed by the next pass.
-    if (Date.now() >= deadline) {
-      return { outcome: "stale", code: "budget_exceeded" };
-    }
     return { outcome: "error", code: `provider_${error.kind}` };
   }
   if (error instanceof AppException) {
@@ -473,7 +477,7 @@ export async function syncCalendar(
         provider: claim.provider,
       });
     } catch (caught) {
-      const result = failureOf(caught, deadline);
+      const result = failureOf(caught);
       outcome = result.outcome;
       failure = result.code;
       logCalendar(
