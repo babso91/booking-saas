@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FakeGoogle } from "../../../../tests/support/fake-google";
 import {
@@ -8,7 +8,11 @@ import {
   GOOGLE_SCOPES,
   toProviderEvent,
 } from "./google";
-import { DeadlineExceededError, type RetryPolicy } from "./http";
+import {
+  DeadlineExceededError,
+  type FetchLike,
+  type RetryPolicy,
+} from "./http";
 
 const fastRetry: RetryPolicy = {
   retries: 2,
@@ -1297,5 +1301,48 @@ describe("deadline cut while reading an answer", () => {
         { deadline: Date.now() + 100 },
       ),
     ).rejects.toBeInstanceOf(DeadlineExceededError);
+  });
+});
+
+describe("token refresh under a fractional deadline", () => {
+  const refresher = (fetch: FetchLike) =>
+    createGoogleCalendarProvider({
+      clientId: "c",
+      clientSecret: "s",
+      retry: { ...fastRetry, timeoutMs: 10_000 },
+      fetch,
+    });
+  const answer = () =>
+    new Response(JSON.stringify({ access_token: "at", expires_in: 3600 }), {
+      status: 200,
+    });
+
+  it("less than a whole millisecond left: no request, the deadline (never a RangeError)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const fetch = vi.fn(async () => answer());
+      await expect(
+        refresher(fetch).refreshAccessToken("rt", {
+          deadline: Date.now() + 0.5,
+        }),
+      ).rejects.toBeInstanceOf(DeadlineExceededError);
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a fractional budget above a millisecond: the request is sent", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const fetch = vi.fn(async () => answer());
+      const refreshed = await refresher(fetch).refreshAccessToken("rt", {
+        deadline: Date.now() + 1.5,
+      });
+      expect(refreshed.accessToken).toBe("at");
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

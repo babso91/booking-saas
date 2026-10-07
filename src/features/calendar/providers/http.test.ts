@@ -504,3 +504,81 @@ describe("sendWithRetry: the deadline is told by its own abort, never by the clo
     expect(isDeadlineCut(answered, new Error("other"))).toBe(false);
   });
 });
+
+describe("sendWithRetry: a fractional budget is rounded down, never up", () => {
+  /** The clock frozen: the budget left is exactly `deadline - now`. */
+  async function attempt(
+    budgetMs: number,
+    fetch = vi.fn(async () => response(200)),
+  ) {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const outcome = await sendWithRetry(
+        fetch,
+        "https://x.test",
+        {},
+        { ...policy(), timeoutMs: 10_000 },
+        { deadline: Date.now() + budgetMs },
+      ).then(
+        (answered) => ({ status: answered.status }),
+        (error: unknown) => ({ error }),
+      );
+      return {
+        outcome,
+        fetch,
+        timeouts: timeout.mock.calls.map(([ms]) => ms),
+      };
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  }
+
+  it.each([0.1, 0.9, 0, -5])(
+    "%s ms left: no request starts, the deadline is exhausted",
+    async (budget) => {
+      const { outcome, fetch, timeouts } = await attempt(budget);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(timeouts).toEqual([]);
+      expect(outcome).toEqual({ error: expect.any(DeadlineExceededError) });
+    },
+  );
+
+  it.each([
+    [1.0, 1],
+    [1.1, 1],
+    [800.5, 800],
+  ])(
+    "%s ms left: the request starts with a %s ms timeout",
+    async (budget, ms) => {
+      const { outcome, fetch, timeouts } = await attempt(budget);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(timeouts).toEqual([ms]);
+      expect(outcome).toEqual({ status: 200 });
+    },
+  );
+
+  it("a retryable failure with less than a whole millisecond left: no second request, the deadline is exhausted", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const start = Date.now();
+      const fetch = vi.fn(async () => {
+        // The attempt took all but 0.7 ms of the budget.
+        vi.setSystemTime(start + 1_000);
+        return response(503);
+      });
+      const error = await sendWithRetry(
+        fetch,
+        "https://x.test",
+        {},
+        { ...policy(), baseDelayMs: 0, maxDelayMs: 0, timeoutMs: 10_000 },
+        { deadline: start + 1_000.7 },
+      ).catch((caught: unknown) => caught);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(error).toBeInstanceOf(DeadlineExceededError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

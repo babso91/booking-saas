@@ -205,16 +205,17 @@ export async function sendWithRetry(
       : options.deadline - Date.now();
 
   for (let attempt = 0; attempt <= policy.retries; attempt += 1) {
-    const budget = remaining();
+    // Whole milliseconds left, rounded down: AbortSignal.timeout takes
+    // whole milliseconds (a deadline may not be one), and rounding must
+    // never give a request more time than the deadline leaves. Less than
+    // one whole millisecond: no request starts, the deadline is exhausted.
+    const budget = Math.floor(remaining());
     if (budget <= 0) throw deadlineExceeded();
 
     // The attempt's timeout, cut to the time left: when the deadline is
     // what cut it, this signal and its abort reason are the deadline's.
-    // AbortSignal.timeout takes whole milliseconds (a deadline may not be).
     const deadlineCapped = budget < policy.timeoutMs;
-    const signal = AbortSignal.timeout(
-      Math.max(1, Math.floor(Math.min(policy.timeoutMs, budget))),
-    );
+    const signal = AbortSignal.timeout(Math.min(policy.timeoutMs, budget));
     let response: Response | null = null;
     try {
       response = await fetchImpl(url, { ...init, signal });
@@ -235,6 +236,9 @@ export async function sendWithRetry(
 
     lastStatus = response?.status ?? null;
     if (attempt === policy.retries) break;
+    // No whole millisecond left for another attempt: the deadline is what
+    // stops the retries (never a request started on a rounded-up budget).
+    if (Math.floor(remaining()) <= 0) throw deadlineExceeded();
     await response?.body?.cancel().catch(() => undefined);
     const delay = delayFor(
       attempt,
