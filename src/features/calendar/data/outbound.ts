@@ -988,12 +988,6 @@ function abortable<T extends { abortSignal(signal: AbortSignal): T }>(
   return signal ? query.abortSignal(signal) : query;
 }
 
-/** Aborted when either is (the phase's own deadline, or the run's). */
-function either(phase: AbortSignal | undefined, run: AbortSignal | undefined) {
-  if (!phase) return run;
-  return run ? AbortSignal.any([phase, run]) : phase;
-}
-
 /**
  * Processes due outbound work, within a budget: dedicated calendars to
  * create, then due mirrors. From the periodic job (no `businessId`), also
@@ -1084,20 +1078,26 @@ export async function processOutbound(
     until: number,
     run: (signal?: AbortSignal) => Promise<boolean>,
   ) =>
-    withinDeadline(until, (signal) => run(either(signal, options.signal))).then(
+    // The first of the phase's deadline, the run's parent signal (the
+    // periodic job's deadline) and the phase's own outcome decides, and
+    // nothing after it: a parent abort that came first is the job's
+    // (already reported by it), never later re-logged as this phase's
+    // timeout; a real failure that came first stays a failure, whatever
+    // the parent does afterwards.
+    withinDeadline(until, (signal) => run(signal), options.signal).then(
       (outcome) => {
         if (!outcome.expired) return outcome.value;
-        logCalendar("outbound_phase_deadline_exceeded", {}, "warn");
+        if (outcome.cause === "deadline") {
+          logCalendar("outbound_phase_deadline_exceeded", {}, "warn");
+        }
         return true;
       },
       (error: unknown) => {
-        if (!aborted()) {
-          logCalendar(
-            "outbound_writes_failed",
-            { code: error instanceof AppException ? error.code : "internal" },
-            "error",
-          );
-        }
+        logCalendar(
+          "outbound_writes_failed",
+          { code: error instanceof AppException ? error.code : "internal" },
+          "error",
+        );
         return true;
       },
     );

@@ -34,8 +34,37 @@ export type CallOptions = {
   deadline?: number;
 };
 
+/**
+ * The operation's own deadline came first. Its identity, never the clock
+ * when an error is examined, tells a deadline from a real failure. Still an
+ * `unavailable` provider error for callers that only retry.
+ */
+export class DeadlineExceededError extends CalendarProviderError {
+  constructor() {
+    super("unavailable", null, "Deadline exceeded");
+    this.name = "DeadlineExceededError";
+  }
+}
+
 export function deadlineExceeded() {
-  return new CalendarProviderError("unavailable", null, "Deadline exceeded");
+  return new DeadlineExceededError();
+}
+
+/**
+ * Responses whose request was bounded by its deadline: the abort signal
+ * our deadline-capped timeout owns, so that reading the body can tell the
+ * same cut from a real failure (see `isDeadlineCut`).
+ */
+const deadlineSignals = new WeakMap<Response, AbortSignal>();
+
+/**
+ * Whether `error`, raised while reading `response`, is the request's own
+ * deadline cutting it: the deadline-capped signal aborted and the error is
+ * its very abort reason (fetch rejects, and errors a body, with it).
+ */
+export function isDeadlineCut(response: Response, error: unknown) {
+  const signal = deadlineSignals.get(response);
+  return signal !== undefined && signal.aborted && error === signal.reason;
 }
 
 /**
@@ -72,8 +101,11 @@ export function withDeadline<T>(
 /** What a run bounded by `withinDeadline` came to. */
 export type DeadlineOutcome<T> =
   | { expired: false; value: T }
-  /** The deadline came first: the run's signal was aborted. */
-  | { expired: true };
+  /**
+   * Stopped before the run settled, its signal aborted: by its own deadline
+   * (`deadline`), or by the parent signal it was given (`parent`).
+   */
+  | { expired: true; cause: "deadline" | "parent" };
 
 /**
  * Runs an operation within a deadline (epoch ms) and says which came first,
@@ -85,14 +117,25 @@ export type DeadlineOutcome<T> =
  *   consumed, never an unhandled rejection;
  * - the run first: its value (`{ expired: false }`), or its own error,
  *   rejected unchanged, however late the caller looks at it;
- * - already expired: the run is never started.
+ * - `parent` aborted first: `{ expired: true, cause: "parent" }`, the run's
+ *   signal aborted too; a later local deadline or failure changes nothing;
+ * - already expired (or parent already aborted): the run is never started.
+ *
+ * The first of the three settles the outcome; the timer and the parent
+ * listener are removed as soon as it is settled.
  */
 export function withinDeadline<T>(
   deadline: number,
   run: (signal: AbortSignal) => PromiseLike<T>,
+  parent?: AbortSignal,
 ): Promise<DeadlineOutcome<T>> {
+  if (parent?.aborted) {
+    return Promise.resolve({ expired: true, cause: "parent" });
+  }
   const remaining = deadline - Date.now();
-  if (remaining <= 0) return Promise.resolve({ expired: true });
+  if (remaining <= 0) {
+    return Promise.resolve({ expired: true, cause: "deadline" });
+  }
 
   const controller = new AbortController();
   let operation: Promise<T>;
@@ -103,15 +146,28 @@ export function withinDeadline<T>(
   }
   operation.catch(() => undefined);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onParentAbort: (() => void) | undefined;
   return Promise.race([
     operation.then((value) => ({ expired: false as const, value })),
-    new Promise<{ expired: true }>((resolve) => {
+    new Promise<{ expired: true; cause: "deadline" | "parent" }>((resolve) => {
+      // Settled first, then the run is told: whatever it does next
+      // (an abort error, a late answer) loses the race.
       timer = setTimeout(() => {
+        resolve({ expired: true, cause: "deadline" });
         controller.abort();
-        resolve({ expired: true });
       }, remaining);
+      if (parent) {
+        onParentAbort = () => {
+          resolve({ expired: true, cause: "parent" });
+          controller.abort(parent.reason);
+        };
+        parent.addEventListener("abort", onParentAbort, { once: true });
+      }
     }),
-  ]).finally(() => clearTimeout(timer));
+  ]).finally(() => {
+    clearTimeout(timer);
+    if (onParentAbort) parent?.removeEventListener("abort", onParentAbort);
+  });
 }
 
 export function isRetryableStatus(status: number) {
@@ -149,18 +205,30 @@ export async function sendWithRetry(
       : options.deadline - Date.now();
 
   for (let attempt = 0; attempt <= policy.retries; attempt += 1) {
-    const budget = remaining();
+    // Whole milliseconds left, rounded down: AbortSignal.timeout takes
+    // whole milliseconds (a deadline may not be one), and rounding must
+    // never give a request more time than the deadline leaves. Less than
+    // one whole millisecond: no request starts, the deadline is exhausted.
+    const budget = Math.floor(remaining());
     if (budget <= 0) throw deadlineExceeded();
 
+    // The attempt's timeout, cut to the time left: when the deadline is
+    // what cut it, this signal and its abort reason are the deadline's.
+    const deadlineCapped = budget < policy.timeoutMs;
+    const signal = AbortSignal.timeout(Math.min(policy.timeoutMs, budget));
     let response: Response | null = null;
     try {
-      response = await fetchImpl(url, {
-        ...init,
-        signal: AbortSignal.timeout(Math.min(policy.timeoutMs, budget)),
-      });
-    } catch {
-      response = null; // network error or timeout
+      response = await fetchImpl(url, { ...init, signal });
+    } catch (error) {
+      // Our deadline cut it (fetch rejects with the signal's reason): no
+      // time is left for another attempt. Anything else (network failure,
+      // an abort that is not ours) is retried as before.
+      if (deadlineCapped && signal.aborted && error === signal.reason) {
+        throw deadlineExceeded();
+      }
+      response = null; // network error or attempt timeout
     }
+    if (response && deadlineCapped) deadlineSignals.set(response, signal);
 
     if (response && !isRetryableStatus(response.status)) {
       return response;
@@ -168,6 +236,9 @@ export async function sendWithRetry(
 
     lastStatus = response?.status ?? null;
     if (attempt === policy.retries) break;
+    // No whole millisecond left for another attempt: the deadline is what
+    // stops the retries (never a request started on a rounded-up budget).
+    if (Math.floor(remaining()) <= 0) throw deadlineExceeded();
     await response?.body?.cancel().catch(() => undefined);
     const delay = delayFor(
       attempt,

@@ -198,4 +198,82 @@ describe("outbound: a slow writer database call cannot take reconciliation's sha
     expect(reconcileOutbound).not.toHaveBeenCalled();
     expect(backfillOutbound).not.toHaveBeenCalled();
   });
+
+  describe("the job's own abort (parent) against the phase's deadline", () => {
+    const operations = () =>
+      vi.mocked(logCalendar).mock.calls.map(([operation]) => operation);
+
+    it("A. the parent aborted first, the claim ignoring it: no later phase timeout, no failure, nothing after", async () => {
+      const claim = databaseCall(false);
+      const { deps, provider } = depsWith(claim);
+      const parent = new AbortController();
+      const run = processOutbound(deps, {
+        budgetMs: BUDGET,
+        signal: parent.signal,
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      parent.abort();
+      await vi.advanceTimersByTimeAsync(BUDGET);
+      await run;
+      expect(operations()).not.toContain("outbound_phase_deadline_exceeded");
+      expect(operations()).not.toContain("outbound_writes_failed");
+      expect(reconcileOutbound).not.toHaveBeenCalled();
+      expect(provider).not.toHaveBeenCalled();
+      await drain();
+      expect(unhandled).toEqual([]);
+    });
+
+    it("B. the phase's own deadline, the parent still active: the phase timeout, logged once", async () => {
+      const claim = databaseCall(false);
+      const { deps } = depsWith(claim);
+      const parent = new AbortController();
+      const run = processOutbound(deps, {
+        budgetMs: BUDGET,
+        signal: parent.signal,
+      });
+      await vi.advanceTimersByTimeAsync(PRIORITY);
+      await run;
+      expect(
+        operations().filter((op) => op === "outbound_phase_deadline_exceeded"),
+      ).toHaveLength(1);
+      expect(reconcileOutbound).toHaveBeenCalledTimes(1);
+    });
+
+    it("C. a real failure first, the parent aborted later: the failure is logged", async () => {
+      const claim = databaseCall(false);
+      const { deps } = depsWith(claim);
+      const parent = new AbortController();
+      const run = processOutbound(deps, {
+        budgetMs: BUDGET,
+        signal: parent.signal,
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      claim.answer({ data: null, error: { message: "sentinel" } });
+      await vi.advanceTimersByTimeAsync(1);
+      parent.abort();
+      await vi.advanceTimersByTimeAsync(BUDGET);
+      await run;
+      expect(operations()).toContain("outbound_writes_failed");
+      expect(operations()).not.toContain("outbound_phase_deadline_exceeded");
+    });
+
+    it("D. the parent aborted first, a real failure later: consumed, no failure log", async () => {
+      const claim = databaseCall(false);
+      const { deps } = depsWith(claim);
+      const parent = new AbortController();
+      const run = processOutbound(deps, {
+        budgetMs: BUDGET,
+        signal: parent.signal,
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      parent.abort();
+      await run;
+      claim.fail(new Error("late"));
+      await vi.advanceTimersByTimeAsync(BUDGET);
+      await drain();
+      expect(operations()).not.toContain("outbound_writes_failed");
+      expect(operations()).not.toContain("outbound_phase_deadline_exceeded");
+      expect(unhandled).toEqual([]);
+    });
+  });
 });
