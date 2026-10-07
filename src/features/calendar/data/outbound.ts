@@ -6,6 +6,7 @@ import {
   type CalendarProviderId,
   type OutboundEvent,
 } from "@/features/calendar/providers/types";
+import { withinDeadline } from "@/features/calendar/providers/http";
 import { encryptSecret } from "@/lib/crypto/secret-box";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
@@ -17,6 +18,12 @@ import {
 } from "./connection";
 import { tokenAad, type CalendarDeps } from "./deps";
 import { logCalendar } from "./log";
+import { outboundEvent } from "./outbound-event";
+import {
+  backfillOutbound,
+  RECONCILIATION_MIN_START_MS,
+  reconcileOutbound,
+} from "./reconcile";
 import {
   getAccessToken,
   StaleCredentialsError,
@@ -41,6 +48,8 @@ import {
 // lands late or twice never creates a duplicate.
 
 const PROVIDER: CalendarProviderId = "google";
+
+export { outboundEvent };
 
 export type CalendarOutboundState =
   "disabled" | "creating" | "active" | "action_required";
@@ -408,7 +417,7 @@ async function provesOwnership(
       await provider.insertEvent(token, calendarId, sentinel, { deadline });
     } catch (error) {
       if (!isKind(error, "conflict")) throw error;
-      await provider.updateEvent(token, calendarId, sentinel, { deadline });
+      await provider.restoreEvent(token, calendarId, sentinel, { deadline });
     }
   } catch (error) {
     if (isKind(error, "forbidden", "not_found")) return false;
@@ -630,6 +639,10 @@ export type MirrorClaim = {
   endsAt: string | null;
   serviceName: string | null;
   clientFirstName: string | null;
+  /** The repair generation captured with the claim (acknowledged on success). */
+  repairGeneration: number;
+  /** Reconciliation found the event different from Booking: repair it. */
+  repair: boolean;
 };
 
 type MirrorOutcome =
@@ -641,27 +654,6 @@ type MirrorOutcome =
     }
   /** No authority any more (reconnected, disconnected, expired grant). */
   | { kind: "halt" };
-
-/**
- * The event as Google shows it: canonical instants from PostgreSQL (no
- * conversion here), the service's end (never the buffer), a first name and
- * a service name. Private metadata identifies the mirror.
- */
-export function outboundEvent(claim: MirrorClaim): OutboundEvent {
-  const firstName = claim.clientFirstName?.trim();
-  const service = claim.serviceName?.trim() || "Rendez-vous";
-  return {
-    id: claim.eventId,
-    summary: (firstName ? `${firstName} — ${service}` : service).slice(0, 250),
-    startsAt: claim.startsAt!,
-    endsAt: claim.endsAt!,
-    privateProperties: {
-      origin: "booking-saas",
-      appointmentId: claim.appointmentId,
-      revision: String(claim.revision),
-    },
-  };
-}
 
 const isKind = (error: unknown, ...kinds: string[]) =>
   error instanceof CalendarProviderError && kinds.includes(error.kind);
@@ -685,8 +677,12 @@ async function applyMirror(
 
         if (!claim.active) {
           // Never written to this calendar (cancelled before any attempt,
-          // or recorded for a former calendar): nothing to remove.
-          if (claim.previousCalendarId !== target) return { kind: "applied" };
+          // or recorded for a former calendar): nothing to remove. Unless
+          // reconciliation listed the event there (a repair): the
+          // deterministic id of an absent appointment is removed.
+          if (claim.previousCalendarId !== target && !claim.repair) {
+            return { kind: "applied" };
+          }
           const existed = await provider.deleteEvent(
             token,
             target,
@@ -700,14 +696,38 @@ async function applyMirror(
         }
 
         const event = outboundEvent(claim);
-        // Possibly written before (a lost answer included): update first.
-        // A cancelled event comes back with status confirmed, same id.
-        if (claim.previousCalendarId === target) {
+        // An event that exists under the deterministic id: only the
+        // managed fields are written (partial update), whatever the
+        // professional added stays. Deleted at Google (the patch leaves it
+        // cancelled, or Google answers 410): the dedicated restoration, a
+        // full rewrite of the canonical event. Never a read first.
+        // "missing": the id does not exist (never written, or purged).
+        const writeExisting = async (): Promise<"written" | "missing"> => {
           try {
-            await provider.updateEvent(token, target, event, callOptions);
-            return { kind: "applied" };
+            const { status } = await provider.patchEvent(
+              token,
+              target,
+              event,
+              callOptions,
+            );
+            if (status !== "cancelled") return "written";
           } catch (error) {
-            if (!isKind(error, "not_found", "gone")) throw error;
+            if (isKind(error, "not_found")) return "missing";
+            if (!isKind(error, "gone")) throw error;
+          }
+          try {
+            await provider.restoreEvent(token, target, event, callOptions);
+            return "written";
+          } catch (error) {
+            if (isKind(error, "not_found", "gone")) return "missing";
+            throw error;
+          }
+        };
+
+        // Possibly written before (a lost answer included): update first.
+        if (claim.previousCalendarId === target) {
+          if ((await writeExisting()) === "written") {
+            return { kind: "applied" };
           }
         }
         try {
@@ -717,8 +737,11 @@ async function applyMirror(
           // The deterministic id exists (an insert whose answer was lost,
           // or a deleted event): it is reconciled, never duplicated.
           if (isKind(error, "conflict")) {
-            await provider.updateEvent(token, target, event, callOptions);
-            return { kind: "applied" };
+            if ((await writeExisting()) === "written") {
+              return { kind: "applied" };
+            }
+            // Gone between the two answers: the next attempt inserts.
+            return { kind: "retry", code: "conflict" };
           }
           if (isKind(error, "not_found") && (await calendarGone())) {
             return { kind: "action_required", code: "calendar_deleted" };
@@ -762,13 +785,235 @@ export type OutboundRunResult = {
   retried: number;
   superseded: number;
   actionRequired: number;
+  /** Appointments enrolled by the backfill (periodic job only). */
+  backfilled: number;
+  /** Calendars whose listing completed in this run. */
+  reconciled: number;
+  /** Drifts recorded as repairs in this run. */
+  drifted: number;
 };
 
 /**
+ * Share of outbound's time reserved to writes (due mirrors and repairs)
+ * in the periodic job; reconciliation has at least the rest. Either side
+ * borrows what the other leaves unused: reconciliation starts as soon as
+ * no write is due, and writes resume after reconciliation if time is left.
+ */
+export const OUTBOUND_WRITE_SHARE = 0.75;
+
+/**
+ * The slice reserved for reconciliation is at least what a pass needs to
+ * start (RECONCILIATION_MIN_START_MS) plus the scheduling slack between the
+ * priority deadline and its first check: a reserved slice is never one it
+ * refuses. Derived, never a second number to keep in step.
+ */
+export const RECONCILIATION_RESERVE_MS = RECONCILIATION_MIN_START_MS + 500;
+
+/**
+ * How an outbound budget of the periodic job is split. Writes have
+ * priority for OUTBOUND_WRITE_SHARE of it; reconciliation keeps the rest,
+ * raised to RECONCILIATION_RESERVE_MS when the budget can hold that next to
+ * a write. A budget too small for both reserves nothing: writes keep their
+ * priority and reconciliation only gets what they leave (it starts only
+ * with RECONCILIATION_MIN_START_MS left).
+ */
+export function outboundPhases(budget: number) {
+  const share = Math.floor(budget * (1 - OUTBOUND_WRITE_SHARE));
+  const reconciliationMs =
+    budget >= MIN_WRITE_MS + RECONCILIATION_RESERVE_MS
+      ? Math.max(share, RECONCILIATION_RESERVE_MS)
+      : share;
+  return { priorityMs: budget - reconciliationMs, reconciliationMs };
+}
+
+/** Mirrors claimed per batch by the periodic job (at most 3 of one
+ * business), so that what a deadline leaves unprocessed is a few claims
+ * (released), and businesses alternate. */
+const CLAIM_BATCH = 10;
+/**
+ * Time a write needs left in its phase to be started (each provider call is
+ * bounded by the phase's deadline anyway): a short priority phase still
+ * writes, instead of leaving its whole slice unused.
+ */
+const MIN_WRITE_MS = 1500;
+const CLAIM_PER_BUSINESS = 3;
+
+/**
+ * Applies due mirrors (revisions and repairs), claimed fairly across
+ * businesses in small batches, until none is due, `limit` were claimed, or
+ * `deadline`. A configuration-level failure stops the business at once
+ * (action required): its other mirrors are not tried, nor retried one by
+ * one. Returns whether it stopped for lack of time with work left.
+ */
+async function applyDueMirrors(
+  deps: CalendarDeps,
+  result: OutboundRunResult,
+  state: { claimed: number; stopped: Set<string> },
+  options: {
+    businessId?: string;
+    limit: number;
+    deadline: number;
+    /**
+     * Batches until nothing was due by then (ISO, the periodic job: never
+     * what the run itself made due). null: one claim of everything due now
+     * (a kick after a change: the change is due by the database's clock).
+     */
+    dueBefore: string | null;
+    /** Aborted at the phase's or the run's deadline. */
+    signal?: AbortSignal;
+  },
+) {
+  const aborted = () => options.signal?.aborted === true;
+  while (state.claimed < options.limit) {
+    if (aborted() || options.deadline - Date.now() < MIN_WRITE_MS) return true;
+    // Aborted with the phase: a claim granted late is never used (its lease
+    // expires and the mirror is claimed again).
+    const { data, error } = await abortable(
+      deps.admin.rpc("calendar_outbound_claim_mirrors", {
+        p_limit: options.dueBefore
+          ? Math.min(CLAIM_BATCH, options.limit - state.claimed)
+          : options.limit,
+        p_business_id: (options.businessId ?? null) as string,
+        p_per_business: options.dueBefore ? CLAIM_PER_BUSINESS : 10,
+        p_exclude: [...state.stopped],
+        p_due_before: options.dueBefore as string,
+      }),
+      options.signal,
+    );
+    if (error) throw databaseException(error);
+    const claims = (data ?? []) as MirrorClaim[];
+    if (claims.length === 0) return false;
+    state.claimed += claims.length;
+
+    // Businesses stopped in this run (action required, no authority, rate
+    // limited) and claims the time left cannot cover: released untouched,
+    // available to the next run at once.
+    const release = (claim: MirrorClaim) =>
+      abortable(
+        deps.admin.rpc("calendar_outbound_release_mirror", {
+          p_appointment_id: claim.appointmentId,
+          p_claim_id: claim.claimId,
+        }),
+        options.signal,
+      );
+    for (const [index, claim] of claims.entries()) {
+      if (state.stopped.has(claim.businessId)) {
+        await release(claim);
+        continue;
+      }
+      if (aborted() || options.deadline - Date.now() < MIN_WRITE_MS) {
+        if (!aborted()) {
+          for (const left of claims.slice(index)) await release(left);
+        }
+        return true;
+      }
+      const outcome = await applyMirror(
+        deps,
+        claim,
+        Math.min(options.deadline, Date.now() + 20_000),
+      );
+
+      if (outcome.kind === "applied") {
+        const { data: done, error: doneError } = await deps.admin.rpc(
+          "calendar_outbound_complete_mirror",
+          {
+            p_appointment_id: claim.appointmentId,
+            p_claim_id: claim.claimId,
+            p_revision: claim.revision,
+            p_repair_generation: claim.repairGeneration,
+          },
+        );
+        if (doneError) throw databaseException(doneError);
+        if (done === "applied") result.applied += 1;
+        else {
+          result.superseded += 1;
+          logCalendar("outbound_mirror_superseded", {
+            businessId: claim.businessId,
+            appointmentId: claim.appointmentId,
+          });
+        }
+      } else if (outcome.kind === "retry") {
+        await deps.admin.rpc("calendar_outbound_fail_mirror", {
+          p_appointment_id: claim.appointmentId,
+          p_claim_id: claim.claimId,
+          p_error: outcome.code,
+        });
+        result.retried += 1;
+        logCalendar(
+          "outbound_mirror_failed",
+          {
+            businessId: claim.businessId,
+            appointmentId: claim.appointmentId,
+            code: outcome.code,
+          },
+          "warn",
+        );
+        if (outcome.rateLimited) state.stopped.add(claim.businessId);
+      } else if (outcome.kind === "action_required") {
+        state.stopped.add(claim.businessId);
+        const { data: marked } = await deps.admin.rpc(
+          "calendar_outbound_mark_action_required",
+          {
+            p_appointment_id: claim.appointmentId,
+            p_claim_id: claim.claimId,
+            p_action_code: outcome.code,
+          },
+        );
+        if (!marked) {
+          // A stale worker's late answer: no authority, nothing changed.
+          result.superseded += 1;
+        } else {
+          result.actionRequired += 1;
+          logCalendar(
+            "outbound_action_required",
+            { businessId: claim.businessId, code: outcome.code },
+            "warn",
+          );
+        }
+      } else {
+        state.stopped.add(claim.businessId);
+        result.superseded += 1;
+      }
+    }
+    if (!options.dueBefore) return false;
+  }
+  return false;
+}
+
+/** A database call aborted with `signal`; never started once it is aborted. */
+function abortable<T extends { abortSignal(signal: AbortSignal): T }>(
+  query: T,
+  signal: AbortSignal | undefined,
+) {
+  return signal ? query.abortSignal(signal) : query;
+}
+
+/** Aborted when either is (the phase's own deadline, or the run's). */
+function either(phase: AbortSignal | undefined, run: AbortSignal | undefined) {
+  if (!phase) return run;
+  return run ? AbortSignal.any([phase, run]) : phase;
+}
+
+/**
  * Processes due outbound work, within a budget: dedicated calendars to
- * create, then due mirrors (claimed fairly across businesses). A
- * configuration-level failure stops the business at once (action
- * required): its other mirrors are not tried, nor retried one by one.
+ * create, then due mirrors. From the periodic job (no `businessId`), also
+ * the backfill and reconciliation, in two phases with real deadlines:
+ *
+ * 1. priority: creations, backfill (local enrollment, so that what it
+ *    enrolls is written in the same run) and due writes, for
+ *    outboundPhases(budget).priorityMs (OUTBOUND_WRITE_SHARE of the
+ *    budget, less if needed to reserve a slice reconciliation can start
+ *    in). The deadline covers every await
+ *    of the phase, database calls included: at the deadline the phase's
+ *    signal is aborted and the run stops waiting for it (a late answer or
+ *    failure is consumed, never an unhandled rejection). What lands late
+ *    is harmless: claims expire and every recorded outcome is a
+ *    compare-and-set under the claim's authority;
+ * 2. reconciliation, guaranteed the rest of the budget;
+ * 3. writes again with whatever reconciliation leaves, if the priority
+ *    phase was cut short or repairs were just recorded.
+ *
+ * A failed write phase is logged and never skips reconciliation.
  * Nothing new starts once `signal` is aborted (the periodic job's deadline).
  */
 export async function processOutbound(
@@ -780,7 +1025,9 @@ export async function processOutbound(
     signal?: AbortSignal;
   } = {},
 ): Promise<OutboundRunResult> {
-  const deadline = Date.now() + (options.budgetMs ?? 25_000);
+  const budget = options.budgetMs ?? 25_000;
+  const start = Date.now();
+  const deadline = start + budget;
   const aborted = () => options.signal?.aborted === true;
   const result: OutboundRunResult = {
     creations: 0,
@@ -788,112 +1035,114 @@ export async function processOutbound(
     retried: 0,
     superseded: 0,
     actionRequired: 0,
+    backfilled: 0,
+    reconciled: 0,
+    drifted: 0,
+  };
+  const writes = { claimed: 0, stopped: new Set<string>() };
+  const limit = options.limit ?? 50;
+
+  const createCalendars = async (
+    businessIds: string[],
+    until: number,
+    signal: AbortSignal | undefined,
+  ) => {
+    for (const businessId of businessIds) {
+      if (signal?.aborted || until - Date.now() < 5000) break;
+      const outcome = await ensureOutboundCalendar(deps, businessId, {
+        deadline: Math.min(until, Date.now() + 20_000),
+      });
+      if (outcome !== "busy") result.creations += 1;
+      if (outcome === "action_required") result.actionRequired += 1;
+    }
   };
 
-  let creations: string[];
   if (options.businessId) {
-    creations = [options.businessId];
-  } else {
-    const { data, error } = await deps.admin.rpc(
-      "calendar_outbound_due_creations",
-      { p_limit: 20 },
+    // A kick after a change: its own business only, one claim.
+    await createCalendars([options.businessId], deadline, options.signal);
+    if (aborted()) return result;
+    await applyDueMirrors(deps, result, writes, {
+      businessId: options.businessId,
+      limit,
+      deadline,
+      dueBefore: null,
+      signal: options.signal,
+    });
+    return result;
+  }
+
+  const priorityDeadline = start + outboundPhases(budget).priorityMs;
+  // A phase run with a real deadline; true when it was cut short. Which
+  // came first is said by withinDeadline, never inferred from the clock:
+  // the phase's deadline is expected (a warning), a real failure is an
+  // error even when it happens a millisecond before the deadline. A
+  // failure never takes reconciliation's turn: what the phase left undone
+  // stays due for the next run. When the run itself was abandoned (its
+  // parent signal aborted at the periodic job's deadline), whatever fails
+  // afterwards is that abandonment, already reported by the job.
+  const phase = (
+    until: number,
+    run: (signal?: AbortSignal) => Promise<boolean>,
+  ) =>
+    withinDeadline(until, (signal) => run(either(signal, options.signal))).then(
+      (outcome) => {
+        if (!outcome.expired) return outcome.value;
+        logCalendar("outbound_phase_deadline_exceeded", {}, "warn");
+        return true;
+      },
+      (error: unknown) => {
+        if (!aborted()) {
+          logCalendar(
+            "outbound_writes_failed",
+            { code: error instanceof AppException ? error.code : "internal" },
+            "error",
+          );
+        }
+        return true;
+      },
+    );
+
+  const cut = await phase(priorityDeadline, async (signal) => {
+    const { data, error } = await abortable(
+      deps.admin.rpc("calendar_outbound_due_creations", { p_limit: 20 }),
+      signal,
     );
     if (error) throw databaseException(error);
-    creations = (data ?? []).map((row) => row.business_id);
-  }
-  for (const businessId of creations) {
-    if (aborted() || deadline - Date.now() < 5000) break;
-    const outcome = await ensureOutboundCalendar(deps, businessId, {
-      deadline: Math.min(deadline, Date.now() + 20_000),
+    await createCalendars(
+      (data ?? []).map((row) => row.business_id),
+      priorityDeadline,
+      signal,
+    );
+    if (signal?.aborted) return true;
+    result.backfilled = await backfillOutbound(deps, signal);
+    return applyDueMirrors(deps, result, writes, {
+      limit,
+      deadline: priorityDeadline,
+      dueBefore: new Date().toISOString(),
+      signal,
     });
-    if (outcome !== "busy") result.creations += 1;
-    if (outcome === "action_required") result.actionRequired += 1;
-  }
+  });
   if (aborted()) return result;
 
-  const { data, error } = await deps.admin.rpc(
-    "calendar_outbound_claim_mirrors",
-    {
-      p_limit: options.limit ?? 50,
-      p_business_id: (options.businessId ?? null) as string,
-      p_per_business: 10,
-    },
-  );
-  if (error) throw databaseException(error);
-  const claims = (data ?? []) as MirrorClaim[];
+  const reconciliation = await reconcileOutbound(deps, {
+    deadline,
+    signal: options.signal,
+  });
+  result.reconciled = reconciliation.reconciled;
+  result.drifted = reconciliation.drifted;
+  result.actionRequired += reconciliation.actionRequired;
 
-  // Businesses stopped in this run (action required, no authority, rate
-  // limited): their remaining claims are left to expire, untouched.
-  const stopped = new Set<string>();
-  for (const claim of claims) {
-    if (stopped.has(claim.businessId)) continue;
-    if (aborted() || deadline - Date.now() < 3000) break;
-    const outcome = await applyMirror(
-      deps,
-      claim,
-      Math.min(deadline, Date.now() + 20_000),
+  // Writes cut short by their share, or repairs just recorded: the time
+  // reconciliation left is theirs.
+  if ((cut || reconciliation.drifted > 0) && !aborted()) {
+    await phase(deadline, (signal) =>
+      applyDueMirrors(deps, result, writes, {
+        limit,
+        deadline,
+        dueBefore: new Date().toISOString(),
+        signal,
+      }),
     );
-
-    if (outcome.kind === "applied") {
-      const { data: done, error: doneError } = await deps.admin.rpc(
-        "calendar_outbound_complete_mirror",
-        {
-          p_appointment_id: claim.appointmentId,
-          p_claim_id: claim.claimId,
-          p_revision: claim.revision,
-        },
-      );
-      if (doneError) throw databaseException(doneError);
-      if (done === "applied") result.applied += 1;
-      else {
-        result.superseded += 1;
-        logCalendar("outbound_mirror_superseded", {
-          businessId: claim.businessId,
-          appointmentId: claim.appointmentId,
-        });
-      }
-    } else if (outcome.kind === "retry") {
-      await deps.admin.rpc("calendar_outbound_fail_mirror", {
-        p_appointment_id: claim.appointmentId,
-        p_claim_id: claim.claimId,
-        p_error: outcome.code,
-      });
-      result.retried += 1;
-      logCalendar(
-        "outbound_mirror_failed",
-        {
-          businessId: claim.businessId,
-          appointmentId: claim.appointmentId,
-          code: outcome.code,
-        },
-        "warn",
-      );
-      if (outcome.rateLimited) stopped.add(claim.businessId);
-    } else if (outcome.kind === "action_required") {
-      stopped.add(claim.businessId);
-      const { data: marked } = await deps.admin.rpc(
-        "calendar_outbound_mark_action_required",
-        {
-          p_appointment_id: claim.appointmentId,
-          p_claim_id: claim.claimId,
-          p_action_code: outcome.code,
-        },
-      );
-      if (!marked) {
-        // A stale worker's late answer: no authority, nothing changed.
-        result.superseded += 1;
-      } else {
-        result.actionRequired += 1;
-        logCalendar(
-          "outbound_action_required",
-          { businessId: claim.businessId, code: outcome.code },
-          "warn",
-        );
-      }
-    } else {
-      stopped.add(claim.businessId);
-      result.superseded += 1;
-    }
   }
   return result;
 }

@@ -809,7 +809,7 @@ describe("Google outbound (calendar.app.created)", () => {
     expect(await provider.deleteEvent(tokens.accessToken, calendarId, id)).toBe(
       false,
     );
-    await provider.updateEvent(tokens.accessToken, calendarId, event(id));
+    await provider.restoreEvent(tokens.accessToken, calendarId, event(id));
     expect(fake.storedEvents(calendarId)).toMatchObject([
       { id, status: "confirmed", summary: "Léa — Coupe" },
     ]);
@@ -875,5 +875,397 @@ describe("Google outbound (calendar.app.created)", () => {
         event("bk0123456789abcdef0123456789abcdef"),
       ),
     ).rejects.toMatchObject({ kind: "forbidden" });
+  });
+});
+
+describe("reconciliation listing and comparison", () => {
+  const expected = {
+    id: "bk00000000000000000000000000000001",
+    summary: "Léa — Coupe",
+    startsAt: "2026-10-14T14:00:00+00:00",
+    endsAt: "2026-10-14T15:00:00+00:00",
+    privateProperties: {
+      origin: "booking-saas",
+      appointmentId: "a1",
+      revision: "3",
+    },
+  };
+  const listed = {
+    id: expected.id,
+    status: "confirmed",
+    summary: "Léa — Coupe",
+    start: { dateTime: "2026-10-14T14:00:00Z" },
+    end: { dateTime: "2026-10-14T15:00:00Z" },
+    transparency: null,
+    privateProperties: {
+      origin: "booking-saas",
+      appointmentId: "a1",
+      revision: "1",
+    },
+  };
+
+  it("lists every event (deleted included) with fixed parameters and the owned fields only; a sync token goes along, never a time bound", async () => {
+    const tokens = await connect();
+    fake.setCalendars(account.sub, [
+      { id: "cal", summary: "Booking", timeZone: "UTC" },
+    ]);
+    fake.putEvent("cal", {
+      id: expected.id,
+      summary: "Léa — Coupe",
+      start: { dateTime: expected.startsAt },
+      end: { dateTime: expected.endsAt },
+      extendedProperties: { private: { origin: "booking-saas" } },
+    });
+    fake.putEvent("cal", {
+      id: "gone1",
+      status: "cancelled",
+      start: { dateTime: expected.startsAt },
+      end: { dateTime: expected.endsAt },
+    });
+    const full = await provider.listOwnedEvents(
+      tokens.accessToken,
+      "cal",
+      { kind: "full" },
+      null,
+    );
+    expect(full.events.map((event) => [event.id, event.status])).toEqual([
+      [expected.id, "confirmed"],
+      ["gone1", "cancelled"],
+    ]);
+    expect(full.events[0]).toMatchObject({
+      summary: "Léa — Coupe",
+      privateProperties: { origin: "booking-saas" },
+    });
+    expect(full.nextSyncToken).toMatch(/^sync-/);
+    const first = fake.requests.at(-1)!.url;
+    expect(Object.fromEntries(first.searchParams)).toMatchObject({
+      showDeleted: "true",
+      maxResults: "250",
+    });
+    for (const absent of ["timeMin", "timeMax", "singleEvents", "orderBy"]) {
+      expect(first.searchParams.has(absent)).toBe(false);
+    }
+    expect(first.searchParams.get("fields")).not.toMatch(
+      /description|attendees/,
+    );
+
+    await provider.listOwnedEvents(
+      tokens.accessToken,
+      "cal",
+      { kind: "incremental", syncToken: full.nextSyncToken! },
+      null,
+    );
+    const next = fake.requests.at(-1)!.url;
+    expect(next.searchParams.get("syncToken")).toBe(full.nextSyncToken);
+    expect(next.searchParams.get("showDeleted")).toBe("true");
+    expect(next.searchParams.get("fields")).toBe(
+      first.searchParams.get("fields"),
+    );
+
+    fake.expireSyncTokens();
+    await expect(
+      provider.listOwnedEvents(
+        tokens.accessToken,
+        "cal",
+        { kind: "incremental", syncToken: full.nextSyncToken! },
+        null,
+      ),
+    ).rejects.toMatchObject({ kind: "gone" });
+  });
+
+  it.each([
+    ["items not a list", { items: {}, nextSyncToken: "s" }],
+    ["no cursor", { items: [] }],
+    ["both cursors", { items: [], nextSyncToken: "s", nextPageToken: "p" }],
+    ["an event without id", { items: [{}], nextSyncToken: "s" }],
+    [
+      "metadata of the wrong type",
+      {
+        items: [{ id: "x1234", extendedProperties: { private: { a: 1 } } }],
+        nextSyncToken: "s",
+      },
+    ],
+  ])("a malformed page fails as a whole (%s)", async (_label, body) => {
+    const tokens = await connect();
+    fake.setCalendars(account.sub, [
+      { id: "cal", summary: "Booking", timeZone: "UTC" },
+    ]);
+    fake.failNext(() => true, 200, 1, body);
+    await expect(
+      provider.listOwnedEvents(
+        tokens.accessToken,
+        "cal",
+        { kind: "full" },
+        null,
+      ),
+    ).rejects.toMatchObject({ kind: "protocol" });
+  });
+
+  it("compares the owned fields only, instants as instants", () => {
+    const differs = provider.ownedEventDiffers;
+    expect(differs(expected, listed)).toBe(false);
+    for (const same of [
+      { start: { dateTime: "2026-10-14T16:00:00+02:00" } },
+      { end: { dateTime: "2026-10-14T10:00:00.000-05:00" } },
+      { transparency: "opaque" },
+      { start: { dateTime: "2026-10-14T14:00:00Z", timeZone: "Asia/Tokyo" } },
+    ]) {
+      expect(differs(expected, { ...listed, ...same })).toBe(false);
+    }
+    for (const changed of [
+      { status: "cancelled" },
+      { status: "tentative" },
+      { summary: "Autre" },
+      { summary: null },
+      { transparency: "transparent" },
+      { start: { dateTime: "2026-10-14T14:01:00Z" } },
+      { end: { dateTime: "2026-10-14T15:00:00" } },
+      { start: { date: "2026-10-14" } },
+      { start: null },
+      { privateProperties: null },
+      {
+        privateProperties: { origin: "booking-saas", appointmentId: "other" },
+      },
+    ]) {
+      expect(differs(expected, { ...listed, ...changed })).toBe(true);
+    }
+    // Must not exist: only a live event differs.
+    expect(differs(null, { ...listed, status: "cancelled" })).toBe(false);
+    expect(differs(null, listed)).toBe(true);
+  });
+});
+
+describe("partial update and restoration", () => {
+  const event = {
+    id: "bk0123456789abcdef0123456789abcdef",
+    summary: "Léa — Coupe",
+    startsAt: "2026-10-14T14:00:00+00:00",
+    endsAt: "2026-10-14T15:00:00+00:00",
+    privateProperties: {
+      origin: "booking-saas",
+      appointmentId: "a",
+      revision: "2",
+    },
+  };
+
+  async function calendarWithEvent() {
+    fake.setCalendars(account.sub, [
+      { id: account.email, summary: "Moi", timeZone: "UTC", primary: true },
+    ]);
+    const url = provider.writeAuthorizationUrl({
+      state: "w",
+      codeChallenge: challenge,
+      redirectUri: REDIRECT,
+      loginHint: account.sub,
+    });
+    const { code } = fake.authorize(account, url);
+    const tokens = await provider.exchangeCode({
+      code,
+      codeVerifier: verifier,
+      redirectUri: REDIRECT,
+    });
+    const { id: calendarId } = await provider.createCalendar(
+      tokens.accessToken,
+      { summary: "R", description: "d", timeZone: "UTC" },
+    );
+    await provider.insertEvent(tokens.accessToken, calendarId, event);
+    return { token: tokens.accessToken, calendarId };
+  }
+
+  it("patches the managed fields only: no unmanaged key, all-day date removed, private keys merged", async () => {
+    const { token, calendarId } = await calendarWithEvent();
+    fake.editEvent(calendarId, event.id, {
+      description: "Note",
+      colorId: "4",
+      start: { date: "2026-10-14" },
+      extendedProperties: { private: { other: "x" } },
+    });
+    expect(
+      await provider.patchEvent(token, calendarId, {
+        ...event,
+        summary: "Zoé — Coupe",
+      }),
+    ).toEqual({ status: "confirmed" });
+
+    const request = fake.requests.at(-1)!;
+    expect(request.method).toBe("PATCH");
+    expect(request.url.searchParams.get("sendUpdates")).toBe("none");
+    expect(request.url.searchParams.get("fields")).toBe("id,status");
+    expect(JSON.parse(request.body)).toEqual({
+      summary: "Zoé — Coupe",
+      start: { dateTime: event.startsAt, date: null },
+      end: { dateTime: event.endsAt, date: null },
+      status: "confirmed",
+      transparency: "opaque",
+      extendedProperties: { private: event.privateProperties },
+    });
+    const [stored] = fake.storedEvents(calendarId);
+    expect(stored).toMatchObject({
+      summary: "Zoé — Coupe",
+      description: "Note",
+      colorId: "4",
+      start: { dateTime: event.startsAt },
+      extendedProperties: {
+        private: { ...event.privateProperties, other: "x" },
+      },
+    });
+    expect(stored!.start.date).toBeUndefined();
+  });
+
+  it("reports a deleted event it did not restore; restoreEvent rewrites the canonical event (PUT)", async () => {
+    const { token, calendarId } = await calendarWithEvent();
+    await provider.deleteEvent(token, calendarId, event.id);
+    expect(await provider.patchEvent(token, calendarId, event)).toEqual({
+      status: "cancelled",
+    });
+    fake.patchOnCancelled = "gone";
+    await expect(
+      provider.patchEvent(token, calendarId, event),
+    ).rejects.toMatchObject({ kind: "gone" });
+    await provider.restoreEvent(token, calendarId, event);
+    expect(fake.requests.at(-1)!.method).toBe("PUT");
+    expect(fake.storedEvents(calendarId)).toMatchObject([
+      { id: event.id, status: "confirmed", summary: "Léa — Coupe" },
+    ]);
+    await expect(
+      provider.patchEvent(token, calendarId, { ...event, id: "bkmissing00" }),
+    ).rejects.toMatchObject({ kind: "not_found" });
+  });
+
+  it("a malformed patch answer is a protocol error", async () => {
+    const { token, calendarId } = await calendarWithEvent();
+    fake.failNext(() => true, 200, 1, { id: event.id });
+    await expect(
+      provider.patchEvent(token, calendarId, event),
+    ).rejects.toMatchObject({ kind: "protocol" });
+  });
+
+  it("unmanaged fields never differ", () => {
+    const listed = {
+      id: event.id,
+      status: "confirmed",
+      summary: event.summary,
+      start: { dateTime: event.startsAt },
+      end: { dateTime: event.endsAt },
+      transparency: null,
+      privateProperties: { ...event.privateProperties, other: "y" },
+    };
+    expect(provider.ownedEventDiffers(event, listed)).toBe(false);
+  });
+});
+
+describe("fake Google: a paginated listing is one coherent chain", () => {
+  const timed = (id: string, hour: number) => ({
+    id,
+    summary: id,
+    start: { dateTime: `2026-10-14T${String(hour).padStart(2, "0")}:00:00Z` },
+    end: { dateTime: `2026-10-14T${String(hour + 1).padStart(2, "0")}:00:00Z` },
+  });
+
+  async function calendar() {
+    const tokens = await connect();
+    fake.setCalendars(account.sub, [
+      { id: "cal", summary: "Booking", timeZone: "UTC" },
+    ]);
+    fake.putEvent("cal", timed("evta1", 9));
+    fake.putEvent("cal", timed("evtb1", 10));
+    fake.putEvent("cal", timed("evtc1", 11));
+    fake.pageSize = 1;
+    return tokens.accessToken;
+  }
+
+  /** Every page of a listing; `between` runs after the first page. */
+  async function listAll(
+    token: string,
+    query: { kind: "full" } | { kind: "incremental"; syncToken: string },
+    between: () => void = () => undefined,
+  ) {
+    const seen: { id: string; status: string; summary: string | null }[] = [];
+    let pageToken: string | null = null;
+    for (let page = 0; page < 20; page += 1) {
+      const result = await provider.listOwnedEvents(
+        token,
+        "cal",
+        query,
+        pageToken,
+      );
+      seen.push(
+        ...result.events.map(({ id, status, summary }) => ({
+          id,
+          status,
+          summary,
+        })),
+      );
+      if (page === 0) between();
+      if (result.nextSyncToken)
+        return { seen, syncToken: result.nextSyncToken };
+      pageToken = result.nextPageToken;
+    }
+    throw new Error("listing never ended");
+  }
+
+  it.each([
+    [
+      "created",
+      () => fake.putEvent("cal", timed("evtd1", 12)),
+      { id: "evtd1", status: "confirmed" },
+    ],
+    [
+      "modified (already listed)",
+      () => fake.editEvent("cal", "evta1", { summary: "changed" }),
+      { id: "evta1", summary: "changed" },
+    ],
+    [
+      "deleted (not listed yet)",
+      () => fake.deleteEvent("cal", "evtc1"),
+      { id: "evtc1", status: "cancelled" },
+    ],
+  ])(
+    "full listing: an event %s between two pages is never lost — the next incremental listing returns it",
+    async (_label, change, expected) => {
+      const token = await calendar();
+      const full = await listAll(token, { kind: "full" }, change);
+      // The pages read one snapshot: every original event exactly once.
+      expect(full.seen.map((event) => event.id)).toEqual([
+        "evta1",
+        "evtb1",
+        "evtc1",
+      ]);
+      const next = await listAll(token, {
+        kind: "incremental",
+        syncToken: full.syncToken,
+      });
+      expect(next.seen).toEqual([expect.objectContaining(expected)]);
+    },
+  );
+
+  it("incremental listing: a change between its pages comes in the following incremental listing", async () => {
+    const token = await calendar();
+    const full = await listAll(token, { kind: "full" });
+    fake.editEvent("cal", "evta1", { summary: "a2" });
+    fake.editEvent("cal", "evtb1", { summary: "b2" });
+    const first = await listAll(
+      token,
+      { kind: "incremental", syncToken: full.syncToken },
+      () => fake.editEvent("cal", "evtc1", { summary: "c2" }),
+    );
+    expect(first.seen.map((event) => event.summary)).toEqual(["a2", "b2"]);
+    const second = await listAll(token, {
+      kind: "incremental",
+      syncToken: first.syncToken,
+    });
+    expect(second.seen.map((event) => event.summary)).toEqual(["c2"]);
+    const third = await listAll(token, {
+      kind: "incremental",
+      syncToken: second.syncToken,
+    });
+    expect(third.seen).toEqual([]);
+  });
+
+  it("a page token belongs to its listing: an unknown one is refused", async () => {
+    const token = await calendar();
+    await expect(
+      provider.listOwnedEvents(token, "cal", { kind: "full" }, "p999-1"),
+    ).rejects.toMatchObject({ kind: "bad_request" });
   });
 });

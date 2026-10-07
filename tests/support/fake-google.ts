@@ -3,12 +3,27 @@ import { createHash, randomUUID } from "node:crypto";
 // In-memory Google (OAuth 2.0 + Calendar API v3) for tests: authorization
 // codes with PKCE, refresh/revoke, calendarList and events.list with
 // pagination, sync tokens and 410, injected failures, watch/stop channels.
+// A paginated listing (full or incremental) is one coherent chain, as
+// Google's sync protocol guarantees: its first request takes a snapshot and
+// a change watermark, its page tokens read that snapshot (never an offset
+// into the collection as it is now), and its final sync token is the
+// watermark, so every change made while the pages were read shows up in
+// the next incremental listing.
 // Outbound: incremental authorization (scopes granted per account, kept by
 // include_granted_scopes), calendars.insert/get (app-created calendars,
 // calendar.app.created required), events insert/update/delete with custom
-// ids (409 on an existing id, cancelled events kept and restorable), and
-// answers lost after the request was applied.
+// ids (409 on an existing id, cancelled events kept and restorable),
+// events.patch with Google's merge semantics (fields not sent unchanged,
+// nested objects merged, null removes, arrays replaced), and answers lost
+// after the request was applied.
 // Only the behaviour the adapter relies on is modelled.
+
+/** The position of a page token in its listing (tests). */
+export function pageOffsetOf(url: URL) {
+  const token = url.searchParams.get("pageToken");
+  const match = token ? /^p\d+-(\d+)$/.exec(token) : null;
+  return match ? Number(match[1]) : null;
+}
 
 export const WRITE_SCOPE =
   "https://www.googleapis.com/auth/calendar.app.created";
@@ -24,11 +39,36 @@ export type FakeEvent = {
   attendees?: { self?: boolean; responseStatus?: string; email?: string }[];
   summary?: string;
   extendedProperties?: { private?: Record<string, string> };
+  // Fields only the professional sets (never written by Booking).
+  description?: string;
+  location?: string;
+  colorId?: string;
+  reminders?: unknown;
 };
 
 type StoredEvent = FakeEvent & { etag: string; updated: string; seq: number };
 
 type Account = { sub: string; email: string };
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Google's patch semantics on a JSON resource. */
+function mergePatch(
+  target: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...target };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete result[key];
+    else if (isObject(value) && isObject(result[key])) {
+      result[key] = mergePatch(result[key], value);
+    } else if (isObject(value)) {
+      result[key] = mergePatch({}, value);
+    } else result[key] = value;
+  }
+  return result;
+}
 
 type Failure = {
   match: (url: URL) => boolean;
@@ -69,12 +109,14 @@ function aborted(signal: AbortSignal | null | undefined) {
   });
 }
 
-/** What the API returns for an event: no internal counter, no title (the
- * adapter asks for a field mask without it). */
-function publicEvent(event: StoredEvent) {
+/** What the API returns for an event: no internal counter; the title only
+ * when the field mask asks for it (inbound's does not, reconciliation's
+ * does). Google omits transparency when it is the default (opaque). */
+function publicEvent(event: StoredEvent, fields: string | null = null) {
   const copy: Partial<StoredEvent> = { ...event };
   delete copy.seq;
-  delete copy.summary;
+  if (!fields?.includes("summary")) delete copy.summary;
+  if (copy.transparency === "opaque") delete copy.transparency;
   return copy;
 }
 
@@ -111,6 +153,13 @@ export class FakeGoogle {
   >();
 
   private seq = 0;
+  /**
+   * What events.patch does to a deleted (cancelled) event, which Google's
+   * reference does not specify: `keeps_cancelled` (the fields are merged,
+   * the event stays deleted), `restores` (undeleted like by update), or
+   * `gone` (410). The writer must converge in every case.
+   */
+  patchOnCancelled: "keeps_cancelled" | "restores" | "gone" = "keeps_cancelled";
   /** When true, the consent screen grants everything but the write scope. */
   denyWriteScope = false;
   /**
@@ -156,6 +205,12 @@ export class FakeGoogle {
   }[] = [];
   private events = new Map<string, Map<string, StoredEvent>>();
   private expiredSyncTokens = new Set<string>();
+  /** Listings being paginated: snapshot and change watermark. */
+  private listings = new Map<
+    string,
+    { items: StoredEvent[]; watermark: number }
+  >();
+  private listingSeq = 0;
   private failures: Failure[] = [];
   private holds: {
     match: (url: URL, method: string) => boolean;
@@ -311,6 +366,32 @@ export class FakeGoogle {
     const existing = this.events.get(calendarId)?.get(eventId);
     if (!existing) return;
     this.putEvent(calendarId, { ...existing, status: "cancelled" });
+  }
+
+  /**
+   * The professional edits an event in Google (a change for incremental
+   * sync): `change` is merged into the stored event.
+   */
+  editEvent(
+    calendarId: string,
+    eventId: string,
+    change: Partial<FakeEvent> & Record<string, unknown>,
+  ) {
+    const existing = this.events.get(calendarId)?.get(eventId);
+    if (!existing) throw new Error(`No event ${eventId}`);
+    const event: Partial<StoredEvent> = { ...existing, ...change };
+    delete event.etag;
+    delete event.updated;
+    delete event.seq;
+    this.putEvent(calendarId, event as FakeEvent);
+  }
+
+  /**
+   * An event Google no longer lists at all (a deleted event purged after a
+   * while): only a full listing can notice its absence.
+   */
+  purgeEvent(calendarId: string, eventId: string) {
+    this.events.get(calendarId)?.delete(eventId);
   }
 
   /** Makes the given sync token (or every token issued so far) answer 410. */
@@ -663,6 +744,35 @@ export class FakeGoogle {
 
     const eventId = decodeURIComponent(eventMatch[2]!);
     const existing = store.get(eventId);
+    if (method === "PATCH") {
+      if (!existing) return json({ error: { code: 404 } }, 404);
+      if (existing.status === "cancelled" && this.patchOnCancelled === "gone") {
+        return json({ error: { code: 410, message: "deleted" } }, 410);
+      }
+      const current: Partial<StoredEvent> = { ...existing };
+      delete current.etag;
+      delete current.updated;
+      delete current.seq;
+      const patch = JSON.parse(body) as Record<string, unknown>;
+      const merged = mergePatch(
+        current as Record<string, unknown>,
+        patch,
+      ) as FakeEvent;
+      if (
+        existing.status === "cancelled" &&
+        this.patchOnCancelled === "keeps_cancelled"
+      ) {
+        merged.status = "cancelled";
+      }
+      this.putEvent(calendarId, { ...merged, id: eventId });
+      const fields = url.searchParams.get("fields");
+      const stored = store.get(eventId)!;
+      return json(
+        fields === "id,status"
+          ? { id: eventId, status: stored.status }
+          : publicEvent(stored, "summary"),
+      );
+    }
     if (method === "PUT") {
       if (!existing) return json({ error: { code: 404 } }, 404);
       const event = JSON.parse(body) as Omit<FakeEvent, "id">;
@@ -717,23 +827,49 @@ export class FakeGoogle {
       );
       const bound = (value: { date?: string; dateTime?: string }) =>
         Date.parse(value.dateTime ?? `${value.date}T00:00:00Z`);
+      // showDeleted: a full listing includes deleted (cancelled) events.
+      const showDeleted = url.searchParams.get("showDeleted") === "true";
       items = store.filter(
         (event) =>
-          event.status !== "cancelled" &&
+          (showDeleted || event.status !== "cancelled") &&
           bound(event.end) > timeMin - 86_400_000 &&
           bound(event.start) < timeMax + 86_400_000,
       );
     }
 
-    const offset = Number(url.searchParams.get("pageToken") ?? 0);
-    const page = items.slice(offset, offset + this.pageSize);
-    const last = offset + this.pageSize >= items.length;
+    let listing: { items: StoredEvent[]; watermark: number } | undefined;
+    let offset = 0;
+    const pageToken = url.searchParams.get("pageToken");
+    if (pageToken) {
+      const match = /^p(\d+)-(\d+)$/.exec(pageToken);
+      listing = match ? this.listings.get(match[1]!) : undefined;
+      if (!match || !listing) {
+        return json(
+          { error: { code: 400, message: "Invalid page token" } },
+          400,
+        );
+      }
+      offset = Number(match[2]);
+    } else {
+      // The listing's snapshot: what changes from now on is after its
+      // watermark, hence in the next incremental listing.
+      listing = { items, watermark: this.seq };
+      this.listingSeq += 1;
+      this.listings.set(String(this.listingSeq), listing);
+    }
+    const id = pageToken
+      ? /^p(\d+)-/.exec(pageToken)![1]
+      : String(this.listingSeq);
+    const page = listing.items.slice(offset, offset + this.pageSize);
+    const last = offset + this.pageSize >= listing.items.length;
     return json({
       timeZone: this.calendarsById(calendarId)?.timeZone ?? "UTC",
-      items: page.map(publicEvent),
+      items: page.map((event) =>
+        publicEvent(event, url.searchParams.get("fields")),
+      ),
       ...(last
-        ? { nextSyncToken: `sync-${this.seq}` }
-        : { nextPageToken: String(offset + this.pageSize) }),
+        ? { nextSyncToken: `sync-${listing.watermark}` }
+        : { nextPageToken: `p${id}-${offset + this.pageSize}` }),
     });
   }
 

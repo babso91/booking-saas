@@ -40,7 +40,11 @@ import type { ActionResult } from "@/lib/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 import type { Database } from "@/types/database.generated";
 
-import { FakeGoogle, type FakeEvent } from "../support/fake-google";
+import {
+  FakeGoogle,
+  type FakeEvent,
+  pageOffsetOf,
+} from "../support/fake-google";
 import {
   anonClient,
   createBusiness,
@@ -729,9 +733,7 @@ describe("blocking selection and sync", () => {
 
     // Page 2 fails every retry: the first page is applied, its cursor saved.
     fake.failNext(
-      (url) =>
-        url.pathname.endsWith("/events") &&
-        url.searchParams.get("pageToken") === "2",
+      (url) => url.pathname.endsWith("/events") && pageOffsetOf(url) === 2,
       503,
       4,
     );
@@ -753,7 +755,7 @@ describe("blocking selection and sync", () => {
           !request.url.searchParams.has("syncToken"),
       )
       .slice(-4);
-    expect(resumed[0]!.url.searchParams.get("pageToken")).toBe("2");
+    expect(pageOffsetOf(resumed[0]!.url)).toBe(2);
     expect(
       (await calendarsOf(s)).find((item) => item.blocking)!.syncStatus,
     ).toBe("synced");
@@ -1776,9 +1778,7 @@ describe("full sync generations", () => {
     fake.putEvent(work(s), timed("w", D, "14:00", "15:00"));
     fake.expireSyncTokens();
     fake.failNext(
-      (url) =>
-        url.pathname.endsWith("/events") &&
-        url.searchParams.get("pageToken") === "2",
+      (url) => url.pathname.endsWith("/events") && pageOffsetOf(url) === 2,
       403,
       1,
       { error: { errors: [{ reason: "forbidden" }] } },
@@ -1788,7 +1788,7 @@ describe("full sync generations", () => {
     expect(await syncState(calendarId)).toMatchObject({
       generation: 1,
       full_generation: 2,
-      full_page_token: "2",
+      full_page_token: expect.stringMatching(/^p\d+-2$/),
     });
     // X is then deleted at Google.
     fake.deleteEvent(work(s), "x");
@@ -1816,9 +1816,7 @@ describe("full sync generations", () => {
   it("a resumed page cursor the provider rejects (410) restarts from page 1 with a new generation", async () => {
     const { s, calendarId } = await interruptedAttempt();
     fake.failNext(
-      (url) =>
-        url.pathname.endsWith("/events") &&
-        url.searchParams.get("pageToken") === "2",
+      (url) => url.pathname.endsWith("/events") && pageOffsetOf(url) === 2,
       410,
     );
     expect(await syncCalendar(getCalendarDeps(), calendarId)).toBe("synced");
@@ -1834,7 +1832,7 @@ describe("full sync generations", () => {
         request.url.pathname.endsWith("/events") &&
         !request.url.searchParams.has("syncToken"),
     );
-    expect(resumed.at(-1)!.url.searchParams.get("pageToken")).toBe("2");
+    expect(pageOffsetOf(resumed.at(-1)!.url)).toBe(2);
     expect((await syncState(calendarId)).generation).toBe(2);
   });
 

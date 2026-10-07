@@ -86,16 +86,8 @@ describe("outbound event", () => {
     expect(
       outboundEvent({
         appointmentId: "a1",
-        businessId: "b",
-        claimId: "c",
-        generation: "g",
-        connectionId: "k",
-        credentialGeneration: "cg",
         revision: 3,
         eventId: "bk00",
-        targetCalendarId: "t",
-        previousCalendarId: null,
-        active: true,
         startsAt: "2026-10-14T14:00:00+00:00",
         endsAt: "2026-10-14T15:00:00+00:00",
         serviceName: "Coupe",

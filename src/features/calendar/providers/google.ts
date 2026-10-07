@@ -10,6 +10,9 @@ import {
   type CalendarProvider,
   type EventQuery,
   type OutboundEvent,
+  type OwnedEvent,
+  type OwnedEventPage,
+  type OwnedEventQuery,
   type ProviderCalendar,
   type ProviderEvent,
   type ProviderEventPage,
@@ -64,6 +67,10 @@ const API = "https://www.googleapis.com/calendar/v3";
 
 const EVENT_FIELDS =
   "items(id,status,start,end,transparency,eventType,recurringEventId,etag,updated,attendees(self,responseStatus)),nextPageToken,nextSyncToken,timeZone";
+// Reconciliation: the fields Booking owns, nothing else (no description,
+// attendees or notes are ever read).
+const OWNED_EVENT_FIELDS =
+  "items(id,status,summary,start,end,transparency,extendedProperties/private),nextPageToken,nextSyncToken";
 const CALENDAR_FIELDS =
   "items(id,summary,summaryOverride,description,timeZone,primary,accessRole),nextPageToken";
 
@@ -300,6 +307,54 @@ function parseEvent(item: unknown): ProviderEvent {
   return toProviderEvent(item as GoogleEvent)!;
 }
 
+const isStringRecord = (value: unknown): value is Record<string, string> =>
+  isRecord(value) &&
+  Object.values(value).every((item) => typeof item === "string");
+
+const isRawBound = (value: unknown) =>
+  isRecord(value) &&
+  optional(value.date, (item) => typeof item === "string") &&
+  optional(value.dateTime, (item) => typeof item === "string") &&
+  optional(value.timeZone, (item) => typeof item === "string");
+
+/**
+ * One listed event of a calendar Booking writes to. Only the types are
+ * checked: values (an all-day bound, an unknown status) are compared, and
+ * any difference is a drift the writer repairs, never a failed page.
+ */
+function parseOwnedEvent(item: unknown): OwnedEvent {
+  if (!isRecord(item) || !nonEmptyString(item.id)) {
+    throw protocolError("Event without id");
+  }
+  const properties = item.extendedProperties;
+  if (
+    !optional(item.status, nonEmptyString) ||
+    !optional(item.summary, (value) => typeof value === "string") ||
+    !optional(item.start, isRawBound) ||
+    !optional(item.end, isRawBound) ||
+    !optional(item.transparency, nonEmptyString) ||
+    !optional(
+      properties,
+      (value) => isRecord(value) && optional(value.private, isStringRecord),
+    )
+  ) {
+    throw protocolError("Malformed event");
+  }
+  const start = item.start as OwnedEvent["start"] | undefined;
+  const end = item.end as OwnedEvent["end"] | undefined;
+  return {
+    id: item.id,
+    status: (item.status as string | undefined) ?? "confirmed",
+    summary: (item.summary as string | undefined) ?? null,
+    start: start ?? null,
+    end: end ?? null,
+    transparency: (item.transparency as string | undefined) ?? null,
+    privateProperties:
+      ((properties as { private?: Record<string, string> } | undefined)
+        ?.private as Record<string, string> | undefined) ?? null,
+  };
+}
+
 const RATE_LIMIT_REASONS = new Set([
   "rateLimitExceeded",
   "userRateLimitExceeded",
@@ -381,6 +436,92 @@ export function toProviderEvent(event: GoogleEvent): ProviderEvent | null {
   };
 }
 
+// The canonical serializer: Booking's managed fields, the one definition
+// that inserts, partial updates and restorations send and that
+// reconciliation compares a listed event with. Only the appointment's slot
+// and a minimal title: no attendee (no invitation), no description, no
+// notes, no contact detail. Opaque: the professional's other tools see the
+// slot as busy. Every other field of the event belongs to the professional.
+function eventBody(event: OutboundEvent) {
+  return {
+    summary: event.summary,
+    start: { dateTime: event.startsAt },
+    end: { dateTime: event.endsAt },
+    status: "confirmed",
+    transparency: "opaque",
+    extendedProperties: { private: event.privateProperties },
+  };
+}
+
+/**
+ * The partial update (events.patch) of the managed fields. Google's patch
+ * semantics: fields not sent are unchanged, nested objects are merged key
+ * by key, a null value removes a key. So:
+ * - description, location, colour, reminders, attendees… are not sent and
+ *   stay as the professional set them;
+ * - `extendedProperties.private` is merged: Booking's keys (origin,
+ *   appointmentId, revision) are written, any other private key is kept;
+ * - `start` and `end` are merged too: `date: null` removes an all-day date
+ *   the professional may have set, so that the bound is the instant only
+ *   (a named `timeZone` is kept: with an explicit offset it does not change
+ *   the instant).
+ */
+function patchBody(event: OutboundEvent) {
+  const body = eventBody(event);
+  return {
+    ...body,
+    start: { ...body.start, date: null },
+    end: { ...body.end, date: null },
+  };
+}
+
+/**
+ * Private properties that identify Booking's event. `revision` is
+ * informational (the revision last written), never compared.
+ */
+const OWNED_PRIVATE_PROPERTIES = ["origin", "appointmentId"] as const;
+
+/** An RFC 3339 date-time with its offset, as whole seconds; else null. */
+function instantOf(value: string | undefined) {
+  if (value === undefined || parseDateTime(value)?.zoned !== true) return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? Math.floor(time / 1000) : null;
+}
+
+/**
+ * Whether a listed event differs from what Booking would write now, on the
+ * fields Booking owns only: presence (a cancelled event is absent),
+ * status, title, the two instants (compared as instants: any offset, any
+ * precision below the second), transparency (Google omits the default,
+ * opaque) and the identifying private properties. `expected` null: the
+ * event must not exist. Fields Booking never writes (description, colour,
+ * reminders) are never compared.
+ */
+export function ownedEventDiffers(
+  expected: OutboundEvent | null,
+  remote: OwnedEvent,
+) {
+  if (!expected) return remote.status !== "cancelled";
+  const body = eventBody(expected);
+  const sameBound = (bound: OwnedEvent["start"], dateTime: string): boolean => {
+    if (!bound || bound.date !== undefined) return false;
+    const actual = instantOf(bound.dateTime);
+    return actual !== null && actual === instantOf(dateTime);
+  };
+  return (
+    remote.status !== body.status ||
+    remote.summary !== body.summary ||
+    (remote.transparency ?? "opaque") !== body.transparency ||
+    !sameBound(remote.start, body.start.dateTime) ||
+    !sameBound(remote.end, body.end.dateTime) ||
+    OWNED_PRIVATE_PROPERTIES.some(
+      (key) =>
+        remote.privateProperties?.[key] !==
+        body.extendedProperties.private[key],
+    )
+  );
+}
+
 export function createGoogleCalendarProvider(options: {
   clientId: string;
   clientSecret: string;
@@ -437,18 +578,6 @@ export function createGoogleCalendarProvider(options: {
     url.searchParams.set("sendUpdates", "none");
     return url;
   };
-
-  // Only the appointment's slot and a minimal title: no attendee (no
-  // invitation), no description, no notes, no contact detail. Opaque: the
-  // professional's other tools see the slot as busy.
-  const eventBody = (event: OutboundEvent) => ({
-    summary: event.summary,
-    start: { dateTime: event.startsAt },
-    end: { dateTime: event.endsAt },
-    status: "confirmed",
-    transparency: "opaque",
-    extendedProperties: { private: event.privateProperties },
-  });
 
   const checkEventId = (eventId: string) => {
     if (!EVENT_ID.test(eventId)) {
@@ -705,6 +834,55 @@ export function createGoogleCalendarProvider(options: {
       };
     },
 
+    ownedEventDiffers,
+
+    async listOwnedEvents(
+      accessToken,
+      calendarId,
+      query: OwnedEventQuery,
+      pageToken,
+      callOptions,
+    ): Promise<OwnedEventPage> {
+      const url = new URL(
+        `${API}/calendars/${encodeURIComponent(calendarId)}/events`,
+      );
+      // Same parameters on every request of a listing (Google requires it):
+      // deleted events included, no time bound, no expansion (Booking never
+      // writes recurring events).
+      url.searchParams.set("showDeleted", "true");
+      url.searchParams.set("maxResults", "250");
+      url.searchParams.set("fields", OWNED_EVENT_FIELDS);
+      if (query.kind === "incremental") {
+        url.searchParams.set("syncToken", query.syncToken);
+      }
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+      const body = await call(
+        url.toString(),
+        { headers: bearer(accessToken) },
+        callOptions,
+      );
+      if (body.items !== undefined && !Array.isArray(body.items)) {
+        throw protocolError("Malformed event page");
+      }
+      const nextPageToken = body.nextPageToken;
+      const nextSyncToken = body.nextSyncToken;
+      if (
+        (nextPageToken !== undefined && !nonEmptyString(nextPageToken)) ||
+        (nextSyncToken !== undefined && !nonEmptyString(nextSyncToken)) ||
+        (nextPageToken === undefined) === (nextSyncToken === undefined)
+      ) {
+        throw protocolError("Malformed event page");
+      }
+      return {
+        events: ((body.items as unknown[] | undefined) ?? []).map(
+          parseOwnedEvent,
+        ),
+        nextPageToken: (nextPageToken as string | undefined) ?? null,
+        nextSyncToken: (nextSyncToken as string | undefined) ?? null,
+      };
+    },
+
     async watchEvents(accessToken, calendarId, channel, callOptions) {
       const body = await call(
         `${API}/calendars/${encodeURIComponent(calendarId)}/events/watch`,
@@ -793,7 +971,27 @@ export function createGoogleCalendarProvider(options: {
       if (body.id !== event.id) throw protocolError("Unexpected event");
     },
 
-    async updateEvent(accessToken, calendarId, event, callOptions) {
+    // events.patch: one request (3 quota units instead of 1 for update),
+    // never a read before the write. Idempotent (same body): retried like
+    // an insert.
+    async patchEvent(accessToken, calendarId, event, callOptions) {
+      checkEventId(event.id);
+      const url = eventUrl(calendarId, event.id);
+      url.searchParams.set("fields", "id,status");
+      const body = await call(
+        url.toString(),
+        jsonRequest("PATCH", accessToken, patchBody(event)),
+        callOptions,
+      );
+      if (body.id !== event.id || !nonEmptyString(body.status)) {
+        throw protocolError("Unexpected event");
+      }
+      return { status: body.status };
+    },
+
+    // events.update (full replacement) with status confirmed: the
+    // restoration of a deleted event, never an ordinary update.
+    async restoreEvent(accessToken, calendarId, event, callOptions) {
       checkEventId(event.id);
       const body = await call(
         eventUrl(calendarId, event.id).toString(),

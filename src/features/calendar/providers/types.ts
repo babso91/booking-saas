@@ -85,6 +85,33 @@ export type EventQuery =
 
 export type ProviderChannel = { id: string; resourceId: string };
 
+/**
+ * One event of a calendar Booking writes to, as listed for reconciliation:
+ * the fields Booking owns, raw (compared by the canonical serializer, never
+ * trusted as authority). A deleted event comes back with status cancelled
+ * and possibly nothing else.
+ */
+export type OwnedEvent = {
+  id: string;
+  status: string;
+  summary: string | null;
+  start: { date?: string; dateTime?: string; timeZone?: string } | null;
+  end: { date?: string; dateTime?: string; timeZone?: string } | null;
+  transparency: string | null;
+  privateProperties: Record<string, string> | null;
+};
+
+export type OwnedEventPage = {
+  events: OwnedEvent[];
+  nextPageToken: string | null;
+  /** Present on the last page only. */
+  nextSyncToken: string | null;
+};
+
+/** A complete listing of the calendar, or the changes since a sync token. */
+export type OwnedEventQuery =
+  { kind: "full" } | { kind: "incremental"; syncToken: string };
+
 export interface CalendarProvider {
   readonly id: CalendarProviderId;
   /** Scopes the integration cannot work without. */
@@ -138,6 +165,30 @@ export interface CalendarProvider {
     options?: CallOptions,
   ): Promise<ProviderEventPage>;
 
+  /**
+   * One page of every event of a calendar Booking writes to (deleted ones
+   * included), for reconciliation: no time bounds (a sync token admits
+   * none), the same parameters on every request. A sync token no longer
+   * valid fails with `gone`; a malformed page fails (`protocol`).
+   */
+  listOwnedEvents(
+    accessToken: string,
+    calendarId: string,
+    query: OwnedEventQuery,
+    pageToken: string | null,
+    options?: CallOptions,
+  ): Promise<OwnedEventPage>;
+
+  /**
+   * Whether a listed event differs from `expected` (null: it must not
+   * exist) on the fields Booking owns, through the same serializer as the
+   * writes. Remote metadata is compared, never trusted.
+   */
+  ownedEventDiffers(
+    expected: OutboundEvent | null,
+    remote: OwnedEvent,
+  ): boolean;
+
   watchEvents(
     accessToken: string,
     calendarId: string,
@@ -173,8 +224,27 @@ export interface CalendarProvider {
     event: OutboundEvent,
     options?: CallOptions,
   ): Promise<void>;
-  /** Replaces the event (confirmed again if it was cancelled). */
-  updateEvent(
+  /**
+   * Writes the Booking-managed fields of an existing event only (partial
+   * update): every field Booking does not own (description, location,
+   * colour, reminders, other private properties) is left as it is. Returns
+   * the event's status after the write: `cancelled` means the event is
+   * deleted at the provider and was not restored by this write (the caller
+   * then restores it). `not_found` when it never existed or is purged.
+   */
+  patchEvent(
+    accessToken: string,
+    calendarId: string,
+    event: OutboundEvent,
+    options?: CallOptions,
+  ): Promise<{ status: string }>;
+  /**
+   * Restoration of a deleted (cancelled) event: the whole event is
+   * rewritten as Booking's canonical event, confirmed, same id. Only for
+   * that exceptional case (it removes every field Booking does not own),
+   * and for the ownership probe's own event.
+   */
+  restoreEvent(
     accessToken: string,
     calendarId: string,
     event: OutboundEvent,

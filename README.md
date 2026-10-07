@@ -143,5 +143,6 @@ Si une action échoue au niveau du transport, `callAction` interroge la page cou
 | `20261008090000_calendar_sync_untrusted_zone.sql`      | calendrier au fuseau non reconnu : synchronisation continue avec marge (`degraded`), relecture périodique de la liste des calendriers                                                  |
 | `20261009090000_calendar_sync_coherent_bounds.sql`     | bornes résolues avant comparaison, enveloppe bloquée au lieu d'un rollback de page, événements approximatifs (`degraded`), horodatage de la relecture par connexion                    |
 | `20261010090000_calendar_outbound_core.sql`            | miroir Booking → Google : autorisation d'écriture incrémentale, calendrier dédié idempotent, outbox par rendez-vous, générations, `action_required` et réactivation, exclusion inbound |
+| `20261011090000_calendar_outbound_reconciliation.sql`  | backfill borné des rendez-vous jamais enrôlés, lecture du calendrier dédié (sync token), demandes de réparation des miroirs (`repair_generation`), état de réconciliation privé        |
 
 Toute modification de schéma doit être ajoutée dans une nouvelle migration ; ne pas réécrire une migration déjà appliquée sur un environnement partagé.
