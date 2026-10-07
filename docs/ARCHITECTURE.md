@@ -128,7 +128,7 @@ Tous les identifiants sont des UUID générés par PostgreSQL. Les montants sont
 
 ### Clientes et rendez-vous
 
-- `clients` : identité de la cliente unique par email normalisé dans un business, notes privées et empreinte du token fidélité.
+- `clients` : la cliente (entité CRM) d'un business, identifiée par son email canonique au sein de ce business uniquement (normalisé par la base sur chaque écriture), notes privées et empreinte du token fidélité. Jamais un compte Auth. Contrat : [`docs/CRM_CUSTOMER_CONTRACT.md`](CRM_CUSTOMER_CONTRACT.md).
 - `appointments` : créneau, snapshots du nom/prix/durée de la prestation, statut et notes. Les snapshots préservent l'historique après modification d'une prestation.
 
 Les clés étrangères vers cliente et prestation sont composites `(id, business_id)`. Une ligne ne peut donc pas associer des objets appartenant à deux tenants différents.
@@ -215,7 +215,7 @@ Risques restants, documentés plutôt que sur-architecturés :
 
 La RPC `create_public_booking` lit une seule fois le business, les réglages et la prestation, avec `FOR SHARE` après le verrou de planning. Elle passe ces valeurs explicitement à `private.compute_available_slots`, puis les réutilise pour la fenêtre occupée et l'insertion. Une modification concurrente est soit validée avant et lue, soit mise en attente jusqu'au commit de la réservation. Validation et rendez-vous stocké utilisent donc toujours exactement les mêmes durée, buffer et grille.
 
-La RPC `create_public_booking` effectue dans une transaction : validation du business et du service actif, recalcul de disponibilité par la même fonction que l'affichage, recherche ou création de la cliente (email insensible à la casse, au sein du business uniquement, sans jamais modifier une fiche existante), insertion du rendez-vous avec snapshots, puis insertion de l'email de confirmation dans l'outbox. Grâce au verrou de planning, une seconde réservation concurrente attend la première puis revalide sur un snapshot à jour. La contrainte d'exclusion reste la garantie finale entre rendez-vous, quel que soit le chemin d'écriture et le niveau d'isolation. L'interface n'est jamais la source d'autorité du créneau.
+La RPC `create_public_booking` effectue dans une transaction : validation du business et du service actif, recalcul de disponibilité par la même fonction que l'affichage, résolution de la cliente par `private.resolve_client` (email canonique, au sein du business uniquement, `INSERT … ON CONFLICT` ; une fiche existante n'est que complétée, jamais écrasée), insertion du rendez-vous avec snapshots (dont le contact tel que soumis), puis insertion de l'email de confirmation dans l'outbox. Grâce au verrou de planning, une seconde réservation concurrente attend la première puis revalide sur un snapshot à jour. La contrainte d'exclusion reste la garantie finale entre rendez-vous, quel que soit le chemin d'écriture et le niveau d'isolation. L'interface n'est jamais la source d'autorité du créneau.
 
 ### Fidélité idempotente
 
