@@ -27,7 +27,18 @@ Une cliente n'est pas un utilisateur Supabase Auth :
 
 L'identité d'une cliente est son email canonique, au sein de son business uniquement.
 
-- **Forme canonique.** Calculée par `private.canonical_email(text)` : Unicode NFC, espaces de début et de fin retirés, minuscules. Un email vide ou fait d'espaces donne `null`.
+- **Forme canonique.** Calculée par `private.canonical_email(text)`, dans cet ordre :
+  1. **Unicode NFC.** Les écritures canoniquement équivalentes deviennent identiques.
+  2. **Espaces périphériques retirés.** Exactement les caractères que retire `String.prototype.trim()` en JavaScript (`WhiteSpace` et `LineTerminator` d'ECMAScript), soit 25 points de code :
+     - U+0009 tabulation, U+000A saut de ligne, U+000B tabulation verticale, U+000C saut de page, U+000D retour chariot ;
+     - U+0020 espace, U+00A0 espace insécable, U+1680, U+2000 à U+200A, U+202F, U+205F, U+3000 ;
+     - U+2028 et U+2029 (séparateurs de ligne et de paragraphe), U+FEFF (BOM).
+
+     La base et le navigateur coupent donc les mêmes caractères. Un test le vérifie sur tous les points de code Unicode. NFC est appliqué d'abord : l'ensemble est stable par NFC (U+2000 et U+2001 deviennent U+2002 et U+2003, qui en font partie).
+
+  3. **Minuscules.**
+  4. **Vide → `null`.** Un email vide, ou fait uniquement de ces caractères, donne `null`.
+- **Les espaces internes sont conservés.** Un espace à l'intérieur d'une adresse (`lea @example.com`) n'est jamais retiré : l'adresse reste distincte, et les chemins de réservation la refusent comme invalide. U+200B (espace sans chasse) n'est pas un espace pour JavaScript, ni ici.
 - **Rien de plus.** Aucune règle floue, aucune IA, aucune règle propre à un fournisseur (les points et `+tag` de Gmail restent significatifs).
 - **Pas d'identité par téléphone ni par nom.** Deux emails différents font deux clientes, même avec le même téléphone.
 
@@ -85,8 +96,14 @@ Les autres instantanés (prestation, durée, prix, tampon) sont inchangés.
    - **Fiche conservée** : la plus ancienne (`created_at`, puis `id`).
    - **Valeurs non vides** : la fiche conservée garde les siennes. Un nom de famille, un téléphone ou un jeton de fidélité manquant est repris de la fiche la plus récente du groupe qui en a un (`created_at desc`, puis `id desc`).
    - **Notes** : celles des autres fiches sont ajoutées à la suite, de la plus ancienne à la plus récente. Aucune n'est perdue.
-   - **Références** : rendez-vous, événements de fidélité, échanges de récompenses et emails passent à la fiche conservée, puis les autres fiches sont supprimées.
-   - **Rendez-vous déplacés** : ils changent de version (un formulaire ouvert avant la migration sera refusé comme périmé) et leur miroir de calendrier est réévalué. Leur instantané garde le contact d'origine.
+   - **Références** : rendez-vous, événements de fidélité, échanges de récompenses et emails passent à la fiche conservée, puis les autres fiches sont supprimées. Chaque ligne d'historique est conservée telle quelle (points, montants, clés d'idempotence, dates) ; seul `client_id` change. Pour un email, `updated_at` enregistre ce changement.
+   - **Rendez-vous déplacés** : ils changent de version (un formulaire ouvert avant la migration sera refusé comme périmé). Leur instantané garde le contact d'origine.
+   - **Google, sans effet de bord.** La fusion est une opération interne :
+     - elle n'inscrit jamais un rendez-vous dans le calendrier sortant (passé, annulé ou futur) ;
+     - un miroir existant ne redevient dû que si son titre change, c'est-à-dire si le prénom de l'ancienne fiche diffère de celui de la fiche conservée, une seule fois et par la même instruction qu'un renommage de fiche ;
+     - mécanisme : le rattachement est marqué comme fusion pour sa seule transaction (`booking.crm_customer_merge`, `set_config` local, dans un bloc `DO`). Dans ce cas, le trigger `private.record_appointment_mirror` ignore un changement de `client_id` seul. Tout autre changement (horaire, statut, prestation) est enregistré comme avant. La version, `updated_at` et les instantanés suivent les règles habituelles ;
+     - ce marqueur ne sort jamais de sa transaction, et aucun rôle d'API ne peut le poser.
+     - Les rendez-vous futurs jamais inscrits restent du ressort du backfill sortant habituel.
 3. **Emails canoniques.** Les emails stockés passent sous forme canonique ; un email vide devient `null`.
 
 Les business restent indépendants : la même adresse dans un autre business n'est jamais fusionnée.
@@ -96,6 +113,7 @@ Les business restent indépendants : la même adresse dans un autre business n'e
 - **Payload sortant inchangé.** Le titre reste « prénom de la fiche — prestation » ; les propriétés privées restent `origin`, `appointmentId` et `revision`. Ni email, ni téléphone, ni identifiant de cliente ne sont envoyés. Un test de non-régression le vérifie pour une cliente qui revient avec une autre orthographe et un téléphone.
 - **Aucune cliente créée par l'entrant.** Les événements Google externes sont seulement des périodes occupées ; ils ne créent jamais de cliente.
 - **Le titre ne change pas par une réservation.** La résolution ne modifie jamais le prénom d'une fiche.
+- **La fusion de l'historique n'exporte rien.** Voir « Reprise de l'historique » : aucun nouveau miroir, et un miroir existant ne redevient dû que si son titre change.
 
 ## Sécurité (RLS)
 

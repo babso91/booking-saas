@@ -173,7 +173,7 @@ describe("identity: the canonical email within one business", () => {
       [
         [
           "  Lea@Example.TEST ",
-          "zoé@x.test",
+          "zoe\u0301@x.test",
           "first.last+tag@gmail.test",
           "   ",
           "",
@@ -182,7 +182,7 @@ describe("identity: the canonical email within one business", () => {
     );
     expect(rows.map((row) => row.value)).toEqual([
       "lea@example.test",
-      "zoé@x.test",
+      "zo\u00e9@x.test",
       // Dots and +tags are significant: no provider-specific rule.
       "first.last+tag@gmail.test",
       null,
@@ -190,11 +190,106 @@ describe("identity: the canonical email within one business", () => {
     ]);
   });
 
+  it("peripheral whitespace is removed exactly as String.prototype.trim does; whitespace inside is kept", async () => {
+    const cases: [input: string, expected: string | null][] = [
+      [" lea@example.com ", "lea@example.com"],
+      ["\tlea@example.com\t", "lea@example.com"],
+      ["\r\nlea@example.com\n", "lea@example.com"],
+      ["\rlea@example.com\r", "lea@example.com"],
+      ["\u000b\u000clea@example.com\u000c", "lea@example.com"],
+      [" lea@example.com ", "lea@example.com"],
+      [" 　Lea@Example.com  ", "lea@example.com"],
+      ["   lea@example.com  ", "lea@example.com"],
+      ["﻿LEA@EXAMPLE.COM", "lea@example.com"],
+      // Case, whitespace and Unicode form together.
+      ["\t ZOÉ@X.test ", "zoé@x.test"],
+      // Inside the address: kept (and refused by the booking paths).
+      ["lea @example.com", "lea @example.com"],
+      ["lea @example.com", "lea @example.com"],
+      ["\tlea\t@example.com\t", "lea\t@example.com"],
+      // Not whitespace for JavaScript either (zero width space): kept.
+      ["​lea@example.com", "​lea@example.com"],
+      // Whitespace only, of every class: no identity.
+      [" ", null],
+      ["\t\r\n\u000b\u000c", null],
+      ["       　", null],
+      ["  ﻿", null],
+    ];
+    const { rows } = await db.query<{ value: string | null }>(
+      `select private.canonical_email(v) as value
+       from unnest($1::text[]) with ordinality as t(v, n) order by n`,
+      [cases.map(([input]) => input)],
+    );
+    expect(rows.map((row) => row.value)).toEqual(
+      cases.map(([, expected]) => expected),
+    );
+    // The browser's own normalization of each input gives the same result.
+    expect(
+      cases.map(
+        ([input]) => input.normalize("NFC").trim().toLowerCase() || null,
+      ),
+    ).toEqual(cases.map(([, expected]) => expected));
+  });
+
+  it("the trimmed set is exactly JavaScript's, over every Unicode code point", async () => {
+    const { rows } = await db.query<{ cp: number }>(
+      `select cp from generate_series(1, 1114111) cp
+       where (cp < 55296 or cp > 57343)
+         and private.canonical_email(chr(cp)) is null
+       order by cp`,
+    );
+    const javascript: number[] = [];
+    for (let cp = 1; cp <= 0x10ffff; cp += 1) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      if (String.fromCodePoint(cp).normalize("NFC").trim() === "") {
+        javascript.push(cp);
+      }
+    }
+    expect(rows.map((row) => row.cp)).toEqual(javascript);
+    expect(javascript).toHaveLength(25);
+  });
+
+  it("direct writes of one address with other peripheral whitespace are one identity in a business, separate across businesses", async () => {
+    const id = await createClientRecord(business.id, "\tLea@Example.com\t");
+    const { rows } = await db.query(
+      "select email::text as email from public.clients where id = $1",
+      [id],
+    );
+    expect(rows[0]).toEqual({ email: "lea@example.com" });
+    for (const variant of [
+      "lea@example.com",
+      " LEA@example.com ",
+      "\r\nlea@EXAMPLE.com　",
+      "﻿lea@example.com",
+    ]) {
+      await expect(
+        createClientRecord(business.id, variant),
+      ).rejects.toMatchObject({ code: "23505" });
+    }
+
+    // A booking with another variant resolves to that record.
+    await rawPublicBooking("09:00", "　LEA@example.com\t");
+    expect(await customers()).toMatchObject([
+      { id, email: "lea@example.com", appointments: 1 },
+    ]);
+    // Inside the address, whitespace is not an equivalent spelling.
+    await expect(
+      rawPublicBooking("10:00", "lea @example.com"),
+    ).rejects.toMatchObject({ message: "invalid_email" });
+
+    const other = await newBusiness(owner);
+    const elsewhere = await createClientRecord(
+      other.business.id,
+      "lea@example.com",
+    );
+    expect(elsewhere).not.toBe(id);
+  });
+
   it("case, whitespace and Unicode-form variants are one customer; the second booking reuses it", async () => {
     await publicBooking({ time: "09:00", email: "Lea@Example.test" });
     await rawPublicBooking("10:00", "  LEA@EXAMPLE.TEST ");
-    await rawPublicBooking("11:00", "zoé@x.test", "Zoé");
-    await rawPublicBooking("12:00", "zoé@X.test", "Zoé");
+    await rawPublicBooking("11:00", "zoe\u0301@x.test", "Zoé");
+    await rawPublicBooking("12:00", "zo\u00e9@X.test", "Zoé");
 
     expect(
       (await customers()).map(({ email, appointments }) => ({
@@ -203,7 +298,7 @@ describe("identity: the canonical email within one business", () => {
       })),
     ).toEqual([
       { email: "lea@example.test", appointments: 2 },
-      { email: "zoé@x.test", appointments: 2 },
+      { email: "zo\u00e9@x.test", appointments: 2 },
     ]);
   });
 

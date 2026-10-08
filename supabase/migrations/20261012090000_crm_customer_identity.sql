@@ -8,11 +8,11 @@
 -- adding a parallel table:
 --
 --   1. One normalization, in the database: private.canonical_email (Unicode
---      NFC, trimmed, lower-cased, empty → null). A trigger applies it to
---      every write of clients.email, whatever the path (RPC, member DML,
---      service role). The
---      existing unique (business_id, email) is therefore uniqueness of the
---      canonical email within a business. No global identity, no fuzzy or
+--      NFC, peripheral whitespace trimmed exactly as JavaScript's
+--      String.prototype.trim does, lower-cased, empty → null). A trigger
+--      applies it to every write of clients.email, whatever the path (RPC,
+--      member DML, service role). The existing unique (business_id, email)
+--      is therefore uniqueness of the canonical email within a business. No global identity, no fuzzy or
 --      provider-specific rule (dots and +tags stay significant), no phone
 --      identity.
 --   2. private.resolve_client: the one resolution used by every creation
@@ -33,12 +33,33 @@
 --
 -- Google Calendar is unaffected: the outbound event still carries the
 -- customer's first name only (never email, phone or customer id), and
--- external events never create customers.
+-- external events never create customers. The merge is internal: it never
+-- enrolls an appointment in the outbound calendar, and an existing mirror
+-- is due again only when its title (the first name) actually changes.
 
 -- ---------------------------------------------------------------------------
 -- 1. Canonical email
 -- ---------------------------------------------------------------------------
 
+-- In this order:
+--   1. Unicode NFC (canonically equivalent spellings become one);
+--   2. peripheral whitespace removed: exactly the characters JavaScript's
+--      String.prototype.trim removes (ECMAScript WhiteSpace and
+--      LineTerminator), so that the database, authoritative, agrees with
+--      the browser's trimming:
+--        U+0009 tab, U+000A line feed, U+000B line tabulation,
+--        U+000C form feed, U+000D carriage return, U+0020 space,
+--        U+00A0 no-break space, U+1680 Ogham space mark,
+--        U+2000..U+200A (en quad .. hair space), U+2028 line separator,
+--        U+2029 paragraph separator, U+202F narrow no-break space,
+--        U+205F medium mathematical space, U+3000 ideographic space,
+--        U+FEFF zero width no-break space (BOM).
+--      NFC first: the set is closed under NFC (U+2000 and U+2001 become
+--      U+2002 and U+2003, also in the set), so trimming sees the final
+--      characters. Whitespace inside the address is never removed: such an
+--      address stays distinct, and invalid for the booking paths;
+--   3. lower case;
+--   4. empty → null (no identity).
 create function private.canonical_email(p_value text)
 returns text
 language sql
@@ -47,7 +68,12 @@ parallel safe
 set search_path = ''
 as $$
   select nullif(
-    pg_catalog.lower(pg_catalog.btrim(pg_catalog.normalize(p_value, 'NFC'))),
+    pg_catalog.lower(
+      pg_catalog.btrim(
+        pg_catalog.normalize(p_value, 'NFC'),
+        E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF'
+      )
+    ),
     ''
   );
 $$;
@@ -55,7 +81,7 @@ $$;
 revoke all on function private.canonical_email(text) from public;
 
 comment on function private.canonical_email(text) is
-  'The customer identity key: NFC, trimmed, lower-cased email; null when empty.';
+  'The customer identity key: NFC, peripheral whitespace (as String.prototype.trim) removed, lower-cased email; null when empty.';
 
 -- ---------------------------------------------------------------------------
 -- 2. Contact snapshots on appointments
@@ -99,6 +125,68 @@ alter table public.appointments enable trigger set_appointments_updated_at;
 -- ---------------------------------------------------------------------------
 -- 3. Backfill: one customer per canonical email within a business
 -- ---------------------------------------------------------------------------
+
+-- The mirror trigger, identical to 20261010090000 except one case: an update
+-- that changes client_id alone, inside a transaction marked as a customer
+-- merge (booking.crm_customer_merge = 'on', set locally by the merge below),
+-- records nothing; that transaction records the Google-visible changes
+-- itself. The mark is a transaction-local setting: no API role can set it
+-- (PostgREST runs no SET), it ends with its transaction, and it never
+-- hides a change of time, status or service.
+create or replace function private.record_appointment_mirror()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'DELETE' then
+    update private.appointment_calendar_mirrors m
+    set desired_revision = m.desired_revision + 1,
+        next_attempt_at = pg_catalog.now(),
+        attempts = 0,
+        last_error = null
+    where m.appointment_id = old.id;
+    return old;
+  end if;
+
+  if tg_op = 'UPDATE'
+    and new.starts_at is not distinct from old.starts_at
+    and new.ends_at is not distinct from old.ends_at
+    and new.status is not distinct from old.status
+    and new.service_name_snapshot is not distinct from old.service_name_snapshot
+    and (
+      new.client_id is not distinct from old.client_id
+      or pg_catalog.current_setting('booking.crm_customer_merge', true) = 'on'
+    ) then
+    return new;
+  end if;
+
+  insert into private.appointment_calendar_mirrors as m (
+    appointment_id, business_id, event_id
+  )
+  select new.id, new.business_id, private.mirror_event_id(new.id)
+  where exists (
+    select 1 from private.calendar_outbound o
+    where o.business_id = new.business_id
+      and o.status in ('creating', 'active', 'action_required')
+  )
+  on conflict (appointment_id) do update
+  set desired_revision = m.desired_revision + 1,
+      next_attempt_at = pg_catalog.now(),
+      attempts = 0,
+      last_error = null;
+  if not found then
+    update private.appointment_calendar_mirrors m
+    set desired_revision = m.desired_revision + 1,
+        next_attempt_at = pg_catalog.now(),
+        attempts = 0,
+        last_error = null
+    where m.appointment_id = new.id;
+  end if;
+  return new;
+end;
+$$;
 
 -- Groups: customers of one business whose emails have the same canonical
 -- form. Survivor: the earliest record (created_at, then id). Its non-empty
@@ -171,11 +259,51 @@ set last_name = coalesce(
     )
 where s.id in (select m.survivor from crm_customer_merge m);
 
-update public.appointments a
-set client_id = m.survivor
-from crm_customer_merge m
-where a.client_id = m.id
-  and m.id <> m.survivor;
+-- Google: the merge is an internal change of record, not a change of the
+-- event. As an ordinary client change, moving an appointment to the
+-- survivor would go through private.record_appointment_mirror: an existing
+-- mirror would become due (a provider write even with the same title), and
+-- an appointment never enrolled, past or cancelled included, would be
+-- enrolled and exported for the first time. Instead:
+--   * existing mirrors whose title changes (the former record's first name
+--     is not the survivor's) are due once, by the statement a rename of the
+--     customer uses (private.record_client_mirrors), computed while each
+--     appointment still points to its former record;
+--   * the relink itself is marked as a customer merge for this transaction
+--     only (booking.crm_customer_merge, set_config local), which the mirror
+--     trigger understands: a change of client_id alone records nothing.
+--     Nothing else is skipped: version, updated_at, snapshots and every
+--     other trigger run as for any update.
+-- One statement (a DO block): the due marks, the merge mark, the relink and
+-- the unmark commit together whatever runs the migration; no worker can
+-- claim a mirror before its appointment points to the survivor, and no
+-- other session ever sees the merge mark.
+do $$
+begin
+  update private.appointment_calendar_mirrors mi
+  set desired_revision = mi.desired_revision + 1,
+      next_attempt_at = pg_catalog.now(),
+      attempts = 0,
+      last_error = null
+  from public.appointments a
+  join crm_customer_merge m on m.id = a.client_id and m.id <> m.survivor
+  join public.clients former on former.id = m.id
+  join public.clients survivor on survivor.id = m.survivor
+  where mi.appointment_id = a.id
+    and former.first_name is distinct from survivor.first_name;
+
+  perform pg_catalog.set_config('booking.crm_customer_merge', 'on', true);
+
+  update public.appointments a
+  set client_id = m.survivor
+  from crm_customer_merge m
+  where a.client_id = m.id
+    and m.id <> m.survivor;
+
+  perform pg_catalog.set_config('booking.crm_customer_merge', 'off', true);
+end;
+$$;
+
 update public.loyalty_events e
 set client_id = m.survivor
 from crm_customer_merge m
