@@ -100,7 +100,7 @@ Les autres instantanés (prestation, durée, prix, tampon) sont inchangés.
    - **Rendez-vous déplacés** : ils changent de version (un formulaire ouvert avant la migration sera refusé comme périmé). Leur instantané garde le contact d'origine.
    - **Google, sans effet de bord.** La fusion est une opération interne :
      - elle n'inscrit jamais un rendez-vous dans le calendrier sortant (passé, annulé ou futur) ;
-     - un miroir existant ne redevient dû que si son titre change, c'est-à-dire si le prénom de l'ancienne fiche diffère de celui de la fiche conservée, une seule fois et par la même instruction qu'un renommage de fiche ;
+     - un miroir existant ne redevient dû que si son titre change, une seule fois et par la même instruction qu'un renommage de fiche. Les prénoms sont comparés tels que Google les affiche : le sérialiseur (`outboundEvent`) applique `String.prototype.trim()`, sans changer la casse ni normaliser l'Unicode. `"Emma "`, `" Emma"` ou `"Emma"` entourés d'espaces insécables donnent le même titre que `"Emma"` ; `"emma"` ou `"Emmy"` donnent un autre titre ;
      - mécanisme : le rattachement est marqué comme fusion pour sa seule transaction (`booking.crm_customer_merge`, `set_config` local, dans un bloc `DO`). Dans ce cas, le trigger `private.record_appointment_mirror` ignore un changement de `client_id` seul. Tout autre changement (horaire, statut, prestation) est enregistré comme avant. La version, `updated_at` et les instantanés suivent les règles habituelles ;
      - ce marqueur ne sort jamais de sa transaction, et aucun rôle d'API ne peut le poser.
      - Les rendez-vous futurs jamais inscrits restent du ressort du backfill sortant habituel.

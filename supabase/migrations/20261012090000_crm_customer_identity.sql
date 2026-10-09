@@ -265,10 +265,14 @@ where s.id in (select m.survivor from crm_customer_merge m);
 -- mirror would become due (a provider write even with the same title), and
 -- an appointment never enrolled, past or cancelled included, would be
 -- enrolled and exported for the first time. Instead:
---   * existing mirrors whose title changes (the former record's first name
---     is not the survivor's) are due once, by the statement a rename of the
---     customer uses (private.record_client_mirrors), computed while each
---     appointment still points to its former record;
+--   * existing mirrors whose title changes are due once, by the statement a
+--     rename of the customer uses (private.record_client_mirrors), computed
+--     while each appointment still points to its former record. The title
+--     is compared as Google shows it: the serializer (outboundEvent) writes
+--     the first name trimmed by String.prototype.trim, case and every other
+--     character kept, no Unicode normalization (an empty result leaves the
+--     service alone, the same for both). So "Emma " or "\u00a0Emma" and
+--     "Emma" are one title; "emma", "Emmy" and "Emma" are three;
 --   * the relink itself is marked as a customer merge for this transaction
 --     only (booking.crm_customer_merge, set_config local), which the mirror
 --     trigger understands: a change of client_id alone records nothing.
@@ -290,7 +294,16 @@ begin
   join public.clients former on former.id = m.id
   join public.clients survivor on survivor.id = m.survivor
   where mi.appointment_id = a.id
-    and former.first_name is distinct from survivor.first_name;
+    -- The characters String.prototype.trim removes (as in
+    -- private.canonical_email, without its NFC and lower case).
+    and pg_catalog.btrim(
+          former.first_name,
+          E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF'
+        )
+        is distinct from pg_catalog.btrim(
+          survivor.first_name,
+          E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF'
+        );
 
   perform pg_catalog.set_config('booking.crm_customer_merge', 'on', true);
 

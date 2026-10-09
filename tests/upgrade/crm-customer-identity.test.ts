@@ -42,6 +42,27 @@ const historyBefore: Record<
 > = { loyalty_events: [], reward_redemptions: [], email_events: [] };
 let mirrorsBefore: Map<string, Record<string, unknown>>;
 
+// Business G, merged records with an existing mirror: first names that
+// differ only in what the serializer trims are one Google title; a real
+// difference (case included) is another. "Emmy" → "Emma" is gChanged.
+const projectionCases = [
+  { key: "pTrailing", survivor: "Emma", former: "Emma ", sameTitle: true },
+  { key: "pLeading", survivor: "Emma", former: " Emma", sameTitle: true },
+  {
+    key: "pWhitespace",
+    survivor: "Emma",
+    former: "\u00a0Emma\t\u3000",
+    sameTitle: true,
+  },
+  {
+    key: "pSurvivorPadded",
+    survivor: "\u2003Emma\u202f",
+    former: "\ufeffEmma\n",
+    sameTitle: true,
+  },
+  { key: "pCase", survivor: "Emma", former: "emma", sameTitle: false },
+] as const;
+
 /** The rows of `table` in businesses A and B; after the upgrade, only those
  *  that existed before it (a booking made after it adds its own email). */
 async function history(table: keyof typeof historyBefore) {
@@ -379,6 +400,18 @@ beforeAll(async () => {
     email: "\tAMY@g.test\t",
     createdAt: "2026-02-01T11:00:00Z",
   });
+  for (const [index, item] of projectionCases.entries()) {
+    await addCustomer(`${item.key}Survivor`, businessG, {
+      firstName: item.survivor,
+      email: `${item.key.toLowerCase()}@g.test`,
+      createdAt: `2026-01-02T1${index}:00:00Z`,
+    });
+    await addCustomer(`${item.key}Former`, businessG, {
+      firstName: item.former,
+      email: `\t${item.key.toUpperCase()}@G.test `,
+      createdAt: `2026-02-02T1${index}:00:00Z`,
+    });
+  }
   // Never enrolled: before outbound existed for this business.
   await addAppointment(
     "gPast",
@@ -420,6 +453,15 @@ beforeAll(async () => {
   await addAppointment("gSame", businessG, serviceG, customer.emmaDup!, 5);
   await addAppointment("gChanged", businessG, serviceG, customer.emmyDup!, 6);
   await addAppointment("gSurvivor", businessG, serviceG, customer.emma!, 7);
+  for (const [index, item] of projectionCases.entries()) {
+    await addAppointment(
+      item.key,
+      businessG,
+      serviceG,
+      customer[`${item.key}Former`]!,
+      8 + index,
+    );
+  }
   await db.query(
     `update private.appointment_calendar_mirrors
      set applied_revision = desired_revision, provider_calendar_id = 'cal-g',
@@ -660,6 +702,7 @@ describe("upgrading customers of a business mirrored to Google", () => {
     expect((await customersOf(businessG)).map((row) => row.id)).toEqual([
       customer.emma,
       customer.amy,
+      ...projectionCases.map((item) => customer[`${item.key}Survivor`]),
     ]);
     for (const key of ["gPast", "gPastCancelled", "gChanged"]) {
       expect(await appointmentRow(appointment[key]!)).toMatchObject({
@@ -692,6 +735,7 @@ describe("upgrading customers of a business mirrored to Google", () => {
         appointment.gSame!,
         appointment.gChanged!,
         appointment.gSurvivor!,
+        ...projectionCases.map((item) => appointment[item.key]!),
       ].sort(),
     );
   });
@@ -704,6 +748,45 @@ describe("upgrading customers of a business mirrored to Google", () => {
     expect(mirrors.get(appointment.gSurvivor!)).toEqual(
       mirrorsBefore.get(appointment.gSurvivor!),
     );
+  });
+
+  it("the title is compared as the serializer shows it: whitespace it trims is no change; case and other characters are", async () => {
+    const title = (firstName: string) =>
+      outboundEvent({
+        appointmentId: "a",
+        eventId: "e",
+        revision: 1,
+        startsAt: null,
+        endsAt: null,
+        serviceName: "Coupe",
+        clientFirstName: firstName,
+      }).summary;
+    const mirrors = await mirrorsOf(businessG);
+    for (const item of projectionCases) {
+      // The case table agrees with the real serializer.
+      expect(title(item.former) === title(item.survivor)).toBe(item.sameTitle);
+      const before = mirrorsBefore.get(appointment[item.key]!)!;
+      const after = mirrors.get(appointment[item.key]!)!;
+      if (item.sameTitle) {
+        expect(after).toEqual(before);
+      } else {
+        expect(after).toMatchObject({
+          desired_revision: String(Number(before.desired_revision) + 1),
+          applied_revision: before.applied_revision,
+          repair_generation: before.repair_generation,
+          repaired_generation: before.repaired_generation,
+          attempts: 0,
+          last_error: null,
+        });
+      }
+      // The merge itself as for any appointment: moved to the survivor,
+      // versioned, its snapshot the former record's first name as it was.
+      expect(await appointmentRow(appointment[item.key]!)).toMatchObject({
+        client_id: customer[`${item.key}Survivor`],
+        firstName: item.former,
+        version: versionsBefore.get(appointment[item.key]!)!.version + 1,
+      });
+    }
   });
 
   it("an existing mirror whose title changes is due exactly once, for the survivor's first name only", async () => {
@@ -722,7 +805,8 @@ describe("upgrading customers of a business mirrored to Google", () => {
       "select private.outbound_status($1) as status",
       [businessG],
     );
-    expect(status[0].status).toMatchObject({ pendingCount: 1 });
+    // "Emmy" → "Emma" and "emma" → "Emma"; nothing else.
+    expect(status[0].status).toMatchObject({ pendingCount: 2 });
 
     // What the writer gets: the survivor's first name and the service, no
     // email, phone or customer id.
@@ -731,22 +815,25 @@ describe("upgrading customers of a business mirrored to Google", () => {
       [businessG],
     );
     const claims = rows[0].claims as Parameters<typeof outboundEvent>[0][];
-    expect(claims.map((claim) => claim.appointmentId)).toEqual([
-      appointment.gChanged,
+    expect(claims.map((claim) => claim.appointmentId).sort()).toEqual(
+      [appointment.gChanged!, appointment.pCase!].sort(),
+    );
+    const events = claims.map((claim) => outboundEvent(claim));
+    expect(events.map((event) => event.summary)).toEqual([
+      "Emma — Coupe",
+      "Emma — Coupe",
     ]);
-    const event = outboundEvent({
-      ...claims[0]!,
-      eventId: `bk${appointment.gChanged!.replaceAll("-", "")}`,
-    });
-    expect(event.summary).toBe("Emma — Coupe");
-    const sent = JSON.stringify([claims, event]).toLowerCase();
+    const sent = JSON.stringify([claims, events]).toLowerCase();
     for (const secret of [
       "amy@g.test",
       "emma@g.test",
+      "pcase@g.test",
       "0633333333",
       customer.amy!,
       customer.emmyDup!,
       customer.emma!,
+      customer.pCaseSurvivor!,
+      customer.pCaseFormer!,
     ]) {
       expect(sent).not.toContain(secret.toLowerCase());
     }
