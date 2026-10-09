@@ -621,6 +621,25 @@ isOneToOne: false
               "appointment_id": string,"business_name": string,"currency": string,"duration_minutes": number,"ends_at": string,"price_cents": number,"service_name": string,"starts_at": string,"timezone": string
             }[]
                            },
+"crm_assert_member":
+{ Args: { "p_business_id": string }; Returns: undefined
+                           },
+"crm_client_activity":
+{ Args: { "p_as_of": string,"p_business_id": string,"p_client_id"?: string }; Returns: {
+              "cancelled_count": number,"client_id": string,"completed_count": number,"first_completed_at": string,"last_completed_at": string,"next_appointment_id": string,"next_starts_at": string,"no_show_count": number,"past_confirmed_count": number,"upcoming_count": number
+            }[]
+                           },
+"crm_client_profile":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_upcoming_limit"?: number }; Returns: Json
+                           },
+"crm_client_timeline":
+{ Args: { "p_as_of"?: string,"p_before_at"?: string,"p_before_id"?: string,"p_business_id": string,"p_client_id": string,"p_limit"?: number }; Returns: {
+              "as_of": string,"data": Json,"event_id": string,"kind": string,"occurred_at": string
+            }[]
+                           },
+"crm_list_clients":
+{ Args: { "p_after_at"?: string,"p_after_count"?: number,"p_after_id"?: string,"p_after_text"?: string,"p_as_of"?: string,"p_business_id": string,"p_filter"?: string,"p_limit"?: number,"p_query"?: string,"p_sort"?: string }; Returns: Json
+                           },
 "get_available_slots":
 { Args: { "p_date": string,"p_service_id": string,"p_slug": string }; Returns: {
               "ends_at": string,"local_ends_at": string,"local_starts_at": string,"starts_at": string
