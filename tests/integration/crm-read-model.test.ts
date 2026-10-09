@@ -8,7 +8,10 @@ import {
   listClientsAction,
   listClientTimelineAction,
 } from "@/features/crm/actions/crm";
-import { encodeDirectoryCursor } from "@/features/crm/data/cursor";
+import {
+  encodeDirectoryCursor,
+  encodeTimelineCursor,
+} from "@/features/crm/data/cursor";
 import { listBusinessClients } from "@/features/crm/data/directory";
 import { getClientRelationshipProfile } from "@/features/crm/data/profile";
 import { listClientTimeline } from "@/features/crm/data/timeline";
@@ -1864,5 +1867,149 @@ describe("time zone metadata matches the conversions", () => {
     // The latest completed visit is the one at Vancouver midnight (09:00 in
     // Paris: the zone the stale context named).
     expect(row.lastCompletedVisitAt?.local).toBe(`${day}T00:00`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The cursor's reference instant, end to end (empty pages included)
+// ---------------------------------------------------------------------------
+
+describe("cursor reference instant through the Server Actions", () => {
+  /** A timeline cursor positioned before every event: an empty page. */
+  const emptyPageCursor = (clientId: string, asOf: string) =>
+    encodeTimelineCursor({
+      asOf,
+      clientId,
+      at: "1900-01-01T00:00:00+00:00",
+      id: `appointment:${randomUUID()}`,
+    });
+
+  it("an offset with seconds is a validation error on `cursor` before any read, never internal (empty page)", async () => {
+    as(ownerA);
+    const result = await listClientTimelineAction({
+      clientId: c.lea,
+      cursor: emptyPageCursor(c.lea!, "2026-10-09T08:00:00+00:00:01"),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "validation_error",
+        fieldErrors: { cursor: expect.any(Array) },
+      },
+    });
+
+    const directory = await listClientsAction({
+      cursor: encodeDirectoryCursor({
+        asOf: "2026-10-09T08:00:00+00:00:01",
+        sort: "name",
+        filter: "all",
+        query: "",
+        key: "a",
+        id: c.lea!,
+      }),
+    });
+    expect(directory).toMatchObject({
+      ok: false,
+      error: {
+        code: "validation_error",
+        fieldErrors: { cursor: expect.any(Array) },
+      },
+    });
+  });
+
+  it("malformed offsets: validation error on `cursor`", async () => {
+    as(ownerA);
+    for (const asOf of [
+      "2026-10-09T08:00:00+16:00",
+      "2026-10-09T08:00:00+0000",
+    ]) {
+      expect(
+        await listClientTimelineAction({
+          clientId: c.lea,
+          cursor: emptyPageCursor(c.lea!, asOf),
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          code: "validation_error",
+          fieldErrors: { cursor: expect.any(Array) },
+        },
+      });
+    }
+  });
+
+  it("every accepted form reaches an empty page safely: UTC, Z, microseconds, syntax bounds", async () => {
+    as(ownerA);
+    const cases: [asOf: string, iso: string][] = [
+      ["2026-10-09T08:00:00+00:00", "2026-10-09T08:00:00.000Z"],
+      ["2026-10-09T08:00:00Z", "2026-10-09T08:00:00.000Z"],
+      ["2026-10-09T08:00:00.123456+00:00", "2026-10-09T08:00:00.123Z"],
+      ["2026-10-09T10:00:00-07:00", "2026-10-09T17:00:00.000Z"],
+      ["0001-01-01T00:00:00+15:59", "0000-12-31T08:01:00.000Z"],
+      ["9999-12-31T23:59:59.999999-15:59", "+010000-01-01T15:58:59.999Z"],
+    ];
+    for (const [asOf, iso] of cases) {
+      const page = ok(
+        await listClientTimelineAction({
+          clientId: c.lea,
+          cursor: emptyPageCursor(c.lea!, asOf),
+        }),
+      );
+      expect(page).toMatchObject({
+        asOf: iso,
+        events: [],
+        nextCursor: null,
+        timezone: "Europe/Paris",
+      });
+    }
+  });
+
+  it("an empty page after a cursor the backend generated (events removed meanwhile)", async () => {
+    const client = await customer(A.id, { firstName: "Elena" });
+    const newer = await appointment(
+      A.id,
+      client,
+      coupe,
+      at(-50, 16),
+      "completed",
+    );
+    const older = await appointment(
+      A.id,
+      client,
+      coupe,
+      at(-51, 16),
+      "completed",
+    );
+    as(ownerA);
+    const first = ok(
+      await listClientTimelineAction({ clientId: client, limit: 1 }),
+    );
+    expect(first.events.map((event) => event.id)).toEqual([
+      `appointment:${newer}`,
+    ]);
+    const cursor = JSON.parse(
+      Buffer.from(first.nextCursor!, "base64url").toString("utf8"),
+    );
+    // PostgreSQL's own reference instant: microseconds, +00:00.
+    expect(cursor.asOf).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?\+00:00$/,
+    );
+
+    await db.query("delete from public.appointments where id = $1", [older]);
+    const second = ok(
+      await listClientTimelineAction({
+        clientId: client,
+        limit: 1,
+        cursor: first.nextCursor,
+      }),
+    );
+    expect(second).toMatchObject({
+      asOf: first.asOf,
+      events: [],
+      nextCursor: null,
+      timezone: "Europe/Paris",
+    });
+    await db.query("delete from public.appointments where id = $1", [newer]);
+    await db.query("delete from public.clients where id = $1", [client]);
   });
 });

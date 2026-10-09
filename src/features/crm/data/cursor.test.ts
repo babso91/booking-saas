@@ -6,6 +6,7 @@ import {
   encodeDirectoryCursor,
   encodeTimelineCursor,
   isPostgresTimestamp,
+  isReferenceInstant,
   MAX_CURSOR_LENGTH,
 } from "./cursor";
 
@@ -342,5 +343,71 @@ describe("timeline cursor", () => {
     expectRefused(() =>
       decodeTimelineCursor(raw(timeline({ businessId: OTHER })), ID),
     );
+  });
+});
+
+describe("reference instant (asOf)", () => {
+  const accepted = [
+    "2026-10-09T08:00:00+00:00",
+    "2026-10-09T08:00:00Z",
+    "2026-10-09T08:00:00.123456+00:00",
+    "2026-10-09T08:00:00.123456Z",
+    "2026-10-09T08:00:00-07:00",
+    // Bounds of the syntax: still within Date's range.
+    "0001-01-01T00:00:00+15:59",
+    "9999-12-31T23:59:59.999999-15:59",
+  ];
+
+  it("accepts PostgreSQL's ±HH:MM and Z forms; every accepted value is readable by Date", () => {
+    for (const asOf of accepted) {
+      expect(isReferenceInstant(asOf)).toBe(true);
+      expect(Number.isNaN(new Date(asOf).getTime())).toBe(false);
+      expect(decodeTimelineCursor(raw(timeline({ asOf })), ID).asOf).toBe(asOf);
+      expect(decodeDirectoryCursor(raw(directory({ asOf })), NAME).asOf).toBe(
+        asOf,
+      );
+    }
+  });
+
+  it("refuses an offset with seconds (Date cannot read it) in both cursors", () => {
+    for (const asOf of [
+      "2026-10-09T08:00:00+00:00:01",
+      "1890-03-01T00:00:00+00:09:21",
+      "2026-10-09T08:00:00.123456-07:52:58",
+    ]) {
+      expect(isPostgresTimestamp(asOf)).toBe(true);
+      expect(isReferenceInstant(asOf)).toBe(false);
+      expect(Number.isNaN(new Date(asOf).getTime())).toBe(true);
+      expectRefused(() => decodeTimelineCursor(raw(timeline({ asOf })), ID));
+      expectRefused(() =>
+        decodeDirectoryCursor(raw(directory({ asOf })), NAME),
+      );
+    }
+  });
+
+  it("refuses malformed offsets", () => {
+    for (const asOf of [
+      "2026-10-09T08:00:00+16:00",
+      "2026-10-09T08:00:00+05:60",
+      "2026-10-09T08:00:00+0000",
+      "2026-10-09T08:00:00+00",
+      "2026-10-09T08:00:00 +00:00",
+    ]) {
+      expect(isReferenceInstant(asOf)).toBe(false);
+      expectRefused(() => decodeTimelineCursor(raw(timeline({ asOf })), ID));
+    }
+  });
+
+  it("positions keep PostgreSQL's full syntax (read by PostgreSQL only), microseconds intact", () => {
+    const at = "1890-03-01T00:00:00.000001+00:09:21";
+    expect(decodeTimelineCursor(raw(timeline({ at })), ID).at).toBe(at);
+    const key = "1890-03-01T00:00:00.000001+00:09:21";
+    expect(
+      decodeDirectoryCursor(raw(directory({ sort: "newest", key })), {
+        sort: "newest",
+        filter: "all",
+        query: "",
+      }).key,
+    ).toBe(key);
   });
 });

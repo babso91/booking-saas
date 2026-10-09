@@ -335,6 +335,8 @@ Un curseur n'est accepté que s'il est exactement ce que le backend produit. Tou
   - vérifiés champ par champ sur le calendrier grégorien : `2026-02-30` est refusé, `2024-02-29` accepté, `2025-02-29` et `1900-02-29` refusés ;
   - **conservés tels quels**, sans repasser par `Date`, ce qui préserve les microsecondes ;
   - `-infinity` n'est accepté que pour `last_visit`, `infinity` que pour `next_appointment`.
+  - **`asOf`, plus strict :** c'est le `now()` de PostgreSQL dans la session UTC de l'API, toujours écrit avec un décalage `±HH:MM`. Il est aussi relu par JavaScript (l'`asOf` d'une page vide), qui ne sait pas lire un décalage avec secondes. `asOf` accepte donc seulement `Z` ou `±HH:MM`, et doit être lisible par `Date` (c'est le cas de toute année 0001–9999 avec un décalage d'au plus ±15:59) ;
+  - les positions (`at` de la timeline, clés de tri de l'annuaire) ne vont qu'à PostgreSQL et gardent la syntaxe complète, décalage avec secondes compris.
 - **Identifiants :** syntaxe UUID `8-4-4-4-12` hexadécimale, quelle que soit la version. Les événements doivent être de la forme `appointment|loyalty|email:<uuid>`.
 - **Comptes (`most_visits`) :** entiers sûrs entre 0 et 2 147 483 647 (le type `integer` de PostgreSQL). `2147483648`, `-1`, `1.5`, `NaN` et `Infinity` sont refusés.
 - **Lien avec la lecture :** un curseur produit pour une autre recherche, un autre filtre, un autre tri ou une autre cliente est refusé.

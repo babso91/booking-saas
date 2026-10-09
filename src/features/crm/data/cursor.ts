@@ -25,6 +25,12 @@ import { AppException } from "@/lib/errors";
 //     6 fractional digits, Z or ±HH:MM[:SS]), checked field by field against
 //     the Gregorian calendar (no February 30) and kept as the original text
 //     (microseconds preserved: never re-serialized through Date);
+//   * the reference instant (asOf) more narrowly: it is PostgreSQL's now()
+//     in the API's UTC session, always written with a ±HH:MM offset, and
+//     it is also read by JavaScript (the response's asOf when a page is
+//     empty), which cannot parse an offset with seconds. So asOf takes Z or
+//     ±HH:MM only and must parse as a Date. Positions (timeline `at`,
+//     directory sort keys) go to PostgreSQL only and keep the full syntax;
 //   * identifiers with the 8-4-4-4-12 hexadecimal UUID syntax (any version);
 //   * counts as safe integers within PostgreSQL's integer, and ≥ 0.
 // A well-formed cursor made for another search, filter, ordering or
@@ -77,7 +83,24 @@ export function isPostgresTimestamp(value: string): boolean {
   );
 }
 
+const OFFSET_WITH_SECONDS = /[+-]\d{2}:\d{2}:\d{2}$/;
+
+/**
+ * A reference instant (cursor `asOf`): a PostgreSQL timestamp whose offset
+ * has no seconds (Z or ±HH:MM), readable by JavaScript's Date as well (every
+ * such value with a 4-digit year is: years 0001 to 9999, offsets up to
+ * ±15:59, are well within Date's range).
+ */
+export function isReferenceInstant(value: string): boolean {
+  return (
+    isPostgresTimestamp(value) &&
+    !OFFSET_WITH_SECONDS.test(value) &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
+
 const timestamp = z.string().max(40).refine(isPostgresTimestamp);
+const referenceInstant = z.string().max(40).refine(isReferenceInstant);
 const uuid = z.string().regex(UUID);
 /** Text PostgreSQL can hold: well-formed Unicode, no NUL. */
 const text = (max: number) =>
@@ -89,7 +112,7 @@ const text = (max: number) =>
 const directoryCursorSchema = z.strictObject({
   v: z.literal(1),
   t: z.literal("clients"),
-  asOf: timestamp,
+  asOf: referenceInstant,
   sort: z.enum(CLIENT_SORTS),
   filter: z.enum(CLIENT_FILTERS),
   query: text(100),
@@ -103,7 +126,7 @@ const directoryCursorSchema = z.strictObject({
 const timelineCursorSchema = z.strictObject({
   v: z.literal(1),
   t: z.literal("timeline"),
-  asOf: timestamp,
+  asOf: referenceInstant,
   clientId: uuid,
   at: timestamp,
   id: z.string().regex(EVENT_ID),
