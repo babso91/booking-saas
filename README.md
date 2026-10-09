@@ -89,6 +89,7 @@ Inclus :
 - horaires hebdomadaires à plages multiples, réglages de réservation, exceptions (fermeture, vacances, blocage, ouverture exceptionnelle) ;
 - calcul des créneaux disponibles dans le fuseau IANA du business, PostgreSQL étant la seule autorité calendaire (jours réels, heures murales, occurrences ; ni Node ni le navigateur ne convertissent avec leur propre tzdata : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §8) ;
 - réservation publique transactionnelle avec création/rapprochement de la cliente et email de confirmation mis en outbox ;
+- domaine client (CRM V1) : cliente par business, identité par email canonique, instantanés de contact des rendez-vous : contrat dans [docs/CRM_CUSTOMER_CONTRACT.md](docs/CRM_CUSTOMER_CONTRACT.md) ;
 - API publique : `GET /api/public/businesses/[slug]`, `GET /api/public/businesses/[slug]/availability?serviceId=…&date=AAAA-MM-JJ`, `POST /api/bookings` ;
 - Server Actions professionnelles dans `src/features/*/actions` ;
 - authentification professionnelle (email + mot de passe), gardes de routage serveur et onboarding transactionnel : contrat UI dans [docs/AUTH_ONBOARDING_CONTRACT.md](docs/AUTH_ONBOARDING_CONTRACT.md).

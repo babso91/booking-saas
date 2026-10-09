@@ -728,6 +728,50 @@ describe("mirrors: create, update, cancel", () => {
     });
   });
 
+  it("a returning customer (same email, other spelling, other first name, a phone): the event still shows the customer's first name only, never email, phone or customer id", async () => {
+    const s = await setup();
+    const calendarId = await enabled(s);
+    const book = (
+      time: string,
+      firstName: string,
+      email: string,
+      phone?: string,
+    ) =>
+      db.query<{ appointment_id: string }>(
+        `select appointment_id from private.create_public_booking_at(now(), $1, $2, $3::timestamptz, $4, $5, null, $6)`,
+        [
+          s.business.slug,
+          s.service,
+          at(D, time),
+          firstName,
+          email,
+          phone ?? null,
+        ],
+      );
+    await book("09:00", "Léa", "crm.lea@client.test");
+    await book("11:00", "Lea M", " CRM.Lea@Client.TEST ", "+33612345678");
+    const { rows: customers } = await db.query<{ id: string }>(
+      "select id from public.clients where business_id = $1",
+      [s.business.id],
+    );
+    expect(customers).toHaveLength(1);
+
+    expect(await run(s)).toMatchObject({ applied: 2 });
+    expect(liveEvents(calendarId).map((event) => event.summary)).toEqual([
+      "Léa — Coupe",
+      "Léa — Coupe",
+    ]);
+    const bodies = fake.requests
+      .filter((request) => isInsert(request.url, request.method))
+      .map((request) => request.body);
+    expect(bodies).toHaveLength(2);
+    for (const body of bodies) {
+      expect(body.toLowerCase()).not.toContain("crm.lea@client.test");
+      expect(body).not.toMatch(/\+336|612345678|Lea M|attendees/);
+      expect(body).not.toContain(customers[0]!.id);
+    }
+  });
+
   it("every write path records the desired state: public booking, manual creation, update, status", async () => {
     const s = await setup();
     await enabled(s);
