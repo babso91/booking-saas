@@ -638,9 +638,7 @@ isOneToOne: false
             }[]
                            },
 "crm_list_clients":
-{ Args: { "p_after_at"?: string,"p_after_count"?: number,"p_after_id"?: string,"p_after_text"?: string,"p_as_of"?: string,"p_business_id": string,"p_filter"?: string,"p_limit"?: number,"p_query"?: string,"p_sort"?: string }; Returns: {
-              "as_of": string,"completed_count": number,"created_at": string,"email": string,"first_name": string,"id": string,"last_completed_at": string,"last_name": string,"next_appointment_id": string,"next_starts_at": string,"phone": string,"sort_at": string,"sort_count": number,"sort_text": string,"total_count": number,"upcoming_count": number
-            }[]
+{ Args: { "p_after_at"?: string,"p_after_count"?: number,"p_after_id"?: string,"p_after_text"?: string,"p_as_of"?: string,"p_business_id": string,"p_filter"?: string,"p_limit"?: number,"p_query"?: string,"p_sort"?: string }; Returns: Json
                            },
 "get_available_slots":
 { Args: { "p_date": string,"p_service_id": string,"p_slug": string }; Returns: {

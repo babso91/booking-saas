@@ -146,11 +146,14 @@ describe("upgrading to the relationship read model", () => {
     const email = events.find((event) => event.event_id.startsWith("email:"));
     expect(email?.data).toMatchObject({ status: "pending", sentAt: null });
 
-    const list = await asOwner<{ id: string; completed_count: number }>(
-      "select id, completed_count from public.crm_list_clients($1)",
+    const [list] = await asOwner<{ page: Record<string, never> }>(
+      "select public.crm_list_clients($1) as page",
       [businessId],
     );
-    expect(list).toEqual([{ id: clientId, completed_count: 1 }]);
+    expect(list!.page).toMatchObject({
+      totalCount: 1,
+      rows: [{ id: clientId, completedCount: 1, upcomingCount: 1 }],
+    });
     expect(await tables()).toBe(rowsBefore);
   });
 });

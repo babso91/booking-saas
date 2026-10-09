@@ -149,11 +149,19 @@ $$;
 --   next_appointment  next appointment ascending, none last;
 --   most_visits       completed visits descending.
 -- Keyset pagination: the next page starts after (sort key, id) of the last
--- row read, given back as p_after_* (sort_text for name, sort_at for the
--- instants, sort_count for most_visits; ±infinity stand for "none").
--- At most p_limit + 1 rows: the extra one says another page exists.
--- total_count: matching customers of this business (search and filter, not
--- the cursor).
+-- row read, given back as p_after_* (sortText for name, sortAt for the
+-- instants, sortCount for most_visits; ±infinity stand for "none").
+--
+-- Answer, from ONE statement (page and total read the same data):
+--   { asOf, totalCount, rows: [...] }
+-- rows: at most p_limit + 1, in order (the extra one says another page
+-- exists), each with its sort key. totalCount: the customers of this
+-- business matching the search and filter when the statement runs,
+-- independent of the cursor and of the page: an empty page (a cursor past
+-- the end) still carries the real total. It is not a frozen count: rows
+-- created, deleted or changed since an earlier page count as they are now.
+-- p_as_of fixes the reference instant of the metrics (upcoming, next
+-- appointment), not the data.
 create function public.crm_list_clients(
   p_business_id uuid,
   p_query text default null,
@@ -166,35 +174,18 @@ create function public.crm_list_clients(
   p_after_count integer default null,
   p_after_id uuid default null
 )
-returns table (
-  id uuid,
-  first_name text,
-  last_name text,
-  email text,
-  phone text,
-  created_at timestamptz,
-  completed_count integer,
-  last_completed_at timestamptz,
-  upcoming_count integer,
-  next_appointment_id uuid,
-  next_starts_at timestamptz,
-  sort_text text,
-  sort_at timestamptz,
-  sort_count integer,
-  total_count bigint,
-  as_of timestamptz
-)
+returns jsonb
 language plpgsql
 stable
 security invoker
 set search_path = ''
 as $$
-#variable_conflict use_column
 declare
   v_as_of timestamptz := coalesce(p_as_of, pg_catalog.now());
   v_query text := nullif(pg_catalog.btrim(pg_catalog.normalize(coalesce(p_query, ''), 'NFC')), '');
   v_pattern text;
   v_digits text;
+  v_result jsonb;
 begin
   perform public.crm_assert_member(p_business_id);
 
@@ -227,7 +218,6 @@ begin
     end if;
   end if;
 
-  return query
   with activity as (
     select * from public.crm_client_activity(p_business_id, v_as_of)
   ),
@@ -276,30 +266,62 @@ begin
         when 'last_visit' then coalesce(m.last_completed_at, '-infinity'::timestamptz)
         when 'next_appointment' then coalesce(m.next_starts_at, 'infinity'::timestamptz)
       end as k_at,
-      case when p_sort = 'most_visits' then m.completed_count end as k_count,
-      pg_catalog.count(*) over () as total
+      case when p_sort = 'most_visits' then m.completed_count end as k_count
     from matching m
+  ),
+  page as (
+    select
+      k.*,
+      pg_catalog.row_number() over (
+        order by
+          k.k_text asc,
+          case when p_sort in ('newest', 'last_visit') then k.k_at end desc,
+          case when p_sort = 'next_appointment' then k.k_at end asc,
+          k.k_count desc,
+          k.id asc
+      ) as position
+    from keyed k
+    where p_after_id is null
+      or (p_sort = 'name' and (k.k_text, k.id) > (p_after_text, p_after_id))
+      or (p_sort = 'next_appointment' and (k.k_at, k.id) > (p_after_at, p_after_id))
+      or (p_sort in ('newest', 'last_visit')
+          and (k.k_at < p_after_at or (k.k_at = p_after_at and k.id > p_after_id)))
+      or (p_sort = 'most_visits'
+          and (k.k_count < p_after_count or (k.k_count = p_after_count and k.id > p_after_id)))
+    order by
+      k.k_text asc,
+      case when p_sort in ('newest', 'last_visit') then k.k_at end desc,
+      case when p_sort = 'next_appointment' then k.k_at end asc,
+      k.k_count desc,
+      k.id asc
+    limit p_limit + 1
   )
-  select
-    k.id, k.first_name, k.last_name, k.email, k.phone, k.created_at,
-    k.completed_count, k.last_completed_at, k.upcoming_count,
-    k.next_appointment_id, k.next_starts_at,
-    k.k_text, k.k_at, k.k_count, k.total, v_as_of
-  from keyed k
-  where p_after_id is null
-    or (p_sort = 'name' and (k.k_text, k.id) > (p_after_text, p_after_id))
-    or (p_sort = 'next_appointment' and (k.k_at, k.id) > (p_after_at, p_after_id))
-    or (p_sort in ('newest', 'last_visit')
-        and (k.k_at < p_after_at or (k.k_at = p_after_at and k.id > p_after_id)))
-    or (p_sort = 'most_visits'
-        and (k.k_count < p_after_count or (k.k_count = p_after_count and k.id > p_after_id)))
-  order by
-    k.k_text asc,
-    case when p_sort in ('newest', 'last_visit') then k.k_at end desc,
-    case when p_sort = 'next_appointment' then k.k_at end asc,
-    k.k_count desc,
-    k.id asc
-  limit p_limit + 1;
+  select pg_catalog.jsonb_build_object(
+    'asOf', v_as_of,
+    'totalCount', (select pg_catalog.count(*) from matching),
+    'rows', coalesce((
+      select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'id', p.id,
+        'firstName', p.first_name,
+        'lastName', p.last_name,
+        'email', p.email,
+        'phone', p.phone,
+        'createdAt', p.created_at,
+        'completedCount', p.completed_count,
+        'lastCompletedAt', p.last_completed_at,
+        'upcomingCount', p.upcoming_count,
+        'nextAppointmentId', p.next_appointment_id,
+        'nextStartsAt', p.next_starts_at,
+        'sortText', p.k_text,
+        'sortAt', p.k_at,
+        'sortCount', p.k_count
+      ) order by p.position)
+      from page p
+    ), '[]'::jsonb)
+  )
+  into v_result;
+
+  return v_result;
 end;
 $$;
 

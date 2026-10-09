@@ -223,7 +223,7 @@ export async function listClientTimeline(
 
   return {
     asOf: new Date(asOf).toISOString(),
-    timezone: context.timezone,
+    timezone: time.timezone,
     events: page.map(({ raw, event }) =>
       toEvent(raw.event_id, time.at(raw.occurred_at), event, time),
     ),

@@ -40,7 +40,12 @@ Chaque instant affichable est un `BusinessInstantDto` :
 - `local` : heure murale `YYYY-MM-DDTHH:MM` dans le fuseau du business, lue par PostgreSQL (`public.business_time`) ;
 - `occurrence` : `first` ou `second` pendant l'heure répétée d'automne, sinon `null`.
 
-L'UI groupe par date locale avec `local.slice(0, 10)` et ne convertit jamais une date elle-même. Chaque réponse porte `timezone`.
+L'UI groupe par date locale avec `local.slice(0, 10)` et ne convertit jamais une date elle-même.
+
+Chaque réponse porte `timezone` : c'est **le fuseau avec lequel ses heures murales ont réellement été calculées**. Il est renvoyé par le même appel à `business_time` que les conversions, jamais lu à part dans le contexte de session.
+
+- **Changement de fuseau concurrent :** si le fuseau du business change entre la lecture du contexte et les conversions, la réponse annonce le nouveau fuseau, et toutes ses heures murales sont calculées dans ce fuseau. Elle reste donc cohérente (testé).
+- **Un seul appel par réponse :** chaque réponse fait un seul appel à `business_time`, même quand la page est vide, donc un seul fuseau par réponse.
 
 Le modèle de lecture ne prend **aucune décision de date civile** : seuls des instants sont comparés. Il n'y a donc ni « aujourd'hui », ni bornes de jour, ni dépendance au fuseau du serveur.
 
@@ -48,8 +53,11 @@ Le modèle de lecture ne prend **aucune décision de date civile** : seuls des i
 
 Chaque réponse porte `asOf`, l'instant de référence de ses métriques (le `now()` de la transaction PostgreSQL).
 
+**Ce que `asOf` fige : le temps, pas les données.**
+
 - **Une seule valeur par appel :** les comptes, le prochain rendez-vous et le filtre « à venir » sont tous calculés au même instant, donc ils ne se contredisent pas.
-- **Une seule valeur par pagination :** le curseur transporte l'`asOf` de la première page, et toutes les pages suivantes l'utilisent.
+- **Une seule valeur par pagination :** le curseur transporte l'`asOf` de la première page, et toutes les pages suivantes l'utilisent. Un rendez-vous ne passe donc pas de « à venir » à « passé » au fil des pages, simplement parce que l'horloge avance.
+- **Pas un instantané de la base :** chaque page relit les données telles qu'elles sont au moment de sa requête. Les fiches, rendez-vous, écritures ou emails créés, modifiés ou supprimés entre deux pages sont vus tels qu'ils sont devenus (voir « Garanties de pagination »).
 
 ## Définitions (une seule source)
 
@@ -155,7 +163,14 @@ Il n'y a aucun état de cycle de vie (« à risque », « VIP »…).
 
 - **Keyset :** la page suivante commence strictement après la dernière ligne lue, avec `limit` entre 1 et 100 (25 par défaut).
 - **Curseur lié à sa lecture :** le curseur est opaque et lié à la recherche, au filtre et au tri qui l'ont produit. Le réutiliser avec d'autres paramètres donne `validation_error`.
-- **Garanties :** pas de doublon, pas de saut, `totalCount` stable d'une page à l'autre, et toutes les pages calculées au même `asOf`.
+- **Garanties :** voir « Garanties de pagination » ci-dessous, communes à l'annuaire et à la timeline.
+
+### `totalCount`
+
+- **Défini indépendamment de la page :** c'est le nombre de clientes du business qui correspondent à la recherche et au filtre au moment où la requête s'exécute. Le curseur ne l'influence pas.
+- **Calculé dans la même instruction SQL que la page,** il ne dépend donc pas de ses lignes. Une page vide (curseur après la dernière cliente, ou clientes supprimées entre deux pages) porte quand même le vrai total. Par exemple : deux clientes, page 1 = Anna ; Zoé est supprimée ; la page 2 est vide avec `totalCount = 1`.
+- **Pas figé :** c'est le compte **actuel**, recalculé à chaque page. Il peut changer d'une page à l'autre si des fiches sont créées, supprimées ou modifiées entre-temps.
+- **Jamais de fuite :** pour un autre business, la réponse est une erreur `forbidden`, jamais un compte.
 
 ## Profil — `getClientProfileAction`
 
@@ -273,9 +288,57 @@ Statuts exposés :
 - **Pagination :**
   - keyset, `limit` entre 1 et 100 (20 par défaut) ;
   - le curseur porte l'`asOf` de la première page, la position (instant exact à la microseconde, `id`) et la cliente ;
-  - il est refusé pour une autre cliente.
-- **Nouvel événement entre deux pages :** il n'apparaît pas dans les pages suivantes, qui ne contiennent ni doublon ni décalage. Une nouvelle première page le montre en tête.
-- **Événement dont la date change :** un rendez-vous déplacé change de position. Il peut alors manquer ou réapparaître dans une pagination déjà commencée, et une nouvelle lecture le remet à sa place.
+  - il est refusé pour une autre cliente ;
+  - garanties : voir ci-dessous.
+
+## Garanties de pagination (annuaire et timeline)
+
+Les données sont **vivantes** : `asOf` fige l'instant de référence, pas le contenu de la base. Il n'existe aucun instantané entre deux requêtes.
+
+**Données inchangées entre les pages** (aucune création, modification ou suppression qui touche l'ordre ou le filtre) :
+
+- ordre déterministe et total ;
+- aucun doublon ;
+- aucun élément sauté ;
+- curseur stable : la même suite de pages à chaque relecture ;
+- `totalCount` identique sur toutes les pages.
+
+**Données modifiées pendant une pagination :**
+
+| Situation                                                                                                              | Effet sur la pagination déjà commencée                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. Une cliente déjà lue est renommée et passe **après** le curseur (Anna → Zora)                                       | elle est relue : doublon                                                                                                                                             |
+| B. Une cliente pas encore lue est renommée et passe **avant** le curseur (Zoé → Aaron)                                 | elle n'apparaît pas dans les pages restantes : omission                                                                                                              |
+| C. Un nouvel événement dont la position est **après** le curseur dans l'ordre décroissant                              | il apparaît dans une page suivante. Exemple : la page 1 se termine sur un rendez-vous annulé futur, et un email enregistré maintenant est plus ancien que ce curseur |
+| D. Un événement antidaté, enregistré après la page 1 avec un `occurredAt` plus ancien que le curseur                   | il apparaît dans une page suivante                                                                                                                                   |
+| Un événement plus récent que la première page (au-dessus du curseur)                                                   | il n'apparaît pas dans les pages suivantes                                                                                                                           |
+| Une fiche ou un événement qui change de filtre (par exemple un nouveau rendez-vous à venir), ou un rendez-vous déplacé | il peut entrer, sortir, être relu ou manquer                                                                                                                         |
+
+Ces quatre cas (A à D) sont couverts par des tests de régression.
+
+**Pour retrouver une vue cohérente :** repartir de la première page (sans curseur). On obtient une vue fraîche, avec un nouvel `asOf`.
+
+Le backend ne déduplique pas les pages. Toute présentation (par exemple ignorer un `id` déjà affiché) relève de l'UI.
+
+## Curseurs : validation stricte
+
+Un curseur n'est accepté que s'il est exactement ce que le backend produit. Tout le reste donne `validation_error` avec `fieldErrors.cursor`, avant tout appel à la base, et jamais une erreur `internal`.
+
+- **Encodage :**
+  - alphabet base64url seulement, sans `=` ;
+  - encodage canonique : ré-encoder donne le même texte, donc ni suffixe parasite ni bits invalides ;
+  - au plus 1 024 caractères et 768 octets décodés ;
+  - UTF-8 valide.
+- **Document JSON :** un objet strict de la version (`v: 1`) et du type (`clients` ou `timeline`) attendus, sans clé supplémentaire. Le tri et le filtre doivent appartenir à leurs listes.
+- **Instants :**
+  - exactement le format écrit par PostgreSQL : `YYYY-MM-DDTHH:MM:SS`, jusqu'à 6 décimales, puis `Z` ou `±HH:MM[:SS]` avec un décalage d'au plus 15 h 59 ;
+  - vérifiés champ par champ sur le calendrier grégorien : `2026-02-30` est refusé, `2024-02-29` accepté, `2025-02-29` et `1900-02-29` refusés ;
+  - **conservés tels quels**, sans repasser par `Date`, ce qui préserve les microsecondes ;
+  - `-infinity` n'est accepté que pour `last_visit`, `infinity` que pour `next_appointment`.
+- **Identifiants :** syntaxe UUID `8-4-4-4-12` hexadécimale, quelle que soit la version. Les événements doivent être de la forme `appointment|loyalty|email:<uuid>`.
+- **Comptes (`most_visits`) :** entiers sûrs entre 0 et 2 147 483 647 (le type `integer` de PostgreSQL). `2147483648`, `-1`, `1.5`, `NaN` et `Infinity` sont refusés.
+- **Lien avec la lecture :** un curseur produit pour une autre recherche, un autre filtre, un autre tri ou une autre cliente est refusé.
+- **Aucun droit :** un curseur valide n'autorise rien. Chaque page revérifie la session, le business et la cliente.
 
 ### Ajouter un type d'événement plus tard
 
@@ -304,11 +367,13 @@ L'UI ignore les `kind` qu'elle ne connaît pas encore, ou affiche un repli. Les 
   - ajouté : `email_events_client_timeline_idx (business_id, client_id, created_at desc, id)`. Les index existants des emails ne servaient que le worker et la déduplication ; sans ce nouvel index, chaque page de timeline lirait tous les emails du business.
 - **Mesures locales** (3 000 clientes, 15 000 rendez-vous, 20 000 emails, session réelle d'un membre, RLS active) :
 
-  | Lecture                                       | Durée    |
-  | --------------------------------------------- | -------- |
-  | Page d'annuaire                               | ≈ 215 ms |
-  | Profil                                        | ≈ 5 ms   |
-  | Page de timeline d'une cliente à 2 000 emails | ≈ 30 ms  |
+  | Lecture                                                 | Durée        |
+  | ------------------------------------------------------- | ------------ |
+  | Page d'annuaire (page et total dans une même requête)   | ≈ 175–195 ms |
+  | Page d'annuaire avec recherche                          | ≈ 215 ms     |
+  | Page d'annuaire vide après le curseur (total seulement) | ≈ 170 ms     |
+  | Profil                                                  | ≈ 3–5 ms     |
+  | Page de timeline d'une cliente à 2 000 emails           | ≈ 30 ms      |
 
 - **Coût de l'annuaire :** il vient surtout des politiques RLS existantes, qui appellent `is_business_member(business_id)` pour chaque ligne (≈ 37 ms sans RLS). Une réécriture ensembliste de ces politiques, commune à toute l'application, est hors périmètre.
 
@@ -323,9 +388,11 @@ L'UI ignore les `kind` qu'elle ne connaît pas encore, ou affiche un repli. Les 
 ## Passation pour l'agent UI
 
 1. **Liste.** Appeler `listClientsAction({ query, filter, sort, limit: 25 })`.
-   - Afficher `totalCount`.
+   - Afficher `totalCount` comme le nombre **actuel** de clientes correspondantes. Il peut changer d'une page à l'autre, et une page vide peut avoir un total non nul.
    - Pour « charger plus », rappeler avec `cursor: page.nextCursor` et **les mêmes** `query`, `filter` et `sort`.
    - Quand la recherche, le filtre ou le tri change, repartir sans curseur.
+   - Ne jamais promettre un instantané : si les données changent pendant le défilement, une cliente peut apparaître deux fois ou manquer (voir « Garanties de pagination »). Rafraîchir revient à repartir de la première page.
+   - Si `validation_error` porte sur `cursor`, repartir de la première page.
 2. **Profil.** À l'ouverture, appeler en parallèle `getClientProfileAction({ clientId })` et `listClientTimelineAction({ clientId })`.
    - Épingler `nextAppointment` en haut.
    - Afficher `overview` avec les intitulés exacts de ce document (« visites effectuées », « valeur des prestations réalisées », jamais « payé »).
@@ -333,7 +400,7 @@ L'UI ignore les `kind` qu'elle ne connaît pas encore, ou affiche un repli. Les 
 3. **Timeline.**
    - Grouper par `occurredAt.local.slice(0, 10)`.
    - Faire un `switch (event.kind)`, avec un repli pour un `kind` inconnu.
-   - Pour la suite, rappeler avec `nextCursor`.
+   - Pour la suite, rappeler avec `nextCursor`. Un événement créé pendant le défilement peut apparaître plus bas (s'il est plus ancien que le curseur) ou seulement après un rafraîchissement.
    - L'en-tête du profil montre la fiche **actuelle** ; un événement de rendez-vous montre son **instantané**.
 4. **Champs absents.** `email`, `phone`, `lastName`, `favoriteService`, `lastCompletedVisitAt`, `completedAt`, `sentAt` et `rewardName` peuvent être `null`. Il faut alors afficher l'absence, jamais une valeur inventée.
-5. **Dates.** Ne jamais formater une date avec le fuseau du navigateur : utiliser `local`, et `occurrence` pour l'heure répétée d'automne.
+5. **Dates.** Ne jamais formater une date avec le fuseau du navigateur : utiliser `local`, et `occurrence` pour l'heure répétée d'automne. Afficher le `timezone` de **la même réponse** : c'est celui de ses heures murales.

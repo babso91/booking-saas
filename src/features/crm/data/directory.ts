@@ -1,5 +1,7 @@
 import "server-only";
 
+import { z } from "zod";
+
 import type { BusinessContext } from "@/features/businesses/data/business-context";
 import {
   decodeDirectoryCursor,
@@ -17,11 +19,40 @@ import type { AppSupabaseClient } from "@/lib/supabase/types";
 // under the user's session (RLS). Metrics come from the same definition as
 // the profile (public.crm_client_activity).
 
-export type CrmContext = Pick<BusinessContext, "businessId" | "timezone">;
+/**
+ * The business only: its time zone is never taken from the session's
+ * context but from the conversion itself (instants.ts).
+ */
+export type CrmContext = Pick<BusinessContext, "businessId">;
 
 export function displayName(firstName: string, lastName: string | null) {
   return [firstName, lastName].filter(Boolean).join(" ");
 }
+
+const instant = z.string();
+
+const directorySchema = z.object({
+  asOf: instant,
+  totalCount: z.number().int().min(0),
+  rows: z.array(
+    z.object({
+      id: z.uuid(),
+      firstName: z.string(),
+      lastName: z.string().nullable(),
+      email: z.string().nullable(),
+      phone: z.string().nullable(),
+      createdAt: instant,
+      completedCount: z.number().int(),
+      lastCompletedAt: instant.nullable(),
+      upcomingCount: z.number().int(),
+      nextAppointmentId: z.uuid().nullable(),
+      nextStartsAt: instant.nullable(),
+      sortText: z.string().nullable(),
+      sortAt: instant.nullable(),
+      sortCount: z.number().int().nullable(),
+    }),
+  ),
+});
 
 export async function listBusinessClients(
   client: AppSupabaseClient,
@@ -57,33 +88,34 @@ export async function listBusinessClients(
 
   if (error) throw databaseException(error);
 
-  const rows = data.slice(0, input.limit);
+  const parsed = directorySchema.safeParse(data);
+  if (!parsed.success) {
+    throw new AppException("internal", { cause: parsed.error });
+  }
+  // The total comes with the page, from the same statement, never from its
+  // rows: a page can be empty while customers match.
+  const { asOf, totalCount } = parsed.data;
+  const rows = parsed.data.rows.slice(0, input.limit);
   const last = rows.at(-1);
   const time = await businessInstants(
     client,
     context.businessId,
     rows.flatMap((row) => [
-      row.created_at,
-      row.last_completed_at,
-      row.next_starts_at,
+      row.createdAt,
+      row.lastCompletedAt,
+      row.nextStartsAt,
     ]),
   );
-  const asOf = data[0]?.as_of ?? after?.asOf ?? time.now;
-  if (!asOf) {
-    throw new AppException("internal", {
-      cause: new Error("crm_list_clients: no reference instant"),
-    });
-  }
 
   let nextCursor: string | null = null;
-  if (data.length > input.limit && last) {
+  if (parsed.data.rows.length > input.limit && last) {
     const key =
       input.sort === "name"
-        ? last.sort_text
+        ? last.sortText
         : input.sort === "most_visits"
-          ? last.sort_count
-          : last.sort_at;
-    if (key === null || key === undefined) {
+          ? last.sortCount
+          : last.sortAt;
+    if (key === null) {
       throw new AppException("internal", {
         cause: new Error("crm_list_clients: row without sort key"),
       });
@@ -102,24 +134,24 @@ export async function listBusinessClients(
 
   return {
     asOf: new Date(asOf).toISOString(),
-    timezone: context.timezone,
-    totalCount: Number(data[0]?.total_count ?? 0),
+    timezone: time.timezone,
+    totalCount,
     clients: rows.map((row) => ({
       id: row.id,
-      displayName: displayName(row.first_name, row.last_name),
-      firstName: row.first_name,
-      lastName: row.last_name,
+      displayName: displayName(row.firstName, row.lastName),
+      firstName: row.firstName,
+      lastName: row.lastName,
       email: row.email,
       phone: row.phone,
-      createdAt: time.at(row.created_at),
-      completedCount: row.completed_count,
-      lastCompletedVisitAt: time.optional(row.last_completed_at),
-      upcomingCount: row.upcoming_count,
+      createdAt: time.at(row.createdAt),
+      completedCount: row.completedCount,
+      lastCompletedVisitAt: time.optional(row.lastCompletedAt),
+      upcomingCount: row.upcomingCount,
       nextAppointment:
-        row.next_appointment_id && row.next_starts_at
+        row.nextAppointmentId && row.nextStartsAt
           ? {
-              id: row.next_appointment_id,
-              startsAt: time.at(row.next_starts_at),
+              id: row.nextAppointmentId,
+              startsAt: time.at(row.nextStartsAt),
             }
           : null,
     })),

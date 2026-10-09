@@ -126,7 +126,7 @@ export async function getClientRelationshipProfile(
 
   return {
     asOf: new Date(profile.asOf).toISOString(),
-    timezone: context.timezone,
+    timezone: time.timezone,
     client: {
       id: profile.client.id,
       displayName: displayName(

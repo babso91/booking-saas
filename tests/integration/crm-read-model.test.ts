@@ -2,11 +2,17 @@ import { randomUUID } from "node:crypto";
 
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import { getBusinessContext } from "@/features/businesses/data/business-context";
 import {
   getClientProfileAction,
   listClientsAction,
   listClientTimelineAction,
 } from "@/features/crm/actions/crm";
+import { encodeDirectoryCursor } from "@/features/crm/data/cursor";
+import { listBusinessClients } from "@/features/crm/data/directory";
+import { getClientRelationshipProfile } from "@/features/crm/data/profile";
+import { listClientTimeline } from "@/features/crm/data/timeline";
+import { listClientsSchema } from "@/features/crm/schemas/crm";
 import type {
   ClientProfileDto,
   ClientSort,
@@ -1110,7 +1116,7 @@ describe("timeline", () => {
     }
   });
 
-  it("an event recorded between two pages: no duplicate, no shift; the next first page shows it", async () => {
+  it("a newer event recorded between two pages, above the cursor: not in the next pages; the next first page shows it", async () => {
     const client = await customer(A.id, { firstName: "Feed" });
     for (let day = 1; day <= 12; day += 1) {
       await appointment(A.id, client, coupe, at(-day, 16), "completed");
@@ -1396,5 +1402,467 @@ describe("performance with thousands of customers", () => {
     expect(JSON.stringify(rows[0])).toContain(
       "email_events_client_timeline_idx",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Directory total: independent of the page
+// ---------------------------------------------------------------------------
+
+describe("directory total", () => {
+  it("is the real total even when the page is empty: a matching customer deleted between two pages", async () => {
+    const owner = await createProfessional("crm-total");
+    const business = await createBusiness(owner.userId, { timezone: "UTC" });
+    const anna = await customer(business.id, { firstName: "Anna" });
+    const zoe = await customer(business.id, { firstName: "Zoé" });
+    as(owner);
+    const first = ok(await listClientsAction({ limit: 1 }));
+    expect(first).toMatchObject({ totalCount: 2, clients: [{ id: anna }] });
+    expect(first.nextCursor).not.toBeNull();
+
+    // Deleted by the professional herself (RLS delete policy of members).
+    const { error } = await owner.client.from("clients").delete().eq("id", zoe);
+    expect(error).toBeNull();
+
+    const second = ok(
+      await listClientsAction({ limit: 1, cursor: first.nextCursor }),
+    );
+    expect(second).toMatchObject({
+      totalCount: 1,
+      clients: [],
+      nextCursor: null,
+      timezone: "UTC",
+    });
+  });
+
+  it("is zero for an empty business and for a filter or search without match; correct on the last page", async () => {
+    const owner = await createProfessional("crm-empty");
+    await createBusiness(owner.userId, { timezone: "UTC" });
+    as(owner);
+    expect(ok(await listClientsAction({}))).toMatchObject({
+      totalCount: 0,
+      clients: [],
+      nextCursor: null,
+    });
+
+    as(ownerA);
+    expect(ok(await listClientsAction({ query: "zzzz" }))).toMatchObject({
+      totalCount: 0,
+      clients: [],
+    });
+    expect(
+      ok(await listClientsAction({ filter: "visited", query: "inès" })),
+    ).toMatchObject({ totalCount: 0, clients: [] });
+
+    const { rows } = await db.query<{ n: number }>(
+      "select count(*)::int as n from public.clients where business_id = $1",
+      [A.id],
+    );
+    const total = rows[0]!.n;
+    const limit = total - 1;
+    const first = ok(await listClientsAction({ limit }));
+    expect(first.totalCount).toBe(total);
+    expect(first.clients).toHaveLength(limit);
+    const last = ok(
+      await listClientsAction({ limit, cursor: first.nextCursor }),
+    );
+    expect(last.totalCount).toBe(total);
+    expect(last.clients).toHaveLength(1);
+    expect(last.nextCursor).toBeNull();
+  });
+
+  it("another business: an error, never a count", async () => {
+    const { data, error } = await ownerA.client.rpc("crm_list_clients", {
+      p_business_id: B.id,
+      p_limit: 1,
+    });
+    expect(data).toBeNull();
+    expect(error?.message).toBe("forbidden");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pagination over live data: what a cursor does and does not guarantee
+// ---------------------------------------------------------------------------
+
+describe("pagination over live data (documented limits)", () => {
+  let owner: Professional;
+  let business: TestBusiness;
+  let service: string;
+
+  beforeAll(async () => {
+    owner = await createProfessional("crm-live");
+    business = await createBusiness(owner.userId, { timezone: "UTC" });
+    service = await createService(business.id, { durationMinutes: 30 });
+  });
+
+  async function names(limit: number, firstCursor?: string | null) {
+    const seen: string[] = [];
+    let cursor = firstCursor ?? null;
+    do {
+      const page: DirectoryPageDto = ok(
+        await listClientsAction({ limit, cursor }),
+      );
+      seen.push(...ids(page.clients));
+      cursor = page.nextCursor;
+    } while (cursor);
+    return seen;
+  }
+
+  async function rename(id: string, firstName: string) {
+    const { error } = await owner.client
+      .from("clients")
+      .update({ first_name: firstName })
+      .eq("id", id);
+    expect(error).toBeNull();
+  }
+
+  it("A. a customer already read, renamed to sort after the cursor, is read again", async () => {
+    const anna = await customer(business.id, { firstName: "Anna" });
+    const mila = await customer(business.id, { firstName: "Mila" });
+    const zoe = await customer(business.id, { firstName: "Zoé" });
+    as(owner);
+    const first = ok(await listClientsAction({ limit: 1 }));
+    expect(ids(first.clients)).toEqual([anna]);
+    await rename(anna, "Zora");
+    const rest = await names(1, first.nextCursor);
+    // Mila, Zoé, then Anna again under her new name: a duplicate.
+    expect(rest).toEqual([mila, zoe, anna]);
+    await db.query("delete from public.clients where id = any($1)", [
+      [anna, mila, zoe],
+    ]);
+  });
+
+  it("B. a customer not read yet, renamed to sort before the cursor, is never read", async () => {
+    const anna = await customer(business.id, { firstName: "Anna" });
+    const mila = await customer(business.id, { firstName: "Mila" });
+    const zoe = await customer(business.id, { firstName: "Zoé" });
+    as(owner);
+    const first = ok(await listClientsAction({ limit: 1 }));
+    expect(ids(first.clients)).toEqual([anna]);
+    await rename(zoe, "Aaron");
+    const rest = await names(1, first.nextCursor);
+    // Zoé (now Aaron) sorts before the cursor: omitted from this pass.
+    expect(rest).toEqual([mila]);
+    // A fresh first page shows everyone, in the new order.
+    expect(await names(10)).toEqual([zoe, anna, mila]);
+    await db.query("delete from public.clients where id = any($1)", [
+      [anna, mila, zoe],
+    ]);
+  });
+
+  it("C. a new event below the cursor appears in a later page (the cursor sat on a future cancelled appointment)", async () => {
+    const client = await customer(business.id, { firstName: "Cora" });
+    const futureCancelled = await appointment(
+      business.id,
+      client,
+      service,
+      at(5, 11),
+      "cancelled",
+      30,
+    );
+    await appointment(
+      business.id,
+      client,
+      service,
+      at(-5, 11),
+      "completed",
+      30,
+    );
+    as(owner);
+    const first = ok(
+      await listClientTimelineAction({ clientId: client, limit: 1 }),
+    );
+    expect(first.events.map((event) => event.id)).toEqual([
+      `appointment:${futureCancelled}`,
+    ]);
+    // Recorded now: older than the cursor (a future instant), so below it.
+    const fresh = await email(business.id, client, {
+      createdAt: new Date().toISOString(),
+    });
+    const second = ok(
+      await listClientTimelineAction({
+        clientId: client,
+        limit: 1,
+        cursor: first.nextCursor,
+      }),
+    );
+    expect(second.events.map((event) => event.id)).toEqual([`email:${fresh}`]);
+  });
+
+  it("D. a backdated event recorded after the first page appears in a later page", async () => {
+    const client = await customer(business.id, { firstName: "Dora" });
+    const recent = await appointment(
+      business.id,
+      client,
+      service,
+      at(-2, 13),
+      "completed",
+      30,
+    );
+    const older = await appointment(
+      business.id,
+      client,
+      service,
+      at(-10, 13),
+      "completed",
+      30,
+    );
+    as(owner);
+    const first = ok(
+      await listClientTimelineAction({ clientId: client, limit: 1 }),
+    );
+    expect(first.events.map((event) => event.id)).toEqual([
+      `appointment:${recent}`,
+    ]);
+    const backdated = await email(business.id, client, {
+      createdAt: at(-6, 13),
+    });
+    const rest: string[] = [];
+    let cursor = first.nextCursor;
+    while (cursor) {
+      const page: ClientTimelinePageDto = ok(
+        await listClientTimelineAction({ clientId: client, limit: 1, cursor }),
+      );
+      rest.push(...page.events.map((event) => event.id));
+      cursor = page.nextCursor;
+    }
+    expect(rest).toEqual([`email:${backdated}`, `appointment:${older}`]);
+  });
+
+  it("unchanged data: the same pages, again and again (static guarantees hold)", async () => {
+    const created = [
+      await customer(business.id, { firstName: "Elsa" }),
+      await customer(business.id, { firstName: "Fanny" }),
+      await customer(business.id, { firstName: "Gaby" }),
+    ];
+    as(owner);
+    const whole = ids(ok(await listClientsAction({ limit: 100 })).clients);
+    for (let round = 0; round < 3; round += 1) {
+      expect(await names(1)).toEqual(whole);
+    }
+    await db.query("delete from public.clients where id = any($1)", [created]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invalid cursors through the actions: a controlled validation error
+// ---------------------------------------------------------------------------
+
+describe("invalid cursors through the actions", () => {
+  const raw = (value: unknown) =>
+    Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+
+  it("every malformed cursor is validation_error on `cursor`, never internal", async () => {
+    as(ownerA);
+    const page = ok(await listClientsAction({ sort: "most_visits", limit: 1 }));
+    const decoded = JSON.parse(
+      Buffer.from(page.nextCursor!, "base64url").toString("utf8"),
+    );
+    const directoryCursors = [
+      `${page.nextCursor}=`,
+      `${page.nextCursor}A`,
+      "%%%",
+      raw({ ...decoded, key: 2147483648 }),
+      raw({ ...decoded, key: -1 }),
+      raw({ ...decoded, asOf: "2026-02-30T08:00:00+00:00" }),
+      raw({ ...decoded, v: 2 }),
+      raw({ ...decoded, id: "------------------------------------" }),
+    ];
+    for (const cursor of directoryCursors) {
+      const result = await listClientsAction({
+        sort: "most_visits",
+        limit: 1,
+        cursor,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "validation_error",
+          fieldErrors: { cursor: expect.any(Array) },
+        },
+      });
+    }
+    // The upper bound itself is a valid count: accepted, read normally.
+    const boundary = await listClientsAction({
+      sort: "most_visits",
+      limit: 1,
+      cursor: raw({ ...decoded, key: 2147483647 }),
+    });
+    expect(boundary.ok).toBe(true);
+
+    const timelinePage = ok(
+      await listClientTimelineAction({ clientId: c.lea, limit: 1 }),
+    );
+    const event = JSON.parse(
+      Buffer.from(timelinePage.nextCursor!, "base64url").toString("utf8"),
+    );
+    for (const cursor of [
+      raw({ ...event, at: "2026-02-30T08:00:00+00:00" }),
+      raw({ ...event, id: "email:------------------------------------" }),
+      raw({ ...event, id: `review:${c.lea}` }),
+      raw({ ...event, at: "2026-10-09T08:00:00+16:00" }),
+    ]) {
+      const result = await listClientTimelineAction({
+        clientId: c.lea,
+        limit: 1,
+        cursor,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "validation_error",
+          fieldErrors: { cursor: expect.any(Array) },
+        },
+      });
+    }
+    // Over the input cap: refused by the schema, on `cursor` too.
+    expect(await listClientsAction({ cursor: "A".repeat(1025) })).toMatchObject(
+      {
+        ok: false,
+        error: {
+          code: "validation_error",
+          fieldErrors: { cursor: expect.any(Array) },
+        },
+      },
+    );
+  });
+
+  it("a valid cursor still never authorizes: the business is re-checked on every page", async () => {
+    // A well-formed cursor forged with B's customer id, under A's session.
+    const forged = encodeDirectoryCursor({
+      asOf: "2026-10-09T08:00:00.123456+00:00",
+      sort: "name",
+      filter: "all",
+      query: "",
+      key: "a",
+      id: c.emmaB!,
+    });
+    as(ownerA);
+    const { rows } = await db.query<{ id: string }>(
+      "select id from public.clients where business_id = $1",
+      [A.id],
+    );
+    const own = rows.map((row) => row.id);
+    const page = ok(await listClientsAction({ cursor: forged, limit: 100 }));
+    expect(page.clients.length).toBeGreaterThan(0);
+    for (const row of page.clients) {
+      expect(own).toContain(row.id);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One time zone per response: the one the wall clocks were computed with
+// ---------------------------------------------------------------------------
+
+describe("time zone metadata matches the conversions", () => {
+  it("a zone change between the session's context and the conversion: the response says the zone actually used", async () => {
+    const owner = await createProfessional("crm-zone");
+    const business = await createBusiness(owner.userId, {
+      timezone: "Europe/Paris",
+    });
+    const service = await createService(business.id, { durationMinutes: 30 });
+    const client = await customer(business.id, { firstName: "Vera" });
+    const quiet = await customer(business.id, { firstName: "Quiet" });
+    const ordinary = "2026-03-10T15:00:00.000Z";
+    const { rows } = await db.query<{ midnight: Date; day: string }>(
+      `select (d::timestamp at time zone 'America/Vancouver') as midnight, d::text as day
+       from (select (now() at time zone 'America/Vancouver')::date - 20 as d) x`,
+    );
+    const { midnight, day } = rows[0]!;
+    const fallBack = nextFallBack();
+    await appointment(business.id, client, service, ordinary, "completed", 30);
+    await appointment(
+      business.id,
+      client,
+      service,
+      midnight.toISOString(),
+      "completed",
+      30,
+    );
+    await appointment(
+      business.id,
+      client,
+      service,
+      `${fallBack}T08:30:00.000Z`,
+      "confirmed",
+      30,
+    );
+    await appointment(
+      business.id,
+      client,
+      service,
+      `${fallBack}T09:30:00.000Z`,
+      "confirmed",
+      30,
+    );
+
+    // 1. The context of the session, read first: Paris.
+    const context = await getBusinessContext(owner.client);
+    expect(context.timezone).toBe("Europe/Paris");
+    // 2. The business moves to Vancouver before the conversions.
+    await db.query(
+      "update public.businesses set timezone = 'America/Vancouver' where id = $1",
+      [business.id],
+    );
+    // 3. Every read with that (now stale) context.
+    const directory = await listBusinessClients(
+      owner.client,
+      context,
+      listClientsSchema.parse({ limit: 10 }),
+    );
+    const profile = await getClientRelationshipProfile(
+      owner.client,
+      context,
+      client,
+    );
+    const history = await listClientTimeline(owner.client, context, {
+      clientId: client,
+      limit: 20,
+    });
+    const empty = await listClientTimeline(owner.client, context, {
+      clientId: quiet,
+      limit: 20,
+    });
+    const emptyDirectory = await listBusinessClients(
+      owner.client,
+      context,
+      listClientsSchema.parse({ query: "nobody" }),
+    );
+
+    for (const response of [
+      directory,
+      profile,
+      history,
+      empty,
+      emptyDirectory,
+    ]) {
+      expect(response.timezone).toBe("America/Vancouver");
+    }
+    expect(empty.events).toEqual([]);
+    expect(emptyDirectory.clients).toEqual([]);
+
+    // The wall clocks are Vancouver's: an ordinary instant, a local
+    // midnight, the repeated autumn hour.
+    const locals = history.events.map((event) => event.occurredAt.local).sort();
+    expect(locals).toEqual(["2026-03-10T08:00", `${day}T00:00`].sort());
+    expect(
+      profile.upcoming.map((row) => [
+        row.startsAt.local,
+        row.startsAt.occurrence,
+      ]),
+    ).toEqual([
+      [`${fallBack}T01:30`, "first"],
+      [`${fallBack}T01:30`, "second"],
+    ]);
+    const row = directory.clients.find((item) => item.id === client)!;
+    expect(row.nextAppointment?.startsAt).toMatchObject({
+      local: `${fallBack}T01:30`,
+      occurrence: "first",
+    });
+    // The latest completed visit is the one at Vancouver midnight (09:00 in
+    // Paris: the zone the stale context named).
+    expect(row.lastCompletedVisitAt?.local).toBe(`${day}T00:00`);
   });
 });

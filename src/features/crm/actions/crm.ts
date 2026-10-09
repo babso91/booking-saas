@@ -20,8 +20,8 @@ export async function listClientsAction(input: unknown) {
   return runBusinessAction(
     listClientsSchema,
     input,
-    ({ client, businessId, timezone }, data) =>
-      listBusinessClients(client, { businessId, timezone }, data),
+    ({ client, businessId }, data) =>
+      listBusinessClients(client, { businessId }, data),
   );
 }
 
@@ -30,8 +30,8 @@ export async function getClientProfileAction(input: unknown) {
   return runBusinessAction(
     clientIdSchema,
     input,
-    ({ client, businessId, timezone }, { clientId }) =>
-      getClientRelationshipProfile(client, { businessId, timezone }, clientId),
+    ({ client, businessId }, { clientId }) =>
+      getClientRelationshipProfile(client, { businessId }, clientId),
   );
 }
 
@@ -40,7 +40,7 @@ export async function listClientTimelineAction(input: unknown) {
   return runBusinessAction(
     clientTimelineSchema,
     input,
-    ({ client, businessId, timezone }, data) =>
-      listClientTimeline(client, { businessId, timezone }, data),
+    ({ client, businessId }, data) =>
+      listClientTimeline(client, { businessId }, data),
   );
 }
