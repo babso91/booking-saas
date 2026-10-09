@@ -1871,97 +1871,216 @@ describe("time zone metadata matches the conversions", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The cursor's reference instant, end to end (empty pages included)
+// The cursor's reference instant, end to end: PostgreSQL normalizes it (UTC
+// session) and JavaScript reads the result back, on empty and full pages
 // ---------------------------------------------------------------------------
 
 describe("cursor reference instant through the Server Actions", () => {
-  /** A timeline cursor positioned before every event: an empty page. */
-  const emptyPageCursor = (clientId: string, asOf: string) =>
+  /** PostgreSQL's own JSON output of a timestamptz in the API's session. */
+  const CANONICAL = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?\+00:00$/;
+
+  /** Positioned before every event (empty page) or after them (full page). */
+  const timelineCursor = (asOf: string, page: "empty" | "full") =>
     encodeTimelineCursor({
       asOf,
-      clientId,
-      at: "1900-01-01T00:00:00+00:00",
+      clientId: c.lea!,
+      at:
+        page === "empty"
+          ? "1900-01-01T00:00:00+00:00"
+          : "9999-12-31T23:59:59.999999+00:00",
       id: `appointment:${randomUUID()}`,
     });
+  /** Newest first, after every customer (empty page) or before them (full). */
+  const directoryCursor = (asOf: string, page: "empty" | "full") =>
+    encodeDirectoryCursor({
+      asOf,
+      sort: "newest",
+      filter: "all",
+      query: "",
+      key:
+        page === "empty"
+          ? "0001-01-01T00:00:00+00:00"
+          : "9999-12-31T23:59:59.999999+00:00",
+      id: randomUUID(),
+    });
+  const asOfIn = (cursor: string | null): string =>
+    JSON.parse(Buffer.from(cursor!, "base64url").toString("utf8")).asOf;
 
-  it("an offset with seconds is a validation error on `cursor` before any read, never internal (empty page)", async () => {
-    as(ownerA);
-    const result = await listClientTimelineAction({
+  /** Every read a cursor's asOf reaches. */
+  const reads = (asOf: string) => [
+    listClientsAction({
+      sort: "newest",
+      cursor: directoryCursor(asOf, "empty"),
+    }),
+    listClientsAction({
+      sort: "newest",
+      cursor: directoryCursor(asOf, "full"),
+    }),
+    listClientTimelineAction({
       clientId: c.lea,
-      cursor: emptyPageCursor(c.lea!, "2026-10-09T08:00:00+00:00:01"),
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        code: "validation_error",
-        fieldErrors: { cursor: expect.any(Array) },
-      },
-    });
+      cursor: timelineCursor(asOf, "empty"),
+    }),
+    listClientTimelineAction({
+      clientId: c.lea,
+      cursor: timelineCursor(asOf, "full"),
+    }),
+  ];
+  const refusedCursor = {
+    ok: false,
+    error: {
+      code: "validation_error",
+      fieldErrors: { cursor: expect.any(Array) },
+    },
+  };
 
-    const directory = await listClientsAction({
-      cursor: encodeDirectoryCursor({
-        asOf: "2026-10-09T08:00:00+00:00:01",
-        sort: "name",
-        filter: "all",
-        query: "",
-        key: "a",
-        id: c.lea!,
-      }),
+  it("an extreme offset PostgreSQL normalizes out of years 0001–9999 is refused before any read, never internal", async () => {
+    const above = "9999-12-31T23:59:59.999999-15:59";
+    const below = "0001-01-01T00:00:00+15:59";
+    // What the API's session would make of them: instants JavaScript cannot
+    // read (a five-digit year, a year BC).
+    const { rows } = await db.query<{ above: string; below: string }>(
+      `select to_jsonb($1::timestamptz) #>> '{}' as above,
+              to_jsonb($2::timestamptz) #>> '{}' as below`,
+      [above, below],
+    );
+    expect(rows[0]).toEqual({
+      above: "10000-01-01T15:58:59.999999+00:00",
+      below: "0001-12-31T08:01:00+00:00 BC",
     });
-    expect(directory).toMatchObject({
-      ok: false,
-      error: {
-        code: "validation_error",
-        fieldErrors: { cursor: expect.any(Array) },
-      },
-    });
-  });
+    expect(Number.isNaN(Date.parse(rows[0]!.above))).toBe(true);
+    expect(Number.isNaN(Date.parse(rows[0]!.below))).toBe(true);
 
-  it("malformed offsets: validation error on `cursor`", async () => {
     as(ownerA);
-    for (const asOf of [
-      "2026-10-09T08:00:00+16:00",
-      "2026-10-09T08:00:00+0000",
-    ]) {
-      expect(
-        await listClientTimelineAction({
-          clientId: c.lea,
-          cursor: emptyPageCursor(c.lea!, asOf),
-        }),
-      ).toMatchObject({
-        ok: false,
-        error: {
-          code: "validation_error",
-          fieldErrors: { cursor: expect.any(Array) },
-        },
-      });
+    for (const asOf of [above, below]) {
+      for (const result of await Promise.all(reads(asOf))) {
+        expect(result).toMatchObject(refusedCursor);
+      }
     }
   });
 
-  it("every accepted form reaches an empty page safely: UTC, Z, microseconds, syntax bounds", async () => {
+  it("any offset other than PostgreSQL's +00:00 is refused on every read: forms accepted before, malformed ones", async () => {
+    as(ownerA);
+    for (const asOf of [
+      "2026-10-09T08:00:00Z",
+      "2026-10-09T10:00:00+02:00",
+      "2026-10-09T01:00:00-07:00",
+      "2026-10-09T08:00:00-00:00",
+      "2026-10-09T23:59:00+15:59",
+      "2026-10-09T08:00:00+00:00:00",
+      "2026-10-09T08:00:00+00:00:01",
+      "2026-10-09T08:00:00+16:00",
+      "2026-10-09T08:00:00+0000",
+    ]) {
+      for (const result of await Promise.all(reads(asOf))) {
+        expect(result).toMatchObject(refusedCursor);
+      }
+    }
+  });
+
+  it("PostgreSQL's UTC form, years 0001 to 9999, microseconds: every read, empty or full, next cursor verbatim", async () => {
     as(ownerA);
     const cases: [asOf: string, iso: string][] = [
       ["2026-10-09T08:00:00+00:00", "2026-10-09T08:00:00.000Z"],
-      ["2026-10-09T08:00:00Z", "2026-10-09T08:00:00.000Z"],
+      ["2026-10-09T08:00:00.5+00:00", "2026-10-09T08:00:00.500Z"],
       ["2026-10-09T08:00:00.123456+00:00", "2026-10-09T08:00:00.123Z"],
-      ["2026-10-09T10:00:00-07:00", "2026-10-09T17:00:00.000Z"],
-      ["0001-01-01T00:00:00+15:59", "0000-12-31T08:01:00.000Z"],
-      ["9999-12-31T23:59:59.999999-15:59", "+010000-01-01T15:58:59.999Z"],
+      ["0001-01-01T00:00:00+00:00", "0001-01-01T00:00:00.000Z"],
+      ["9999-12-31T23:59:59.999999+00:00", "9999-12-31T23:59:59.999Z"],
     ];
     for (const [asOf, iso] of cases) {
-      const page = ok(
-        await listClientTimelineAction({
-          clientId: c.lea,
-          cursor: emptyPageCursor(c.lea!, asOf),
+      const emptyDirectory = ok(
+        await listClientsAction({
+          sort: "newest",
+          cursor: directoryCursor(asOf, "empty"),
         }),
       );
-      expect(page).toMatchObject({
+      expect(emptyDirectory).toMatchObject({
+        asOf: iso,
+        clients: [],
+        nextCursor: null,
+        timezone: "Europe/Paris",
+      });
+      expect(emptyDirectory.totalCount).toBeGreaterThan(1);
+
+      const directory = ok(
+        await listClientsAction({
+          sort: "newest",
+          limit: 1,
+          cursor: directoryCursor(asOf, "full"),
+        }),
+      );
+      expect(directory.asOf).toBe(iso);
+      expect(directory.clients).toHaveLength(1);
+      // Through PostgreSQL and back, to the microsecond.
+      expect(asOfIn(directory.nextCursor)).toBe(asOf);
+
+      const emptyTimeline = ok(
+        await listClientTimelineAction({
+          clientId: c.lea,
+          cursor: timelineCursor(asOf, "empty"),
+        }),
+      );
+      expect(emptyTimeline).toMatchObject({
         asOf: iso,
         events: [],
         nextCursor: null,
         timezone: "Europe/Paris",
       });
+
+      const timeline = ok(
+        await listClientTimelineAction({
+          clientId: c.lea,
+          limit: 1,
+          cursor: timelineCursor(asOf, "full"),
+        }),
+      );
+      expect(timeline.asOf).toBe(iso);
+      expect(timeline.events).toHaveLength(1);
+      expect(asOfIn(timeline.nextCursor)).toBe(asOf);
     }
+  });
+
+  it("cursors the backend generates carry PostgreSQL's UTC form and are read back", async () => {
+    as(ownerA);
+    const first = ok(await listClientsAction({ sort: "newest", limit: 1 }));
+    expect(asOfIn(first.nextCursor)).toMatch(CANONICAL);
+    const second = ok(
+      await listClientsAction({
+        sort: "newest",
+        limit: 1,
+        cursor: first.nextCursor,
+      }),
+    );
+    expect(second.asOf).toBe(first.asOf);
+    expect(second.clients).toHaveLength(1);
+
+    const page = ok(
+      await listClientTimelineAction({ clientId: c.lea, limit: 1 }),
+    );
+    expect(asOfIn(page.nextCursor)).toMatch(CANONICAL);
+    const next = ok(
+      await listClientTimelineAction({
+        clientId: c.lea,
+        limit: 1,
+        cursor: page.nextCursor,
+      }),
+    );
+    expect(next.asOf).toBe(page.asOf);
+    expect(next.events).toHaveLength(1);
+    expect(asOfIn(next.nextCursor)).toBe(asOfIn(page.nextCursor));
+  });
+
+  it("an empty timeline without cursor: PostgreSQL's now()", async () => {
+    as(ownerA);
+    const before = Date.now();
+    const history = ok(await listClientTimelineAction({ clientId: c.zoe }));
+    expect(history).toMatchObject({
+      events: [],
+      nextCursor: null,
+      timezone: "Europe/Paris",
+    });
+    expect(Math.abs(Date.parse(history.asOf) - before)).toBeLessThan(
+      60 * MINUTE,
+    );
   });
 
   it("an empty page after a cursor the backend generated (events removed meanwhile)", async () => {
@@ -1987,13 +2106,7 @@ describe("cursor reference instant through the Server Actions", () => {
     expect(first.events.map((event) => event.id)).toEqual([
       `appointment:${newer}`,
     ]);
-    const cursor = JSON.parse(
-      Buffer.from(first.nextCursor!, "base64url").toString("utf8"),
-    );
-    // PostgreSQL's own reference instant: microseconds, +00:00.
-    expect(cursor.asOf).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?\+00:00$/,
-    );
+    expect(asOfIn(first.nextCursor)).toMatch(CANONICAL);
 
     await db.query("delete from public.appointments where id = $1", [older]);
     const second = ok(

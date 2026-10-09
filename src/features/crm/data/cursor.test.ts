@@ -347,19 +347,14 @@ describe("timeline cursor", () => {
 });
 
 describe("reference instant (asOf)", () => {
-  const accepted = [
-    "2026-10-09T08:00:00+00:00",
-    "2026-10-09T08:00:00Z",
-    "2026-10-09T08:00:00.123456+00:00",
-    "2026-10-09T08:00:00.123456Z",
-    "2026-10-09T08:00:00-07:00",
-    // Bounds of the syntax: still within Date's range.
-    "0001-01-01T00:00:00+15:59",
-    "9999-12-31T23:59:59.999999-15:59",
-  ];
-
-  it("accepts PostgreSQL's ±HH:MM and Z forms; every accepted value is readable by Date", () => {
-    for (const asOf of accepted) {
+  it("accepts PostgreSQL's UTC form (+00:00), years 0001 to 9999, microseconds as written", () => {
+    for (const asOf of [
+      "2026-10-09T08:00:00+00:00",
+      "2026-10-09T08:00:00.5+00:00",
+      "2026-10-09T08:00:00.123456+00:00",
+      "0001-01-01T00:00:00+00:00",
+      "9999-12-31T23:59:59.999999+00:00",
+    ]) {
       expect(isReferenceInstant(asOf)).toBe(true);
       expect(Number.isNaN(new Date(asOf).getTime())).toBe(false);
       expect(decodeTimelineCursor(raw(timeline({ asOf })), ID).asOf).toBe(asOf);
@@ -369,15 +364,21 @@ describe("reference instant (asOf)", () => {
     }
   });
 
-  it("refuses an offset with seconds (Date cannot read it) in both cursors", () => {
+  it("refuses every other offset in both cursors, the extreme ones first (normalized out of 0001–9999)", () => {
     for (const asOf of [
+      "9999-12-31T23:59:59.999999-15:59",
+      "0001-01-01T00:00:00+15:59",
+      "2026-10-09T08:00:00Z",
+      "2026-10-09T08:00:00.123456Z",
+      "2026-10-09T10:00:00+02:00",
+      "2026-10-09T01:00:00-07:00",
+      "2026-10-09T08:00:00-00:00",
+      "2026-10-09T08:00:00+00:00:00",
       "2026-10-09T08:00:00+00:00:01",
       "1890-03-01T00:00:00+00:09:21",
-      "2026-10-09T08:00:00.123456-07:52:58",
     ]) {
       expect(isPostgresTimestamp(asOf)).toBe(true);
       expect(isReferenceInstant(asOf)).toBe(false);
-      expect(Number.isNaN(new Date(asOf).getTime())).toBe(true);
       expectRefused(() => decodeTimelineCursor(raw(timeline({ asOf })), ID));
       expectRefused(() =>
         decodeDirectoryCursor(raw(directory({ asOf })), NAME),
@@ -392,6 +393,9 @@ describe("reference instant (asOf)", () => {
       "2026-10-09T08:00:00+0000",
       "2026-10-09T08:00:00+00",
       "2026-10-09T08:00:00 +00:00",
+      "0000-12-31T08:01:00+00:00",
+      "10000-01-01T15:58:59.999999+00:00",
+      "0001-12-31T08:01:00+00:00 BC",
     ]) {
       expect(isReferenceInstant(asOf)).toBe(false);
       expectRefused(() => decodeTimelineCursor(raw(timeline({ asOf })), ID));

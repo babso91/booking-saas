@@ -25,12 +25,14 @@ import { AppException } from "@/lib/errors";
 //     6 fractional digits, Z or ±HH:MM[:SS]), checked field by field against
 //     the Gregorian calendar (no February 30) and kept as the original text
 //     (microseconds preserved: never re-serialized through Date);
-//   * the reference instant (asOf) more narrowly: it is PostgreSQL's now()
-//     in the API's UTC session, always written with a ±HH:MM offset, and
-//     it is also read by JavaScript (the response's asOf when a page is
-//     empty), which cannot parse an offset with seconds. So asOf takes Z or
-//     ±HH:MM only and must parse as a Date. Positions (timeline `at`,
-//     directory sort keys) go to PostgreSQL only and keep the full syntax;
+//   * the reference instant (asOf) more narrowly: exactly the form the
+//     backend generates, PostgreSQL's now() in the API's UTC session, always
+//     written with "+00:00" (never Z, never another offset). PostgreSQL
+//     returns it normalized to UTC and JavaScript reads it back (every
+//     response's asOf), so any other offset could move a four-digit year out
+//     of 0001–9999 (9999-12-31T23:59:59-15:59 is 10000-01-01 in UTC), which
+//     neither side can then read. Positions (timeline `at`, directory sort
+//     keys) are only compared in PostgreSQL and keep the full syntax;
 //   * identifiers with the 8-4-4-4-12 hexadecimal UUID syntax (any version);
 //   * counts as safe integers within PostgreSQL's integer, and ≥ 0.
 // A well-formed cursor made for another search, filter, ordering or
@@ -83,18 +85,18 @@ export function isPostgresTimestamp(value: string): boolean {
   );
 }
 
-const OFFSET_WITH_SECONDS = /[+-]\d{2}:\d{2}:\d{2}$/;
+/** PostgreSQL's offset for an instant in the API's (UTC) session. */
+const UTC_OFFSET = "+00:00";
 
 /**
- * A reference instant (cursor `asOf`): a PostgreSQL timestamp whose offset
- * has no seconds (Z or ±HH:MM), readable by JavaScript's Date as well (every
- * such value with a 4-digit year is: years 0001 to 9999, offsets up to
- * ±15:59, are well within Date's range).
+ * A reference instant (cursor `asOf`): a PostgreSQL timestamp in its UTC
+ * form, so that normalizing it to UTC changes nothing and its year stays
+ * within 0001–9999, readable by JavaScript's Date as well.
  */
 export function isReferenceInstant(value: string): boolean {
   return (
     isPostgresTimestamp(value) &&
-    !OFFSET_WITH_SECONDS.test(value) &&
+    value.endsWith(UTC_OFFSET) &&
     !Number.isNaN(Date.parse(value))
   );
 }
