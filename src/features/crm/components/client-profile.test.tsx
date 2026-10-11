@@ -782,7 +782,6 @@ describe("profile reads: only the newest one is ever shown", () => {
    * re-read A starts and stays pending; returns A and the next reads.
    */
   async function renderWithPendingAutomaticRead() {
-    useViewport(false); // the compact line says "N visites · …"
     const automatic = deferred();
     actions.getClientProfileAction
       .mockResolvedValueOnce(ok(visits(11)))
@@ -799,6 +798,7 @@ describe("profile reads: only the newest one is ever shown", () => {
   }
 
   it("automatic A, then manual B: B answers first, A's late answer never replaces it", async () => {
+    useViewport(false); // the compact line says "N visites · …"
     const automatic = await renderWithPendingAutomaticRead();
     const manual = deferred();
     actions.getClientProfileAction.mockReturnValueOnce(manual.promise);
@@ -824,6 +824,7 @@ describe("profile reads: only the newest one is ever shown", () => {
   });
 
   it("reverse order: A's answer, arriving while B is pending, is never shown", async () => {
+    useViewport(false); // the compact line says "N visites · …"
     const automatic = await renderWithPendingAutomaticRead();
     const manual = deferred();
     actions.getClientProfileAction.mockReturnValueOnce(manual.promise);
@@ -841,6 +842,7 @@ describe("profile reads: only the newest one is ever shown", () => {
   });
 
   it("a late failure of an older read never replaces a newer result with an error", async () => {
+    useViewport(false); // the compact line says "N visites · …"
     const automatic = await renderWithPendingAutomaticRead();
     const first = deferred();
     const second = deferred();
