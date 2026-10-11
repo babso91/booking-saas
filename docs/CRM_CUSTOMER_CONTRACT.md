@@ -128,3 +128,7 @@ Les business restent indépendants : la même adresse dans un autre business n'e
 - **Pas de fusion par téléphone ou par nom.** Les fiches sans email ne sont jamais rapprochées.
 - **Pas de fusion ou séparation manuelle.** Ce sera une étape ultérieure.
 - **Historique approximatif.** Pour les rendez-vous antérieurs à cette migration, l'instantané reflète la fiche à la date de la migration, pas forcément le contact soumis à l'époque.
+
+## Lecture de la relation
+
+L'annuaire, le profil et la timeline de chaque cliente sont décrits dans [`CRM_RELATIONSHIP_READ_MODEL.md`](CRM_RELATIONSHIP_READ_MODEL.md). Ils lisent la fiche **actuelle** dans `public.clients`, et l'**instantané** de contact de chaque rendez-vous dans son historique.

@@ -128,7 +128,7 @@ Tous les identifiants sont des UUID générés par PostgreSQL. Les montants sont
 
 ### Clientes et rendez-vous
 
-- `clients` : la cliente (entité CRM) d'un business, identifiée par son email canonique au sein de ce business uniquement (normalisé par la base sur chaque écriture), notes privées et empreinte du token fidélité. Jamais un compte Auth. Contrat : [`docs/CRM_CUSTOMER_CONTRACT.md`](CRM_CUSTOMER_CONTRACT.md).
+- `clients` : la cliente (entité CRM) d'un business, identifiée par son email canonique au sein de ce business uniquement (normalisé par la base sur chaque écriture), notes privées et empreinte du token fidélité. Jamais un compte Auth. Contrat : [`docs/CRM_CUSTOMER_CONTRACT.md`](CRM_CUSTOMER_CONTRACT.md). Le modèle de lecture de la relation client se compose de trois fonctions SQL `SECURITY INVOKER` en lecture seule (sous RLS) et de Server Actions : un annuaire paginé par keyset, un profil, et une timeline typée de rendez-vous, d'écritures de fidélité et d'emails. Ses métriques sont définies une seule fois, et il n'existe ni table d'événements ni agrégat stocké : [`docs/CRM_RELATIONSHIP_READ_MODEL.md`](CRM_RELATIONSHIP_READ_MODEL.md).
 - `appointments` : créneau, snapshots du nom/prix/durée de la prestation, statut et notes. Les snapshots préservent l'historique après modification d'une prestation.
 
 Les clés étrangères vers cliente et prestation sont composites `(id, business_id)`. Une ligne ne peut donc pas associer des objets appartenant à deux tenants différents.
