@@ -342,3 +342,167 @@ describe("empty, loading and errors", () => {
     ).toBe("/login");
   });
 });
+
+describe("a failed refresh is never shown as a successful one", () => {
+  const region = () =>
+    screen.queryByRole("region", { name: "Liste des clientes" });
+
+  it("rows of the criteria on screen stay, marked out of date, when their refresh fails", async () => {
+    // The audit's sequence: "Toutes" loads, "Déjà venues" fails, back to
+    // "Toutes" fails as well.
+    listClientsAction.mockResolvedValueOnce(ok(directoryPage([EMMA, ZOE])));
+    await renderDirectory();
+    expect(rows()).toHaveLength(2);
+
+    listClientsAction.mockResolvedValueOnce(fail("network"));
+    fireEvent.click(screen.getByRole("radio", { name: "Déjà venues" }));
+    await flush();
+    // Nothing from "Toutes" is presented as "Déjà venues".
+    expect(region()).toBeNull();
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /La liste des clientes n’a pas pu être chargée/,
+    );
+
+    listClientsAction.mockResolvedValueOnce(fail("network"));
+    fireEvent.click(screen.getByRole("radio", { name: "Toutes" }));
+    await flush();
+    expect(lastInput()).toMatchObject({ filter: "all" });
+    expect(rows()).toHaveLength(2);
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /n’a pas pu être actualisée.*peuvent ne plus être à jour/,
+    );
+    // A stale cursor is not offered either.
+    expect(
+      screen.queryByRole("button", { name: "Voir plus de clientes" }),
+    ).toBeNull();
+    // No automatic retry loop.
+    const calls = listClientsAction.mock.calls.length;
+    await flush();
+    expect(listClientsAction.mock.calls.length).toBe(calls);
+
+    // Retry reads the criteria on screen; success removes the warning.
+    listClientsAction.mockResolvedValueOnce(ok(directoryPage([EMMA])));
+    fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+    await flush();
+    expect(lastInput()).toMatchObject({ filter: "all", query: "" });
+    expect(lastInput().cursor).toBeUndefined();
+    expect(rows()).toHaveLength(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("while the rows on screen are re-read, it says so", async () => {
+    listClientsAction.mockResolvedValueOnce(ok(directoryPage([EMMA])));
+    await renderDirectory();
+    listClientsAction.mockResolvedValueOnce(fail("internal"));
+    fireEvent.click(screen.getByRole("radio", { name: "Déjà venues" }));
+    await flush();
+
+    let answer!: (value: unknown) => void;
+    listClientsAction.mockReturnValueOnce(
+      new Promise((resolve) => (answer = resolve)),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Toutes" }));
+    await flush();
+    expect(screen.getByRole("status").textContent).toBe(
+      "Actualisation de la liste…",
+    );
+    expect(region()!.getAttribute("aria-busy")).toBe("true");
+
+    answer(ok(directoryPage([EMMA, ZOE])));
+    await flush();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(region()!.getAttribute("aria-busy")).toBe("false");
+    expect(rows()).toHaveLength(2);
+  });
+
+  it("new criteria never show the previous criteria's rows while they load", async () => {
+    listClientsAction.mockResolvedValueOnce(ok(directoryPage([EMMA, ZOE])));
+    await renderDirectory();
+    listClientsAction.mockReturnValueOnce(new Promise(() => {}));
+    fireEvent.change(screen.getByRole("combobox", { name: "Trier par" }), {
+      target: { value: "most_visits" },
+    });
+    await flush();
+    expect(region()).toBeNull();
+    expect(
+      screen.getAllByText("Chargement des clientes…").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("a late answer to older criteria cannot hide the failure of the current ones", async () => {
+    listClientsAction.mockResolvedValueOnce(ok(directoryPage([EMMA])));
+    await renderDirectory();
+    let late!: (value: unknown) => void;
+    listClientsAction.mockReturnValueOnce(
+      new Promise((resolve) => (late = resolve)),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Déjà venues" }));
+    await flush();
+    listClientsAction.mockResolvedValueOnce(fail("internal"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Trier par" }), {
+      target: { value: "most_visits" },
+    });
+    await flush();
+    late(ok(directoryPage([INES]))); // "Déjà venues" by name, too late
+    await flush();
+    expect(region()).toBeNull();
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /n’a pas pu être chargée/,
+    );
+    listClientsAction.mockResolvedValueOnce(ok(directoryPage([INES])));
+    fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+    await flush();
+    expect(lastInput()).toMatchObject({
+      filter: "visited",
+      sort: "most_visits",
+    });
+    expect(rows()).toHaveLength(1);
+  });
+
+  it("a refused cursor whose fresh first page fails keeps the rows, marked out of date", async () => {
+    listClientsAction.mockResolvedValueOnce(
+      ok(directoryPage([EMMA], { totalCount: 2, nextCursor: "stale" })),
+    );
+    await renderDirectory();
+    listClientsAction.mockResolvedValueOnce(
+      fail("validation_error", { cursor: ["invalid"] }),
+    );
+    listClientsAction.mockResolvedValueOnce(fail("network"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Voir plus de clientes" }),
+    );
+    await flush();
+    await flush();
+    expect(lastInput().cursor).toBeUndefined();
+    expect(rows()).toHaveLength(1);
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /n’a pas pu être actualisée/,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Voir plus de clientes" }),
+    ).toBeNull();
+
+    listClientsAction.mockResolvedValueOnce(
+      ok(directoryPage([EMMA, ZOE], { totalCount: 2 })),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+    await flush();
+    expect(rows()).toHaveLength(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("an expired session during a refresh keeps the rows and offers to sign in", async () => {
+    listClientsAction.mockResolvedValueOnce(ok(directoryPage([EMMA])));
+    await renderDirectory();
+    listClientsAction.mockResolvedValueOnce(fail("internal"));
+    fireEvent.click(screen.getByRole("radio", { name: "Déjà venues" }));
+    await flush();
+    listClientsAction.mockResolvedValueOnce(fail("unauthenticated"));
+    fireEvent.click(screen.getByRole("radio", { name: "Toutes" }));
+    await flush();
+    expect(rows()).toHaveLength(1);
+    expect(
+      screen.getByRole("link", { name: "Me reconnecter" }).getAttribute("href"),
+    ).toBe("/login");
+  });
+});

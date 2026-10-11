@@ -70,8 +70,15 @@ type Load<T> =
   | { status: "error"; error: UiError };
 
 export type TimelineState = {
+  /** The latest read of the first page: in progress, done or failed. */
   status: "loading" | "ready" | "error";
+  /**
+   * One coherent sequence: a first page and the older pages read after it,
+   * all in the same time zone. Kept while it is re-read or if that fails.
+   */
   events: ClientTimelineEvent[];
+  /** Time zone of `events`, as returned with them (null before any). */
+  timezone: string | null;
   nextCursor: string | null;
   error: UiError | null;
   /** "Afficher plus ancien" in progress, or its failure. */
@@ -96,6 +103,7 @@ export function ClientProfile({ clientId }: { clientId: string }) {
   const [timeline, setTimeline] = useState<TimelineState>({
     status: "loading",
     events: [],
+    timezone: null,
     nextCursor: null,
     error: null,
     more: "idle",
@@ -113,6 +121,8 @@ export function ClientProfile({ clientId }: { clientId: string }) {
   const wide = useMediaQuery("(min-width: 1024px)");
   const alive = useRef(true);
   const timelineToken = useRef(0);
+  /** History time zone for which the profile was last re-read (once each). */
+  const realignedFor = useRef<string | null>(null);
 
   useEffect(() => {
     alive.current = true;
@@ -140,27 +150,51 @@ export function ClientProfile({ clientId }: { clientId: string }) {
       listClientTimelineAction({ clientId, limit: TIMELINE_PAGE }),
     ).then((result) => {
       if (!alive.current || token !== timelineToken.current) return;
-      setTimeline(
+      setTimeline((value) =>
         result.ok
           ? {
               status: "ready",
               events: result.data.events,
+              timezone: result.data.timezone,
               nextCursor: result.data.nextCursor,
               error: null,
               more: "idle",
               pages: 1,
             }
-          : {
-              status: "error",
-              events: [],
-              nextCursor: null,
-              error: result.error,
-              more: "idle",
-              pages: 0,
-            },
+          : // What was shown stays (in its own time zone), marked out of date.
+            { ...value, status: "error", error: result.error, more: "idle" },
       );
     });
   }, [clientId, timelineRun]);
+
+  // The business changed time zone between the two reads: re-read the
+  // profile once for that zone, so both speak the same hours. Bounded: a
+  // further mismatch is shown as such, never chased.
+  const profileZone = profile.status === "ready" ? profile.data.timezone : null;
+  useEffect(() => {
+    const zone = timeline.timezone;
+    if (!profileZone || !zone || profileZone === zone) return;
+    if (realignedFor.current === zone) return;
+    realignedFor.current = zone;
+    void callAction(() => getClientProfileAction({ clientId })).then(
+      (result) => {
+        if (alive.current && result.ok) {
+          setProfile({ status: "ready", data: result.data });
+        }
+      },
+    );
+  }, [clientId, profileZone, timeline.timezone]);
+
+  /** A fresh history from the first page; what is shown stays meanwhile. */
+  function reloadTimeline() {
+    setTimeline((value) => ({
+      ...value,
+      status: "loading",
+      error: null,
+      more: "idle",
+    }));
+    setTimelineRun((value) => value + 1);
+  }
 
   async function loadOlder() {
     if (timeline.status !== "ready" || !timeline.nextCursor) return;
@@ -175,10 +209,16 @@ export function ClientProfile({ clientId }: { clientId: string }) {
     if (!result.ok) {
       if (isCursorError(result.error)) {
         // The cursor no longer fits: a fresh history from the top.
-        setTimelineRun((value) => value + 1);
+        reloadTimeline();
         return;
       }
       setTimeline((value) => ({ ...value, more: result.error }));
+      return;
+    }
+    if (result.data.timezone !== timeline.timezone) {
+      // Hours of another time zone: never mixed with what is shown. The
+      // sequence starts again from the first page (on this request only).
+      reloadTimeline();
       return;
     }
     // Existing events are never replaced; a page can only add to them.
@@ -243,19 +283,8 @@ export function ClientProfile({ clientId }: { clientId: string }) {
     <Timeline
       state={timeline}
       client={data.client}
-      timezone={data.timezone}
       onLoadOlder={() => void loadOlder()}
-      onRetry={() => {
-        setTimeline({
-          status: "loading",
-          events: [],
-          nextCursor: null,
-          error: null,
-          more: "idle",
-          pages: 0,
-        });
-        setTimelineRun((value) => value + 1);
-      }}
+      onRetry={reloadTimeline}
     />
   );
   const dossier = <Dossier profile={data} />;
@@ -264,6 +293,27 @@ export function ClientProfile({ clientId }: { clientId: string }) {
     <Page backHref={backHref}>
       <RelationshipHeader profile={data} />
       <NextAppointment profile={data} />
+      {timeline.timezone && timeline.timezone !== data.timezone ? (
+        <Notice
+          tone="info"
+          action={
+            <button
+              type="button"
+              onClick={() => {
+                realignedFor.current = null;
+                setProfileRun((value) => value + 1);
+                reloadTimeline();
+              }}
+              className="cursor-pointer text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4"
+            >
+              Recharger la fiche
+            </button>
+          }
+        >
+          Le fuseau horaire du commerce a changé : la fiche est en heures de{" "}
+          {data.timezone}, l’historique en heures de {timeline.timezone}.
+        </Notice>
+      ) : null}
 
       {wide ? (
         // Desktop: the history at the centre, the dossier alongside.
@@ -337,7 +387,7 @@ function RelationshipHeader({ profile }: { profile: ClientProfileDto }) {
           size="lg"
         />
         <div className="min-w-0">
-          <h1 className="font-display text-[34px] leading-none break-words text-ink sm:text-[42px]">
+          <h1 className="font-display text-[34px] leading-none wrap-anywhere text-ink sm:text-[42px]">
             {client.displayName}
           </h1>
           <p className="mt-1.5 text-[14.5px] text-ink-muted">{since}</p>
@@ -345,7 +395,7 @@ function RelationshipHeader({ profile }: { profile: ClientProfileDto }) {
       </div>
 
       {/* Phones: one compact line, so the history comes quickly. */}
-      <p className="text-[14.5px] text-ink-soft md:hidden">
+      <p className="text-[14.5px] wrap-anywhere text-ink-soft md:hidden">
         {[
           visits,
           last ? `dernière le ${last}` : null,
@@ -411,13 +461,15 @@ function Fact({
       </dt>
       <dd
         className={cn(
-          "font-display leading-tight break-words text-ink tabular-nums",
+          "font-display leading-tight wrap-anywhere text-ink tabular-nums",
           small ? "text-[21px]" : "text-[28px]",
         )}
       >
         {children}
       </dd>
-      {detail ? <dd className="text-[13px] text-ink-muted">{detail}</dd> : null}
+      {detail ? (
+        <dd className="text-[13px] wrap-anywhere text-ink-muted">{detail}</dd>
+      ) : null}
     </div>
   );
 }
@@ -432,14 +484,14 @@ function NextAppointment({ profile }: { profile: ClientProfileDto }) {
           aria-label="Prochain rendez-vous"
           className="flex flex-col gap-3 rounded-3xl border border-accent/20 bg-accent-soft px-4 py-4 sm:flex-row sm:items-center sm:gap-4 sm:px-5"
         >
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 items-center gap-4 sm:flex-1">
             <DateBox appointment={next} />
             <div className="min-w-0">
               <p className="text-[15.5px] font-semibold text-ink">
                 Prochain rendez-vous · {timeLabel(next.startsAt)} –{" "}
                 {timeLabel(next.endsAt)}
               </p>
-              <p className="text-[14px] text-ink-soft">
+              <p className="text-[14px] wrap-anywhere text-ink-soft">
                 {next.service.name} ·{" "}
                 {formatPrice(next.price.amountCents, next.price.currency)}{" "}
                 prévus
@@ -611,11 +663,14 @@ function Dossier({ profile }: { profile: ClientProfileDto }) {
         ) : (
           <ul className="flex flex-col gap-2.5">
             {upcoming.map((appointment) => (
-              <li key={appointment.id} className="flex flex-col gap-0.5">
+              <li
+                key={appointment.id}
+                className="flex min-w-0 flex-col gap-0.5"
+              >
                 <span className="text-[14.5px] font-medium text-ink">
                   {dayAndTime(appointment.startsAt)}
                 </span>
-                <span className="text-[13.5px] text-ink-soft">
+                <span className="text-[13.5px] wrap-anywhere text-ink-soft">
                   {appointment.service.name}
                 </span>
                 <Link
@@ -645,7 +700,7 @@ function Dossier({ profile }: { profile: ClientProfileDto }) {
             {observed.map(([label, value]) => (
               <div key={label} className="contents">
                 <dt className="text-ink-muted">{label}</dt>
-                <dd className="min-w-0 break-words text-ink">{value}</dd>
+                <dd className="min-w-0 wrap-anywhere text-ink">{value}</dd>
               </div>
             ))}
           </dl>
@@ -657,7 +712,7 @@ function Dossier({ profile }: { profile: ClientProfileDto }) {
           <ul className="flex flex-col gap-2">
             {overview.completedServiceValue.map((value) => (
               <li key={value.currency} className="flex flex-col">
-                <span className="font-display text-[26px] leading-tight text-ink tabular-nums">
+                <span className="font-display text-[26px] leading-tight wrap-anywhere text-ink tabular-nums">
                   {formatPrice(value.amountCents, value.currency)}
                 </span>
                 <span className="text-[13px] text-ink-muted">

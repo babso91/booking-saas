@@ -46,31 +46,35 @@ type CurrentClient = ClientProfileDto["client"];
  * The relationship history, newest first, grouped by business-local day
  * with a heading per year. Appointments are cards; loyalty and emails are
  * lighter lines. Older pages load on demand; what is shown is never
- * replaced by a page that fails.
+ * replaced by a page that fails. Hours are those of the time zone the
+ * events were read in (`state.timezone`), never another response's.
  */
 export function Timeline({
   state,
   client,
-  timezone,
   onLoadOlder,
   onRetry,
 }: {
   state: TimelineState;
   client: CurrentClient;
-  timezone: string;
   onLoadOlder: () => void;
   onRetry: () => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const shownCount = useRef(0);
+  const shownPages = useRef(0);
   const [announce, setAnnounce] = useState("");
 
   // After "Afficher plus ancien", the keyboard continues on the first new
   // event, and the number added is announced.
+  // A fresh sequence (first page re-read) is not an addition.
   useEffect(() => {
     const previous = shownCount.current;
+    const previousPages = shownPages.current;
     shownCount.current = state.events.length;
+    shownPages.current = state.pages;
+    if (state.pages <= previousPages || previousPages === 0) return;
     if (previous === 0 || state.events.length <= previous) return;
     const first = state.events[previous];
     if (first) {
@@ -82,9 +86,12 @@ export function Timeline({
     setAnnounce(
       `${added} événement${added > 1 ? "s" : ""} plus ancien${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""}.`,
     );
-  }, [state.events]);
+  }, [state.events, state.pages]);
 
   const years = groupTimeline(state.events);
+  const shown = state.events.length > 0;
+  // The sequence on screen can be continued only once its read succeeded.
+  const current = state.status === "ready";
 
   return (
     <section
@@ -100,23 +107,46 @@ export function Timeline({
         >
           Historique
         </h2>
-        <p className="text-[12.5px] text-ink-muted">Heures de {timezone}</p>
+        {state.timezone ? (
+          <p className="text-[12.5px] text-ink-muted">
+            Heures de {state.timezone}
+          </p>
+        ) : null}
       </div>
 
-      {state.status === "loading" ? (
+      {shown && state.status === "error" && state.error ? (
+        <CrmError error={state.error} onRetry={onRetry}>
+          {state.error.code === "unauthenticated"
+            ? undefined
+            : "L’historique n’a pas pu être actualisé. Ce qui est affiché vient du dernier chargement réussi et peut ne plus être à jour."}
+        </CrmError>
+      ) : shown && state.status === "loading" ? (
+        <p role="status" className="text-[13.5px] text-ink-muted">
+          Actualisation de l’historique…
+        </p>
+      ) : null}
+
+      {!shown && state.status === "loading" ? (
         <TimelineSkeleton />
-      ) : state.status === "error" && state.error ? (
+      ) : !shown && state.status === "error" && state.error ? (
         <CrmError error={state.error} onRetry={onRetry}>
           {state.error.code === "unauthenticated"
             ? undefined
             : "L’historique n’a pas pu être chargé."}
         </CrmError>
-      ) : state.events.length === 0 ? (
+      ) : !shown ? (
         <p className="rounded-2xl bg-sand/50 px-4 py-4 text-[14.5px] text-ink-soft">
           Pas encore d’historique. Ses rendez-vous passés apparaîtront ici.
         </p>
       ) : (
-        <div ref={listRef} className="flex flex-col gap-2">
+        <div
+          ref={listRef}
+          aria-busy={state.status === "loading"}
+          className={cn(
+            "flex flex-col gap-2 transition-opacity",
+            state.status === "loading" && "opacity-60",
+          )}
+        >
           {years.map((year, index) => (
             <div key={year.year} className="flex flex-col">
               {index > 0 || years.length > 1 ? (
@@ -155,7 +185,7 @@ export function Timeline({
         {announce}
       </p>
 
-      {state.status === "ready" && typeof state.more === "object" ? (
+      {current && typeof state.more === "object" ? (
         <CrmError error={state.more} onRetry={onLoadOlder}>
           {state.more.code === "unauthenticated"
             ? undefined
@@ -163,7 +193,7 @@ export function Timeline({
         </CrmError>
       ) : null}
 
-      {state.status === "ready" && (state.nextCursor || state.pages > 1) ? (
+      {current && shown && (state.nextCursor || state.pages > 1) ? (
         <div className="flex flex-col items-center gap-2 pt-1 sm:flex-row sm:justify-center sm:gap-4">
           {state.nextCursor ? (
             <Button
@@ -315,7 +345,7 @@ function AppointmentEntry({
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
         <h4
           className={cn(
-            "text-[15px] font-semibold",
+            "min-w-0 text-[15px] font-semibold wrap-anywhere",
             appointment.status === "cancelled" ? "text-ink-soft" : "text-ink",
           )}
         >
@@ -331,9 +361,11 @@ function AppointmentEntry({
           {status.label}
         </span>
       </div>
-      <p className="text-[13.5px] text-ink-muted">{details.join(" · ")}</p>
+      <p className="text-[13.5px] wrap-anywhere text-ink-muted">
+        {details.join(" · ")}
+      </p>
       {appointment.status === "cancelled" && appointment.cancellationReason ? (
-        <p className="text-[13.5px] break-words text-ink-soft">
+        <p className="text-[13.5px] wrap-anywhere text-ink-soft">
           « {appointment.cancellationReason} »
         </p>
       ) : null}
@@ -344,7 +376,7 @@ function AppointmentEntry({
         </p>
       ) : null}
       {contact ? (
-        <p className="text-[12.5px] break-words text-ink-muted">
+        <p className="text-[12.5px] wrap-anywhere text-ink-muted">
           Contact indiqué pour ce rendez-vous : {contact}
         </p>
       ) : null}
@@ -378,14 +410,14 @@ function LoyaltyEntry({ event }: { event: LoyaltyTimelineEvent }) {
       <Dot className="border-accent bg-paper-raised" />
       <GiftIcon size={16} className="mt-0.5 shrink-0 text-accent" />
       <div className="flex min-w-0 flex-col">
-        <p className="text-[14px] font-medium text-ink-soft">
+        <p className="text-[14px] font-medium wrap-anywhere text-ink-soft">
           {title}{" "}
           <span className="font-semibold text-ink tabular-nums">
             {pointsLabel(entry.pointsDelta)}
           </span>
         </p>
         {entry.reason ? (
-          <p className="text-[13px] break-words text-ink-muted">
+          <p className="text-[13px] wrap-anywhere text-ink-muted">
             {entry.reason}
           </p>
         ) : null}
@@ -406,7 +438,7 @@ function EmailEntry({ event }: { event: EmailTimelineEvent }) {
       <MailIcon size={15} className="mt-0.5 shrink-0 text-ink-muted" />
       <div className="flex min-w-0 flex-col">
         <p className="text-[13.5px] text-ink-soft">{emailTitles[email.type]}</p>
-        <p className="text-[12.5px] break-words text-ink-muted">
+        <p className="text-[12.5px] wrap-anywhere text-ink-muted">
           {status} · {email.recipientEmail}
         </p>
       </div>

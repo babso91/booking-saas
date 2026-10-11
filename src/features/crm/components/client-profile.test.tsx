@@ -548,3 +548,214 @@ it("upcoming list says how many more there are beyond the five shown", async () 
   );
   expect(screen.getByText("et 3 autres plus tard")).toBeTruthy();
 });
+
+describe("time zones: every hour is labelled with the zone it was read in", () => {
+  const PARIS = "Europe/Paris";
+  const VANCOUVER = "America/Vancouver";
+  const inZone = (page: ReturnType<typeof timelinePage>, timezone: string) => ({
+    ...page,
+    timezone,
+  });
+  const zoneLabel = () =>
+    history().queryByText(/^Heures de /)?.textContent ?? null;
+
+  it("profile read in Paris, history read in Vancouver: the history says Vancouver; the profile is re-read once", async () => {
+    const vancouverProfile = { ...profile(), timezone: VANCOUVER };
+    actions.getClientProfileAction
+      .mockResolvedValueOnce(ok(profile())) // Paris
+      .mockResolvedValueOnce(ok(vancouverProfile));
+    actions.listClientTimelineAction.mockResolvedValueOnce(
+      ok(inZone(timelinePage([appointmentEvent()]), VANCOUVER)),
+    );
+    render(<ClientProfile clientId={CLIENT_ID} />);
+    await flush();
+    await flush();
+
+    expect(zoneLabel()).toBe(`Heures de ${VANCOUVER}`);
+    expect(actions.getClientProfileAction).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByText(`Heures affichées dans le fuseau ${VANCOUVER}.`),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Le fuseau horaire du commerce a changé/)).toBe(
+      null,
+    );
+  });
+
+  it("if the re-read profile still differs, both zones are named, and nothing is re-read again on its own", async () => {
+    actions.getClientProfileAction.mockResolvedValue(ok(profile())); // Paris
+    actions.listClientTimelineAction.mockResolvedValueOnce(
+      ok(inZone(timelinePage([appointmentEvent()]), VANCOUVER)),
+    );
+    render(<ClientProfile clientId={CLIENT_ID} />);
+    await flush();
+    await flush();
+    await flush();
+
+    expect(zoneLabel()).toBe(`Heures de ${VANCOUVER}`);
+    expect(
+      screen.getByText(
+        `Le fuseau horaire du commerce a changé : la fiche est en heures de ${PARIS}, l’historique en heures de ${VANCOUVER}.`,
+      ),
+    ).toBeTruthy();
+    expect(actions.getClientProfileAction).toHaveBeenCalledTimes(2);
+    expect(actions.listClientTimelineAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("an older page in another zone is never appended: the history restarts from its first page", async () => {
+    const paris = appointmentEvent({ start: "2026-10-02T14:30" });
+    await renderProfile(profile(), [paris], "c1");
+    expect(zoneLabel()).toBe(`Heures de ${PARIS}`);
+
+    const olderInVancouver = appointmentEvent({ start: "2026-09-02T05:30" });
+    actions.listClientTimelineAction.mockResolvedValueOnce(
+      ok(inZone(timelinePage([olderInVancouver], null), VANCOUVER)),
+    );
+    let fresh!: (value: unknown) => void;
+    actions.listClientTimelineAction.mockReturnValueOnce(
+      new Promise((resolve) => (fresh = resolve)),
+    );
+    fireEvent.click(
+      history().getByRole("button", { name: "Afficher plus ancien" }),
+    );
+    await flush();
+
+    // Meanwhile: what was shown stays, under its own zone, marked as re-read.
+    expect(lastTimelineInput()).toEqual({ clientId: CLIENT_ID, limit: 20 });
+    expect(history().getAllByRole("article")).toHaveLength(1);
+    expect(
+      history().queryByText(/05:30/), // the Vancouver page was dropped
+    ).toBeNull();
+    expect(zoneLabel()).toBe(`Heures de ${PARIS}`);
+    expect(history().getByRole("status").textContent).toBe(
+      "Actualisation de l’historique…",
+    );
+    expect(
+      history().queryByRole("button", { name: "Afficher plus ancien" }),
+    ).toBeNull();
+
+    const recent = appointmentEvent({ start: "2026-10-02T05:30" });
+    fresh(ok(inZone(timelinePage([recent], "v1"), VANCOUVER)));
+    await flush();
+    expect(zoneLabel()).toBe(`Heures de ${VANCOUVER}`);
+    expect(history().getAllByRole("article")).toHaveLength(1);
+    expect(history().getByText(/05:30 – /)).toBeTruthy();
+    expect(history().queryByRole("status")).toBeNull();
+    // Not presented as older events added.
+    expect(history().queryByText(/plus ancien.* ajouté/)).toBeNull();
+    expect(
+      history().getByRole("button", { name: "Afficher plus ancien" }),
+    ).toBeTruthy();
+  });
+
+  it("same zone on every page: appended, no restart", async () => {
+    await renderProfile(profile(), [appointmentEvent()], "c1");
+    actions.listClientTimelineAction.mockResolvedValueOnce(
+      ok(timelinePage([appointmentEvent({ start: "2026-08-02T14:30" })])),
+    );
+    fireEvent.click(
+      history().getByRole("button", { name: "Afficher plus ancien" }),
+    );
+    await flush();
+    expect(actions.listClientTimelineAction).toHaveBeenCalledTimes(2);
+    expect(history().getAllByRole("article")).toHaveLength(2);
+    expect(zoneLabel()).toBe(`Heures de ${PARIS}`);
+  });
+
+  it("a failed restart keeps the history shown, under its own zone, marked out of date; retry replaces it", async () => {
+    await renderProfile(profile(), [appointmentEvent()], "c1");
+    actions.listClientTimelineAction.mockResolvedValueOnce(
+      ok(inZone(timelinePage([appointmentEvent()]), VANCOUVER)),
+    );
+    actions.listClientTimelineAction.mockResolvedValueOnce(fail("network"));
+    fireEvent.click(
+      history().getByRole("button", { name: "Afficher plus ancien" }),
+    );
+    await flush();
+    await flush();
+
+    expect(history().getAllByRole("article")).toHaveLength(1);
+    expect(zoneLabel()).toBe(`Heures de ${PARIS}`);
+    expect(history().getByRole("alert").textContent).toMatch(
+      /L’historique n’a pas pu être actualisé.*peut ne plus être à jour/,
+    );
+    expect(
+      history().queryByRole("button", { name: "Afficher plus ancien" }),
+    ).toBeNull();
+    const calls = actions.listClientTimelineAction.mock.calls.length;
+    await flush();
+    expect(actions.listClientTimelineAction.mock.calls.length).toBe(calls);
+
+    actions.listClientTimelineAction.mockResolvedValueOnce(
+      ok(
+        inZone(
+          timelinePage([appointmentEvent(), appointmentEvent()]),
+          VANCOUVER,
+        ),
+      ),
+    );
+    fireEvent.click(history().getByRole("button", { name: "Réessayer" }));
+    await flush();
+    expect(history().getAllByRole("article")).toHaveLength(2);
+    expect(zoneLabel()).toBe(`Heures de ${VANCOUVER}`);
+    expect(history().queryByRole("alert")).toBeNull();
+  });
+
+  it("a refused cursor whose restart fails keeps the history shown", async () => {
+    await renderProfile(profile(), [appointmentEvent()], "stale");
+    actions.listClientTimelineAction.mockResolvedValueOnce(
+      fail("validation_error", { cursor: ["invalid"] }),
+    );
+    actions.listClientTimelineAction.mockResolvedValueOnce(fail("internal"));
+    fireEvent.click(
+      history().getByRole("button", { name: "Afficher plus ancien" }),
+    );
+    await flush();
+    await flush();
+    expect(history().getAllByRole("article")).toHaveLength(1);
+    expect(history().getByRole("alert").textContent).toMatch(
+      /n’a pas pu être actualisé/,
+    );
+  });
+
+  it("an empty history still names its zone", async () => {
+    await renderProfile(profile(), []);
+    expect(zoneLabel()).toBe(`Heures de ${PARIS}`);
+    expect(history().getByText(/Pas encore d’historique/)).toBeTruthy();
+  });
+
+  it("business-local midnight and the repeated autumn hour, as read, never re-computed", async () => {
+    await renderProfile(
+      profile(),
+      [
+        {
+          ...appointmentEvent({
+            start: "2026-10-25T02:30",
+            end: "2026-10-25T03:00",
+          }),
+          occurredAt: at("2026-10-25T02:30", "second"),
+        },
+        appointmentEvent({
+          start: "2026-10-24T00:00",
+          end: "2026-10-24T01:00",
+        }),
+      ].map((event, index) =>
+        index === 0
+          ? {
+              ...event,
+              appointment: {
+                ...event.appointment,
+                startsAt: at("2026-10-25T02:30", "second"),
+              },
+            }
+          : event,
+      ) as ClientTimelineEvent[],
+    );
+    expect(
+      history()
+        .getAllByRole("time")
+        .map((time) => time.getAttribute("datetime")),
+    ).toEqual(["2026-10-25", "2026-10-24"]);
+    expect(history().getByText(/02:30 \(heure d’hiver\) – 03:00/)).toBeTruthy();
+    expect(history().getByText(/^00:00 – 01:00/)).toBeTruthy();
+  });
+});

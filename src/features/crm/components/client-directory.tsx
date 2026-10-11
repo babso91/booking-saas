@@ -49,10 +49,21 @@ const isCursorError = (error: UiError) =>
   error.code === "validation_error" && Boolean(error.fieldErrors?.cursor);
 
 /**
+ * What is asked for, and which read: `seq` changes with every new first
+ * page (new criteria, retry, restart after a refused cursor), so an answer
+ * is only ever attributed to the read that produced it.
+ */
+type Request = { state: DirectoryQuery; seq: number };
+
+/**
  * Customer directory: search, filter, sort and pages of 25 from the CRM
  * read model. What is shown lives in the address. Live pagination: the
  * count is the current one, a row seen twice is shown once, and a refused
  * cursor restarts from the first page.
+ *
+ * Rows are only ever shown for the criteria on screen. While they are
+ * re-read they say so; if that read fails they stay, marked as possibly
+ * out of date, with a retry. Rows of other criteria are never shown.
  */
 export function ClientDirectory({
   initial,
@@ -62,24 +73,38 @@ export function ClientDirectory({
   slug: string;
 }) {
   const [text, setText] = useState(initial.query);
-  const [state, setState] = useState<DirectoryQuery>(initial);
+  const [request, setRequest] = useState<Request>({ state: initial, seq: 0 });
+  /** Last rows read successfully (for `listing.key`). */
   const [listing, setListing] = useState<Listing | null>(null);
-  const [error, setError] = useState<{ key: string; error: UiError } | null>(
-    null,
-  );
-  const [restart, setRestart] = useState(0);
+  /** How the last answered first-page read ended. */
+  const [outcome, setOutcome] = useState<{
+    seq: number;
+    error: UiError | null;
+  } | null>(null);
   const [more, setMore] = useState<"idle" | "loading" | UiError>("idle");
   const latest = useRef(0);
   const firstNew = useRef<string | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
+  const state = request.state;
   const key = keyOf(state);
+  const change = (patch: Partial<DirectoryQuery>) =>
+    setRequest((value) => ({
+      state: { ...value.state, ...patch },
+      seq: value.seq + 1,
+    }));
+  const reload = () =>
+    setRequest((value) => ({ state: value.state, seq: value.seq + 1 }));
 
   // Typing: search after a short pause.
   useEffect(() => {
     if (text === state.query) return;
     const timer = window.setTimeout(
-      () => setState((value) => ({ ...value, query: text })),
+      () =>
+        setRequest((value) => ({
+          state: { ...value.state, query: text },
+          seq: value.seq + 1,
+        })),
       SEARCH_DELAY_MS,
     );
     return () => window.clearTimeout(timer);
@@ -99,7 +124,8 @@ export function ClientDirectory({
 
   // First page of every new read; only the latest one is ever applied.
   useEffect(() => {
-    const token = (latest.current += 1);
+    const seq = request.seq;
+    latest.current = seq;
     void callAction(() =>
       listClientsAction({
         query: state.query,
@@ -108,10 +134,9 @@ export function ClientDirectory({
         limit: PAGE_SIZE,
       }),
     ).then((result) => {
-      if (token !== latest.current) return;
+      if (seq !== latest.current) return;
       setMore("idle");
       if (result.ok) {
-        setError(null);
         setListing({
           key,
           clients: result.data.clients,
@@ -119,17 +144,17 @@ export function ClientDirectory({
           nextCursor: result.data.nextCursor,
           year: result.data.asOf.slice(0, 4),
         });
-      } else {
-        setError({ key, error: result.error });
       }
+      setOutcome({ seq, error: result.ok ? null : result.error });
     });
-    // `key` and `restart` cover every input of the read.
+    // `request.seq` changes with every read (and its criteria).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, restart]);
+  }, [request.seq]);
 
   async function loadMore() {
     if (!listing?.nextCursor || more === "loading") return;
     const token = latest.current;
+    if (outcome?.seq !== token || outcome.error) return;
     setMore("loading");
     const result = await callAction(() =>
       listClientsAction({
@@ -143,8 +168,9 @@ export function ClientDirectory({
     if (token !== latest.current) return;
     if (!result.ok) {
       if (isCursorError(result.error)) {
-        // The cursor no longer fits: start again from a fresh first page.
-        setRestart((value) => value + 1);
+        // The cursor no longer fits: start again from a fresh first page
+        // (once: a first page carries no cursor to refuse).
+        reload();
         return;
       }
       setMore(result.error);
@@ -172,14 +198,17 @@ export function ClientDirectory({
     firstNew.current = null;
   }, [listing]);
 
+  // Rows only for the criteria on screen; the state of their latest read.
   const current = listing?.key === key ? listing : null;
-  const failure = error?.key === key ? error.error : null;
+  const settled = outcome?.seq === request.seq;
+  const refreshing = !settled;
+  const failure = settled ? outcome.error : null;
   const searching = state.query.trim() !== "";
   const narrowed = searching || state.filter !== "all";
 
   const clearSearch = () => {
     setText("");
-    setState((value) => ({ ...value, query: "" }));
+    change({ query: "" });
   };
 
   return (
@@ -195,7 +224,9 @@ export function ClientDirectory({
           >
             {current
               ? countLabel(current.totalCount, narrowed)
-              : "Chargement des clientes…"}
+              : failure
+                ? null
+                : "Chargement des clientes…"}
           </p>
         </header>
 
@@ -233,10 +264,7 @@ export function ClientDirectory({
             <select
               value={state.sort}
               onChange={(event) =>
-                setState((value) => ({
-                  ...value,
-                  sort: event.target.value as ClientSort,
-                }))
+                change({ sort: event.target.value as ClientSort })
               }
               className="h-12 cursor-pointer rounded-2xl border border-line bg-paper-raised px-3 text-[15px] text-ink hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_rgba(151,73,58,0.12)] focus-visible:outline-none"
             >
@@ -257,19 +285,26 @@ export function ClientDirectory({
                 key={filter}
                 filter={filter}
                 checked={state.filter === filter}
-                onSelect={(value) =>
-                  setState((current) => ({ ...current, filter: value }))
-                }
+                onSelect={(value) => change({ filter: value })}
               />
             ))}
           </div>
         </fieldset>
 
+        {current && failure ? (
+          <CrmError error={failure} onRetry={reload}>
+            {failure.code === "unauthenticated"
+              ? undefined
+              : "La liste n’a pas pu être actualisée. Les clientes affichées viennent du dernier chargement réussi et peuvent ne plus être à jour."}
+          </CrmError>
+        ) : current && refreshing ? (
+          <p role="status" className="text-[13.5px] text-ink-muted">
+            Actualisation de la liste…
+          </p>
+        ) : null}
+
         {failure && !current ? (
-          <CrmError
-            error={failure}
-            onRetry={() => setRestart((value) => value + 1)}
-          >
+          <CrmError error={failure} onRetry={reload}>
             {failure.code === "unauthenticated"
               ? undefined
               : "La liste des clientes n’a pas pu être chargée."}
@@ -282,7 +317,10 @@ export function ClientDirectory({
               query={state.query.trim()}
               onClear={() => {
                 setText("");
-                setState({ ...DEFAULT_QUERY, sort: state.sort });
+                change({
+                  query: DEFAULT_QUERY.query,
+                  filter: DEFAULT_QUERY.filter,
+                });
               }}
             />
           ) : (
@@ -291,7 +329,11 @@ export function ClientDirectory({
         ) : (
           <section
             aria-label="Liste des clientes"
-            className="overflow-hidden rounded-3xl border border-line bg-paper-raised"
+            aria-busy={refreshing}
+            className={cn(
+              "overflow-hidden rounded-3xl border border-line bg-paper-raised transition-opacity",
+              refreshing && "opacity-60",
+            )}
           >
             <div
               aria-hidden="true"
@@ -314,7 +356,7 @@ export function ClientDirectory({
               <p className="text-[13.5px] text-ink-muted tabular-nums">
                 {current.clients.length} sur {current.totalCount}
               </p>
-              {current.nextCursor ? (
+              {current.nextCursor && settled && !failure ? (
                 <Button
                   variant="secondary"
                   size="md"
@@ -326,7 +368,7 @@ export function ClientDirectory({
                 </Button>
               ) : null}
             </div>
-            {typeof more === "object" ? (
+            {typeof more === "object" && settled && !failure ? (
               <div className="px-5 pb-4">
                 <CrmError error={more} onRetry={() => void loadMore()}>
                   {more.code === "unauthenticated"
@@ -507,7 +549,7 @@ function EmptyResult({
 }) {
   return (
     <div className="flex flex-col items-start gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-6">
-      <p className="font-display text-[24px] leading-tight text-ink">
+      <p className="max-w-full font-display text-[24px] leading-tight wrap-anywhere text-ink">
         {query
           ? `Aucune cliente ne correspond à « ${query} »`
           : "Aucune cliente dans cette sélection"}
