@@ -12,7 +12,7 @@ L'entité client existe déjà : c'est `public.clients`. Il n'y a pas de seconde
 - **Aucune identité globale.** La même personne qui réserve dans deux business a deux fiches distinctes, jamais reliées.
 - **N rendez-vous par cliente.** Chaque rendez-vous référence une cliente de son propre business, via la clé étrangère composite `(client_id, business_id)`. Une écriture qui associerait une cliente d'un autre business est refusée.
 - **Suppression non destructive.** Une cliente qui a des rendez-vous ne peut pas être supprimée (clé étrangère sans cascade). L'historique ne disparaît jamais par effet de bord. Aucun workflow de suppression ou d'anonymisation dans cette étape.
-- **Extensible.** Les notes privées existent déjà (`internal_notes`). Tags, statistiques et fidélité viendront plus tard, par colonnes ou tables liées à `clients.id`.
+- **Extensible.** Les notes privées datées vivent dans `public.client_notes`, et l'ancien champ libre `internal_notes` est conservé ([`CRM_CLIENT_MANAGEMENT.md`](CRM_CLIENT_MANAGEMENT.md)). Tags, statistiques et fidélité viendront plus tard, par colonnes ou tables liées à `clients.id`.
 
 ### Pas de compte consommateur
 
@@ -66,6 +66,8 @@ Les deux chemins de création utilisent la même fonction, dans la transaction d
 | Cliente existante choisie par identifiant (agenda)                                  | Cette fiche, sans modification.                                                                                                                                              |
 
 Les rendez-vous déjà liés ne sont jamais rattachés à une autre cliente automatiquement.
+
+La création et l'édition manuelles d'une fiche par une professionnelle (`crm_create_client`, `crm_update_client`) n'utilisent pas cette résolution. Un email déjà utilisé y est un conflit qui nomme la fiche existante, jamais une réutilisation, une fusion ou un complément ([`CRM_CLIENT_MANAGEMENT.md`](CRM_CLIENT_MANAGEMENT.md)).
 
 ### Confidentialité de la réponse publique
 

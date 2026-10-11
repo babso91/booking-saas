@@ -352,6 +352,8 @@ Il n'y a ni table d'événements générique, ni event sourcing. Pour une nouvel
 
 L'UI ignore les `kind` qu'elle ne connaît pas encore, ou affiche un repli. Les sources prévues n'existent pas encore et **ne doivent pas** être simulées.
 
+Les notes privées datées (`public.client_notes`, étape 3) existent, mais elles ne sont pas encore une source de la timeline. Elles y entreront avec leur rendu, dans une même PR, pour ne pas exposer à l'UI publiée un `kind` qu'elle n'affiche pas ([`CRM_CLIENT_MANAGEMENT.md`](CRM_CLIENT_MANAGEMENT.md), « Timeline : décision de compatibilité »).
+
 ## Sécurité
 
 - **RLS comme autorité :** les fonctions SQL `crm_*` sont `SECURITY INVOKER`. La RLS de `clients`, `appointments`, `services`, `loyalty_events`, `reward_redemptions`, `rewards` et `email_events` reste donc l'autorité.

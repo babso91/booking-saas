@@ -94,6 +94,23 @@ export const errorCopy: Record<
     title: "Introuvable",
     message: "Cette cliente est introuvable.",
   },
+  client_email_conflict: {
+    title: "Adresse déjà utilisée",
+    message:
+      "Une autre fiche cliente a déjà cette adresse email. Ouvre-la plutôt que d’en créer une seconde.",
+  },
+  stale_client: {
+    title: "Modifiée entre-temps",
+    message: "Cette fiche a changé. Recharge-la avant de réessayer.",
+  },
+  note_not_found: {
+    title: "Introuvable",
+    message: "Cette note est introuvable.",
+  },
+  stale_note: {
+    title: "Modifiée entre-temps",
+    message: "Cette note a changé. Recharge-la avant de réessayer.",
+  },
   service_unavailable: {
     title: "Prestation indisponible",
     message: "Cette prestation n’est pas disponible.",

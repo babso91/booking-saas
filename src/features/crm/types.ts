@@ -239,3 +239,100 @@ export type ClientTimelinePageDto = {
   events: ClientTimelineEvent[];
   nextCursor: string | null;
 };
+
+// ---------------------------------------------------------------------------
+// Customer management (src/features/crm/actions/client-management.ts)
+// ---------------------------------------------------------------------------
+
+/** A customer record as an edit form uses it: current values and version. */
+export type ClientRecordDto = {
+  id: string;
+  /** "First Last" from the current record. */
+  displayName: string;
+  firstName: string;
+  lastName: string | null;
+  /** Canonical (lower-cased, trimmed): the identity within the business. */
+  email: string | null;
+  phone: string | null;
+  /** Pass it back as `expectedVersion` to edit this record. */
+  version: number;
+  /** UTC ISO 8601. */
+  createdAt: string;
+  /** UTC ISO 8601. */
+  updatedAt: string;
+};
+
+export type CreateClientResultDto = {
+  client: ClientRecordDto;
+  /** false when the same requestId had already created this customer. */
+  created: boolean;
+};
+
+export type UpdateClientResultDto = {
+  client: ClientRecordDto;
+  /** false when the record already had exactly these values. */
+  changed: boolean;
+  /**
+   * History that keeps the contact it was made with: an edit never
+   * reroutes a booking's messages.
+   */
+  retained: {
+    /** Upcoming confirmed appointments booked with another email. */
+    upcomingAppointmentsWithOtherEmail: number;
+    /** Emails not sent yet, addressed to another email. */
+    queuedEmailsToOtherAddress: number;
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Private notes (src/features/crm/actions/client-notes.ts)
+// ---------------------------------------------------------------------------
+
+/** A private note about a customer, dated by when it was written. */
+export type ClientNoteDto = {
+  id: string;
+  clientId: string;
+  content: string;
+  /** Pass it back as `expectedVersion` to edit or delete this note. */
+  version: number;
+  /** The content changed since it was written. */
+  edited: boolean;
+  /** When it was written: its date (never changed by edits). */
+  createdAt: BusinessInstantDto;
+  /** Last change of the content (= createdAt if never edited). */
+  updatedAt: BusinessInstantDto;
+  /** Professional (user id) who wrote it; null if that account was removed. */
+  createdBy: string | null;
+  /** Professional who last edited it; null if never edited (or removed). */
+  updatedBy: string | null;
+};
+
+export type ClientNotesPageDto = {
+  timezone: string;
+  /**
+   * The record's former free-text notes (clients.internal_notes), read only
+   * and unchanged; null when empty.
+   */
+  legacyNotes: string | null;
+  /** Newest first. */
+  notes: ClientNoteDto[];
+  nextCursor: string | null;
+};
+
+export type CreateClientNoteResultDto = {
+  note: ClientNoteDto;
+  /** false when the same requestId had already written this note. */
+  created: boolean;
+};
+
+export type UpdateClientNoteResultDto = {
+  note: ClientNoteDto;
+  /** false when the note already had exactly this content. */
+  changed: boolean;
+};
+
+export type DeleteClientNoteResultDto = {
+  noteId: string;
+  /** false when there was no such note (already deleted): nothing done. */
+  deleted: boolean;
+};

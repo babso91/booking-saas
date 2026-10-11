@@ -553,12 +553,17 @@ describe("security: professionals of the business only", () => {
         [B.id],
       );
       expect(rows[0]).toEqual({ n: 0 });
+      // Every CRM function that reads or writes a table runs as the caller.
+      // The one exception, crm_canonical_email, reads no table (a pure
+      // normalization, see crm-client-management.test.ts).
       const { rows: functions } = await member.connection.query(
         `select p.proname, p.prosecdef as definer
          from pg_proc p
          where p.proname like 'crm\\_%' and p.pronamespace = 'public'::regnamespace
+           and p.proname <> 'crm_canonical_email'
          order by 1`,
       );
+      expect(functions.length).toBeGreaterThan(5);
       expect(functions.every((row) => row.definer === false)).toBe(true);
     } finally {
       await closeTransaction(member, "rollback");
@@ -1288,10 +1293,15 @@ describe("read paths", () => {
       await timeline(id, 3);
     }
     expect(await state()).toEqual(before);
+    // The read model's functions cannot write (STABLE). The writes of
+    // customer management are separate functions (VOLATILE).
     const { rows } = await db.query(
       `select p.proname, p.provolatile from pg_proc p
-       where p.proname like 'crm\\_%' and p.pronamespace = 'public'::regnamespace`,
+       where p.pronamespace = 'public'::regnamespace
+         and p.proname in ('crm_assert_member', 'crm_client_activity',
+           'crm_list_clients', 'crm_client_profile', 'crm_client_timeline')`,
     );
+    expect(rows).toHaveLength(5);
     expect(rows.every((row) => row.provolatile === "s")).toBe(true);
   });
 });

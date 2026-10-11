@@ -17,6 +17,13 @@ export const appErrorMessages = {
   appointment_not_found: "Ce rendez-vous est introuvable.",
   block_not_found: "Cette période bloquée est introuvable.",
   client_not_found: "Cette cliente est introuvable.",
+  client_email_conflict:
+    "Une autre fiche cliente utilise déjà cette adresse email.",
+  stale_client:
+    "Cette fiche cliente a été modifiée entre-temps. Rechargez-la avant de réessayer.",
+  note_not_found: "Cette note est introuvable.",
+  stale_note:
+    "Cette note a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_unavailable: "Cette prestation n’est pas disponible.",
   stale_appointment:
     "Ce rendez-vous a été modifié entre-temps. Rechargez-le avant de réessayer.",
@@ -65,10 +72,14 @@ export const appErrorMessages = {
 
 export type AppErrorCode = keyof typeof appErrorMessages;
 
+/** The existing record a write collided with (`client_email_conflict`). */
+export type AppErrorConflict = { clientId: string; displayName: string };
+
 export type AppError = {
   code: AppErrorCode;
   message: string;
   fieldErrors?: Record<string, string[]>;
+  conflict?: AppErrorConflict;
 };
 
 export type ActionResult<T> =
@@ -77,12 +88,14 @@ export type ActionResult<T> =
 export class AppException extends Error {
   readonly code: AppErrorCode;
   readonly fieldErrors?: Record<string, string[]>;
+  readonly conflict?: AppErrorConflict;
 
   constructor(
     code: AppErrorCode,
     options?: {
       message?: string;
       fieldErrors?: Record<string, string[]>;
+      conflict?: AppErrorConflict;
       cause?: unknown;
     },
   ) {
@@ -92,6 +105,7 @@ export class AppException extends Error {
     this.name = "AppException";
     this.code = code;
     this.fieldErrors = options?.fieldErrors;
+    this.conflict = options?.conflict;
   }
 
   toAppError(): AppError {
@@ -99,6 +113,7 @@ export class AppException extends Error {
       code: this.code,
       message: this.message,
       ...(this.fieldErrors ? { fieldErrors: this.fieldErrors } : {}),
+      ...(this.conflict ? { conflict: this.conflict } : {}),
     };
   }
 }
@@ -116,6 +131,10 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   appointment_not_found: 404,
   block_not_found: 404,
   client_not_found: 404,
+  client_email_conflict: 409,
+  stale_client: 409,
+  note_not_found: 404,
+  stale_note: 409,
   service_unavailable: 409,
   stale_appointment: 409,
   stale_block: 409,
