@@ -83,6 +83,7 @@ export function ClientDirectory({
   } | null>(null);
   const [more, setMore] = useState<"idle" | "loading" | UiError>("idle");
   const latest = useRef(0);
+  const reads = useRef(0);
   const firstNew = useRef<string | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
@@ -126,6 +127,9 @@ export function ClientDirectory({
   useEffect(() => {
     const seq = request.seq;
     latest.current = seq;
+    // Which run of this effect: a run cleaned up (newer read, leaving, or
+    // React re-running effects in development) never applies its answer.
+    const read = (reads.current += 1);
     void callAction(() =>
       listClientsAction({
         query: state.query,
@@ -134,7 +138,7 @@ export function ClientDirectory({
         limit: PAGE_SIZE,
       }),
     ).then((result) => {
-      if (seq !== latest.current) return;
+      if (read !== reads.current) return;
       setMore("idle");
       if (result.ok) {
         setListing({
@@ -147,6 +151,9 @@ export function ClientDirectory({
       }
       setOutcome({ seq, error: result.ok ? null : result.error });
     });
+    return () => {
+      reads.current += 1;
+    };
     // `request.seq` changes with every read (and its criteria).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request.seq]);

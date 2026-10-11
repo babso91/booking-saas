@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ClientTimelineEvent } from "@/features/crm/types";
@@ -757,5 +758,167 @@ describe("time zones: every hour is labelled with the zone it was read in", () =
     ).toEqual(["2026-10-25", "2026-10-24"]);
     expect(history().getByText(/02:30 \(heure d’hiver\) – 03:00/)).toBeTruthy();
     expect(history().getByText(/^00:00 – 01:00/)).toBeTruthy();
+  });
+});
+
+describe("profile reads: only the newest one is ever shown", () => {
+  const VANCOUVER = "America/Vancouver";
+  const visits = (count: number, timezone = "Europe/Paris") => ({
+    ...profile({ overview: { completedCount: count } }),
+    timezone,
+  });
+  const deferred = () => {
+    let resolve!: (value: unknown) => void;
+    const promise = new Promise((done) => (resolve = done));
+    return { promise, resolve };
+  };
+  const shownVisits = () =>
+    screen.getByText(/^\d+ visites · /).textContent?.split(" ")[0];
+  const reload = () =>
+    fireEvent.click(screen.getByRole("button", { name: "Recharger la fiche" }));
+
+  /**
+   * Profile read in Paris (11 visits), history in Vancouver: the automatic
+   * re-read A starts and stays pending; returns A and the next reads.
+   */
+  async function renderWithPendingAutomaticRead() {
+    useViewport(false); // the compact line says "N visites · …"
+    const automatic = deferred();
+    actions.getClientProfileAction
+      .mockResolvedValueOnce(ok(visits(11)))
+      .mockReturnValueOnce(automatic.promise);
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok({ ...timelinePage([appointmentEvent()]), timezone: VANCOUVER }),
+    );
+    render(<ClientProfile clientId={CLIENT_ID} />);
+    await flush();
+    await flush();
+    expect(actions.getClientProfileAction).toHaveBeenCalledTimes(2);
+    expect(shownVisits()).toBe("11");
+    return automatic;
+  }
+
+  it("automatic A, then manual B: B answers first, A's late answer never replaces it", async () => {
+    const automatic = await renderWithPendingAutomaticRead();
+    const manual = deferred();
+    actions.getClientProfileAction.mockReturnValueOnce(manual.promise);
+    reload();
+    await flush();
+
+    manual.resolve(ok(visits(13, VANCOUVER)));
+    await flush();
+    expect(shownVisits()).toBe("13");
+    expect(screen.queryByText(/Le fuseau horaire du commerce a changé/)).toBe(
+      null,
+    );
+
+    automatic.resolve(ok(visits(12))); // Paris, older
+    await flush();
+    await flush();
+    expect(shownVisits()).toBe("13");
+    expect(screen.queryByText(/Le fuseau horaire du commerce a changé/)).toBe(
+      null,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(actions.getClientProfileAction).toHaveBeenCalledTimes(3);
+  });
+
+  it("reverse order: A's answer, arriving while B is pending, is never shown", async () => {
+    const automatic = await renderWithPendingAutomaticRead();
+    const manual = deferred();
+    actions.getClientProfileAction.mockReturnValueOnce(manual.promise);
+    reload();
+    await flush();
+
+    automatic.resolve(ok(visits(12, VANCOUVER)));
+    await flush();
+    expect(shownVisits()).toBe("11"); // still the last applied read
+
+    manual.resolve(ok(visits(13, VANCOUVER)));
+    await flush();
+    expect(shownVisits()).toBe("13");
+    expect(actions.getClientProfileAction).toHaveBeenCalledTimes(3);
+  });
+
+  it("a late failure of an older read never replaces a newer result with an error", async () => {
+    const automatic = await renderWithPendingAutomaticRead();
+    const first = deferred();
+    const second = deferred();
+    actions.getClientProfileAction
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    reload(); // manual B
+    await flush();
+    reload(); // manual C, the notice is still there
+    await flush();
+
+    second.resolve(ok(visits(13, VANCOUVER)));
+    await flush();
+    expect(shownVisits()).toBe("13");
+
+    first.resolve(fail("network"));
+    automatic.resolve(fail("internal"));
+    await flush();
+    expect(shownVisits()).toBe("13");
+    expect(screen.queryByText(/La fiche n’a pas pu être chargée/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("another customer: the previous customer's late answer is never shown", async () => {
+    const emma = deferred();
+    actions.getClientProfileAction
+      .mockReturnValueOnce(emma.promise)
+      .mockResolvedValueOnce(
+        ok(
+          profile({
+            client: {
+              id: "30000000-0000-4000-8000-00000000bbbb",
+              displayName: "Inès Benali",
+              firstName: "Inès",
+              lastName: "Benali",
+            },
+          }),
+        ),
+      );
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()])),
+    );
+    const view = render(<ClientProfile clientId={CLIENT_ID} />);
+    await flush();
+    view.rerender(
+      <ClientProfile clientId="30000000-0000-4000-8000-00000000bbbb" />,
+    );
+    await flush();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Inès Benali" }),
+    ).toBeTruthy();
+
+    emma.resolve(ok(profile()));
+    await flush();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Inès Benali" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Emma Laurent")).toBeNull();
+  });
+
+  it("StrictMode: the first, cleaned-up run of the effect never applies its answer", async () => {
+    const first = deferred();
+    actions.getClientProfileAction
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce(ok(visits(13)));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()])),
+    );
+    useViewport(false);
+    render(
+      <StrictMode>
+        <ClientProfile clientId={CLIENT_ID} />
+      </StrictMode>,
+    );
+    await flush();
+    expect(shownVisits()).toBe("13");
+    first.resolve(ok(visits(12)));
+    await flush();
+    expect(shownVisits()).toBe("13");
   });
 });

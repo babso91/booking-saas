@@ -120,6 +120,12 @@ export function ClientProfile({ clientId }: { clientId: string }) {
   // One layout at a time (never the history twice in the page).
   const wide = useMediaQuery("(min-width: 1024px)");
   const alive = useRef(true);
+  /**
+   * Generation of profile reads, shared by every path (first load, retry,
+   * "Recharger la fiche", automatic re-read, another customer): each new
+   * read supersedes all older ones, whatever order the answers arrive in.
+   */
+  const profileRead = useRef(0);
   const timelineToken = useRef(0);
   /** History time zone for which the profile was last re-read (once each). */
   const realignedFor = useRef<string | null>(null);
@@ -132,9 +138,10 @@ export function ClientProfile({ clientId }: { clientId: string }) {
   }, []);
 
   useEffect(() => {
+    const read = (profileRead.current += 1);
     void callAction(() => getClientProfileAction({ clientId })).then(
       (result) => {
-        if (!alive.current) return;
+        if (!alive.current || read !== profileRead.current) return;
         setProfile(
           result.ok
             ? { status: "ready", data: result.data }
@@ -142,6 +149,10 @@ export function ClientProfile({ clientId }: { clientId: string }) {
         );
       },
     );
+    // Another customer, a newer read or leaving: this answer is obsolete.
+    return () => {
+      profileRead.current += 1;
+    };
   }, [clientId, profileRun]);
 
   useEffect(() => {
@@ -176,11 +187,14 @@ export function ClientProfile({ clientId }: { clientId: string }) {
     if (!profileZone || !zone || profileZone === zone) return;
     if (realignedFor.current === zone) return;
     realignedFor.current = zone;
+    // Same generation as every other profile read. No cleanup here: a
+    // change of these inputs must not cancel a newer read in flight.
+    const read = (profileRead.current += 1);
     void callAction(() => getClientProfileAction({ clientId })).then(
       (result) => {
-        if (alive.current && result.ok) {
-          setProfile({ status: "ready", data: result.data });
-        }
+        if (!alive.current || read !== profileRead.current) return;
+        // A failed re-read keeps the profile shown; the notice stays.
+        if (result.ok) setProfile({ status: "ready", data: result.data });
       },
     );
   }, [clientId, profileZone, timeline.timezone]);

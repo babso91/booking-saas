@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -505,4 +506,23 @@ describe("a failed refresh is never shown as a successful one", () => {
       screen.getByRole("link", { name: "Me reconnecter" }).getAttribute("href"),
     ).toBe("/login");
   });
+});
+
+it("StrictMode: the first, cleaned-up run of the read never overwrites the newer answer", async () => {
+  let first!: (value: unknown) => void;
+  listClientsAction
+    .mockReturnValueOnce(new Promise((resolve) => (first = resolve)))
+    .mockResolvedValueOnce(ok(directoryPage([INES])));
+  render(
+    <StrictMode>
+      <ClientDirectory initial={DEFAULT_QUERY} slug="studio-mila" />
+    </StrictMode>,
+  );
+  await flush();
+  expect(listClientsAction).toHaveBeenCalledTimes(2);
+  expect(rows()).toEqual([expect.stringMatching(/^Inès Benali/)]);
+
+  first(ok(directoryPage([EMMA, ZOE])));
+  await flush();
+  expect(rows()).toEqual([expect.stringMatching(/^Inès Benali/)]);
 });
