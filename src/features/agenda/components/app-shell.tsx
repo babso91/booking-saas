@@ -19,16 +19,14 @@ import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 type Business = { name: string; slug: string };
-type Section = "agenda" | "calendar";
+type Section = "agenda" | "clients" | "calendar";
 
 const CALENDAR_SETTINGS = "/app/settings/calendar";
+const CLIENTS = "/app/clients";
 
 // Only destinations that exist are links. Upcoming sections are shown as
 // such, without fake pages.
-const upcoming = [
-  { label: "Clientes", icon: UsersIcon },
-  { label: "Fidélité", icon: GiftIcon },
-];
+const upcoming = [{ label: "Fidélité", icon: GiftIcon }];
 
 /**
  * Professional area frame. Desktop: compact sidebar. Phones and tablets: a
@@ -68,6 +66,13 @@ export function AppShell({
             className={item("agenda")}
           >
             <CalendarIcon size={18} /> Agenda
+          </Link>
+          <Link
+            href={CLIENTS}
+            aria-current={current === "clients" ? "page" : undefined}
+            className={item("clients")}
+          >
+            <UsersIcon size={18} /> Clientes
           </Link>
           <Link
             href={CALENDAR_SETTINGS}
@@ -121,6 +126,16 @@ export function AppShell({
         >
           <CalendarIcon size={21} /> Agenda
         </Link>
+        <Link
+          href={CLIENTS}
+          aria-current={current === "clients" ? "page" : undefined}
+          className={cn(
+            "flex h-16 flex-col items-center justify-center gap-1 text-[11.5px]",
+            current === "clients" ? "font-semibold text-ink" : "text-ink-soft",
+          )}
+        >
+          <UsersIcon size={21} /> Clientes
+        </Link>
         {upcoming.map(({ label, icon: Icon }) => (
           <span
             key={label}
@@ -165,7 +180,7 @@ export function AppShell({
           </Link>
           <PublicLink slug={business.slug} />
           <p className="text-[14px] text-ink-muted">
-            Clientes et fidélité arrivent bientôt dans ton espace.
+            La fidélité arrive bientôt dans ton espace.
           </p>
           <SignOutButton />
         </div>

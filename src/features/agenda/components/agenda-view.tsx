@@ -86,8 +86,11 @@ const DEFAULT_TIME = "09:00";
  */
 export function AgendaView({
   today: initialToday,
+  initialDate,
   slug,
 }: {
+  /** Day to open on (a link from a customer profile); today otherwise. */
+  initialDate?: string;
   /** The business's date today, from PostgreSQL. */
   today: string;
   slug: string;
@@ -98,7 +101,7 @@ export function AgendaView({
 
   const canonical = useCanonicalToday(initialToday, clock);
 
-  const [anchor, setAnchor] = useState(initialToday);
+  const [anchor, setAnchor] = useState(initialDate ?? initialToday);
   const [includeCancelled, setIncludeCancelled] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
