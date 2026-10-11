@@ -61,6 +61,7 @@ describe("customer management and notes errors", () => {
       ["stale_client", "stale_client"],
       ["note_not_found", "note_not_found"],
       ["stale_note", "stale_note"],
+      ["client_note_deleted", "note_deleted"],
     ] as const) {
       const error = databaseException({
         code: "P0001",

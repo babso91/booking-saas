@@ -22,6 +22,8 @@ export const appErrorMessages = {
   stale_client:
     "Cette fiche cliente a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   note_not_found: "Cette note est introuvable.",
+  note_deleted:
+    "Cette note a déjà été enregistrée, puis supprimée. Elle n’a pas été recréée.",
   stale_note:
     "Cette note a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_unavailable: "Cette prestation n’est pas disponible.",
@@ -134,6 +136,7 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_email_conflict: 409,
   stale_client: 409,
   note_not_found: 404,
+  note_deleted: 410,
   stale_note: 409,
   service_unavailable: 409,
   stale_appointment: 409,

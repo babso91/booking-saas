@@ -22,7 +22,7 @@ import type {
   DeleteClientNoteResultDto,
   UpdateClientNoteResultDto,
 } from "@/features/crm/types";
-import { AppException } from "@/lib/errors";
+import { AppException, appErrorMessages } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
@@ -174,11 +174,28 @@ export async function createClientNote(
     .single();
 
   if (error) throw writeException(error);
+  // This request was processed before and its note deleted since: it is
+  // never written again.
+  if (data.status === "deleted") throw noteDeleted();
 
-  return {
-    note: await getClientNote(client, context, input.clientId, data.note_id),
-    created: data.status === "created",
-  };
+  try {
+    return {
+      note: await getClientNote(client, context, input.clientId, data.note_id),
+      created: data.status === "created",
+    };
+  } catch (error) {
+    // A replay answered just before a concurrent deletion committed.
+    if (error instanceof AppException && error.code === "note_not_found") {
+      throw noteDeleted();
+    }
+    throw error;
+  }
+}
+
+function noteDeleted() {
+  return new AppException("note_deleted", {
+    fieldErrors: { requestId: [appErrorMessages.note_deleted] },
+  });
 }
 
 export async function updateClientNote(

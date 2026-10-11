@@ -13,7 +13,7 @@ Backend uniquement. Les écrans CRM de l'étape 2 (PR #17) ne changent pas : ils
 - **Mêmes règles de saisie que l'agenda.** Les champs de contact sont définis une fois (`src/features/crm/schemas/contact.ts`) et partagés par la création de rendez-vous de l'agenda et par le CRM. PostgreSQL applique les mêmes règles et reste l'autorité.
 - **Mêmes motifs que les rendez-vous.**
   - Concurrence optimiste par `version`, incrémentée par `private.bump_version` à chaque mise à jour.
-  - Idempotence par `creation_request_id`, avec une empreinte (`creation_request_fingerprint`) liée à la commande canonique.
+  - Idempotence par `creation_request_id`, avec une empreinte liée à la commande canonique. Pour les notes, la trace d'une requête traitée survit à la note (voir « Requêtes de création traitées »).
 - **RLS reste l'autorité.** Toutes les fonctions sont `SECURITY INVOKER` : la RLS de `clients`, `client_notes`, `appointments` et `email_events` s'applique à chaque lecture et à chaque écriture. Chaque fonction vérifie aussi l'appartenance au business (`crm_assert_member`, erreur `forbidden`) et filtre chaque requête par `p_business_id`. Le business vient toujours de la session (`runBusinessAction`), jamais de l'entrée.
 - **Une table dédiée aux notes datées** (`public.client_notes`). Le champ libre `clients.internal_notes` n'est ni migré, ni modifié (voir « Notes héritées »).
 
@@ -37,6 +37,7 @@ Chaque action renvoie un `ActionResult`. Nouveaux codes d'erreur :
 | `stale_client`          | 409    | La fiche a changé depuis `expectedVersion`.                                                                           |
 | `note_not_found`        | 404    | Aucune note de cet identifiant pour cette cliente de ce business.                                                     |
 | `stale_note`            | 409    | La note a changé depuis `expectedVersion`.                                                                            |
+| `note_deleted`          | 410    | Rejeu d'une création déjà traitée dont la note a été supprimée depuis : rien n'est recréé (`fieldErrors.requestId`).  |
 
 Codes existants réutilisés :
 
@@ -106,16 +107,20 @@ Rien ne change. Le trigger existant (`clients_record_calendar_mirrors`) rend les
 
 ### Modèle : `public.client_notes`
 
-| Colonne                                               | Rôle                                                                                                                                                         |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `business_id`, `client_id`                            | Clé étrangère composite vers `clients (id, business_id)` : une note ne peut appartenir qu'à une cliente de son business. Elle est supprimée avec la cliente. |
-| `content`                                             | NFC, rogné (mêmes caractères que `String.prototype.trim`), 1 à 5 000 caractères, sauts de ligne internes conservés.                                          |
-| `created_at`                                          | Date de la note, fixée par la base, jamais par l'appelant. Elle ne change pas à l'édition.                                                                   |
-| `updated_at`, `updated_by`, `version`                 | Suivent uniquement les changements de contenu.                                                                                                               |
-| `created_by`                                          | L'utilisatrice de la session (`auth.uid()`), imposée par la base. `null` si le compte est supprimé.                                                          |
-| `creation_request_id`, `creation_request_fingerprint` | Idempotence, comme pour les clientes.                                                                                                                        |
+| Colonne                               | Rôle                                                                                                                                                         |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `business_id`, `client_id`            | Clé étrangère composite vers `clients (id, business_id)` : une note ne peut appartenir qu'à une cliente de son business. Elle est supprimée avec la cliente. |
+| `content`                             | NFC, rogné (mêmes caractères que `String.prototype.trim`), 1 à 5 000 caractères, sauts de ligne internes conservés.                                          |
+| `created_at`                          | Date de la note, fixée par la base, jamais par l'appelant. Elle ne change pas à l'édition.                                                                   |
+| `updated_at`, `updated_by`, `version` | Suivent uniquement les changements de contenu.                                                                                                               |
+| `created_by`                          | L'utilisatrice de la session (`auth.uid()`), imposée par la base. `null` seulement si ce profil est réellement supprimé.                                     |
+| `creation_request_id`                 | La requête de création qui l'a écrite (voir « Requêtes de création traitées »).                                                                              |
 
-Le trigger `client_notes_guard` garantit ces règles quel que soit le chemin d'écriture (fonctions, DML d'un membre, `service_role`). Une note ne peut changer ni de business, ni de cliente, ni de date, ni d'auteur, ni de clé de requête (`client_note_immutable`).
+### Attribution : contrôlée par la base
+
+- **Privilèges par colonne.** Un membre peut insérer `business_id`, `client_id`, `content` et `creation_request_id`, puis modifier `content`, et rien d'autre. Il n'existe aucun droit `UPDATE` sur toute la table : il passerait outre les droits par colonne. Toute tentative directe sur l'auteur, la date ou la version est refusée (`42501`).
+- **Trigger `client_notes_guard`**, quel que soit le rôle (fonctions, DML d'un membre, `service_role`). Une note ne peut changer ni de business, ni de cliente, ni de date, ni d'auteur, ni de clé de requête (`client_note_immutable`). Une référence d'auteur (`created_by`, `updated_by`) ne devient `null` que si ce profil n'existe plus : c'est le `ON DELETE SET NULL` de sa clé étrangère, à la suppression réelle du compte. Le profil est cherché avec les droits du propriétaire, jamais déduit de ce que la RLS laisse voir à l'appelant.
+- **Version.** Elle ne bouge qu'avec le contenu. La suppression d'un auteur ne change ni la version, ni `updated_at`.
 
 ### Lecture et pagination
 
@@ -127,10 +132,40 @@ Le trigger `client_notes_guard` garantit ces règles quel que soit le chemin d'�
 
 ### Écriture
 
-- **Création** : idempotente par `requestId`. Un nouvel essai donne `created: false` ; une clé réutilisée pour une autre cliente ou un autre texte donne `idempotency_conflict`.
+- **Création** : idempotente par `requestId`, une fois pour toutes (voir ci-dessous).
 - **Édition** : elle porte la `version` lue (`stale_note` sinon), avec verrou de ligne. Le même contenu donne `changed: false`, sans écriture.
 - **Suppression** : elle porte la `version` lue (`stale_note` si la note a changé entre-temps). Supprimer une note absente répond `deleted: false` : supprimer deux fois revient au même. La réponse ne dit pas si la note a existé.
 - **Désignation complète.** Une note est toujours désignée par sa cliente et par son identifiant. Une note visée via une autre cliente est introuvable et reste intacte.
+
+### Requêtes de création traitées : `private.client_note_requests`
+
+Une requête de création traitée le reste, même après la suppression de sa note. Le registre garde une ligne par requête :
+
+- `request_id`, unique dans le business ;
+- `client_id` ;
+- une empreinte SHA-256 de la commande (cliente et contenu) ;
+- `note_id`, la note écrite ;
+- `created_at`.
+
+Il ne garde **aucun contenu**.
+
+- **Écriture atomique.** Le trigger `client_notes_record_request` enregistre la requête dans la transaction de l'insertion, quel que soit le chemin.
+- **Pierre tombale atomique.** À la suppression de la note, par n'importe quel chemin (action, DML d'un membre, cascade), sa clé étrangère met `note_id` à `null` dans la même transaction.
+- **Concurrence.** La clé primaire fait attendre un second insert de la même requête jusqu'à la validation du premier. La ligne existante est ensuite verrouillée : une suppression en cours se termine avant la lecture.
+
+| Rejeu de `requestId`                  | Réponse                                                                      |
+| ------------------------------------- | ---------------------------------------------------------------------------- |
+| Même commande, note toujours présente | La note actuelle (contenu modifié compris), `created: false`. Aucun doublon. |
+| Même commande, note supprimée depuis  | `note_deleted` (410). Rien n'est écrit, aucun ancien contenu n'est restauré. |
+| Autre cliente ou autre contenu        | `idempotency_conflict`, que la note existe encore ou non.                    |
+| Nouveau `requestId`                   | Une nouvelle note, même avec le même texte.                                  |
+
+Confidentialité et durée de vie :
+
+- **Accès.** Le registre est dans le schéma `private` : aucun rôle d'API ne le lit ni ne l'écrit, et aucune fonction ne renvoie l'empreinte.
+- **Empreinte.** Elle est traitée comme une donnée sensible : elle permettrait de confirmer une hypothèse sur le texte d'une note supprimée.
+- **Suppression.** Les lignes partent avec la cliente, donc avec le business.
+- **Oracle résiduel.** Un rejeu permet de confirmer un texte supposé (`note_deleted` ou `idempotency_conflict`). Mais il faut connaître le `requestId`, que seul le formulaire d'origine connaît : aucune réponse ne l'expose.
 
 ### Confidentialité
 

@@ -20,6 +20,7 @@ const domainMessages: Record<string, AppErrorCode> = {
   client_not_found: "client_not_found",
   stale_client: "stale_client",
   note_not_found: "note_not_found",
+  client_note_deleted: "note_deleted",
   stale_note: "stale_note",
   service_unavailable: "service_unavailable",
   stale_appointment: "stale_appointment",

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { createClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
@@ -21,6 +22,7 @@ import {
 import type { ClientNotesPageDto } from "@/features/crm/types";
 import type { ActionResult, AppErrorCode } from "@/lib/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
+import type { Database } from "@/types/database.generated";
 
 import {
   anonClient,
@@ -28,6 +30,7 @@ import {
   createProfessional,
   createService,
   db,
+  env,
   insertAppointment,
   type Professional,
   type TestBusiness,
@@ -1101,7 +1104,8 @@ describe("private notes", () => {
     ).toEqual([]);
     expect(await noteRow(note.id)).toEqual(before);
 
-    // Even a member's direct write cannot move it, re-date it or re-sign it.
+    // Even a member's direct write cannot move it, re-date it or re-sign
+    // it: members may update the content only (column privilege).
     for (const change of [
       { client_id: other.id },
       { created_at: "2020-01-01T00:00:00Z" },
@@ -1111,7 +1115,7 @@ describe("private notes", () => {
         .from("client_notes")
         .update(change)
         .eq("id", note.id);
-      expect(error).toMatchObject({ message: "client_note_immutable" });
+      expect(error?.code).toBe("42501");
     }
     expect(await noteRow(note.id)).toEqual(before);
   });
@@ -1446,48 +1450,48 @@ describe("private notes", () => {
 // action waits for it, then the first call commits
 // ---------------------------------------------------------------------------
 
+/** Resolves once another backend running `call` waits on a lock. */
+async function waitForBlockedCall(call: string, except: number) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const { rows } = await db.query(
+      `select 1 from pg_stat_activity
+       where wait_event_type = 'Lock' and pid <> $2
+         and strpos(query, $1) > 0`,
+      [call, except],
+    );
+    if (rows.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`${call} never waited for the first transaction`);
+}
+
+/** As ownerA, in a transaction left open. */
+async function firstCall<T>(sql: string, params: unknown[]) {
+  const transaction = await openTransaction({
+    role: "authenticated",
+    userId: ownerA.userId,
+  });
+  const { rows } = await transaction.connection.query(sql, params);
+  return { transaction, row: rows[0] as T };
+}
+
+async function interleave<T>(
+  first: OpenTransaction,
+  call: string,
+  second: () => Promise<T>,
+): Promise<T> {
+  try {
+    const pending = second();
+    await waitForBlockedCall(call, first.pid);
+    await closeTransaction(first, "commit");
+    return await pending;
+  } catch (error) {
+    await closeTransaction(first, "rollback").catch(() => undefined);
+    throw error;
+  }
+}
+
 describe("concurrent writes, interleaved deterministically", () => {
-  /** Resolves once another backend running `call` waits on a lock. */
-  async function waitForBlockedCall(call: string, except: number) {
-    for (let attempt = 0; attempt < 200; attempt += 1) {
-      const { rows } = await db.query(
-        `select 1 from pg_stat_activity
-         where wait_event_type = 'Lock' and pid <> $2
-           and strpos(query, $1) > 0`,
-        [call, except],
-      );
-      if (rows.length > 0) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    throw new Error(`${call} never waited for the first transaction`);
-  }
-
-  /** As ownerA, in a transaction left open. */
-  async function firstCall<T>(sql: string, params: unknown[]) {
-    const transaction = await openTransaction({
-      role: "authenticated",
-      userId: ownerA.userId,
-    });
-    const { rows } = await transaction.connection.query(sql, params);
-    return { transaction, row: rows[0] as T };
-  }
-
-  async function interleave<T>(
-    first: OpenTransaction,
-    call: string,
-    second: () => Promise<T>,
-  ): Promise<T> {
-    try {
-      const pending = second();
-      await waitForBlockedCall(call, first.pid);
-      await closeTransaction(first, "commit");
-      return await pending;
-    } catch (error) {
-      await closeTransaction(first, "rollback").catch(() => undefined);
-      throw error;
-    }
-  }
-
   it("a submission racing the same request waits for it and answers with its customer", async () => {
     const requestId = randomUUID();
     const { transaction, row } = await firstCall<{
@@ -1641,5 +1645,315 @@ describe("the functions' surface", () => {
     expect(helper).toEqual([
       { source: "select private.canonical_email(p_value);" },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Note authorship: controlled by the database, never erased by a member
+// ---------------------------------------------------------------------------
+
+describe("note authorship", () => {
+  /** A professional added to `business` as a second member. */
+  async function member(label: string, business: TestBusiness) {
+    const professional = await createProfessional(label);
+    await db.query(
+      `insert into public.business_members (business_id, user_id, role)
+       values ($1, $2, 'admin')`,
+      [business.id, professional.userId],
+    );
+    return professional;
+  }
+
+  /** Alice writes a note, Bob edits it: both authors are recorded. */
+  async function writtenAndEdited() {
+    const founder = await createProfessional("crm-authors-owner");
+    const business = await createBusiness(founder.userId);
+    const alice = await member("crm-authors-alice", business);
+    const bob = await member("crm-authors-bob", business);
+    const { rows } = await db.query<{ id: string }>(
+      `insert into public.clients (business_id, first_name) values ($1, 'Emma') returning id`,
+      [business.id],
+    );
+    const clientId = rows[0]!.id;
+    as(alice);
+    const note = ok(
+      await createClientNoteAction({
+        clientId,
+        content: "Écrite par Alice",
+        requestId: randomUUID(),
+      }),
+    ).note;
+    as(bob);
+    ok(
+      await updateClientNoteAction({
+        clientId,
+        noteId: note.id,
+        expectedVersion: 1,
+        content: "Modifiée par Bob",
+      }),
+    );
+    const row = await noteRow(note.id);
+    expect(row).toMatchObject({
+      created_by: alice.userId,
+      updated_by: bob.userId,
+      version: 2,
+    });
+    return { business, alice, bob, clientId, noteId: note.id, row: row! };
+  }
+
+  it("a member cannot erase, forge or re-version attribution through the API", async () => {
+    const { bob, alice, noteId, row } = await writtenAndEdited();
+    for (const change of [
+      { created_by: null, updated_by: null },
+      { created_by: null },
+      { updated_by: null },
+      { created_by: bob.userId },
+      { updated_by: alice.userId },
+      { version: 99 },
+      { updated_at: "2030-01-01T00:00:00Z" },
+    ]) {
+      const { error } = await bob.client
+        .from("client_notes")
+        .update(change)
+        .eq("id", noteId);
+      expect(error?.code).toBe("42501");
+    }
+    expect(await noteRow(noteId)).toEqual(row);
+
+    // The content stays editable directly, with the database's attribution.
+    const { error } = await bob.client
+      .from("client_notes")
+      .update({ content: "Corrigée par Bob" })
+      .eq("id", noteId);
+    expect(error).toBeNull();
+    expect(await noteRow(noteId)).toMatchObject({
+      created_by: alice.userId,
+      updated_by: bob.userId,
+      version: 3,
+    });
+  });
+
+  it("whatever the role, a reference to an existing profile is never nulled", async () => {
+    const { noteId, row } = await writtenAndEdited();
+    for (const sql of [
+      "update public.client_notes set created_by = null, updated_by = null where id = $1",
+      "update public.client_notes set created_by = null where id = $1",
+      "update public.client_notes set updated_by = null where id = $1",
+    ]) {
+      await expect(db.query(sql, [noteId])).rejects.toMatchObject({
+        message: "client_note_immutable",
+      });
+    }
+    expect(await noteRow(noteId)).toEqual(row);
+  });
+
+  it("a genuinely deleted account clears its references; later edits still work", async () => {
+    const { alice, bob, clientId, noteId, row } = await writtenAndEdited();
+    const admin = createClient<Database>(env.apiUrl, env.serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { error } = await admin.auth.admin.deleteUser(alice.userId);
+    expect(error).toBeNull();
+    const { rows: profiles } = await db.query(
+      "select 1 from public.profiles where id = $1",
+      [alice.userId],
+    );
+    expect(profiles).toEqual([]);
+    // The foreign key cleared the reference: nothing else moved.
+    expect(await noteRow(noteId)).toEqual({ ...row, created_by: null });
+
+    as(bob);
+    const edited = ok(
+      await updateClientNoteAction({
+        clientId,
+        noteId,
+        expectedVersion: 2,
+        content: "Reprise par Bob",
+      }),
+    ).note;
+    expect(edited).toMatchObject({
+      createdBy: null,
+      updatedBy: bob.userId,
+      version: 3,
+    });
+  });
+
+  it("another business's member cannot touch the attribution either", async () => {
+    const { noteId, row } = await writtenAndEdited();
+    const { error } = await ownerB.client
+      .from("client_notes")
+      .update({ created_by: null })
+      .eq("id", noteId);
+    expect(error?.code).toBe("42501");
+    const edit = await ownerB.client
+      .from("client_notes")
+      .update({ content: "Intrusion" })
+      .eq("id", noteId)
+      .select();
+    expect(edit.data).toEqual([]);
+    expect(await noteRow(noteId)).toEqual(row);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A processed creation request stays processed, even once its note is gone
+// ---------------------------------------------------------------------------
+
+describe("deleted notes and replayed creations", () => {
+  async function notesOf(clientId: string) {
+    const { rows } = await db.query<{ id: string; content: string }>(
+      "select id, content from public.client_notes where client_id = $1 order by created_at",
+      [clientId],
+    );
+    return rows;
+  }
+
+  async function writeThenDelete(content = "Supprimée ensuite") {
+    const record = await newCustomer({ firstName: "Fanny" });
+    as(ownerA);
+    const input = { clientId: record.id, content, requestId: randomUUID() };
+    const note = ok(await createClientNoteAction(input)).note;
+    ok(
+      await updateClientNoteAction({
+        clientId: record.id,
+        noteId: note.id,
+        expectedVersion: 1,
+        content: `${content} (modifiée)`,
+      }),
+    );
+    return { record, input, note };
+  }
+
+  it("create, edit, replay: the same note, no duplicate, no content reset", async () => {
+    const { record, input, note } = await writeThenDelete();
+    const replayed = ok(await createClientNoteAction(input));
+    expect(replayed).toMatchObject({
+      created: false,
+      note: { id: note.id, content: `${input.content} (modifiée)`, version: 2 },
+    });
+    expect(await notesOf(record.id)).toHaveLength(1);
+  });
+
+  it("create, delete, replay: note_deleted, nothing recreated; a changed payload is idempotency_conflict", async () => {
+    const { record, input, note } = await writeThenDelete();
+    ok(
+      await deleteClientNoteAction({
+        clientId: record.id,
+        noteId: note.id,
+        expectedVersion: 2,
+      }),
+    );
+
+    failure(await createClientNoteAction(input), "note_deleted", "requestId");
+    failure(
+      await createClientNoteAction({ ...input, content: "Autre texte" }),
+      "idempotency_conflict",
+      "requestId",
+    );
+    expect(await notesOf(record.id)).toEqual([]);
+    expect(
+      ok(await listClientNotesAction({ clientId: record.id })).notes,
+    ).toEqual([]);
+
+    // A new request writes a new note, even with the same text.
+    const fresh = ok(
+      await createClientNoteAction({ ...input, requestId: randomUUID() }),
+    );
+    expect(fresh.created).toBe(true);
+    expect(fresh.note.id).not.toBe(note.id);
+    expect(await notesOf(record.id)).toEqual([
+      { id: fresh.note.id, content: input.content },
+    ]);
+  });
+
+  it("a note deleted directly through the API is not recreated by a replay", async () => {
+    const { record, input, note } = await writeThenDelete();
+    const removal = await ownerA.client
+      .from("client_notes")
+      .delete()
+      .eq("id", note.id)
+      .select();
+    expect(removal.data).toHaveLength(1);
+    failure(await createClientNoteAction(input), "note_deleted");
+    expect(await notesOf(record.id)).toEqual([]);
+  });
+
+  it("a replay racing the deletion waits for it, then answers note_deleted", async () => {
+    const { record, input, note } = await writeThenDelete();
+    const { transaction, row } = await firstCall<{ status: string }>(
+      "select * from public.crm_delete_client_note($1, $2, $3, 2)",
+      [A.id, record.id, note.id],
+    );
+    expect(row.status).toBe("deleted");
+    as(ownerA);
+    const result = await interleave(transaction, "crm_create_client_note", () =>
+      createClientNoteAction(input),
+    );
+    failure(result, "note_deleted");
+    expect(await notesOf(record.id)).toEqual([]);
+  });
+
+  it("the ledger keeps no content, is unreachable from the API, and goes with the customer", async () => {
+    const { record, input, note } = await writeThenDelete("Texte privé");
+    ok(
+      await deleteClientNoteAction({
+        clientId: record.id,
+        noteId: note.id,
+        expectedVersion: 2,
+      }),
+    );
+    const { rows: columns } = await db.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+       where table_schema = 'private' and table_name = 'client_note_requests'
+       order by ordinal_position`,
+    );
+    expect(columns.map((column) => column.column_name)).toEqual([
+      "business_id",
+      "request_id",
+      "client_id",
+      "fingerprint",
+      "note_id",
+      "created_at",
+    ]);
+    const { rows: ledger } = await db.query(
+      `select note_id from private.client_note_requests
+       where business_id = $1 and request_id = $2`,
+      [A.id, input.requestId],
+    );
+    expect(ledger).toEqual([{ note_id: null }]);
+    const { rows: content } = await db.query(
+      "select 1 from public.client_notes where content like 'Texte privé%'",
+    );
+    expect(content).toEqual([]);
+    const { rows: privileges } = await db.query(
+      `select has_table_privilege('authenticated', 'private.client_note_requests', 'select, insert, update, delete') as member,
+              has_table_privilege('anon', 'private.client_note_requests', 'select, insert, update, delete') as anon`,
+    );
+    expect(privileges).toEqual([{ member: false, anon: false }]);
+
+    // The ledger goes with the customer's data.
+    await db.query("delete from public.clients where id = $1", [record.id]);
+    const { rows: remaining } = await db.query(
+      "select 1 from private.client_note_requests where client_id = $1",
+      [record.id],
+    );
+    expect(remaining).toEqual([]);
+  });
+
+  it("request ids are per business: the same id in another business is another request", async () => {
+    const { input } = await writeThenDelete();
+    as(ownerB);
+    const elsewhere = ok(
+      await createClientAction({ firstName: "Gina", requestId: randomUUID() }),
+    ).client;
+    const created = ok(
+      await createClientNoteAction({
+        clientId: elsewhere.id,
+        content: input.content,
+        requestId: input.requestId,
+      }),
+    );
+    expect(created.created).toBe(true);
+    expect(await notesOf(elsewhere.id)).toHaveLength(1);
   });
 });

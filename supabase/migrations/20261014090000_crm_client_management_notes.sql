@@ -15,9 +15,17 @@
 --      (idempotent creation, as appointments): a retried or double
 --      submission creates one customer.
 --   3. public.client_notes: private dated notes about a customer, written
---      by the business's professionals. The legacy free text
+--      by the business's professionals. Authorship and dates belong to the
+--      database: members may change the content only (column privileges),
+--      and an author reference becomes null only when that profile is
+--      really deleted (its foreign key). The legacy free text
 --      clients.internal_notes is neither migrated nor changed; it is only
 --      read back (crm_list_client_notes, `legacyNotes`).
+--   4. private.client_note_requests: the durable record of every processed
+--      note creation request. It outlives the note: a replayed request
+--      never writes a note again, even once its note is deleted. It keeps
+--      no content (a fingerprint), is unreachable from the API and goes
+--      with the customer.
 --
 -- Security: every function is SECURITY INVOKER: row level security on
 -- clients, client_notes, appointments and email_events stays the authority
@@ -381,27 +389,21 @@ create table public.client_notes (
   version integer not null default 1 check (version >= 1),
   created_by uuid references public.profiles (id) on delete set null,
   updated_by uuid references public.profiles (id) on delete set null,
+  -- The creation request that wrote it (idempotency: see
+  -- private.client_note_requests).
   creation_request_id uuid,
-  creation_request_fingerprint text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   -- The customer of the note's own business (a note of another business's
   -- customer cannot exist). Notes go with their customer.
   constraint client_notes_client_fkey foreign key (client_id, business_id)
-    references public.clients (id, business_id) on delete cascade,
-  constraint client_notes_creation_request_fingerprint_present check (
-    (creation_request_id is null) = (creation_request_fingerprint is null)
-  )
+    references public.clients (id, business_id) on delete cascade
 );
 
 -- One customer's notes, newest first (also the order of a future timeline
 -- branch: occurred_at = created_at, then id).
 create index client_notes_client_idx
   on public.client_notes (business_id, client_id, created_at desc, id desc);
-
-create unique index client_notes_creation_request_idx
-  on public.client_notes (business_id, creation_request_id)
-  where creation_request_id is not null;
 
 comment on table public.client_notes is
   'Private dated notes about a customer, written by the business''s professionals. Never public.';
@@ -418,8 +420,12 @@ comment on column public.client_notes.version is
 --   update  business, customer, date, author and creation request never
 --           change (a note stays with its customer); a change of the
 --           content bumps version, updated_at and updated_by; otherwise
---           they stay (a removed author's id may only become null, as its
---           foreign key does).
+--           they stay.
+-- An author reference (created_by, updated_by) becomes null only when that
+-- profile no longer exists: the ON DELETE SET NULL of its foreign key,
+-- which runs after the profile's deletion. SECURITY DEFINER: the profile is
+-- looked up whatever the caller may see (row level security hides other
+-- users' profiles), never inferred from the caller's view.
 create function private.guard_client_note()
 returns trigger
 language plpgsql
@@ -440,8 +446,9 @@ begin
     or new.client_id is distinct from old.client_id
     or new.created_at is distinct from old.created_at
     or new.creation_request_id is distinct from old.creation_request_id
-    or new.creation_request_fingerprint is distinct from old.creation_request_fingerprint
-    or (new.created_by is distinct from old.created_by and new.created_by is not null) then
+    or (new.created_by is distinct from old.created_by
+        and (new.created_by is not null
+             or exists (select 1 from public.profiles p where p.id = old.created_by))) then
     raise exception using errcode = '55000', message = 'client_note_immutable';
   end if;
 
@@ -450,7 +457,9 @@ begin
     new.updated_at := pg_catalog.now();
     new.updated_by := (select auth.uid());
   else
-    if new.updated_by is distinct from old.updated_by and new.updated_by is not null then
+    if new.updated_by is distinct from old.updated_by
+      and (new.updated_by is not null
+           or exists (select 1 from public.profiles p where p.id = old.updated_by)) then
       raise exception using errcode = '55000', message = 'client_note_immutable';
     end if;
     new.version := old.version;
@@ -483,8 +492,113 @@ create policy client_notes_delete_member
   using (public.is_business_member(business_id));
 
 -- Signed-in members only, through row level security; never anonymous.
+-- Column privileges: a member writes a note's customer, content and
+-- creation request, then changes its content only. Authorship, dates and
+-- version are never the caller's (a table-wide UPDATE grant would override
+-- these column grants, so there is none).
 revoke all on table public.client_notes from anon, authenticated;
-grant select, insert, update, delete on table public.client_notes to authenticated;
+grant select, delete on table public.client_notes to authenticated;
+grant insert (business_id, client_id, content, creation_request_id)
+  on table public.client_notes to authenticated;
+grant update (content) on table public.client_notes to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 5b. Processed note creation requests
+-- ---------------------------------------------------------------------------
+
+-- One row per creation request ever processed for a customer: the request
+-- id (unique within the business), a fingerprint of the command (customer
+-- and content) and the note it wrote. The row outlives the note: when the
+-- note is deleted, by any path, its foreign key sets note_id to null in the
+-- same transaction (the tombstone). A replayed request is thus answered
+-- from here and never writes a note again.
+--
+-- Privacy: no content is kept, only a SHA-256 fingerprint, which is still
+-- treated as sensitive (it can confirm a guess of a deleted note): the
+-- table is in the private schema, readable by no API role, and no function
+-- returns it. Lifecycle: the rows go with the customer (and so with the
+-- business).
+create table private.client_note_requests (
+  business_id uuid not null,
+  request_id uuid not null,
+  client_id uuid not null,
+  fingerprint text not null,
+  note_id uuid references public.client_notes (id) on delete set null,
+  created_at timestamptz not null default now(),
+  primary key (business_id, request_id),
+  constraint client_note_requests_client_fkey foreign key (client_id, business_id)
+    references public.clients (id, business_id) on delete cascade
+);
+
+create index client_note_requests_note_idx
+  on private.client_note_requests (note_id)
+  where note_id is not null;
+create index client_note_requests_client_idx
+  on private.client_note_requests (business_id, client_id);
+
+alter table private.client_note_requests enable row level security;
+revoke all on table private.client_note_requests from public, anon, authenticated, service_role;
+
+-- After a note with a creation request is inserted (any path), records the
+-- request in the same transaction. A request processed before is never
+-- processed again: the insert is refused with
+--   client_note_replayed  same command, its note still exists (DETAIL: id);
+--   client_note_deleted   same command, its note was deleted since;
+--   idempotency_conflict  another customer or content.
+-- Concurrency: the request's primary key makes a concurrent insert of the
+-- same request wait for the first; the existing record is then locked, so
+-- that a deletion of its note in progress settles before it is read.
+create function private.record_client_note_request()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_fingerprint text := pg_catalog.encode(
+    pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.jsonb_build_object('client_id', new.client_id, 'content', new.content)::text,
+      'UTF8'
+    )),
+    'hex'
+  );
+  v_existing record;
+begin
+  insert into private.client_note_requests (business_id, request_id, client_id, fingerprint, note_id)
+  values (new.business_id, new.creation_request_id, new.client_id, v_fingerprint, new.id)
+  on conflict (business_id, request_id) do nothing;
+
+  if found then
+    return null;
+  end if;
+
+  select r.fingerprint, r.note_id into v_existing
+  from private.client_note_requests r
+  where r.business_id = new.business_id
+    and r.request_id = new.creation_request_id
+  for update;
+
+  if v_existing.fingerprint is distinct from v_fingerprint then
+    raise exception using errcode = 'P0001', message = 'idempotency_conflict', hint = 'requestId';
+  end if;
+  if v_existing.note_id is null then
+    raise exception using errcode = 'P0001', message = 'client_note_deleted', hint = 'requestId';
+  end if;
+  raise exception using
+    errcode = 'P0001',
+    message = 'client_note_replayed',
+    detail = v_existing.note_id::text,
+    hint = 'requestId';
+end;
+$$;
+
+revoke all on function private.record_client_note_request() from public;
+
+create trigger client_notes_record_request
+  after insert on public.client_notes
+  for each row
+  when (new.creation_request_id is not null)
+  execute function private.record_client_note_request();
 
 -- ---------------------------------------------------------------------------
 -- 6. Notes: read
@@ -575,11 +689,18 @@ $$;
 -- String.prototype.trim removes, as private.canonical_email), 1–5000
 -- characters. Line breaks inside are kept.
 
--- Writes a note about one customer of p_business_id.
--- Outcome: created, or replayed (p_request_id already created note_id for
--- this customer and content: a retry or a double submission).
+-- Writes a note about one customer of p_business_id, once per request.
+-- Outcome:
+--   created   a new note, note_id;
+--   replayed  p_request_id already wrote note_id, for this customer and
+--             content (a retry or a double submission);
+--   deleted   p_request_id already wrote a note for this customer and
+--             content, deleted since: nothing is written again (note_id
+--             null).
 -- Errors: client_not_found, idempotency_conflict (p_request_id used for
--- another customer or content).
+-- another customer or content, the note deleted or not).
+-- The request is recorded by the insert itself (trigger
+-- client_notes_record_request), whatever the path, in the same transaction.
 create function public.crm_create_client_note(
   p_business_id uuid,
   p_client_id uuid,
@@ -598,10 +719,9 @@ declare
     pg_catalog.normalize(p_content, 'NFC'),
     E'\u0009\u000A\u000B\u000C\u000D                  　﻿'
   );
-  v_fingerprint text;
-  v_existing_id uuid;
-  v_existing_fingerprint text;
   v_note_id uuid;
+  v_message text;
+  v_detail text;
 begin
   perform public.crm_assert_member(p_business_id);
 
@@ -614,60 +734,32 @@ begin
   if p_request_id is null then
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'requestId';
   end if;
+  if not exists (
+    select 1 from public.clients c
+    where c.id = p_client_id
+      and c.business_id = p_business_id
+  ) then
+    raise exception using errcode = 'P0002', message = 'client_not_found', hint = 'clientId';
+  end if;
 
-  v_fingerprint := pg_catalog.encode(
-    pg_catalog.sha256(pg_catalog.convert_to(
-      pg_catalog.jsonb_build_object('client_id', p_client_id, 'content', v_content)::text,
-      'UTF8'
-    )),
-    'hex'
-  );
-
-  -- 1. This request already wrote a note (a retry).
-  select n.id, n.creation_request_fingerprint
-  into v_existing_id, v_existing_fingerprint
-  from public.client_notes n
-  where n.business_id = p_business_id
-    and n.creation_request_id = p_request_id;
-
-  if v_existing_id is null then
-    if not exists (
-      select 1 from public.clients c
-      where c.id = p_client_id
-        and c.business_id = p_business_id
-    ) then
-      raise exception using errcode = 'P0002', message = 'client_not_found', hint = 'clientId';
-    end if;
-
-    -- 2. Write. The same request committed meanwhile inserts nothing.
-    insert into public.client_notes (
-      business_id, client_id, content,
-      creation_request_id, creation_request_fingerprint
-    )
-    values (p_business_id, p_client_id, v_content, p_request_id, v_fingerprint)
-    on conflict do nothing
+  begin
+    insert into public.client_notes (business_id, client_id, content, creation_request_id)
+    values (p_business_id, p_client_id, v_content, p_request_id)
     returning id into v_note_id;
+  exception
+    when raise_exception then
+      get stacked diagnostics v_message = message_text, v_detail = pg_exception_detail;
+      if v_message = 'client_note_replayed' then
+        return query select 'replayed'::text, v_detail::uuid;
+        return;
+      elsif v_message = 'client_note_deleted' then
+        return query select 'deleted'::text, null::uuid;
+        return;
+      end if;
+      raise;
+  end;
 
-    if v_note_id is not null then
-      return query select 'created'::text, v_note_id;
-      return;
-    end if;
-
-    select n.id, n.creation_request_fingerprint
-    into v_existing_id, v_existing_fingerprint
-    from public.client_notes n
-    where n.business_id = p_business_id
-      and n.creation_request_id = p_request_id;
-
-    if v_existing_id is null then
-      raise exception using errcode = '40001', message = 'conflict';
-    end if;
-  end if;
-
-  if v_existing_fingerprint is distinct from v_fingerprint then
-    raise exception using errcode = 'P0001', message = 'idempotency_conflict', hint = 'requestId';
-  end if;
-  return query select 'replayed'::text, v_existing_id;
+  return query select 'created'::text, v_note_id;
 end;
 $$;
 
@@ -741,7 +833,10 @@ begin
 end;
 $$;
 
--- Deletes one note of one customer of p_business_id.
+-- Deletes one note of one customer of p_business_id: the row and its
+-- content. Its creation request, if any, stays processed (its record's
+-- note_id becomes null in the same transaction, through the foreign key, as
+-- for any other deletion path).
 -- Outcome: deleted, or absent (no such note here: already deleted by a
 -- previous call, or never one of this customer's: nothing is written, and
 -- nothing tells which). Error: stale_note (the note changed since

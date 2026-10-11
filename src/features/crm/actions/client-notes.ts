@@ -29,7 +29,11 @@ export async function listClientNotesAction(input: unknown) {
   );
 }
 
-/** Writes a note. Idempotent by `requestId` (one per form). */
+/**
+ * Writes a note. Idempotent by `requestId` (one per form): a replay answers
+ * the note it wrote (`created: false`), or `note_deleted` once that note was
+ * deleted (never written again).
+ */
 export async function createClientNoteAction(input: unknown) {
   return runBusinessAction(
     createClientNoteSchema,

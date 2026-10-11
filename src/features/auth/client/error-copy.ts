@@ -107,6 +107,11 @@ export const errorCopy: Record<
     title: "Introuvable",
     message: "Cette note est introuvable.",
   },
+  note_deleted: {
+    title: "Déjà supprimée",
+    message:
+      "Cette note avait déjà été enregistrée, puis supprimée. Elle n’a pas été recréée.",
+  },
   stale_note: {
     title: "Modifiée entre-temps",
     message: "Cette note a changé. Recharge-la avant de réessayer.",

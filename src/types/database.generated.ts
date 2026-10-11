@@ -189,13 +189,13 @@ isOneToOne: false
                   ]
                 },"client_notes": {
                   Row: {
-                    "business_id": string,"client_id": string,"content": string,"created_at": string,"created_by": string | null,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"id": string,"updated_at": string,"updated_by": string | null,"version": number
+                    "business_id": string,"client_id": string,"content": string,"created_at": string,"created_by": string | null,"creation_request_id": string | null,"id": string,"updated_at": string,"updated_by": string | null,"version": number
                   }
                   Insert: {
-                    "business_id": string,"client_id": string,"content": string,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "business_id": string,"client_id": string,"content": string,"created_at"?: string,"created_by"?: string | null,"creation_request_id"?: string | null,"id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Update: {
-                    "business_id"?: string,"client_id"?: string,"content"?: string,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "business_id"?: string,"client_id"?: string,"content"?: string,"created_at"?: string,"created_by"?: string | null,"creation_request_id"?: string | null,"id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Relationships: [
                     {
