@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -135,6 +136,13 @@ export function AppointmentDetails({
         <p className="font-display text-[30px] leading-tight text-ink">
           {appointment.client.displayName}
         </p>
+        <Link
+          href={`/app/clients/${appointment.client.id}`}
+          className="w-fit text-[14px] font-medium text-ink-soft underline decoration-line-strong underline-offset-4 hover:text-ink"
+        >
+          Voir sa fiche cliente
+          <span className="sr-only"> ({appointment.client.displayName})</span>
+        </Link>
         <p className="text-[16px] text-ink-soft">{appointment.service.name}</p>
       </div>
 

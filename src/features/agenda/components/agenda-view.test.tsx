@@ -1220,3 +1220,38 @@ describe("defaults and retries", () => {
     });
   });
 });
+
+describe("links with the customer profiles", () => {
+  it("opens on the day a profile links to (?date=)", async () => {
+    useViewport(true);
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate)),
+    );
+    render(
+      <AgendaView today={TODAY} initialDate="2026-10-24" slug="studio-mila" />,
+    );
+    await waitFor(() =>
+      expect(actions.getAgendaAction).toHaveBeenCalledWith({
+        startDate: "2026-10-19",
+        endDate: "2026-10-25",
+        includeCancelled: false,
+      }),
+    );
+  });
+
+  it("an appointment's panel leads to the customer's profile", async () => {
+    useViewport(true);
+    const user = userEvent.setup();
+    const booked = appointment({ local: "2026-09-28T10:00" });
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [booked] })),
+    );
+    renderAgenda();
+    const details = await openAppointment(user, /Camille Roux/);
+    const link = within(details).getByRole("link", {
+      name: /Voir sa fiche cliente/,
+    });
+    expect(link.getAttribute("href")).toBe(`/app/clients/${booked.client.id}`);
+    expect(link.textContent).toContain("Camille Roux");
+  });
+});
