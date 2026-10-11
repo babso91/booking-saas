@@ -25,8 +25,12 @@ describe("AppShell", () => {
       expect(link.getAttribute("href")).toBe("/app");
       expect(link.getAttribute("aria-current")).toBe("page");
     });
+    screen.getAllByRole("link", { name: /Clientes/ }).forEach((link) => {
+      expect(link.getAttribute("href")).toBe("/app/clients");
+      expect(link.getAttribute("aria-current")).toBeNull();
+    });
     expect(
-      screen.queryByRole("link", { name: /Clientes|Fidélité|Paramètres/ }),
+      screen.queryByRole("link", { name: /Fidélité|Paramètres/ }),
     ).toBeNull();
     expect(screen.getAllByText("Bientôt").length).toBeGreaterThan(0);
     expect(screen.getByText("contenu")).toBeTruthy();
@@ -72,5 +76,24 @@ describe("AppShell", () => {
         .getByRole("link", { name: /Google Calendar/ })
         .getAttribute("href"),
     ).toBe("/app/settings/calendar");
+  });
+
+  it("marks Clientes as the current page in the customer screens", () => {
+    render(
+      <AppShell
+        business={{ name: "Studio Mila", slug: "studio-mila" }}
+        current="clients"
+      >
+        <p>contenu</p>
+      </AppShell>,
+    );
+    const links = screen.getAllByRole("link", { name: /Clientes/ });
+    expect(links).toHaveLength(2); // sidebar and phone tab bar
+    links.forEach((link) =>
+      expect(link.getAttribute("aria-current")).toBe("page"),
+    );
+    screen
+      .getAllByRole("link", { name: /Agenda/ })
+      .forEach((link) => expect(link.getAttribute("aria-current")).toBeNull());
   });
 });
