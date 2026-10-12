@@ -21,8 +21,10 @@ export default async function ClientProfilePage({
       business={{ name: business.name, slug: business.slug }}
       current="clients"
     >
-      {/* A malformed id is refused by the action (client_not_found screen). */}
-      <ClientProfile clientId={clientId} />
+      {/* A malformed id is refused by the action (client_not_found screen).
+          One instance per customer: nothing typed or read for one (drafts,
+          pending answers) can reach another. */}
+      <ClientProfile key={clientId} clientId={clientId} />
     </AppShell>
   );
 }

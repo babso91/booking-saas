@@ -26,8 +26,10 @@ import {
 } from "@/features/crm/actions/crm";
 import type {
   AppointmentSummaryDto,
+  ClientNoteDto,
   ClientProfileDto,
   ClientTimelineEvent,
+  UpdateClientResultDto,
 } from "@/features/crm/types";
 import { cn } from "@/lib/cn";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
@@ -45,8 +47,18 @@ import {
   weekdayShort,
 } from "../client/format";
 import { CrmError } from "./crm-error";
+import { EditClientSheet } from "./edit-client";
 import { Monogram } from "./monogram";
-import { Timeline } from "./timeline";
+import {
+  DeleteNoteDialog,
+  DossierNotes,
+  NoteComposerSheet,
+  NoteEditorSheet,
+  useNotesList,
+  type NoteChange,
+  type NotesListState,
+} from "./notes";
+import { Timeline, type NoteHandlers } from "./timeline";
 
 const TIMELINE_PAGE = 20;
 const DIRECTORY = "/app/clients";
@@ -95,6 +107,12 @@ const isCursorError = (error: UiError) =>
  * history (the timeline, at the centre) and what is durably known about her
  * (the dossier). Profile and first timeline page load in parallel; each
  * zone fails and retries on its own.
+ *
+ * The professional edits the record and writes private notes from here.
+ * Drafts live in this page, apart from the data read: a refresh, a failed
+ * write or a closed sheet never erase them. After every confirmed note
+ * write, the history and the dossier's notes are read again (the server's
+ * order and content decide). The route mounts one instance per customer.
  */
 export function ClientProfile({ clientId }: { clientId: string }) {
   const [profile, setProfile] = useState<Load<ClientProfileDto>>({
@@ -129,6 +147,27 @@ export function ClientProfile({ clientId }: { clientId: string }) {
   const timelineToken = useRef(0);
   /** History time zone for which the profile was last re-read (once each). */
   const realignedFor = useRef<string | null>(null);
+
+  const notesList = useNotesList(clientId);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerText, setComposerText] = useState("");
+  const [editingNote, setEditingNote] = useState<ClientNoteDto | null>(null);
+  const [deletingNote, setDeletingNote] = useState<ClientNoteDto | null>(null);
+  const [editingClient, setEditingClient] = useState(false);
+  const [clientDraft, setClientDraft] = useState(false);
+  const [saved, setSaved] = useState<UpdateClientResultDto | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  /** Bumped when the focused control disappeared (a deleted note). */
+  const [refocus, setRefocus] = useState(0);
+
+  // After the dialog closed (its cleanup runs first, in the same commit).
+  useEffect(() => {
+    if (refocus === 0) return;
+    const target =
+      document.querySelector<HTMLElement>("[data-notes-heading]") ??
+      document.getElementById("client-history");
+    target?.focus();
+  }, [refocus]);
 
   useEffect(() => {
     alive.current = true;
@@ -208,6 +247,80 @@ export function ClientProfile({ clientId }: { clientId: string }) {
       more: "idle",
     }));
     setTimelineRun((value) => value + 1);
+  }
+
+  /** A confirmed note write: shown at once, then both views re-read. */
+  function notesChanged(change: NoteChange) {
+    if (change.type === "updated") {
+      // Same id, same position (its date never changes).
+      setTimeline((value) => ({
+        ...value,
+        events: value.events.map((event) =>
+          event.kind === "note" && event.note.id === change.note.id
+            ? { ...event, note: change.note }
+            : event,
+        ),
+      }));
+    } else if (change.type === "deleted") {
+      setTimeline((value) => ({
+        ...value,
+        events: value.events.filter(
+          (event) =>
+            !(event.kind === "note" && event.note.id === change.noteId),
+        ),
+      }));
+      // Its buttons are gone: the keyboard continues on the notes.
+      setRefocus((value) => value + 1);
+    }
+    notesList.apply(change);
+    reloadTimeline();
+    notesList.reload();
+    setAnnouncement(
+      change.type === "created"
+        ? "Note ajoutée à l’historique."
+        : change.type === "updated"
+          ? "Note modifiée."
+          : change.type === "deleted"
+            ? "Note supprimée."
+            : "",
+    );
+  }
+
+  function clientSaved(result: UpdateClientResultDto) {
+    const { client } = result;
+    setSaved(result);
+    setProfile((value) =>
+      value.status === "ready"
+        ? {
+            ...value,
+            data: {
+              ...value.data,
+              client: {
+                ...value.data.client,
+                displayName: client.displayName,
+                firstName: client.firstName,
+                lastName: client.lastName,
+                email: client.email,
+                phone: client.phone,
+              },
+            },
+          }
+        : value,
+    );
+    // A newer read supersedes any older one still in flight.
+    setProfileRun((value) => value + 1);
+    setAnnouncement(
+      result.changed ? "Fiche mise à jour." : "Aucune modification.",
+    );
+  }
+
+  function showHistory() {
+    if (!wide) setTab("history");
+    window.setTimeout(() => {
+      const heading = document.getElementById("client-history");
+      heading?.scrollIntoView?.({ block: "start" });
+      heading?.focus();
+    }, 0);
   }
 
   async function loadOlder() {
@@ -293,15 +406,32 @@ export function ClientProfile({ clientId }: { clientId: string }) {
   }
 
   const data = profile.data;
+  const noteHandlers: NoteHandlers = {
+    onAdd: () => setComposerOpen(true),
+    onEdit: setEditingNote,
+    onDelete: setDeletingNote,
+  };
   const history = (
     <Timeline
       state={timeline}
       client={data.client}
+      notes={noteHandlers}
       onLoadOlder={() => void loadOlder()}
       onRetry={reloadTimeline}
     />
   );
-  const dossier = <Dossier profile={data} />;
+  const dossier = (
+    <Dossier
+      profile={data}
+      notes={notesList.state}
+      noteHandlers={noteHandlers}
+      onNotesRetry={notesList.reload}
+      onShowHistory={showHistory}
+      onEditClient={() => setEditingClient(true)}
+      clientDraft={clientDraft}
+      saved={saved}
+    />
+  );
 
   return (
     <Page backHref={backHref}>
@@ -333,7 +463,7 @@ export function ClientProfile({ clientId }: { clientId: string }) {
         // Desktop: the history at the centre, the dossier alongside.
         <div className="grid grid-cols-[minmax(0,1.7fr)_minmax(18rem,1fr)] items-start gap-6">
           {history}
-          <div className="sticky top-6 flex flex-col gap-4">{dossier}</div>
+          <div className="flex min-w-0 flex-col gap-4">{dossier}</div>
         </div>
       ) : (
         // Phones and tablets: the history first, the dossier one tap away.
@@ -348,6 +478,42 @@ export function ClientProfile({ clientId }: { clientId: string }) {
           </div>
         </div>
       )}
+
+      <p className="sr-only" role="status">
+        {announcement}
+      </p>
+      <NoteComposerSheet
+        clientId={clientId}
+        open={composerOpen}
+        text={composerText}
+        onTextChange={setComposerText}
+        onClose={() => setComposerOpen(false)}
+        onChanged={notesChanged}
+      />
+      <NoteEditorSheet
+        clientId={clientId}
+        note={editingNote}
+        onClose={() => setEditingNote(null)}
+        onChanged={notesChanged}
+        onSaveAsNew={(text) => {
+          setEditingNote(null);
+          setComposerText(text);
+          setComposerOpen(true);
+        }}
+      />
+      <DeleteNoteDialog
+        clientId={clientId}
+        note={deletingNote}
+        onClose={() => setDeletingNote(null)}
+        onChanged={notesChanged}
+      />
+      <EditClientSheet
+        clientId={clientId}
+        open={editingClient}
+        onClose={() => setEditingClient(false)}
+        onSaved={clientSaved}
+        onDraftChange={setClientDraft}
+      />
     </Page>
   );
 }
@@ -627,7 +793,27 @@ function Tabs({
 // Dossier: what is durably known, only from the CRM read model.
 // ---------------------------------------------------------------------------
 
-function Dossier({ profile }: { profile: ClientProfileDto }) {
+function Dossier({
+  profile,
+  notes,
+  noteHandlers,
+  onNotesRetry,
+  onShowHistory,
+  onEditClient,
+  clientDraft,
+  saved,
+}: {
+  profile: ClientProfileDto;
+  notes: NotesListState;
+  noteHandlers: NoteHandlers;
+  onNotesRetry: () => void;
+  onShowHistory: () => void;
+  onEditClient: () => void;
+  /** Unsaved changes are kept in the edit form. */
+  clientDraft: boolean;
+  /** The last confirmed save, for its message. */
+  saved: UpdateClientResultDto | null;
+}) {
   const { client, overview, upcoming } = profile;
   const others = overview.upcomingCount - upcoming.length;
   const observed = [
@@ -653,7 +839,29 @@ function Dossier({ profile }: { profile: ClientProfileDto }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <DossierSection title="Coordonnées">
+      <DossierSection
+        title="Coordonnées"
+        action={
+          <button
+            type="button"
+            onClick={onEditClient}
+            aria-label={
+              clientDraft
+                ? "Reprendre la modification de la fiche"
+                : "Modifier la fiche"
+            }
+            className="flex h-10 shrink-0 cursor-pointer items-center rounded-xl border border-line px-3 text-[13.5px] font-medium text-ink hover:border-line-strong"
+          >
+            {clientDraft ? "Reprendre la modification" : "Modifier"}
+          </button>
+        }
+      >
+        {clientDraft ? (
+          <p className="text-[13px] text-ink-muted">
+            Modifications non enregistrées, conservées pour plus tard.
+          </p>
+        ) : null}
+        {saved ? <SavedMessage result={saved} /> : null}
         <ContactLine
           icon={<MailIcon size={17} />}
           label="Email"
@@ -668,6 +876,16 @@ function Dossier({ profile }: { profile: ClientProfileDto }) {
           Fiche créée le {dayMonthYear(client.createdAt)}
         </p>
       </DossierSection>
+
+      <DossierNotes
+        list={notes}
+        profileTimezone={profile.timezone}
+        onAdd={noteHandlers.onAdd}
+        onEdit={noteHandlers.onEdit}
+        onDelete={noteHandlers.onDelete}
+        onRetry={onNotesRetry}
+        onShowHistory={onShowHistory}
+      />
 
       <DossierSection title="À venir">
         {upcoming.length === 0 ? (
@@ -752,9 +970,11 @@ function Dossier({ profile }: { profile: ClientProfileDto }) {
 
 function DossierSection({
   title,
+  action,
   children,
 }: {
   title: string;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   const id = useId();
@@ -763,11 +983,38 @@ function DossierSection({
       aria-labelledby={id}
       className="flex flex-col gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-5"
     >
-      <h2 id={id} className="font-display text-[22px] leading-tight text-ink">
-        {title}
-      </h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 id={id} className="font-display text-[22px] leading-tight text-ink">
+          {title}
+        </h2>
+        {action}
+      </div>
       {children}
     </section>
+  );
+}
+
+/** What a confirmed save changed, and what keeps its former contact. */
+function SavedMessage({ result }: { result: UpdateClientResultDto }) {
+  const {
+    upcomingAppointmentsWithOtherEmail: upcoming,
+    queuedEmailsToOtherAddress: queued,
+  } = result.retained;
+  const kept = [
+    upcoming > 0
+      ? `${upcoming} rendez-vous à venir ${upcoming > 1 ? "gardent" : "garde"} l’email indiqué à la réservation`
+      : null,
+    queued > 0
+      ? `${queued} email${queued > 1 ? "s" : ""} déjà programmé${queued > 1 ? "s" : ""} ${queued > 1 ? "restent adressés" : "reste adressé"} à l’ancienne adresse`
+      : null,
+  ].filter(Boolean);
+  return (
+    <Notice tone="success">
+      {result.changed
+        ? "Fiche mise à jour."
+        : "Aucune modification : la fiche avait déjà ces informations."}
+      {kept.length > 0 ? ` ${kept.join(" ; ")}.` : null}
+    </Notice>
   );
 }
 

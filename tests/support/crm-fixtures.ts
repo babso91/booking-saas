@@ -2,12 +2,16 @@ import type {
   AppointmentSummaryDto,
   AppointmentTimelineEvent,
   BusinessInstantDto,
+  ClientNoteDto,
+  ClientNotesPageDto,
   ClientProfileDto,
+  ClientRecordDto,
   ClientTimelinePageDto,
   DirectoryClientDto,
   DirectoryPageDto,
   EmailTimelineEvent,
   LoyaltyTimelineEvent,
+  NoteTimelineEvent,
 } from "@/features/crm/types";
 
 // CRM DTOs exactly as the Server Actions return them. Wall clocks are given
@@ -235,4 +239,65 @@ export function timelinePage(
   nextCursor: string | null = null,
 ): ClientTimelinePageDto {
   return { asOf: AS_OF, timezone: TZ, events, nextCursor };
+}
+
+/** The account that wrote notes (an id, never shown). */
+export const AUTHOR_ID = "40000000-0000-4000-8000-000000000001";
+
+export function note(
+  overrides: Partial<ClientNoteDto> & { local?: string } = {},
+): ClientNoteDto {
+  const { local = "2026-10-02T16:10", ...rest } = overrides;
+  return {
+    id: uuid(),
+    clientId: CLIENT_ID,
+    content: "Souhaite essayer une courbure D au prochain rendez-vous.",
+    version: 1,
+    edited: false,
+    createdAt: at(local),
+    updatedAt: at(local),
+    createdBy: AUTHOR_ID,
+    updatedBy: null,
+    ...rest,
+  };
+}
+
+/** A note in the timeline: `note:<id>`, dated by when it was written. */
+export function noteEvent(value: ClientNoteDto = note()): NoteTimelineEvent {
+  return {
+    id: `note:${value.id}`,
+    kind: "note",
+    occurredAt: value.createdAt,
+    note: value,
+  };
+}
+
+export function notesPage(
+  notes: ClientNoteDto[] = [],
+  overrides: Partial<ClientNotesPageDto> = {},
+): ClientNotesPageDto {
+  return {
+    timezone: TZ,
+    legacyNotes: null,
+    notes,
+    nextCursor: null,
+    ...overrides,
+  };
+}
+
+export function clientRecord(
+  overrides: Partial<ClientRecordDto> = {},
+): ClientRecordDto {
+  return {
+    id: CLIENT_ID,
+    displayName: "Emma Laurent",
+    firstName: "Emma",
+    lastName: "Laurent",
+    email: "emma.laurent@exemple.fr",
+    phone: "06 12 34 56 78",
+    version: 3,
+    createdAt: "2025-03-14T09:00:00.000Z",
+    updatedAt: "2026-09-01T08:00:00.000Z",
+    ...overrides,
+  };
 }

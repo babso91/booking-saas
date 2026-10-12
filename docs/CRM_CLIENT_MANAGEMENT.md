@@ -215,10 +215,28 @@ Depuis la migration `20261015090000_crm_timeline_notes.sql` (PR #19, phase 1), l
 
 **Compatibilité.** L'UI de la PR #17 ignore un `kind` inconnu (`default: return null`), mais elle grouperait l'événement par jour sans l'afficher. Les jours apparaîtraient vides, et une page entière de notes paraîtrait vide. Le backend est donc livré sur la branche de la PR #19 et **ne doit pas être fusionné sans le rendu** de la phase 2. Il n'y a ni drapeau de fonctionnalité ni chemin transitoire. Le contrat de passation est dans [`CRM_NOTES_TIMELINE_HANDOFF.md`](CRM_NOTES_TIMELINE_HANDOFF.md).
 
-## Travail restant (étape 4, PR #19, phase 2 : UI)
+## Écrans (PR #19, phase 2)
 
-- **Écrans.** Créer et modifier une cliente, avec conflit d'email (« Ouvrir la fiche existante »), version périmée (« Recharger ») et message `retained`.
-- **Notes dans la fiche.** Liste, saisie, édition, suppression, plus les notes héritées en lecture seule.
-- **Rendu des notes dans la timeline** ([`CRM_NOTES_TIMELINE_HANDOFF.md`](CRM_NOTES_TIMELINE_HANDOFF.md)). Le backend est livré en phase 1.
-- **Conversion explicite des notes héritées**, si elle est validée.
+Les écrans utilisent ces actions telles quelles. Aucun contrat serveur n'a changé.
+
+- **Annuaire** (`client-directory.tsx`, `create-client.tsx`) : « Ajouter une cliente ».
+  - Seul le prénom est obligatoire.
+  - Le `requestId` est lié à l'empreinte de la commande normalisée (`requestKeyFor`, comme l'agenda). Un nouvel essai des mêmes valeurs le réutilise ; des valeurs modifiées en génèrent un nouveau. Après `idempotency_conflict`, seul un choix explicite (« Créer avec ces informations ») en génère un autre.
+  - Le succès n'est annoncé qu'après confirmation, puis la nouvelle fiche s'ouvre.
+  - `client_email_conflict` nomme la fiche existante et propose « Ouvrir la fiche existante » (`error.conflict`, désormais transmis par `callAction`), sans jamais fusionner.
+- **Fiche, Coordonnées** (`edit-client.tsx`) : « Modifier » lit la fiche et sa version.
+  - La saisie est gardée à part : fermer, échouer ou relire ne l'efface pas.
+  - Sur `stale_client` : comparaison champ par champ. « Garder ma saisie » reporte seulement les champs modifiés par la professionnelle sur la version actuelle. Les autres prennent la valeur actuelle, pour ne jamais annuler un changement fait ailleurs. Enregistrer reste un clic explicite.
+  - Après un enregistrement, le message `retained` est affiché.
+- **Notes** (`notes.tsx`, `timeline.tsx`) :
+  - **Où :** dans la timeline (`kind: "note"`, à sa date, texte brut, retours à la ligne gardés, repli au-delà de ~420 caractères ou de 6 lignes) et dans le Dossier (les 3 plus récentes, plus les notes héritées en lecture seule).
+  - **Création :** même règle de `requestId` que pour une cliente. `note_deleted` et `idempotency_conflict` ne sont jamais contournés automatiquement.
+  - **Édition et suppression :** elles portent `note.id` et `note.version` (jamais `event.id`). Sur `stale_note`, la version actuelle est relue et comparée. Une note disparue entre-temps peut devenir une nouvelle note, sans que le texte soit perdu.
+  - **Après chaque écriture confirmée :** la timeline repart de sa première page et la liste du Dossier est relue. Chaque lecture a sa génération, et une réponse ancienne n'est jamais appliquée.
+- **Une instance de fiche par cliente :** la route monte `ClientProfile` avec `key={clientId}`. Les brouillons et les réponses en cours d'une fiche ne peuvent pas atteindre une autre.
+
+## Travail restant
+
+- **Conversion explicite des notes héritées**, si elle est validée (voir « Notes héritées »).
+- **Nom de l'autrice d'une note :** il demande une lecture backend supplémentaire. Aujourd'hui, l'UI n'affiche ni auteur ni identifiant.
 - **Mise à jour de Google plus rapide (optionnel).** Après un changement de prénom, déclencher le traitement des miroirs comme le font les écritures de l'agenda (`kickCalendarOutbound`). Aujourd'hui, le job périodique s'en charge.
