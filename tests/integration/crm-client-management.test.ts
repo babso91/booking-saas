@@ -1618,7 +1618,7 @@ describe("the functions' surface", () => {
               has_function_privilege('authenticated', p.oid, 'execute') as member
        from pg_proc p
        where p.pronamespace = 'public'::regnamespace
-         and p.proname in ('crm_canonical_email', 'crm_create_client', 'crm_update_client',
+         and p.proname in ('crm_canonical_email', 'crm_canonical_note_content', 'crm_create_client', 'crm_update_client',
            'crm_list_client_notes', 'crm_create_client_note', 'crm_update_client_note',
            'crm_delete_client_note')
        order by 1`,
@@ -1632,6 +1632,7 @@ describe("the functions' surface", () => {
     });
     expect(rows).toEqual([
       fn("crm_canonical_email", "i", true),
+      fn("crm_canonical_note_content", "i"),
       fn("crm_create_client", "v"),
       fn("crm_create_client_note", "v"),
       fn("crm_delete_client_note", "v"),
@@ -1955,5 +1956,302 @@ describe("deleted notes and replayed creations", () => {
     );
     expect(created.created).toBe(true);
     expect(await notesOf(elsewhere.id)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One canonical content, whatever the creation path (Server Action, SQL
+// function, a member's direct insert)
+// ---------------------------------------------------------------------------
+
+describe("one canonical note content, whatever the creation path", () => {
+  /** The Server Action's normalization (the contract): NFC, then trim. */
+  const canonical = (value: string) => value.normalize("NFC").trim();
+
+  async function customerOfA() {
+    return (await newCustomer({ firstName: "Lola" })).id;
+  }
+
+  /** A member's direct insert through the API (permitted by RLS). */
+  async function directInsert(
+    clientId: string,
+    content: string,
+    requestId: string | null = randomUUID(),
+  ) {
+    return ownerA.client
+      .from("client_notes")
+      .insert({
+        business_id: A.id,
+        client_id: clientId,
+        content,
+        creation_request_id: requestId,
+      })
+      .select("id, content, version")
+      .single();
+  }
+
+  /** The SQL function, called directly as the member. */
+  async function rpcCreate(
+    clientId: string,
+    content: string,
+    requestId: string,
+  ) {
+    return ownerA.client
+      .rpc("crm_create_client_note", {
+        p_business_id: A.id,
+        p_client_id: clientId,
+        p_content: content,
+        p_request_id: requestId,
+      })
+      .single();
+  }
+
+  async function storedNotes(clientId: string) {
+    const { rows } = await db.query<{ id: string; content: string }>(
+      "select id, content from public.client_notes where client_id = $1 order by created_at, id",
+      [clientId],
+    );
+    return rows;
+  }
+
+  /** The fingerprint the ledger keeps, and the one of the canonical command. */
+  async function fingerprints(
+    clientId: string,
+    requestId: string,
+    content: string,
+  ) {
+    const { rows } = await db.query<{ kept: string; expected: string }>(
+      `select r.fingerprint as kept,
+              encode(sha256(convert_to(
+                jsonb_build_object('client_id', $2::uuid, 'content', $3::text)::text,
+                'UTF8')), 'hex') as expected
+       from private.client_note_requests r
+       where r.business_id = $1 and r.request_id = $4`,
+      [A.id, clientId, canonical(content), requestId],
+    );
+    return rows[0];
+  }
+
+  it("a direct insert, then the same command through the SQL function and the action: one note", async () => {
+    const clientId = await customerOfA();
+    const requestId = randomUUID();
+    const raw = "  École  ";
+
+    const inserted = await directInsert(clientId, raw, requestId);
+    expect(inserted.error).toBeNull();
+    expect(inserted.data!.content).toBe(canonical(raw));
+    expect(inserted.data!.content).toBe("École");
+
+    const replayed = await rpcCreate(clientId, raw, requestId);
+    expect(replayed.error).toBeNull();
+    expect(replayed.data).toEqual({
+      status: "replayed",
+      note_id: inserted.data!.id,
+    });
+
+    as(ownerA);
+    expect(
+      ok(await createClientNoteAction({ clientId, content: raw, requestId })),
+    ).toMatchObject({ created: false, note: { id: inserted.data!.id } });
+
+    expect(await storedNotes(clientId)).toEqual([
+      { id: inserted.data!.id, content: "École" },
+    ]);
+    const prints = await fingerprints(clientId, requestId, raw);
+    expect(prints!.kept).toBe(prints!.expected);
+  });
+
+  it("a direct insert, its deletion, then a replay: note_deleted, nothing recreated", async () => {
+    const clientId = await customerOfA();
+    const requestId = randomUUID();
+    const raw = "\tÉcole ";
+    const inserted = await directInsert(clientId, raw, requestId);
+    expect(inserted.error).toBeNull();
+
+    as(ownerA);
+    expect(
+      ok(
+        await deleteClientNoteAction({
+          clientId,
+          noteId: inserted.data!.id,
+          expectedVersion: 1,
+        }),
+      ).deleted,
+    ).toBe(true);
+
+    const replayed = await rpcCreate(clientId, raw, requestId);
+    expect(replayed.data).toEqual({ status: "deleted", note_id: null });
+    failure(
+      await createClientNoteAction({ clientId, content: raw, requestId }),
+      "note_deleted",
+    );
+    expect(await storedNotes(clientId)).toEqual([]);
+  });
+
+  it("canonically equivalent NFC and NFD texts are one command, with one fingerprint", async () => {
+    const clientId = await customerOfA();
+    const nfd = "Crème au café";
+    const nfc = "Crème au café";
+    expect(nfd).not.toBe(nfc);
+
+    const requestId = randomUUID();
+    as(ownerA);
+    const created = ok(
+      await createClientNoteAction({ clientId, content: nfd, requestId }),
+    ).note;
+    expect(created.content).toBe(nfc);
+    expect((await rpcCreate(clientId, nfc, requestId)).data).toEqual({
+      status: "replayed",
+      note_id: created.id,
+    });
+    // The direct path recognizes the same request too (never a conflict).
+    const direct = await directInsert(clientId, nfc, requestId);
+    expect(direct.error).toMatchObject({ message: "client_note_replayed" });
+
+    // Two requests of the same text, one per path and form: same fingerprint.
+    const viaInsert = randomUUID();
+    const viaFunction = randomUUID();
+    expect((await directInsert(clientId, nfd, viaInsert)).error).toBeNull();
+    expect((await rpcCreate(clientId, nfc, viaFunction)).error).toBeNull();
+    const first = await fingerprints(clientId, viaInsert, nfd);
+    const second = await fingerprints(clientId, viaFunction, nfc);
+    expect(first!.kept).toBe(second!.kept);
+    expect(first!.kept).toBe(first!.expected);
+    expect((await storedNotes(clientId)).map((note) => note.content)).toEqual([
+      nfc,
+      nfc,
+      nfc,
+    ]);
+  });
+
+  it("peripheral whitespace is trimmed exactly as the action's String.prototype.trim, by every path", async () => {
+    const clientId = await customerOfA();
+    // Removed by String.prototype.trim (and the database), on both sides.
+    const trimmed = [
+      " Note ",
+      "\t\nNote\r\n",
+      " Note ",
+      " Note ",
+      "　Note﻿",
+      "  Note  ",
+    ];
+    // Kept by String.prototype.trim: kept by the database as well.
+    const kept = ["​Note", "Note\u0085", "A  \n  B"];
+    for (const raw of [...trimmed, ...kept]) {
+      const inserted = await directInsert(clientId, raw);
+      expect(inserted.error).toBeNull();
+      expect(inserted.data!.content).toBe(canonical(raw));
+    }
+
+    // One request, three paths, three spellings: one note.
+    const requestId = randomUUID();
+    const inserted = await directInsert(clientId, "　\tNote ", requestId);
+    expect(inserted.data!.content).toBe("Note");
+    expect((await rpcCreate(clientId, " Note\n", requestId)).data).toEqual({
+      status: "replayed",
+      note_id: inserted.data!.id,
+    });
+    as(ownerA);
+    expect(
+      ok(
+        await createClientNoteAction({
+          clientId,
+          content: "﻿Note ",
+          requestId,
+        }),
+      ).created,
+    ).toBe(false);
+
+    // A character trim keeps is content: another command.
+    expect((await rpcCreate(clientId, "​Note", requestId)).error).toMatchObject(
+      { message: "idempotency_conflict" },
+    );
+  });
+
+  it("empty or too long once canonical: refused on the direct path too; the limit counts the canonical text", async () => {
+    const clientId = await customerOfA();
+    for (const raw of [" 　\t﻿ ", " \n"]) {
+      const inserted = await directInsert(clientId, raw);
+      expect(inserted.error).not.toBeNull();
+    }
+    const padded = await directInsert(clientId, ` ${"x".repeat(5000)}　 `);
+    expect(padded.error).toBeNull();
+    expect(padded.data!.content).toHaveLength(5000);
+    expect(
+      (await directInsert(clientId, "x".repeat(5001))).error,
+    ).not.toBeNull();
+    expect(await storedNotes(clientId)).toHaveLength(1);
+  });
+
+  it("a direct edit is canonical too: a whitespace-only difference changes nothing (version kept)", async () => {
+    const clientId = await customerOfA();
+    const inserted = await directInsert(clientId, "École");
+    const noteId = inserted.data!.id;
+    const same = await ownerA.client
+      .from("client_notes")
+      .update({ content: "  École　" })
+      .eq("id", noteId)
+      .select("content, version")
+      .single();
+    expect(same.data).toEqual({ content: "École", version: 1 });
+    as(ownerA);
+    expect(
+      ok(
+        await updateClientNoteAction({
+          clientId,
+          noteId,
+          expectedVersion: 1,
+          content: "\tÉcole ",
+        }),
+      ).changed,
+    ).toBe(false);
+    const changed = await ownerA.client
+      .from("client_notes")
+      .update({ content: " École primaire " })
+      .eq("id", noteId)
+      .select("content, version")
+      .single();
+    expect(changed.data).toEqual({ content: "École primaire", version: 2 });
+  });
+
+  it("a different text, or another customer, under the same request id: idempotency_conflict on every path", async () => {
+    const clientId = await customerOfA();
+    const other = await customerOfA();
+    const requestId = randomUUID();
+    expect(
+      (await directInsert(clientId, " Première ", requestId)).error,
+    ).toBeNull();
+
+    expect(
+      (await rpcCreate(clientId, "Seconde", requestId)).error,
+    ).toMatchObject({
+      message: "idempotency_conflict",
+    });
+    expect(
+      (await directInsert(clientId, "Seconde", requestId)).error,
+    ).toMatchObject({
+      message: "idempotency_conflict",
+    });
+    as(ownerA);
+    failure(
+      await createClientNoteAction({ clientId, content: "Seconde", requestId }),
+      "idempotency_conflict",
+    );
+    // Same text, another customer of the same business.
+    expect((await rpcCreate(other, "Première", requestId)).error).toMatchObject(
+      {
+        message: "idempotency_conflict",
+      },
+    );
+    failure(
+      await createClientNoteAction({
+        clientId: other,
+        content: "Première",
+        requestId,
+      }),
+      "idempotency_conflict",
+    );
+    expect(await storedNotes(clientId)).toHaveLength(1);
+    expect(await storedNotes(other)).toEqual([]);
   });
 });

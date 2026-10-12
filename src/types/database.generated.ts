@@ -664,6 +664,9 @@ isOneToOne: false
 "crm_canonical_email":
 { Args: { "p_value": string }; Returns: string
                            },
+"crm_canonical_note_content":
+{ Args: { "p_value": string }; Returns: string
+                           },
 "crm_client_activity":
 { Args: { "p_as_of": string,"p_business_id": string,"p_client_id"?: string }; Returns: {
               "cancelled_count": number,"client_id": string,"completed_count": number,"first_completed_at": string,"last_completed_at": string,"next_appointment_id": string,"next_starts_at": string,"no_show_count": number,"past_confirmed_count": number,"upcoming_count": number

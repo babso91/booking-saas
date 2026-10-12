@@ -107,14 +107,29 @@ Rien ne change. Le trigger existant (`clients_record_calendar_mirrors`) rend les
 
 ### Modèle : `public.client_notes`
 
-| Colonne                               | Rôle                                                                                                                                                         |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `business_id`, `client_id`            | Clé étrangère composite vers `clients (id, business_id)` : une note ne peut appartenir qu'à une cliente de son business. Elle est supprimée avec la cliente. |
-| `content`                             | NFC, rogné (mêmes caractères que `String.prototype.trim`), 1 à 5 000 caractères, sauts de ligne internes conservés.                                          |
-| `created_at`                          | Date de la note, fixée par la base, jamais par l'appelant. Elle ne change pas à l'édition.                                                                   |
-| `updated_at`, `updated_by`, `version` | Suivent uniquement les changements de contenu.                                                                                                               |
-| `created_by`                          | L'utilisatrice de la session (`auth.uid()`), imposée par la base. `null` seulement si ce profil est réellement supprimé.                                     |
-| `creation_request_id`                 | La requête de création qui l'a écrite (voir « Requêtes de création traitées »).                                                                              |
+| Colonne                               | Rôle                                                                                                                                                            |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `business_id`, `client_id`            | Clé étrangère composite vers `clients (id, business_id)` : une note ne peut appartenir qu'à une cliente de son business. Elle est supprimée avec la cliente.    |
+| `content`                             | Forme canonique, par la base, quel que soit le chemin (voir « Contenu canonique »), 1 à 5 000 caractères une fois canonique, sauts de ligne internes conservés. |
+| `created_at`                          | Date de la note, fixée par la base, jamais par l'appelant. Elle ne change pas à l'édition.                                                                      |
+| `updated_at`, `updated_by`, `version` | Suivent uniquement les changements de contenu.                                                                                                                  |
+| `created_by`                          | L'utilisatrice de la session (`auth.uid()`), imposée par la base. `null` seulement si ce profil est réellement supprimé.                                        |
+| `creation_request_id`                 | La requête de création qui l'a écrite (voir « Requêtes de création traitées »).                                                                                 |
+
+### Contenu canonique
+
+La base fixe la forme du contenu, quel que soit le chemin d'écriture : action serveur, fonction SQL, ou insertion et édition directes d'un membre.
+
+- **Une seule implémentation.** C'est `public.crm_canonical_note_content` : Unicode NFC, puis retrait des espaces périphériques. Le trigger `client_notes_guard` l'appelle avant tout, à l'insertion comme à l'édition, et les fonctions de notes l'appellent aussi.
+- **Ordre d'application :**
+  1. canonicaliser ;
+  2. valider (1 à 5 000 caractères une fois canonique, `invalid_input` sur `content` sinon) ;
+  3. enregistrer ;
+  4. calculer l'empreinte de la requête sur le texte enregistré (trigger `AFTER INSERT`).
+- **Mêmes caractères que le navigateur.** Les espaces retirés sont exactement ceux de `String.prototype.trim`, la règle de l'action serveur. C'est vérifié sur tout le plan Unicode de base, NFC compris. Les espaces internes, les sauts de ligne et les caractères que `trim` garde (U+200B, U+0085…) sont conservés.
+- **Conséquences.**
+  - Une même requête, envoyée en NFD par un chemin puis en NFC ou avec d'autres espaces par un autre, est une seule commande : une seule note et la même empreinte.
+  - Une édition qui ne change que la forme Unicode ou les espaces périphériques n'est pas un changement : la version ne bouge pas.
 
 ### Attribution : contrôlée par la base
 
@@ -143,7 +158,7 @@ Une requête de création traitée le reste, même après la suppression de sa n
 
 - `request_id`, unique dans le business ;
 - `client_id` ;
-- une empreinte SHA-256 de la commande (cliente et contenu) ;
+- une empreinte SHA-256 de la commande canonique (cliente et contenu canonique) ;
 - `note_id`, la note écrite ;
 - `created_at`.
 

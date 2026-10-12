@@ -376,6 +376,26 @@ $$;
 -- 5. Private dated notes
 -- ---------------------------------------------------------------------------
 
+-- A note's content as stored, whatever the path (the functions below, a
+-- member's direct insert or edit, service role): Unicode NFC, then the
+-- peripheral whitespace String.prototype.trim removes (the characters of
+-- private.canonical_email; the browser applies the same NFC + trim). Line
+-- breaks and spaces inside are kept. The only implementation: the guard
+-- trigger and the note functions all call it.
+create function public.crm_canonical_note_content(p_value text)
+returns text
+language sql
+immutable
+parallel safe
+security invoker
+set search_path = ''
+as $$
+  select pg_catalog.btrim(
+    pg_catalog.normalize(p_value, 'NFC'),
+    E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF'
+  );
+$$;
+
 -- A note about one customer, written by a professional of its business.
 -- Dated by created_at (set by the database, never by the caller): the
 -- instant a timeline shows it at, unchanged by edits. updated_at, updated_by
@@ -415,6 +435,9 @@ comment on column public.client_notes.version is
   'Incremented on every change of the content. Edits carry the version they were based on.';
 
 -- Whatever the write path (functions below, member DML, service role):
+--   content canonical (public.crm_canonical_note_content) and 1–5000
+--           characters once canonical; an edit that changes it only by
+--           Unicode form or peripheral whitespace is no change;
 --   insert  authorship and dates come from the database (the caller's
 --           session, now()), version 1;
 --   update  business, customer, date, author and creation request never
@@ -433,6 +456,13 @@ security definer
 set search_path = ''
 as $$
 begin
+  -- 1. Canonical content (the same as the functions'), 2. validated, then
+  -- stored; the request record (AFTER INSERT) fingerprints this stored text.
+  new.content := public.crm_canonical_note_content(new.content);
+  if new.content is null or pg_catalog.char_length(new.content) not between 1 and 5000 then
+    raise exception using errcode = '22023', message = 'invalid_input', hint = 'content';
+  end if;
+
   if tg_op = 'INSERT' then
     new.created_by := (select auth.uid());
     new.updated_by := null;
@@ -685,9 +715,10 @@ $$;
 -- 7. Notes: write
 -- ---------------------------------------------------------------------------
 
--- Content: Unicode NFC, peripheral whitespace removed (the characters
--- String.prototype.trim removes, as private.canonical_email), 1–5000
--- characters. Line breaks inside are kept.
+-- Content: public.crm_canonical_note_content (Unicode NFC, peripheral
+-- whitespace as String.prototype.trim), 1–5000 characters once canonical,
+-- the same for the guard trigger: a request's fingerprint is the canonical
+-- command whatever the path that first wrote it.
 
 -- Writes a note about one customer of p_business_id, once per request.
 -- Outcome:
@@ -715,10 +746,7 @@ set search_path = ''
 as $$
 #variable_conflict use_column
 declare
-  v_content text := pg_catalog.btrim(
-    pg_catalog.normalize(p_content, 'NFC'),
-    E'\u0009\u000A\u000B\u000C\u000D                  　﻿'
-  );
+  v_content text := public.crm_canonical_note_content(p_content);
   v_note_id uuid;
   v_message text;
   v_detail text;
@@ -783,10 +811,7 @@ set search_path = ''
 as $$
 #variable_conflict use_column
 declare
-  v_content text := pg_catalog.btrim(
-    pg_catalog.normalize(p_content, 'NFC'),
-    E'\u0009\u000A\u000B\u000C\u000D                  　﻿'
-  );
+  v_content text := public.crm_canonical_note_content(p_content);
   v_note record;
 begin
   perform public.crm_assert_member(p_business_id);
@@ -898,6 +923,7 @@ $$;
 -- ---------------------------------------------------------------------------
 
 revoke all on function public.crm_canonical_email(text) from public, anon;
+revoke all on function public.crm_canonical_note_content(text) from public, anon;
 revoke all on function public.crm_create_client(uuid, text, text, text, text, uuid) from public, anon;
 revoke all on function public.crm_update_client(uuid, uuid, integer, text, text, text, text) from public, anon;
 revoke all on function public.crm_list_client_notes(uuid, uuid, integer, timestamptz, uuid) from public, anon;
@@ -906,6 +932,7 @@ revoke all on function public.crm_update_client_note(uuid, uuid, uuid, integer, 
 revoke all on function public.crm_delete_client_note(uuid, uuid, uuid, integer) from public, anon;
 
 grant execute on function public.crm_canonical_email(text) to authenticated;
+grant execute on function public.crm_canonical_note_content(text) to authenticated;
 grant execute on function public.crm_create_client(uuid, text, text, text, text, uuid) to authenticated;
 grant execute on function public.crm_update_client(uuid, uuid, integer, text, text, text, text) to authenticated;
 grant execute on function public.crm_list_client_notes(uuid, uuid, integer, timestamptz, uuid) to authenticated;
