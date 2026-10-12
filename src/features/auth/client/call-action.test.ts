@@ -30,6 +30,32 @@ describe("callAction", () => {
     });
   });
 
+  it("keeps the record a write collided with, so the screen can open it", async () => {
+    const result = await callAction(async () => ({
+      ok: false as const,
+      error: {
+        code: "client_email_conflict" as const,
+        message: "Cet email est déjà utilisé par une autre cliente.",
+        fieldErrors: { email: ["Cet email est déjà utilisé."] },
+        conflict: {
+          clientId: "30000000-0000-4000-8000-000000000001",
+          displayName: "Emma Laurent",
+        },
+      },
+    }));
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "client_email_conflict",
+        fieldErrors: { email: ["Cet email est déjà utilisé."] },
+        conflict: {
+          clientId: "30000000-0000-4000-8000-000000000001",
+          displayName: "Emma Laurent",
+        },
+      },
+    });
+  });
+
   it("turns a failed Server Action request into a network error", async () => {
     expect(
       await callAction(async () => {

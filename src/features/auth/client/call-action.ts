@@ -1,4 +1,8 @@
-import type { ActionResult, AppErrorCode } from "@/lib/errors";
+import type {
+  ActionResult,
+  AppErrorCode,
+  AppErrorConflict,
+} from "@/lib/errors";
 
 /**
  * Error codes the auth/onboarding screens can render: every backend code
@@ -10,6 +14,8 @@ export type UiErrorCode = AppErrorCode | "network";
 export type UiError = {
   code: UiErrorCode;
   fieldErrors?: Record<string, string[]>;
+  /** The existing record a write collided with (`client_email_conflict`). */
+  conflict?: AppErrorConflict;
 };
 
 export type UiResult<T> = { ok: true; data: T } | { ok: false; error: UiError };
@@ -27,11 +33,14 @@ export async function callAction<T>(
 
     if (result.ok) return result;
 
+    const { code, fieldErrors, conflict } = result.error;
     return {
       ok: false,
-      error: result.error.fieldErrors
-        ? { code: result.error.code, fieldErrors: result.error.fieldErrors }
-        : { code: result.error.code },
+      error: {
+        code,
+        ...(fieldErrors ? { fieldErrors } : {}),
+        ...(conflict ? { conflict } : {}),
+      },
     };
   } catch {
     return { ok: false, error: { code: await classifyTransportFailure() } };
