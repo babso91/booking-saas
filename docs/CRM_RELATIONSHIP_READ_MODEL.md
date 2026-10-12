@@ -236,7 +236,10 @@ type ClientTimelinePageDto = {
   nextCursor: string | null;
 };
 type ClientTimelineEvent =
-  AppointmentTimelineEvent | LoyaltyTimelineEvent | EmailTimelineEvent;
+  | AppointmentTimelineEvent
+  | LoyaltyTimelineEvent
+  | EmailTimelineEvent
+  | NoteTimelineEvent;
 // Champs communs : id (stable), kind, occurredAt (BusinessInstantDto)
 ```
 
@@ -251,6 +254,7 @@ Un événement correspond à **un fait métier enregistré**, et rien n'est inve
 | `appointment` | `appointments`                 | début du rendez-vous                     | statut, horaires, prestation et prix **enregistrés sur le rendez-vous**, `source` (`public` ou `manual`), `completedAt` (marquage, ou `null`), `cancellationReason`, `contact` = **instantané** de contact du rendez-vous |
 | `loyalty`     | `loyalty_events` (grand livre) | création de l'écriture                   | `type` (`appointment_completed`, `manual_adjustment`, `reward_redeemed`, `correction`), `pointsDelta` (+/−), `reason`, `appointmentId`, `redemption`                                                                      |
 | `email`       | `email_events` (outbox)        | enregistrement de l'email (`created_at`) | `type`, `status`, `scheduledFor`, `sentAt`, `recipientEmail`, `appointmentId`                                                                                                                                             |
+| `note`        | `client_notes` (notes privées) | écriture de la note (`created_at`)       | `note` = le `ClientNoteDto` de la liste des notes, **tel qu'il est maintenant** : contenu actuel, `version`, `edited`, `createdAt`, `updatedAt`, `createdBy`, `updatedBy`                                                 |
 
 #### Rendez-vous
 
@@ -280,6 +284,17 @@ Statuts exposés :
 
 - **Champs jamais exposés :** le payload, l'identifiant fournisseur, le texte d'erreur et la clé de déduplication.
 - **Pas encore d'envoi :** aucun worker n'envoie encore ces emails ; les confirmations de réservation restent donc `scheduled`.
+
+#### Notes privées
+
+Une note de `public.client_notes` (voir [`CRM_CLIENT_MANAGEMENT.md`](CRM_CLIENT_MANAGEMENT.md)) donne **un** événement, présent tant que la note existe. Migration : `supabase/migrations/20261015090000_crm_timeline_notes.sql`.
+
+- **Date et position :** `occurredAt` = `note.createdAt`. Le trigger `client_notes_guard` rend `created_at` immuable, donc une édition ne déplace jamais la note dans la timeline.
+- **Contenu actuel :** l'événement porte la note telle qu'elle est à la lecture (dernier contenu, `version`, `edited`, `updatedAt`, `updatedBy`). Il n'y a **pas d'historique des versions** : une édition ne crée aucun événement, et l'ancien contenu n'est pas conservé.
+- **Suppression :** une note supprimée disparaît de la timeline. Aucun événement « note supprimée » n'est créé : la base ne garde rien de son contenu.
+- **Même DTO que la liste :** `note` est exactement le `ClientNoteDto` de `listClientNotesAction`. Son `version` sert directement à `updateClientNoteAction` et `deleteClientNoteAction`.
+- **Notes héritées :** le texte libre `clients.internal_notes` n'est **pas** un événement : il n'a ni date fiable ni auteur. Il reste lisible via `listClientNotesAction` (`legacyNotes`).
+- **Index :** `client_notes_client_idx (business_id, client_id, created_at desc, id desc)` sert cette branche.
 
 ### Identité, ordre et curseur
 
@@ -337,7 +352,7 @@ Un curseur n'est accepté que s'il est exactement ce que le backend produit. Tou
   - `-infinity` n'est accepté que pour `last_visit`, `infinity` que pour `next_appointment`.
   - **`asOf`, plus strict :** exactement la forme que le backend produit, le `now()` de PostgreSQL dans la session UTC de l'API, toujours écrit avec `+00:00` (jamais `Z`, jamais un autre décalage). PostgreSQL le renvoie normalisé en UTC et JavaScript le relit (l'`asOf` de chaque réponse). Avec un autre décalage, une année à 4 chiffres pourrait sortir de 0001–9999 (`9999-12-31T23:59:59-15:59` devient `10000-01-01` en UTC), et plus personne ne saurait la lire. `asOf` accepte donc seulement `+00:00`. Cela suppose la session UTC (le réglage de Supabase) : si elle changeait, les curseurs produits seraient refusés (repartir de la première page), jamais mal lus, et un test d'intégration vérifie la forme produite ;
   - les positions (`at` de la timeline, clés de tri de l'annuaire) ne vont qu'à PostgreSQL et gardent la syntaxe complète, décalage avec secondes compris.
-- **Identifiants :** syntaxe UUID `8-4-4-4-12` hexadécimale, quelle que soit la version. Les événements doivent être de la forme `appointment|loyalty|email:<uuid>`.
+- **Identifiants :** syntaxe UUID `8-4-4-4-12` hexadécimale, quelle que soit la version. Les événements doivent être de la forme `appointment|loyalty|email|note:<uuid>`.
 - **Comptes (`most_visits`) :** entiers sûrs entre 0 et 2 147 483 647 (le type `integer` de PostgreSQL). `2147483648`, `-1`, `1.5`, `NaN` et `Infinity` sont refusés.
 - **Lien avec la lecture :** un curseur produit pour une autre recherche, un autre filtre, un autre tri ou une autre cliente est refusé.
 - **Aucun droit :** un curseur valide n'autorise rien. Chaque page revérifie la session, le business et la cliente.
@@ -352,11 +367,11 @@ Il n'y a ni table d'événements générique, ni event sourcing. Pour une nouvel
 
 L'UI ignore les `kind` qu'elle ne connaît pas encore, ou affiche un repli. Les sources prévues n'existent pas encore et **ne doivent pas** être simulées.
 
-Les notes privées datées (`public.client_notes`, étape 3) existent, mais elles ne sont pas encore une source de la timeline. Elles y entreront avec leur rendu, dans une même PR, pour ne pas exposer à l'UI publiée un `kind` qu'elle n'affiche pas ([`CRM_CLIENT_MANAGEMENT.md`](CRM_CLIENT_MANAGEMENT.md), « Timeline : décision de compatibilité »).
+Les notes privées (`note`) ont suivi ce chemin : une branche de l'`union all`, le schéma `noteSchema` et l'adaptateur `toNote` partagés avec la liste des notes, un membre `NoteTimelineEvent`, et `note` dans `EVENT_ID` (`cursor.ts`). Elles sont livrées avec leur rendu, dans la même PR (#19), pour ne pas exposer à l'UI publiée un `kind` qu'elle n'affiche pas ([`CRM_NOTES_TIMELINE_HANDOFF.md`](CRM_NOTES_TIMELINE_HANDOFF.md)).
 
 ## Sécurité
 
-- **RLS comme autorité :** les fonctions SQL `crm_*` sont `SECURITY INVOKER`. La RLS de `clients`, `appointments`, `services`, `loyalty_events`, `reward_redemptions`, `rewards` et `email_events` reste donc l'autorité.
+- **RLS comme autorité :** les fonctions SQL `crm_*` sont `SECURITY INVOKER`. La RLS de `clients`, `appointments`, `services`, `loyalty_events`, `reward_redemptions`, `rewards`, `email_events` et `client_notes` reste donc l'autorité.
 - **Vérifications explicites :** chaque fonction vérifie aussi l'appartenance au business (`forbidden` sinon) et filtre chaque ligne par ce business. Une cliente d'une autre activité donne `client_not_found`.
 - **Droits :** `EXECUTE` est accordé à `authenticated` seulement, jamais à `anon`. Le site public de réservation ne peut donc pas lire le CRM.
 - **Lecture seule :** les fonctions sont `STABLE` et ne peuvent rien écrire. Un test vérifie qu'aucune lecture ne modifie les rendez-vous, les fiches, la fidélité, les emails ou les miroirs Google.
@@ -404,6 +419,7 @@ Les notes privées datées (`public.client_notes`, étape 3) existent, mais elle
 3. **Timeline.**
    - Grouper par `occurredAt.local.slice(0, 10)`.
    - Faire un `switch (event.kind)`, avec un repli pour un `kind` inconnu.
+   - `kind: "note"` : voir [`CRM_NOTES_TIMELINE_HANDOFF.md`](CRM_NOTES_TIMELINE_HANDOFF.md).
    - Pour la suite, rappeler avec `nextCursor`. Un événement créé pendant le défilement peut apparaître plus bas (s'il est plus ancien que le curseur) ou seulement après un rafraîchissement.
    - L'en-tête du profil montre la fiche **actuelle** ; un événement de rendez-vous montre son **instantané**.
 4. **Champs absents.** `email`, `phone`, `lastName`, `favoriteService`, `lastCompletedVisitAt`, `completedAt`, `sentAt` et `rewardName` peuvent être `null`. Il faut alors afficher l'absence, jamais une valeur inventée.

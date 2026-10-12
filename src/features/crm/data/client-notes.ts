@@ -29,12 +29,13 @@ import type { AppSupabaseClient } from "@/lib/supabase/types";
 // Private dated notes about a customer (public.client_notes), under the
 // user's session (RLS: members of the business only). Every write is one
 // SQL function call (public.crm_*_client_note): idempotent creation, edits
-// and deletions guarded by the version the professional read. Not part of
-// the relationship timeline yet (docs/CRM_CLIENT_MANAGEMENT.md).
+// and deletions guarded by the version the professional read. The
+// relationship timeline reads the same notes, with the same DTO (timeline.ts).
 
 const instant = z.string();
 
-const noteSchema = z.object({
+/** A note as PostgreSQL returns it (notes list, relationship timeline). */
+export const noteSchema = z.object({
   id: z.uuid(),
   content: z.string(),
   version: z.number().int().min(1),
@@ -51,7 +52,8 @@ const pageSchema = z.object({
 
 type NoteRow = z.output<typeof noteSchema>;
 
-function toNote(
+/** The note DTO, its dates as wall clocks of the business. */
+export function toNote(
   clientId: string,
   row: NoteRow,
   at: Awaited<ReturnType<typeof businessInstants>>["at"],

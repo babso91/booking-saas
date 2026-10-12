@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 
+import { noteSchema, toNote } from "@/features/crm/data/client-notes";
 import {
   decodeTimelineCursor,
   encodeTimelineCursor,
@@ -24,8 +25,9 @@ import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
 // A customer's relationship history (public.crm_client_timeline), newest
-// first, one bounded page at a time. One typed adapter per source; each
-// event is a persisted fact. Adding a kind: a branch in the SQL union, a
+// first, one bounded page at a time: appointments, loyalty entries, emails
+// and private notes. One typed adapter per source; each event is a
+// persisted fact. Adding a kind: a branch in the SQL union, a
 // schema and an adapter here, a member of ClientTimelineEvent.
 
 const instant = z.string();
@@ -86,6 +88,7 @@ const row = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("appointment"), data: appointmentData }),
   z.object({ kind: z.literal("loyalty"), data: loyaltyData }),
   z.object({ kind: z.literal("email"), data: emailData }),
+  z.object({ kind: z.literal("note"), data: noteSchema }),
 ]);
 
 type TimelineRow = z.output<typeof row>;
@@ -110,10 +113,13 @@ function instantsOf(event: TimelineRow): (string | null)[] {
       return [event.data.redemption?.redeemedAt ?? null];
     case "email":
       return [event.data.scheduledFor, event.data.sentAt];
+    case "note":
+      return [event.data.createdAt, event.data.updatedAt];
   }
 }
 
 function toEvent(
+  clientId: string,
   id: string,
   occurredAt: BusinessInstantDto,
   event: TimelineRow,
@@ -179,6 +185,13 @@ function toEvent(
         },
       };
     }
+    case "note":
+      return {
+        id,
+        kind: "note",
+        occurredAt,
+        note: toNote(clientId, event.data, time.at),
+      };
   }
 }
 
@@ -225,7 +238,13 @@ export async function listClientTimeline(
     asOf: new Date(asOf).toISOString(),
     timezone: time.timezone,
     events: page.map(({ raw, event }) =>
-      toEvent(raw.event_id, time.at(raw.occurred_at), event, time),
+      toEvent(
+        input.clientId,
+        raw.event_id,
+        time.at(raw.occurred_at),
+        event,
+        time,
+      ),
     ),
     nextCursor:
       data.length > input.limit && last

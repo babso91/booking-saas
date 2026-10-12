@@ -186,7 +186,7 @@ Confidentialité et durée de vie :
 
 - **RLS.** Lecture, création, modification et suppression sont réservées aux membres du business (`is_business_member`).
 - **`anon`.** Aucun privilège sur la table, ni sur aucune de ces fonctions.
-- **Réservation publique.** Aucune fonction publique ne lit la table. Un test vérifie que seules les quatre fonctions de notes du CRM la mentionnent, et qu'aucune n'est exécutable par `anon`.
+- **Réservation publique.** Aucune fonction publique ne lit la table. Un test vérifie que seules les quatre fonctions de notes du CRM et la timeline (`crm_client_timeline`) la mentionnent, et qu'aucune n'est exécutable par `anon`.
 - **Données personnelles.** Aucun contenu de note, email ou téléphone n'est journalisé.
 
 ### Notes héritées (`clients.internal_notes`)
@@ -205,27 +205,20 @@ Stratégie proposée pour l'étape 4 :
 2. une action explicite, cliente par cliente, crée une note datée du jour avec ce texte et vide le champ, dans une seule transaction ;
 3. un recensement des fiches concernées précède toute décision de migration globale.
 
-## Timeline : décision de compatibilité
+## Timeline : les notes y entrent avec leur rendu
 
-Les notes **n'apparaissent pas encore** dans `listClientTimelineAction`.
-
-L'UI de la PR #17 ignore un `kind` inconnu, mais elle grouperait l'événement par jour sans l'afficher. Les jours apparaîtraient vides, et une page entière de notes paraîtrait vide. Le parseur serveur (`src/features/crm/data/timeline.ts`) rejette aussi un `kind` inconnu. Exposer `note` maintenant dégraderait donc l'écran publié.
-
-Le modèle est prêt pour l'intégration à l'étape 4 (PR #19), livrée avec l'UI :
+Depuis la migration `20261015090000_crm_timeline_notes.sql` (PR #19, phase 1), les notes sont des événements `kind: "note"` de `listClientTimelineAction`. Voir [`CRM_RELATIONSHIP_READ_MODEL.md`](CRM_RELATIONSHIP_READ_MODEL.md), « Notes privées ».
 
 - **Événement.** `event_id = 'note:' || id`, `occurred_at = created_at`. La date est immuable, donc la position dans la timeline ne bouge jamais.
+- **Contenu.** `note` est le `ClientNoteDto` actuel, identique à celui de `listClientNotesAction`.
 - **Index.** `client_notes_client_idx (business_id, client_id, created_at desc, id desc)` sert la branche de l'`union all`, au même ordre que les autres sources.
-- **Changements à faire.**
-  - Ajouter une branche à `crm_client_timeline`.
-  - Ajouter `note` à `EVENT_ID` dans `cursor.ts`.
-  - Ajouter un schéma et un adaptateur à `timeline.ts`.
-  - Ajouter `NoteTimelineEvent` (`content`, `edited`, `createdBy`) à `ClientTimelineEvent`.
-  - Ajouter son rendu dans `timeline.tsx`, dans la même PR.
 
-## Travail restant (étape 4, PR #19)
+**Compatibilité.** L'UI de la PR #17 ignore un `kind` inconnu (`default: return null`), mais elle grouperait l'événement par jour sans l'afficher. Les jours apparaîtraient vides, et une page entière de notes paraîtrait vide. Le backend est donc livré sur la branche de la PR #19 et **ne doit pas être fusionné sans le rendu** de la phase 2. Il n'y a ni drapeau de fonctionnalité ni chemin transitoire. Le contrat de passation est dans [`CRM_NOTES_TIMELINE_HANDOFF.md`](CRM_NOTES_TIMELINE_HANDOFF.md).
+
+## Travail restant (étape 4, PR #19, phase 2 : UI)
 
 - **Écrans.** Créer et modifier une cliente, avec conflit d'email (« Ouvrir la fiche existante »), version périmée (« Recharger ») et message `retained`.
 - **Notes dans la fiche.** Liste, saisie, édition, suppression, plus les notes héritées en lecture seule.
-- **Intégration des notes à la timeline**, et rendu dans l'UI (voir ci-dessus).
+- **Rendu des notes dans la timeline** ([`CRM_NOTES_TIMELINE_HANDOFF.md`](CRM_NOTES_TIMELINE_HANDOFF.md)). Le backend est livré en phase 1.
 - **Conversion explicite des notes héritées**, si elle est validée.
 - **Mise à jour de Google plus rapide (optionnel).** Après un changement de prénom, déclencher le traitement des miroirs comme le font les écritures de l'agenda (`kickCalendarOutbound`). Aujourd'hui, le job périodique s'en charge.

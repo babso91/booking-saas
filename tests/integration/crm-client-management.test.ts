@@ -1263,8 +1263,9 @@ describe("private notes", () => {
       ).error?.code,
     ).toBe("42501");
 
-    // No function but the CRM notes functions reads the table: the public
-    // booking functions (the only ones anonymous callers may run) never do.
+    // No function but the CRM notes functions and the relationship timeline
+    // reads the table: the public booking functions (the only ones anonymous
+    // callers may run) never do.
     const { rows } = await db.query<{ name: string; anon: boolean }>(
       `select p.pronamespace::regnamespace || '.' || p.proname as name,
               has_function_privilege('anon', p.oid, 'execute') as anon
@@ -1274,6 +1275,7 @@ describe("private notes", () => {
        order by 1`,
     );
     expect(rows).toEqual([
+      { name: "public.crm_client_timeline", anon: false },
       { name: "public.crm_create_client_note", anon: false },
       { name: "public.crm_delete_client_note", anon: false },
       { name: "public.crm_list_client_notes", anon: false },
@@ -1420,7 +1422,7 @@ describe("private notes", () => {
     ).toBeNull();
   });
 
-  it("notes are not timeline events (yet): the relationship timeline is unchanged", async () => {
+  it("a note joins the relationship timeline at its date; the other events are unchanged", async () => {
     const record = await newCustomer({ firstName: "Daphné" });
     await insertAppointment({
       businessId: A.id,
@@ -1432,16 +1434,21 @@ describe("private notes", () => {
     });
     as(ownerA);
     const before = ok(await listClientTimelineAction({ clientId: record.id }));
-    ok(
+    const note = ok(
       await createClientNoteAction({
         clientId: record.id,
-        content: "Pas dans la timeline",
+        content: "Dans la timeline",
         requestId: randomUUID(),
       }),
-    );
+    ).note;
     const after = ok(await listClientTimelineAction({ clientId: record.id }));
-    expect(after.events).toEqual(before.events);
-    expect(after.events.map((event) => event.kind)).toEqual(["appointment"]);
+    expect(after.events.slice(1)).toEqual(before.events);
+    expect(after.events[0]).toEqual({
+      id: `note:${note.id}`,
+      kind: "note",
+      occurredAt: note.createdAt,
+      note,
+    });
   });
 });
 

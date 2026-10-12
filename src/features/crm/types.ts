@@ -226,8 +226,22 @@ export type EmailTimelineEvent = TimelineEventBase & {
   };
 };
 
+/**
+ * A private note about the customer (professionals only), dated by when it
+ * was written (`occurredAt` = `note.createdAt`, never changed by an edit).
+ * The note as it is now: the same DTO as the notes list, so it can be edited
+ * or deleted with its `version`.
+ */
+export type NoteTimelineEvent = TimelineEventBase & {
+  kind: "note";
+  note: ClientNoteDto;
+};
+
 export type ClientTimelineEvent =
-  AppointmentTimelineEvent | LoyaltyTimelineEvent | EmailTimelineEvent;
+  | AppointmentTimelineEvent
+  | LoyaltyTimelineEvent
+  | EmailTimelineEvent
+  | NoteTimelineEvent;
 
 export type ClientTimelineKind = ClientTimelineEvent["kind"];
 
