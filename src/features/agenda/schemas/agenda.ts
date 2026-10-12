@@ -4,6 +4,7 @@ import {
   localDateSchema,
   localDateTimeSchema,
 } from "@/features/availability/schemas/availability";
+import { clientContactFields } from "@/features/crm/schemas/contact";
 import { daysBetweenLocalDates } from "@/lib/time/local-date";
 
 // Inputs of the professional agenda. Dates and times are wall-clock values in
@@ -67,25 +68,10 @@ export const agendaRangeSchema = z
 
 export const appointmentIdSchema = z.object({ appointmentId: z.uuid() });
 
+// The customer contact rules shared with the CRM (one definition).
 const newClientSchema = z.object({
   type: z.literal("new"),
-  firstName: nfcTrimmed().pipe(z.string().min(1).max(120)),
-  lastName: optionalText(120),
-  // Trimmed and lower-cased before validation: " Test@Example.com " is
-  // test@example.com. Empty → no email.
-  email: z
-    .string()
-    .transform((value) => value.trim().toLowerCase())
-    .pipe(z.union([z.literal(""), z.email("Email invalide.").max(254)]))
-    .nullish()
-    .transform((value) => (value ? value : null)),
-  phone: z
-    .string()
-    .trim()
-    .regex(/^\+?[0-9 ().-]{6,30}$/, "Téléphone invalide.")
-    .nullish()
-    .or(z.literal("").transform(() => null))
-    .transform((value) => value ?? null),
+  ...clientContactFields,
 });
 
 export const appointmentClientSchema = z.discriminatedUnion("type", [

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   decodeDirectoryCursor,
+  decodeNotesCursor,
   decodeTimelineCursor,
   encodeDirectoryCursor,
+  encodeNotesCursor,
   encodeTimelineCursor,
   isPostgresTimestamp,
   isReferenceInstant,
@@ -413,5 +415,43 @@ describe("reference instant (asOf)", () => {
         query: "",
       }).key,
     ).toBe(key);
+  });
+});
+
+describe("notes cursor", () => {
+  const notes = (overrides: Record<string, unknown> = {}) => ({
+    v: 1,
+    t: "notes",
+    clientId: ID,
+    at: AS_OF,
+    id: OTHER,
+    ...overrides,
+  });
+
+  it("round-trips for its own customer only, microseconds kept", () => {
+    const cursor = encodeNotesCursor({ clientId: ID, at: AS_OF, id: OTHER });
+    expect(decodeNotesCursor(cursor, ID)).toEqual({
+      clientId: ID,
+      at: AS_OF,
+      id: OTHER,
+    });
+    expect(decodeNotesCursor(cursor, ID.toUpperCase()).at).toBe(AS_OF);
+    expectRefused(() => decodeNotesCursor(cursor, OTHER));
+  });
+
+  it("refuses another kind, extra keys, malformed dates and ids", () => {
+    for (const value of [
+      notes({ t: "timeline" }),
+      notes({ v: 2 }),
+      notes({ asOf: AS_OF }),
+      notes({ at: "2026-02-30T08:00:00+00:00" }),
+      notes({ at: "hier" }),
+      notes({ id: `note:${OTHER}` }),
+      notes({ clientId: "x" }),
+      timeline(),
+    ]) {
+      expectRefused(() => decodeNotesCursor(raw(value), ID));
+    }
+    expectRefused(() => decodeNotesCursor("%%%", ID));
   });
 });

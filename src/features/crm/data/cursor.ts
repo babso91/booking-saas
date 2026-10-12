@@ -134,6 +134,14 @@ const timelineCursorSchema = z.strictObject({
   id: z.string().regex(EVENT_ID),
 });
 
+const notesCursorSchema = z.strictObject({
+  v: z.literal(1),
+  t: z.literal("notes"),
+  clientId: uuid,
+  at: timestamp,
+  id: uuid,
+});
+
 export type DirectoryCursor = {
   asOf: string;
   sort: ClientSort;
@@ -146,6 +154,13 @@ export type DirectoryCursor = {
 
 export type TimelineCursor = {
   asOf: string;
+  clientId: string;
+  at: string;
+  id: string;
+};
+
+/** The last note read: its date and id (no reference instant needed). */
+export type NotesCursor = {
   clientId: string;
   at: string;
   id: string;
@@ -261,4 +276,20 @@ export function decodeTimelineCursor(
     at: value.at,
     id: value.id,
   };
+}
+
+export function encodeNotesCursor(cursor: NotesCursor): string {
+  return encode({ v: 1, t: "notes", ...cursor });
+}
+
+/** The cursor, if it belongs to this customer's notes. */
+export function decodeNotesCursor(
+  cursor: string,
+  clientId: string,
+): NotesCursor {
+  const value = decode(cursor, notesCursorSchema);
+  if (value.clientId.toLowerCase() !== clientId.toLowerCase()) {
+    throw invalidCursor();
+  }
+  return { clientId: value.clientId, at: value.at, id: value.id };
 }

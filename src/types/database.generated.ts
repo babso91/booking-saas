@@ -187,15 +187,52 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
-                },"clients": {
+                },"client_notes": {
                   Row: {
-                    "business_id": string,"created_at": string,"email": string | null,"first_name": string,"id": string,"internal_notes": string | null,"last_name": string | null,"loyalty_token_hash": string | null,"phone": string | null,"updated_at": string
+                    "business_id": string,"client_id": string,"content": string,"created_at": string,"created_by": string | null,"creation_request_id": string | null,"id": string,"updated_at": string,"updated_by": string | null,"version": number
                   }
                   Insert: {
-                    "business_id": string,"created_at"?: string,"email"?: string | null,"first_name": string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string
+                    "business_id": string,"client_id": string,"content": string,"created_at"?: string,"created_by"?: string | null,"creation_request_id"?: string | null,"id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Update: {
-                    "business_id"?: string,"created_at"?: string,"email"?: string | null,"first_name"?: string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string
+                    "business_id"?: string,"client_id"?: string,"content"?: string,"created_at"?: string,"created_by"?: string | null,"creation_request_id"?: string | null,"id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "client_notes_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "client_notes_client_fkey"
+      columns: ["client_id","business_id"]
+isOneToOne: false
+      referencedRelation: "clients"
+      referencedColumns: ["id","business_id"]
+    },{
+      foreignKeyName: "client_notes_created_by_fkey"
+      columns: ["created_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "client_notes_updated_by_fkey"
+      columns: ["updated_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"clients": {
+                  Row: {
+                    "business_id": string,"created_at": string,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"email": string | null,"first_name": string,"id": string,"internal_notes": string | null,"last_name": string | null,"loyalty_token_hash": string | null,"phone": string | null,"updated_at": string,"version": number
+                  }
+                  Insert: {
+                    "business_id": string,"created_at"?: string,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"email"?: string | null,"first_name": string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string,"version"?: number
+                  }
+                  Update: {
+                    "business_id"?: string,"created_at"?: string,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"email"?: string | null,"first_name"?: string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -624,6 +661,12 @@ isOneToOne: false
 "crm_assert_member":
 { Args: { "p_business_id": string }; Returns: undefined
                            },
+"crm_canonical_email":
+{ Args: { "p_value": string }; Returns: string
+                           },
+"crm_canonical_note_content":
+{ Args: { "p_value": string }; Returns: string
+                           },
 "crm_client_activity":
 { Args: { "p_as_of": string,"p_business_id": string,"p_client_id"?: string }; Returns: {
               "cancelled_count": number,"client_id": string,"completed_count": number,"first_completed_at": string,"last_completed_at": string,"next_appointment_id": string,"next_starts_at": string,"no_show_count": number,"past_confirmed_count": number,"upcoming_count": number
@@ -637,8 +680,36 @@ isOneToOne: false
               "as_of": string,"data": Json,"event_id": string,"kind": string,"occurred_at": string
             }[]
                            },
+"crm_create_client":
+{ Args: { "p_business_id": string,"p_email"?: string,"p_first_name": string,"p_last_name"?: string,"p_phone"?: string,"p_request_id"?: string }; Returns: {
+              "client_id": string,"status": string
+            }[]
+                           },
+"crm_create_client_note":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_content": string,"p_request_id": string }; Returns: {
+              "note_id": string,"status": string
+            }[]
+                           },
+"crm_delete_client_note":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_note_id": string }; Returns: {
+              "note_id": string,"status": string
+            }[]
+                           },
+"crm_list_client_notes":
+{ Args: { "p_before_at"?: string,"p_before_id"?: string,"p_business_id": string,"p_client_id": string,"p_limit"?: number }; Returns: Json
+                           },
 "crm_list_clients":
 { Args: { "p_after_at"?: string,"p_after_count"?: number,"p_after_id"?: string,"p_after_text"?: string,"p_as_of"?: string,"p_business_id": string,"p_filter"?: string,"p_limit"?: number,"p_query"?: string,"p_sort"?: string }; Returns: Json
+                           },
+"crm_update_client":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_email"?: string,"p_expected_version": number,"p_first_name": string,"p_last_name"?: string,"p_phone"?: string }; Returns: {
+              "client_id": string,"queued_emails_to_other_address": number,"status": string,"upcoming_with_other_email": number
+            }[]
+                           },
+"crm_update_client_note":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_content": string,"p_expected_version": number,"p_note_id": string }; Returns: {
+              "note_id": string,"status": string
+            }[]
                            },
 "get_available_slots":
 { Args: { "p_date": string,"p_service_id": string,"p_slug": string }; Returns: {
