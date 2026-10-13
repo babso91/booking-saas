@@ -8,6 +8,10 @@ import {
   directoryClient,
   directoryPage,
 } from "../../../../tests/support/crm-fixtures";
+import {
+  nextNavigationMock,
+  router,
+} from "../../../../tests/support/next-router";
 import { DEFAULT_QUERY, type DirectoryQuery } from "../client/directory-state";
 import { ClientDirectory } from "./client-directory";
 
@@ -17,6 +21,13 @@ vi.mock("@/features/crm/actions/crm", () => ({
   getClientProfileAction: vi.fn(),
   listClientTimelineAction: vi.fn(),
 }));
+const createClientAction = vi.fn();
+vi.mock("@/features/crm/actions/client-management", () => ({
+  createClientAction: (...args: unknown[]) => createClientAction(...args),
+  getClientRecordAction: vi.fn(),
+  updateClientAction: vi.fn(),
+}));
+vi.mock("next/navigation", () => nextNavigationMock);
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (code: string, fieldErrors?: Record<string, string[]>) => ({
@@ -79,6 +90,8 @@ const lastInput = () =>
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   listClientsAction.mockReset();
+  createClientAction.mockReset();
+  router.push.mockReset();
   window.history.replaceState(null, "", "/app/clients");
   window.sessionStorage.clear();
 });
@@ -525,4 +538,296 @@ it("StrictMode: the first, cleaned-up run of the read never overwrites the newer
   first(ok(directoryPage([EMMA, ZOE])));
   await flush();
   expect(rows()).toEqual([expect.stringMatching(/^Inès Benali/)]);
+});
+
+describe("adding a customer by hand", () => {
+  const NEW_ID = "30000000-0000-4000-8000-00000000cccc";
+  const created = (overrides: Record<string, unknown> = {}) =>
+    ok({
+      client: {
+        id: NEW_ID,
+        displayName: "Léa",
+        firstName: "Léa",
+        lastName: null,
+        email: null,
+        phone: null,
+        version: 1,
+        createdAt: "2026-10-11T08:00:00.000Z",
+        updatedAt: "2026-10-11T08:00:00.000Z",
+        ...overrides,
+      },
+      created: true,
+    });
+  const field = (name: RegExp) => screen.getByLabelText(name);
+  const type = (name: RegExp, value: string) =>
+    fireEvent.change(field(name), { target: { value } });
+  const submit = () =>
+    fireEvent.click(screen.getByRole("button", { name: /^Créer la fiche/ }));
+  const sentIds = () =>
+    createClientAction.mock.calls.map(([input]) => input.requestId);
+
+  async function openForm() {
+    listClientsAction.mockResolvedValue(ok(directoryPage([EMMA])));
+    await renderDirectory();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ajouter une cliente" }),
+    );
+    await flush();
+    expect(
+      screen.getByRole("dialog", { name: "Ajouter une cliente" }),
+    ).toBeTruthy();
+  }
+
+  it("only the first name is required; success is announced once confirmed, then the new record opens", async () => {
+    await openForm();
+    let answer!: (value: unknown) => void;
+    createClientAction.mockReturnValueOnce(
+      new Promise((resolve) => (answer = resolve)),
+    );
+    type(/^Prénom/, "  Léa ");
+    submit();
+    await flush();
+    expect(createClientAction).toHaveBeenCalledTimes(1);
+    expect(createClientAction.mock.calls[0]![0]).toEqual({
+      firstName: "Léa",
+      lastName: null,
+      email: null,
+      phone: null,
+      requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+    // Not confirmed yet: nothing announced, nothing opened.
+    expect(
+      screen.queryByText("Fiche créée. Ouverture de la fiche…"),
+    ).toBeNull();
+    submit(); // a second tap while it is being sent
+    await flush();
+    expect(createClientAction).toHaveBeenCalledTimes(1);
+
+    answer(created());
+    await flush();
+    expect(
+      screen.getByText("Fiche créée. Ouverture de la fiche…"),
+    ).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    expect(router.push).toHaveBeenCalledWith(`/app/clients/${NEW_ID}`);
+  });
+
+  it("checks the fields before sending, with words the professional can act on", async () => {
+    await openForm();
+    type(/^Email/, "lea@");
+    type(/^Téléphone/, "abc");
+    submit();
+    await flush();
+    expect(createClientAction).not.toHaveBeenCalled();
+    expect(screen.getByText("Indique au moins le prénom.")).toBeTruthy();
+    // The keyboard is on the first field to correct.
+    expect(document.activeElement).toBe(field(/^Prénom/));
+    expect(screen.getByText("Cet email semble invalide.")).toBeTruthy();
+    expect(screen.getByText(/Ce numéro semble invalide/)).toBeTruthy();
+  });
+
+  it("an email already used: names that customer, opens her record, never merges, keeps the form", async () => {
+    await openForm();
+    createClientAction.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: "client_email_conflict",
+        message: "backend text never shown",
+        fieldErrors: { email: ["Email déjà utilisé."] },
+        conflict: { clientId: EMMA.id, displayName: "Emma Laurent" },
+      },
+    });
+    type(/^Prénom/, "Emma");
+    type(/^Email/, "emma.laurent@exemple.fr");
+    submit();
+    await flush();
+    expect(
+      screen.getByText(/Il appartient à la fiche de Emma Laurent/),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: "Ouvrir la fiche existante" })
+        .getAttribute("href"),
+    ).toBe(`/app/clients/${EMMA.id}`);
+    expect(
+      screen.getByText("Cet email est déjà celui d’une autre cliente."),
+    ).toBeTruthy();
+    expect((field(/^Prénom/) as HTMLInputElement).value).toBe("Emma");
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("a lost answer: the retry of the same values reuses the same request, so nothing is created twice", async () => {
+    await openForm();
+    createClientAction.mockResolvedValueOnce(fail("network"));
+    type(/^Prénom/, "Léa");
+    submit();
+    await flush();
+    expect(screen.getByText(/La fiche a peut-être été créée/)).toBeTruthy();
+    expect((field(/^Prénom/) as HTMLInputElement).value).toBe("Léa");
+
+    // The backend had created it: the replay answers it (created: false).
+    createClientAction.mockResolvedValueOnce({
+      ...created(),
+      data: { ...created().data, created: false },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+    await flush();
+    expect(sentIds()[1]).toBe(sentIds()[0]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    expect(router.push).toHaveBeenCalledWith(`/app/clients/${NEW_ID}`);
+  });
+
+  it("changed values after a failure are a new request; an idempotency conflict is never bypassed on its own", async () => {
+    await openForm();
+    createClientAction.mockResolvedValueOnce(fail("network"));
+    type(/^Prénom/, "Léa");
+    submit();
+    await flush();
+    createClientAction.mockResolvedValueOnce(fail("idempotency_conflict"));
+    type(/^Nom/, "Martin");
+    submit();
+    await flush();
+    expect(sentIds()[1]).not.toBe(sentIds()[0]);
+    expect(screen.getByText("Rien n’a été créé")).toBeTruthy();
+    await flush();
+    expect(createClientAction).toHaveBeenCalledTimes(2);
+
+    // Only the professional's explicit choice sends it as a new request.
+    createClientAction.mockResolvedValueOnce(created({ lastName: "Martin" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Créer avec ces informations" }),
+    );
+    await flush();
+    expect(sentIds()[2]).not.toBe(sentIds()[1]);
+    expect(createClientAction.mock.calls[2]![0]).toMatchObject({
+      firstName: "Léa",
+      lastName: "Martin",
+    });
+  });
+
+  it("the backend's field refusals are shown under the field; closing keeps what was typed", async () => {
+    await openForm();
+    createClientAction.mockResolvedValueOnce(
+      fail("validation_error", { phone: ["invalid"] }),
+    );
+    type(/^Prénom/, "Léa");
+    type(/^Téléphone/, "+33 6 12 34 56 78");
+    submit();
+    await flush();
+    expect(screen.getByText("Ce numéro semble invalide.")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Annuler" }));
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ajouter une cliente" }),
+    );
+    await flush();
+    expect((field(/^Prénom/) as HTMLInputElement).value).toBe("Léa");
+  });
+
+  it("no customer yet: the empty list offers to add the first one", async () => {
+    listClientsAction.mockResolvedValue(ok(directoryPage([])));
+    await renderDirectory();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ajouter ma première cliente" }),
+    );
+    await flush();
+    expect(
+      screen.getByRole("dialog", { name: "Ajouter une cliente" }),
+    ).toBeTruthy();
+  });
+});
+
+describe("adding a customer: what is being sent cannot change or be lost", () => {
+  const NEW_ID = "30000000-0000-4000-8000-00000000dddd";
+  const confirmed = {
+    ok: true as const,
+    data: {
+      client: {
+        id: NEW_ID,
+        displayName: "Léa",
+        firstName: "Léa",
+        lastName: null,
+        email: null,
+        phone: null,
+        version: 1,
+        createdAt: "2026-10-11T08:00:00.000Z",
+        updatedAt: "2026-10-11T08:00:00.000Z",
+      },
+      created: true,
+    },
+  };
+  const input = (name: RegExp) =>
+    screen.getByLabelText(name) as HTMLInputElement;
+
+  async function sendPending() {
+    listClientsAction.mockResolvedValue(ok(directoryPage([EMMA])));
+    const view = await renderDirectory();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ajouter une cliente" }),
+    );
+    await flush();
+    let answer!: (value: unknown) => void;
+    createClientAction.mockReturnValueOnce(
+      new Promise((resolve) => (answer = resolve)),
+    );
+    fireEvent.change(input(/^Prénom/), { target: { value: "Léa" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Créer la fiche/ }));
+    await flush();
+    return { view, answer: (value: unknown) => answer(value) };
+  }
+
+  it("while it is sent the fields are locked: later typing cannot slip in and be dropped", async () => {
+    const { answer } = await sendPending();
+    expect(input(/^Prénom/).readOnly).toBe(true);
+    fireEvent.change(input(/^Prénom/), { target: { value: "Léa B" } });
+    fireEvent.change(input(/^Email/), { target: { value: "lea@exemple.fr" } });
+    expect(input(/^Prénom/).value).toBe("Léa");
+    expect(input(/^Email/).value).toBe("");
+    // Not dismissable meanwhile.
+    fireEvent.click(screen.getByRole("button", { name: "Fermer" }));
+    await flush();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    answer(confirmed);
+    await flush();
+    expect(createClientAction).toHaveBeenCalledTimes(1);
+    expect(createClientAction.mock.calls[0]![0]).toMatchObject({
+      firstName: "Léa",
+      email: null,
+    });
+    // The new record opens on confirmation, not on a timer.
+    expect(router.push).toHaveBeenCalledWith(`/app/clients/${NEW_ID}`);
+    expect(router.push).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(router.push).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failure unlocks the fields with the exact draft, ready to retry", async () => {
+    const { answer } = await sendPending();
+    answer(fail("network"));
+    await flush();
+    expect(input(/^Prénom/).readOnly).toBe(false);
+    expect(input(/^Prénom/).value).toBe("Léa");
+    fireEvent.change(input(/^Prénom/), { target: { value: "Léane" } });
+    expect(input(/^Prénom/).value).toBe("Léane");
+    expect(screen.getByRole("button", { name: "Réessayer" })).toBeTruthy();
+  });
+
+  it("leaving the page while it is sent: the late answer never navigates", async () => {
+    const { view, answer } = await sendPending();
+    view.unmount();
+    answer(confirmed);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(router.push).not.toHaveBeenCalled();
+  });
 });

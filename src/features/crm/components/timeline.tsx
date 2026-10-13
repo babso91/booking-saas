@@ -10,6 +10,7 @@ import {
   ClockIcon,
   GiftIcon,
   MailIcon,
+  NoteIcon,
   UserOffIcon,
 } from "@/components/ui/icons";
 import {
@@ -19,10 +20,12 @@ import {
 import { formatPrice } from "@/features/agenda/client/money";
 import type {
   AppointmentTimelineEvent,
+  ClientNoteDto,
   ClientProfileDto,
   ClientTimelineEvent,
   EmailTimelineEvent,
   LoyaltyTimelineEvent,
+  NoteTimelineEvent,
 } from "@/features/crm/types";
 import { cn } from "@/lib/cn";
 
@@ -39,8 +42,17 @@ import { agendaDayHref, dayMonthYear, timeLabel } from "../client/format";
 import { contactAtTheTime, groupTimeline } from "../client/timeline";
 import type { TimelineState } from "./client-profile";
 import { CrmError } from "./crm-error";
+import { editedLabel, NoteActions, NoteText } from "./notes";
 
 type CurrentClient = ClientProfileDto["client"];
+
+/** What can be done on notes from the history. */
+export type NoteHandlers = {
+  onAdd: () => void;
+  /** Receives the note itself (`event.note`: its id and version). */
+  onEdit: (note: ClientNoteDto) => void;
+  onDelete: (note: ClientNoteDto) => void;
+};
 
 /**
  * The relationship history, newest first, grouped by business-local day
@@ -52,11 +64,13 @@ type CurrentClient = ClientProfileDto["client"];
 export function Timeline({
   state,
   client,
+  notes,
   onLoadOlder,
   onRetry,
 }: {
   state: TimelineState;
   client: CurrentClient;
+  notes: NoteHandlers;
   onLoadOlder: () => void;
   onRetry: () => void;
 }) {
@@ -107,11 +121,21 @@ export function Timeline({
         >
           Historique
         </h2>
-        {state.timezone ? (
-          <p className="text-[12.5px] text-ink-muted">
-            Heures de {state.timezone}
-          </p>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 max-lg:w-full max-lg:justify-between">
+          {state.timezone ? (
+            <p className="text-[12.5px] text-ink-muted">
+              Heures de {state.timezone}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            onClick={notes.onAdd}
+            className="flex h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border border-line px-3 text-[13.5px] font-medium text-ink hover:border-line-strong"
+          >
+            <NoteIcon size={16} />
+            Ajouter une note
+          </button>
+        </div>
       </div>
 
       {shown && state.status === "error" && state.error ? (
@@ -136,7 +160,8 @@ export function Timeline({
         </CrmError>
       ) : !shown ? (
         <p className="rounded-2xl bg-sand/50 px-4 py-4 text-[14.5px] text-ink-soft">
-          Pas encore d’historique. Ses rendez-vous passés apparaîtront ici.
+          Pas encore d’historique. Ses rendez-vous passés et tes notes
+          apparaîtront ici.
         </p>
       ) : (
         <div
@@ -169,7 +194,11 @@ export function Timeline({
                           tabIndex={-1}
                           className="relative rounded-xl focus:outline-2 focus:outline-offset-2 focus:outline-accent"
                         >
-                          <TimelineEntry event={event} client={client} />
+                          <TimelineEntry
+                            event={event}
+                            client={client}
+                            notes={notes}
+                          />
                         </li>
                       ))}
                     </ol>
@@ -246,13 +275,17 @@ function DayLabel({ date }: { date: string }) {
 function TimelineEntry({
   event,
   client,
+  notes,
 }: {
   event: ClientTimelineEvent;
   client: CurrentClient;
+  notes: NoteHandlers;
 }) {
   switch (event.kind) {
     case "appointment":
       return <AppointmentEntry event={event} client={client} />;
+    case "note":
+      return <NoteEntry event={event} notes={notes} />;
     case "loyalty":
       return <LoyaltyEntry event={event} />;
     case "email":
@@ -443,6 +476,39 @@ function EmailEntry({ event }: { event: EmailTimelineEvent }) {
         </p>
       </div>
     </div>
+  );
+}
+
+/**
+ * A private note, at the date it was written (its position never moves). Its
+ * own id and version (`event.note`) are what edit and delete act on.
+ */
+function NoteEntry({
+  event,
+  notes,
+}: {
+  event: NoteTimelineEvent;
+  notes: NoteHandlers;
+}) {
+  const { note } = event;
+  const edited = editedLabel(note);
+  return (
+    <article className="flex flex-col gap-1.5 rounded-2xl border border-line bg-sand/35 px-3.5 py-2.5">
+      <Dot className="border-ink-soft bg-paper-raised" />
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-ink-soft">
+          <NoteIcon size={15} className="shrink-0" />
+          Note privée · {timeLabel(note.createdAt)}
+        </h4>
+        <NoteActions
+          note={note}
+          onEdit={notes.onEdit}
+          onDelete={notes.onDelete}
+        />
+      </div>
+      <NoteText content={note.content} />
+      {edited ? <p className="text-[12px] text-ink-muted">{edited}</p> : null}
+    </article>
   );
 }
 

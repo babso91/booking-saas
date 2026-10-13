@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { ChevronRightIcon, CloseIcon, SearchIcon } from "@/components/ui/icons";
+import {
+  ChevronRightIcon,
+  CloseIcon,
+  PlusIcon,
+  SearchIcon,
+} from "@/components/ui/icons";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
 import { listClientsAction } from "@/features/crm/actions/crm";
 import {
@@ -25,6 +30,7 @@ import {
   type DirectoryQuery,
 } from "../client/directory-state";
 import { dateWithYear, dayAndTime } from "../client/format";
+import { CreateClientSheet } from "./create-client";
 import { CrmError } from "./crm-error";
 import { Monogram } from "./monogram";
 
@@ -82,6 +88,7 @@ export function ClientDirectory({
     error: UiError | null;
   } | null>(null);
   const [more, setMore] = useState<"idle" | "loading" | UiError>("idle");
+  const [creating, setCreating] = useState(false);
   const latest = useRef(0);
   const reads = useRef(0);
   const firstNew = useRef<string | null>(null);
@@ -221,20 +228,29 @@ export function ClientDirectory({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 pt-6 pb-16 sm:px-6 lg:px-8 lg:pt-10">
-        <header className="flex flex-col gap-1.5">
-          <h1 className="font-display text-[34px] leading-none text-ink sm:text-[40px]">
-            Clientes
-          </h1>
-          <p
-            className="text-[14.5px] text-ink-muted tabular-nums"
-            aria-live="polite"
+        <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+          <div className="flex flex-col gap-1.5">
+            <h1 className="font-display text-[34px] leading-none text-ink sm:text-[40px]">
+              Clientes
+            </h1>
+            <p
+              className="text-[14.5px] text-ink-muted tabular-nums"
+              aria-live="polite"
+            >
+              {current
+                ? countLabel(current.totalCount, narrowed)
+                : failure
+                  ? null
+                  : "Chargement des clientes…"}
+            </p>
+          </div>
+          <Button
+            size="md"
+            onClick={() => setCreating(true)}
+            icon={<PlusIcon size={17} />}
           >
-            {current
-              ? countLabel(current.totalCount, narrowed)
-              : failure
-                ? null
-                : "Chargement des clientes…"}
-          </p>
+            Ajouter une cliente
+          </Button>
         </header>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -331,7 +347,7 @@ export function ClientDirectory({
               }}
             />
           ) : (
-            <NoClientsYet slug={slug} />
+            <NoClientsYet slug={slug} onCreate={() => setCreating(true)} />
           )
         ) : (
           <section
@@ -387,6 +403,7 @@ export function ClientDirectory({
           </section>
         )}
       </div>
+      <CreateClientSheet open={creating} onClose={() => setCreating(false)} />
     </div>
   );
 }
@@ -572,7 +589,13 @@ function EmptyResult({
   );
 }
 
-function NoClientsYet({ slug }: { slug: string }) {
+function NoClientsYet({
+  slug,
+  onCreate,
+}: {
+  slug: string;
+  onCreate: () => void;
+}) {
   return (
     <div className="flex flex-col items-start gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-7">
       <p className="font-display text-[26px] leading-tight text-ink">
@@ -580,9 +603,17 @@ function NoClientsYet({ slug }: { slug: string }) {
       </p>
       <p className="max-w-prose text-[14.5px] text-ink-soft">
         Chaque réservation en ligne ou chaque rendez-vous ajouté dans l’agenda
-        crée ou complète la fiche de la cliente.
+        crée ou complète la fiche de la cliente. Tu peux aussi en ajouter une
+        toi-même.
       </p>
       <div className="flex flex-wrap items-center gap-4 pt-1">
+        <button
+          type="button"
+          onClick={onCreate}
+          className="cursor-pointer text-[14.5px] font-semibold text-ink underline decoration-line-strong underline-offset-4"
+        >
+          Ajouter ma première cliente
+        </button>
         <Link
           href="/app"
           className="text-[14.5px] font-semibold text-ink underline decoration-line-strong underline-offset-4"

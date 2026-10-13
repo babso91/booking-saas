@@ -334,6 +334,21 @@ describe("timeline cursor", () => {
     ).toBe(`loyalty:${v7}`);
   });
 
+  it("positions on every kind of event, private notes included", () => {
+    for (const kind of ["appointment", "loyalty", "email", "note"]) {
+      const cursor = encodeTimelineCursor({
+        asOf: AS_OF,
+        clientId: ID,
+        at: "2026-10-25T00:30:00.000001+00:00",
+        id: `${kind}:${OTHER}`,
+      });
+      expect(decodeTimelineCursor(cursor, ID).id).toBe(`${kind}:${OTHER}`);
+    }
+    for (const id of [`notes:${OTHER}`, `Note:${OTHER}x`, `note:${OTHER}:1`]) {
+      expectRefused(() => decodeTimelineCursor(raw(timeline({ id })), ID));
+    }
+  });
+
   it("refuses an invalid customer id, another kind or extra keys", () => {
     expectRefused(() =>
       decodeTimelineCursor(raw(timeline({ clientId: "nope" })), ID),

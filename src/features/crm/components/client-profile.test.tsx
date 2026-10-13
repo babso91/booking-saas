@@ -21,6 +21,12 @@ import { ClientProfile } from "./client-profile";
 const actions = {
   getClientProfileAction: vi.fn(),
   listClientTimelineAction: vi.fn(),
+  listClientNotesAction: vi.fn(),
+  createClientNoteAction: vi.fn(),
+  updateClientNoteAction: vi.fn(),
+  deleteClientNoteAction: vi.fn(),
+  getClientRecordAction: vi.fn(),
+  updateClientAction: vi.fn(),
 };
 vi.mock("@/features/crm/actions/crm", () => ({
   listClientsAction: vi.fn(),
@@ -28,6 +34,23 @@ vi.mock("@/features/crm/actions/crm", () => ({
     actions.getClientProfileAction(...args),
   listClientTimelineAction: (...args: unknown[]) =>
     actions.listClientTimelineAction(...args),
+}));
+vi.mock("@/features/crm/actions/client-notes", () => ({
+  listClientNotesAction: (...args: unknown[]) =>
+    actions.listClientNotesAction(...args),
+  createClientNoteAction: (...args: unknown[]) =>
+    actions.createClientNoteAction(...args),
+  updateClientNoteAction: (...args: unknown[]) =>
+    actions.updateClientNoteAction(...args),
+  deleteClientNoteAction: (...args: unknown[]) =>
+    actions.deleteClientNoteAction(...args),
+}));
+vi.mock("@/features/crm/actions/client-management", () => ({
+  createClientAction: vi.fn(),
+  getClientRecordAction: (...args: unknown[]) =>
+    actions.getClientRecordAction(...args),
+  updateClientAction: (...args: unknown[]) =>
+    actions.updateClientAction(...args),
 }));
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
@@ -77,6 +100,14 @@ const lastTimelineInput = () =>
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   Object.values(actions).forEach((mock) => mock.mockReset());
+  actions.listClientNotesAction.mockResolvedValue(
+    ok({
+      timezone: "Europe/Paris",
+      legacyNotes: null,
+      notes: [],
+      nextCursor: null,
+    }),
+  );
   window.sessionStorage.clear();
   useViewport(true);
 });
@@ -135,7 +166,7 @@ describe("relationship overview", () => {
     expect(document.body.textContent).not.toMatch(/0,00 €|0 €/);
     expect(
       history().getByText(
-        "Pas encore d’historique. Ses rendez-vous passés apparaîtront ici.",
+        "Pas encore d’historique. Ses rendez-vous passés et tes notes apparaîtront ici.",
       ),
     ).toBeTruthy();
   });
@@ -207,7 +238,8 @@ describe("dossier", () => {
     const contact = within(screen.getByRole("region", { name: "Coordonnées" }));
     expect(contact.getByText("emma.laurent@exemple.fr")).toBeTruthy();
     expect(contact.getByText("Non renseigné")).toBeTruthy();
-    expect(contact.getAllByRole("button")).toHaveLength(1);
+    // One copy button (no phone to copy), next to "Modifier la fiche".
+    expect(contact.getAllByRole("button", { name: /^Copier/ })).toHaveLength(1);
 
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
@@ -264,14 +296,18 @@ describe("dossier", () => {
     ).toEqual(["/app?date=2026-10-24", "/app?date=2026-11-21"]);
   });
 
-  it("no notes, preferences, editing or customer creation: nothing that does not work", async () => {
+  it("only actions that work: editing and notes, nothing announced for later", async () => {
     await renderProfile();
     expect(
-      screen.queryByRole("button", {
-        name: /Modifier|Ajouter une note|Nouvelle cliente|Préférences/,
-      }),
+      screen.getByRole("button", { name: "Modifier la fiche" }),
+    ).toBeTruthy();
+    expect(
+      screen.getAllByRole("button", { name: /^Ajouter une note/ }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: /Préférences|Nouvelle cliente/ }),
     ).toBeNull();
-    expect(document.body.textContent).not.toMatch(/Notes|Bientôt/);
+    expect(document.body.textContent).not.toMatch(/Bientôt|Préférences/);
   });
 });
 
