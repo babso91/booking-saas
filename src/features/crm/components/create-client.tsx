@@ -27,15 +27,13 @@ import {
 import { ContactFields } from "./contact-fields";
 import { CrmError } from "./crm-error";
 
-/** Pause on the confirmed button before opening the new record. */
-const OPEN_DELAY_MS = 600;
-
 /**
  * Creates a customer by hand. One idempotency key per command: a retry of
  * the same values (lost answer, double tap) reuses it, so the backend never
  * creates the customer twice; changed values are a new command with a new
- * key. Success is only announced once the backend confirmed it, then the
- * new record opens. An email already used is never merged: the screen
+ * key. While it is sent the fields are read only (what is sent is what
+ * is saved) and the sheet cannot be dismissed. Success is only announced
+ * once the backend confirmed it, and the new record opens right away. An email already used is never merged: the screen
  * offers to open that customer instead.
  */
 export function CreateClientSheet({
@@ -64,6 +62,8 @@ export function CreateClientSheet({
   }, []);
 
   function change(field: ContactField, value: string) {
+    // Locked while sent: a late event never changes the submitted values.
+    if (state !== "idle") return;
     setDraft((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: undefined }));
   }
@@ -93,8 +93,9 @@ export function CreateClientSheet({
     if (result.ok) {
       setState("success");
       key.current = null;
-      const id = result.data.client.id;
-      window.setTimeout(() => router.push(`/app/clients/${id}`), OPEN_DELAY_MS);
+      // Mounted and confirmed: open the new record now (no timer that
+      // could outlive this page and override a later navigation).
+      router.push(`/app/clients/${result.data.client.id}`);
       return;
     }
     setState("idle");
@@ -140,9 +141,15 @@ export function CreateClientSheet({
           event.preventDefault();
           void submit();
         }}
+        aria-busy={state === "loading"}
         className="flex flex-col gap-5 pt-1"
       >
-        <ContactFields value={draft} onChange={change} errors={errors} />
+        <ContactFields
+          value={draft}
+          onChange={change}
+          errors={errors}
+          readOnly={busy}
+        />
 
         {failure ? (
           <CreateFailure

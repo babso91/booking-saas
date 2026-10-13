@@ -983,7 +983,8 @@ function DossierSection({
       aria-labelledby={id}
       className="flex flex-col gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-5"
     >
-      <div className="flex items-center justify-between gap-3">
+      {/* Wraps when the action is long (a kept draft) on narrow phones. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <h2 id={id} className="font-display text-[22px] leading-tight text-ink">
           {title}
         </h2>

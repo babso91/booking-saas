@@ -12,19 +12,22 @@ import {
 
 /**
  * A customer's identity and contact, as the creation and edit forms ask
- * for them: only the first name is required.
+ * for them: only the first name is required. `readOnly` while a save is
+ * pending: what is being sent stays visible and focusable, but unchanged.
  */
 export function ContactFields({
   value,
   onChange,
   errors,
   disabled,
+  readOnly,
   firstRef,
 }: {
   value: ContactDraft;
   onChange: (field: ContactField, value: string) => void;
   errors: Partial<Record<ContactField, string>>;
   disabled?: boolean;
+  readOnly?: boolean;
   firstRef?: Ref<HTMLInputElement>;
 }) {
   return (
@@ -40,6 +43,7 @@ export function ContactFields({
           autoCapitalize="words"
           maxLength={120}
           disabled={disabled}
+          readOnly={readOnly}
           data-autofocus=""
         />
         <TextField
@@ -52,6 +56,7 @@ export function ContactFields({
           autoCapitalize="words"
           maxLength={120}
           disabled={disabled}
+          readOnly={readOnly}
         />
       </div>
       <TextField
@@ -67,6 +72,7 @@ export function ContactFields({
         spellCheck={false}
         maxLength={254}
         disabled={disabled}
+        readOnly={readOnly}
       />
       <TextField
         label={contactLabels.phone}
@@ -79,6 +85,7 @@ export function ContactFields({
         autoComplete="off"
         maxLength={30}
         disabled={disabled}
+        readOnly={readOnly}
       />
     </div>
   );

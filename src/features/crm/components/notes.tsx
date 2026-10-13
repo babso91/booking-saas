@@ -237,7 +237,7 @@ export function DossierNotes({
       aria-labelledby={headingId}
       className="flex flex-col gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-5"
     >
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <h2
           id={headingId}
           data-notes-heading=""
@@ -447,6 +447,7 @@ export function NoteComposerSheet({
     >
       <form
         id="note-composer"
+        aria-busy={state === "loading"}
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
@@ -457,7 +458,11 @@ export function NoteComposerSheet({
         <TextAreaField
           label="Note"
           value={text}
+          // Locked while sent: what is sent is what is saved, and the
+          // confirmation never drops text typed meanwhile.
+          readOnly={state !== "idle"}
           onChange={(event) => {
+            if (state !== "idle") return;
             onTextChange(event.target.value);
             setFieldError(undefined);
           }}
@@ -536,10 +541,13 @@ export function NoteEditorSheet({
   // One store for the page's lifetime (the sheet's content remounts per
   // note); written only from event handlers.
   const [drafts] = useState(() => new Map<string, Draft>());
+  // While a save is pending the sheet stays open (X, Escape, backdrop):
+  // its answer must reach the page, which re-reads the notes.
+  const [saving, setSaving] = useState(false);
   return (
     <Sheet
       open={note !== null}
-      onClose={onClose}
+      onClose={() => (saving ? undefined : onClose())}
       title="Modifier la note"
       description={
         note
@@ -556,6 +564,7 @@ export function NoteEditorSheet({
           onClose={onClose}
           onChanged={onChanged}
           onSaveAsNew={onSaveAsNew}
+          onSavingChange={setSaving}
         />
       ) : null}
     </Sheet>
@@ -576,6 +585,7 @@ function NoteEditor({
   onClose,
   onChanged,
   onSaveAsNew,
+  onSavingChange,
 }: {
   clientId: string;
   note: ClientNoteDto;
@@ -583,6 +593,7 @@ function NoteEditor({
   onClose: () => void;
   onChanged: (change: NoteChange) => void;
   onSaveAsNew: (text: string) => void;
+  onSavingChange: (saving: boolean) => void;
 }) {
   const kept = drafts.get(note.id);
   // A kept draft started from another version: compare before saving.
@@ -608,7 +619,12 @@ function NoteEditor({
     };
   }, []);
 
+  // Never leave the sheet locked once this editor is gone.
+  useEffect(() => () => onSavingChange(false), [onSavingChange]);
+
   function edit(value: string) {
+    // Locked while saving: a late event never changes what was sent.
+    if (state !== "idle") return;
     setText(value);
     setFieldError(undefined);
     // Only a real change is kept as a draft.
@@ -628,6 +644,7 @@ function NoteEditor({
     setFailure(null);
     setLookup(null);
     setState("loading");
+    onSavingChange(true);
     const result = await callAction(() =>
       updateClientNoteAction({
         clientId,
@@ -638,6 +655,7 @@ function NoteEditor({
     );
     if (!alive.current) return;
     setState("idle");
+    onSavingChange(false);
     if (result.ok) {
       forget();
       onChanged({ type: "updated", note: result.data.note });
@@ -701,6 +719,7 @@ function NoteEditor({
       <TextAreaField
         label="Note"
         value={text}
+        readOnly={state !== "idle"}
         onChange={(event) => edit(event.target.value)}
         error={fieldError}
         counterMax={MAX_NOTE_LENGTH}
@@ -770,6 +789,8 @@ function NoteEditor({
             size="md"
             state={state}
             loadingLabel="Enregistrement…"
+            // Wide enough for "Enregistrement…" while saving.
+            className="sm:min-w-36"
             disabled={failure?.code === "stale_note"}
           >
             Enregistrer

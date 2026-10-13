@@ -1115,3 +1115,197 @@ describe("races: only the newest answer of each read is shown", () => {
     expect(actions.listClientNotesAction.mock.calls.length).toBe(reads.notes);
   });
 });
+
+describe("while a write is pending, what is sent is locked and kept", () => {
+  it("note creation: the text cannot change, the sheet stays, one note with exactly what was sent", async () => {
+    await renderProfile();
+    fireEvent.click(
+      history().getByRole("button", { name: "Ajouter une note" }),
+    );
+    await flush();
+    const pending = deferred();
+    actions.createClientNoteAction.mockReturnValueOnce(pending.promise);
+    fireEvent.change(textarea(), { target: { value: "Note A" } });
+    fireEvent.click(
+      dialog().getByRole("button", { name: /^Enregistrer la note/ }),
+    );
+    await flush();
+    expect(textarea().readOnly).toBe(true);
+    fireEvent.change(textarea(), { target: { value: "Note A + B" } });
+    expect(textarea().value).toBe("Note A");
+    fireEvent.keyDown(document, { key: "Escape" });
+    await flush();
+    expect(
+      screen.getByRole("dialog", { name: "Ajouter une note" }),
+    ).toBeTruthy();
+
+    const written = note({ content: "Note A" });
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([noteEvent(written), appointmentEvent()])),
+    );
+    pending.resolve(ok({ note: written, created: true }));
+    await flush();
+    expect(actions.createClientNoteAction).toHaveBeenCalledTimes(1);
+    expect(lastInput("createClientNoteAction").content).toBe("Note A");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(history().getByText("Note A")).toBeTruthy();
+    // Nothing typed was dropped: the composer starts empty again.
+    fireEvent.click(
+      history().getByRole("button", { name: "Ajouter une note" }),
+    );
+    await flush();
+    expect(textarea().value).toBe("");
+  });
+
+  it("note creation fails: the exact text is editable again and can be retried", async () => {
+    await renderProfile();
+    fireEvent.click(
+      history().getByRole("button", { name: "Ajouter une note" }),
+    );
+    await flush();
+    const pending = deferred();
+    actions.createClientNoteAction.mockReturnValueOnce(pending.promise);
+    fireEvent.change(textarea(), { target: { value: "Note A" } });
+    fireEvent.click(
+      dialog().getByRole("button", { name: /^Enregistrer la note/ }),
+    );
+    await flush();
+    pending.resolve(fail("internal"));
+    await flush();
+    expect(textarea().readOnly).toBe(false);
+    expect(textarea().value).toBe("Note A");
+    expect(dialog().getByRole("button", { name: "Réessayer" })).toBeTruthy();
+  });
+
+  async function pendingNoteEdit() {
+    const written = note({ content: "Courbure C.", version: 2 });
+    await renderProfile({ events: [noteEvent(written)], notes: [written] });
+    fireEvent.click(
+      history().getByRole("button", { name: /^Modifier la note du/ }),
+    );
+    await flush();
+    const pending = deferred();
+    actions.updateClientNoteAction.mockReturnValueOnce(pending.promise);
+    fireEvent.change(textarea(), { target: { value: "Courbure D." } });
+    fireEvent.click(dialog().getByRole("button", { name: /^Enregistrer$/ }));
+    await flush();
+    return { written, pending };
+  }
+
+  it("note edit: locked while saving, and neither X, Escape, the backdrop nor Cancel can drop the result", async () => {
+    const { written, pending } = await pendingNoteEdit();
+    expect(textarea().readOnly).toBe(true);
+    fireEvent.change(textarea(), { target: { value: "Courbure D. et E." } });
+    expect(textarea().value).toBe("Courbure D.");
+
+    fireEvent.click(dialog().getByRole("button", { name: "Fermer" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+    const backdrop = screen
+      .getByRole("dialog")
+      .parentElement!.querySelector<HTMLElement>("[aria-hidden='true']")!;
+    fireEvent.click(backdrop);
+    fireEvent.click(
+      dialog().getByRole("button", { name: /Annuler|Garder pour plus tard/ }),
+    );
+    await flush();
+    expect(
+      screen.getByRole("dialog", { name: "Modifier la note" }),
+    ).toBeTruthy();
+
+    const updated = { ...written, content: "Courbure D.", version: 3 };
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([noteEvent(updated)])),
+    );
+    actions.listClientNotesAction.mockResolvedValue(ok(notesPage([updated])));
+    pending.resolve(ok({ note: updated, changed: true }));
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(history().getByText("Courbure D.")).toBeTruthy();
+    expect(notesSection().getByText("Courbure D.")).toBeTruthy();
+    expect(screen.getByText("Note modifiée.")).toBeTruthy();
+  });
+
+  it("note edit fails: the editor stays open, unlocked, with the exact draft, and can be closed again", async () => {
+    const { pending } = await pendingNoteEdit();
+    pending.resolve(fail("network"));
+    await flush();
+    expect(textarea().readOnly).toBe(false);
+    expect(textarea().value).toBe("Courbure D.");
+    expect(dialog().getByRole("button", { name: "Réessayer" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("record edit: locked while saving; the page shows what the server confirmed", async () => {
+    await renderProfile();
+    actions.getClientRecordAction.mockResolvedValueOnce(ok(clientRecord()));
+    fireEvent.click(screen.getByRole("button", { name: "Modifier la fiche" }));
+    await flush();
+    const field = (name: RegExp) =>
+      dialog().getByLabelText(name) as HTMLInputElement;
+    const pending = deferred();
+    actions.updateClientAction.mockReturnValueOnce(pending.promise);
+    fireEvent.change(field(/^Téléphone/), {
+      target: { value: "07 00 00 00 00" },
+    });
+    fireEvent.click(dialog().getByRole("button", { name: /^Enregistrer$/ }));
+    await flush();
+    for (const name of [/^Prénom/, /^Nom/, /^Email/, /^Téléphone/]) {
+      expect(field(name).readOnly).toBe(true);
+    }
+    fireEvent.change(field(/^Téléphone/), {
+      target: { value: "07 11 11 11 11" },
+    });
+    fireEvent.change(field(/^Prénom/), { target: { value: "Emmy" } });
+    expect(field(/^Téléphone/).value).toBe("07 00 00 00 00");
+    expect(field(/^Prénom/).value).toBe("Emma");
+    fireEvent.keyDown(document, { key: "Escape" });
+    await flush();
+    expect(
+      screen.getByRole("dialog", { name: "Modifier la fiche" }),
+    ).toBeTruthy();
+
+    actions.getClientProfileAction.mockResolvedValue(
+      ok(profile({ client: { phone: "07 00 00 00 00" } })),
+    );
+    pending.resolve(
+      ok({
+        client: clientRecord({ phone: "07 00 00 00 00", version: 4 }),
+        changed: true,
+        retained: {
+          upcomingAppointmentsWithOtherEmail: 0,
+          queuedEmailsToOtherAddress: 0,
+        },
+      }),
+    );
+    await flush();
+    expect(lastInput("updateClientAction")).toMatchObject({
+      firstName: "Emma",
+      phone: "07 00 00 00 00",
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const contact = within(screen.getByRole("region", { name: "Coordonnées" }));
+    expect(contact.getByText("07 00 00 00 00")).toBeTruthy();
+  });
+
+  it("record edit fails: unlocked with the exact draft", async () => {
+    await renderProfile();
+    actions.getClientRecordAction.mockResolvedValueOnce(ok(clientRecord()));
+    fireEvent.click(screen.getByRole("button", { name: "Modifier la fiche" }));
+    await flush();
+    const field = (name: RegExp) =>
+      dialog().getByLabelText(name) as HTMLInputElement;
+    const pending = deferred();
+    actions.updateClientAction.mockReturnValueOnce(pending.promise);
+    fireEvent.change(field(/^Téléphone/), {
+      target: { value: "07 00 00 00 00" },
+    });
+    fireEvent.click(dialog().getByRole("button", { name: /^Enregistrer$/ }));
+    await flush();
+    pending.resolve(fail("internal"));
+    await flush();
+    expect(field(/^Téléphone/).readOnly).toBe(false);
+    expect(field(/^Téléphone/).value).toBe("07 00 00 00 00");
+  });
+});

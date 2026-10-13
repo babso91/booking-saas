@@ -39,7 +39,9 @@ const linkAction =
  * Edits a customer's identity and contact on the version the form read.
  * What is typed (the draft) is kept apart from the record: closing the
  * sheet, a failed save, a record changed elsewhere or re-read never erase
- * it; only a confirmed save or the professional's own choice does.
+ * it; only a confirmed save or the professional's own choice does. While
+ * a save is pending the fields are read only and the sheet stays open, so
+ * nothing typed meanwhile can be dropped by the confirmation.
  */
 export function EditClientSheet({
   clientId,
@@ -130,7 +132,8 @@ export function EditClientSheet({
   }
 
   function change(field: ContactField, value: string) {
-    if (!values) return;
+    // Locked while saving: a late event never changes what was sent.
+    if (!values || state !== "idle") return;
     setDraft({ ...values, [field]: value });
     setErrors((existing) => ({ ...existing, [field]: undefined }));
   }
@@ -248,6 +251,8 @@ export function EditClientSheet({
               size="md"
               state={state}
               loadingLabel="Enregistrement…"
+              // Wide enough for "Enregistrement…" while saving.
+              className="sm:min-w-36"
               disabled={failure?.code === "stale_client"}
             >
               Enregistrer
@@ -260,6 +265,7 @@ export function EditClientSheet({
         <form
           id="edit-client"
           ref={formRef}
+          aria-busy={busy}
           noValidate
           onSubmit={(event) => {
             event.preventDefault();
@@ -272,7 +278,12 @@ export function EditClientSheet({
               Modifications non enregistrées.
             </p>
           ) : null}
-          <ContactFields value={values} onChange={change} errors={errors} />
+          <ContactFields
+            value={values}
+            onChange={change}
+            errors={errors}
+            readOnly={busy}
+          />
 
           {failure?.code === "stale_client" && record ? (
             <StaleRecord

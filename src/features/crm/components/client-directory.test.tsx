@@ -742,3 +742,92 @@ describe("adding a customer by hand", () => {
     ).toBeTruthy();
   });
 });
+
+describe("adding a customer: what is being sent cannot change or be lost", () => {
+  const NEW_ID = "30000000-0000-4000-8000-00000000dddd";
+  const confirmed = {
+    ok: true as const,
+    data: {
+      client: {
+        id: NEW_ID,
+        displayName: "Léa",
+        firstName: "Léa",
+        lastName: null,
+        email: null,
+        phone: null,
+        version: 1,
+        createdAt: "2026-10-11T08:00:00.000Z",
+        updatedAt: "2026-10-11T08:00:00.000Z",
+      },
+      created: true,
+    },
+  };
+  const input = (name: RegExp) =>
+    screen.getByLabelText(name) as HTMLInputElement;
+
+  async function sendPending() {
+    listClientsAction.mockResolvedValue(ok(directoryPage([EMMA])));
+    const view = await renderDirectory();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ajouter une cliente" }),
+    );
+    await flush();
+    let answer!: (value: unknown) => void;
+    createClientAction.mockReturnValueOnce(
+      new Promise((resolve) => (answer = resolve)),
+    );
+    fireEvent.change(input(/^Prénom/), { target: { value: "Léa" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Créer la fiche/ }));
+    await flush();
+    return { view, answer: (value: unknown) => answer(value) };
+  }
+
+  it("while it is sent the fields are locked: later typing cannot slip in and be dropped", async () => {
+    const { answer } = await sendPending();
+    expect(input(/^Prénom/).readOnly).toBe(true);
+    fireEvent.change(input(/^Prénom/), { target: { value: "Léa B" } });
+    fireEvent.change(input(/^Email/), { target: { value: "lea@exemple.fr" } });
+    expect(input(/^Prénom/).value).toBe("Léa");
+    expect(input(/^Email/).value).toBe("");
+    // Not dismissable meanwhile.
+    fireEvent.click(screen.getByRole("button", { name: "Fermer" }));
+    await flush();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    answer(confirmed);
+    await flush();
+    expect(createClientAction).toHaveBeenCalledTimes(1);
+    expect(createClientAction.mock.calls[0]![0]).toMatchObject({
+      firstName: "Léa",
+      email: null,
+    });
+    // The new record opens on confirmation, not on a timer.
+    expect(router.push).toHaveBeenCalledWith(`/app/clients/${NEW_ID}`);
+    expect(router.push).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(router.push).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failure unlocks the fields with the exact draft, ready to retry", async () => {
+    const { answer } = await sendPending();
+    answer(fail("network"));
+    await flush();
+    expect(input(/^Prénom/).readOnly).toBe(false);
+    expect(input(/^Prénom/).value).toBe("Léa");
+    fireEvent.change(input(/^Prénom/), { target: { value: "Léane" } });
+    expect(input(/^Prénom/).value).toBe("Léane");
+    expect(screen.getByRole("button", { name: "Réessayer" })).toBeTruthy();
+  });
+
+  it("leaving the page while it is sent: the late answer never navigates", async () => {
+    const { view, answer } = await sendPending();
+    view.unmount();
+    answer(confirmed);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(router.push).not.toHaveBeenCalled();
+  });
+});
