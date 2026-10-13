@@ -967,6 +967,39 @@ describe("editing the record", () => {
     expect(actions.getClientRecordAction).toHaveBeenCalledTimes(1);
   });
 
+  it("footer: main actions first, discarding the draft on its own row after them (layout checked in a browser)", async () => {
+    await openEditor();
+    const footerActions = () =>
+      [...screen.getByRole("dialog").querySelectorAll("footer button")].map(
+        (button) => button.textContent,
+      );
+    // Nothing typed: no discarding.
+    expect(footerActions()).toEqual(["Annuler", "EnregistrerEnregistrement…"]);
+
+    type(/^Téléphone/, "07 00 00 00 00");
+    // Tab order = DOM order: keep for later, save, then the destructive one.
+    expect(footerActions()).toEqual([
+      "Garder pour plus tard",
+      "EnregistrerEnregistrement…",
+      "Abandonner mes modifications",
+    ]);
+    const discard = dialog().getByRole("button", {
+      name: "Abandonner mes modifications",
+    });
+    // A row of its own, apart from the main actions.
+    expect(discard.parentElement).not.toBe(
+      dialog().getByRole("button", { name: /^Enregistrer/ }).parentElement,
+    );
+
+    fireEvent.click(discard);
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Modifier la fiche" }),
+    ).toBeTruthy();
+    expect(actions.updateClientAction).not.toHaveBeenCalled();
+  });
+
   it("a background refresh of the profile never erases what is being typed", async () => {
     // Profile in Paris, history in Vancouver: an automatic profile re-read.
     const automatic = deferred();

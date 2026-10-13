@@ -230,33 +230,39 @@ export function EditClientSheet({
       description="Les rendez-vous déjà réservés gardent le contact indiqué à leur réservation."
       footer={
         values ? (
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+          // Two rows, so every action fits the panel (460px on desktop):
+          // the main actions, then the destructive one on its own line.
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button variant="ghost" size="md" onClick={close} disabled={busy}>
+                {pending ? "Garder pour plus tard" : "Annuler"}
+              </Button>
+              <Button
+                type="submit"
+                form="edit-client"
+                size="md"
+                state={state}
+                loadingLabel="Enregistrement…"
+                // Wide enough for "Enregistrement…" while saving.
+                className="sm:min-w-36"
+                disabled={failure?.code === "stale_client"}
+              >
+                Enregistrer
+              </Button>
+            </div>
             {pending ? (
               <Button
                 variant="ghost"
                 size="md"
                 onClick={discard}
                 disabled={busy}
-                className="sm:mr-auto"
+                className="sm:self-start"
               >
-                Abandonner mes modifications
+                <span className="text-danger">
+                  Abandonner mes modifications
+                </span>
               </Button>
             ) : null}
-            <Button variant="ghost" size="md" onClick={close} disabled={busy}>
-              {pending ? "Garder pour plus tard" : "Annuler"}
-            </Button>
-            <Button
-              type="submit"
-              form="edit-client"
-              size="md"
-              state={state}
-              loadingLabel="Enregistrement…"
-              // Wide enough for "Enregistrement…" while saving.
-              className="sm:min-w-36"
-              disabled={failure?.code === "stale_client"}
-            >
-              Enregistrer
-            </Button>
           </div>
         ) : undefined
       }
