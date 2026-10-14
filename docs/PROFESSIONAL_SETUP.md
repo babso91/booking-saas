@@ -40,7 +40,10 @@ Ce sont les mêmes règles que pour la PR #19.
 - **Brouillons :** conservés par prestation tant que la page reste ouverte, avec « Garder pour plus tard » et « Abandonner mes modifications » sur une ligne à part.
 - **Création d'une prestation :** le contrat n'a pas de clé d'idempotence. Après une réponse perdue, la liste est relue avant tout nouvel envoi, et une prestation identique apparue entre-temps est reconnue comme créée.
 - **Horaires :** ils n'ont pas de version. L'écran les relit avant d'enregistrer. S'ils ont changé ailleurs depuis l'ouverture, rien n'est remplacé sans un choix explicite : « Remplacer par mes horaires » ou « Reprendre les horaires actuels ».
-- **Fermer ou recharger l'onglet** avec des modifications d'horaires non enregistrées (ou pendant un enregistrement) demande une confirmation du navigateur (`beforeunload`). Une navigation interne à l'application ne la déclenche pas : le brouillon d'horaires est alors perdu.
+- **Horaires non enregistrés : jamais perdus en silence.**
+  - Un lien interne (barre latérale, barre d'onglets, feuille « Compte »…) ouvre une demande : « Enregistrer et continuer » (la navigation n'a lieu qu'après confirmation de l'enregistrement), « Quitter sans enregistrer » ou « Continuer à modifier ». Seuls les clics simples vers une autre page de l'application sont retenus, et seulement tant qu'il y a des modifications.
+  - Fermer ou recharger l'onglet demande une confirmation au navigateur (`beforeunload`).
+  - Une autre sortie (bouton Précédent) garde la semaine non enregistrée pour la session. Elle est proposée au retour (« Brouillon non enregistré restauré »), seulement si les horaires enregistrés n'ont pas changé depuis. Sinon, l'écran le dit et ne restaure rien.
 
 ## Ce qui n'est pas promis
 
@@ -53,10 +56,12 @@ La réservation en ligne par les clientes n'existe pas encore (`/b/[slug]` est u
 
 ## Limites connues
 
-- **Créations concurrentes de prestations :** sans clé d'idempotence côté serveur, la vérification après une réponse perdue réduit le risque de doublon sans l'exclure (une écriture encore en cours au moment de la relecture). Un `requestId` côté serveur supprimerait ce cas : c'est une évolution backend.
-- **Horaires :** sans version côté serveur, la relecture avant enregistrement laisse une fenêtre très courte entre la vérification et l'écriture. Une version (ou un `expectedVersion`) supprimerait ce cas : c'est une évolution backend.
-- **Prestations modifiées ailleurs :** elles n'ont pas de version non plus. Une modification remplace les champs envoyés, et la dernière écriture l'emporte. Seuls les champs modifiés sont envoyés.
-- **Fuseau et exceptions :** le fuseau de l'activité et les exceptions (fermetures, ouvertures exceptionnelles) ont déjà leurs actions, mais pas encore d'écran.
+Elles sont reproduites contre PostgreSQL réel par des tests `it.fails` (`tests/integration/professional-setup-concurrency.test.ts`). Leur correction relève du backend (migration et contrat) : voir [`SETUP_WRITE_GUARANTEES_HANDOFF.md`](SETUP_WRITE_GUARANTEES_HANDOFF.md).
+
+- **Création de prestation non idempotente :** un nouvel essai après une réponse perdue peut créer un doublon. La relecture côté client réduit ce risque sans l'exclure.
+- **Prestations sans version :** deux sessions qui modifient le _même_ champ, et la dernière l'emporte sans le dire. Des champs différents sont tous conservés.
+- **Horaires sans version :** la relecture avant enregistrement détecte un formulaire périmé, mais deux enregistrements simultanés après cette relecture restent possibles (fenêtre de quelques millisecondes).
+- **Pas encore d'écran :** le fuseau de l'activité et les exceptions (fermetures, ouvertures exceptionnelles) ont déjà leurs actions.
 
 ## Recette en staging (comptes fictifs uniquement)
 
