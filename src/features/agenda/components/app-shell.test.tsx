@@ -46,7 +46,12 @@ describe("AppShell", () => {
 
     await user.click(screen.getByRole("button", { name: "Compte" }));
     const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.getByRole("link", { name: /\/b\/studio-mila/ })).toBeTruthy();
+    expect(
+      dialog.getByRole("link", { name: /Horaires/ }).getAttribute("href"),
+    ).toBe("/app/settings/hours");
+    // The booking page address is shown, marked as coming soon, not linked.
+    expect(dialog.getByText(/\/b\/studio-mila/)).toBeTruthy();
+    expect(dialog.queryByRole("link", { name: /\/b\// })).toBeNull();
     expect(dialog.getByRole("button", { name: /Se déconnecter/ })).toBeTruthy();
   });
 
@@ -95,5 +100,38 @@ describe("AppShell", () => {
     screen
       .getAllByRole("link", { name: /Agenda/ })
       .forEach((link) => expect(link.getAttribute("aria-current")).toBeNull());
+  });
+});
+
+describe("services and hours", () => {
+  it("are reachable from the sidebar and the phone tab bar, marked as current there", () => {
+    const { unmount } = render(
+      <AppShell
+        business={{ name: "Studio Mila", slug: "studio-mila" }}
+        current="services"
+      >
+        <p>contenu</p>
+      </AppShell>,
+    );
+    const services = screen.getAllByRole("link", { name: /Prestations/ });
+    // Sidebar and phone tab bar.
+    expect(services).toHaveLength(2);
+    services.forEach((link) => {
+      expect(link.getAttribute("href")).toBe("/app/services");
+      expect(link.getAttribute("aria-current")).toBe("page");
+    });
+    unmount();
+
+    render(
+      <AppShell
+        business={{ name: "Studio Mila", slug: "studio-mila" }}
+        current="hours"
+      >
+        <p>contenu</p>
+      </AppShell>,
+    );
+    const hours = screen.getByRole("link", { name: /Horaires/ });
+    expect(hours.getAttribute("href")).toBe("/app/settings/hours");
+    expect(hours.getAttribute("aria-current")).toBe("page");
   });
 });

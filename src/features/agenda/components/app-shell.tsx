@@ -8,8 +8,9 @@ import {
   CalendarIcon,
   CalendarSyncIcon,
   ChevronRightIcon,
-  ExternalIcon,
+  ClockIcon,
   GiftIcon,
+  SparkIcon,
   UserIcon,
   UsersIcon,
 } from "@/components/ui/icons";
@@ -19,10 +20,12 @@ import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 type Business = { name: string; slug: string };
-type Section = "agenda" | "clients" | "calendar";
+type Section = "agenda" | "clients" | "services" | "hours" | "calendar";
 
 const CALENDAR_SETTINGS = "/app/settings/calendar";
 const CLIENTS = "/app/clients";
+const SERVICES = "/app/services";
+const HOURS = "/app/settings/hours";
 
 // Only destinations that exist are links. Upcoming sections are shown as
 // such, without fake pages.
@@ -73,6 +76,20 @@ export function AppShell({
             className={item("clients")}
           >
             <UsersIcon size={18} /> Clientes
+          </Link>
+          <Link
+            href={SERVICES}
+            aria-current={current === "services" ? "page" : undefined}
+            className={item("services")}
+          >
+            <SparkIcon size={18} /> Prestations
+          </Link>
+          <Link
+            href={HOURS}
+            aria-current={current === "hours" ? "page" : undefined}
+            className={item("hours")}
+          >
+            <ClockIcon size={18} /> Horaires
           </Link>
           <Link
             href={CALENDAR_SETTINGS}
@@ -136,25 +153,24 @@ export function AppShell({
         >
           <UsersIcon size={21} /> Clientes
         </Link>
-        {upcoming.map(({ label, icon: Icon }) => (
-          <span
-            key={label}
-            aria-disabled="true"
-            className="flex h-16 cursor-default flex-col items-center justify-center gap-0.5 text-[11.5px] text-ink-muted/70"
-          >
-            <Icon size={20} className="opacity-70" />
-            <span>{label}</span>
-            <span className="rounded-full bg-sand px-1.5 text-[9.5px] leading-[1.35] font-medium text-ink-soft">
-              Bientôt
-            </span>
-          </span>
-        ))}
+        <Link
+          href={SERVICES}
+          aria-current={current === "services" ? "page" : undefined}
+          className={cn(
+            "flex h-16 flex-col items-center justify-center gap-1 text-[11.5px]",
+            current === "services" ? "font-semibold text-ink" : "text-ink-soft",
+          )}
+        >
+          <SparkIcon size={21} /> Prestations
+        </Link>
         <button
           type="button"
           onClick={() => setAccountOpen(true)}
           className={cn(
             "flex h-16 cursor-pointer flex-col items-center justify-center gap-1 text-[11.5px]",
-            current === "calendar" ? "font-semibold text-ink" : "text-ink-soft",
+            current === "calendar" || current === "hours"
+              ? "font-semibold text-ink"
+              : "text-ink-soft",
           )}
         >
           <UserIcon size={21} /> Compte
@@ -168,6 +184,16 @@ export function AppShell({
         description="Ton espace professionnel"
       >
         <div className="flex flex-col gap-4">
+          <Link
+            href={HOURS}
+            onClick={() => setAccountOpen(false)}
+            aria-current={current === "hours" ? "page" : undefined}
+            className="flex min-h-14 items-center gap-3 rounded-2xl border border-line bg-paper px-4 text-[15px] font-medium text-ink transition-colors hover:border-line-strong"
+          >
+            <ClockIcon size={20} className="text-ink-soft" />
+            <span className="flex-1">Horaires</span>
+            <ChevronRightIcon size={18} className="text-ink-muted" />
+          </Link>
           <Link
             href={CALENDAR_SETTINGS}
             onClick={() => setAccountOpen(false)}
@@ -189,20 +215,22 @@ export function AppShell({
   );
 }
 
+/**
+ * The address of the future booking page. Online booking is not available
+ * yet, so it is shown as such, not as a link to a page that cannot book.
+ */
 function PublicLink({ slug }: { slug: string }) {
   return (
-    <a
-      href={`/b/${slug}`}
-      target="_blank"
-      rel="noreferrer"
-      className="flex items-center gap-1.5 text-[13.5px] break-all text-ink-soft underline decoration-line-strong underline-offset-4 hover:text-ink"
-    >
-      <ExternalIcon size={15} className="shrink-0" />
-      {bookingHost()}/b/{slug}
-      <span className="sr-only">
-        {" "}
-        (ouvre ta page publique dans un nouvel onglet)
+    <p className="flex flex-col gap-1 text-[13px] text-ink-muted">
+      <span className="flex items-center gap-2">
+        Ta page de réservation
+        <span className="rounded-full bg-sand px-2 py-0.5 text-[11px] font-medium text-ink-soft">
+          Bientôt
+        </span>
       </span>
-    </a>
+      <span className="break-all text-ink-soft">
+        {bookingHost()}/b/{slug}
+      </span>
+    </p>
   );
 }
