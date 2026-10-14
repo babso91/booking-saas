@@ -57,6 +57,17 @@ const sent = () =>
     startsAt: string;
     endsAt: string;
   }[];
+/** The week the last save was based on (the backend compares it). */
+const basis = () =>
+  actions.replaceBusinessHoursAction.mock.calls.at(-1)![0].expected as {
+    weekday: number;
+    startsAt: string;
+    endsAt: string;
+  }[];
+const plain = (
+  hours: { weekday: number; startsAt: string; endsAt: string }[],
+) =>
+  hours.map(({ weekday, startsAt, endsAt }) => ({ weekday, startsAt, endsAt }));
 
 async function renderEditor(hours: ReturnType<typeof range>[]) {
   actions.listBusinessHoursAction.mockResolvedValue(ok(hours));
@@ -120,10 +131,8 @@ describe("weekly hours", () => {
   });
 
   it("opening, editing and closing days sends the complete week; the saved week is what is shown", async () => {
-    await renderEditor([
-      range(2, "09:00", "18:00"),
-      range(6, "10:00", "16:00"),
-    ]);
+    const read = [range(2, "09:00", "18:00"), range(6, "10:00", "16:00")];
+    await renderEditor(read);
     // Open Monday (a default range appears) and change its end.
     fireEvent.click(day("Lundi").getByRole("switch", { name: "Lundi ouvert" }));
     fireEvent.change(
@@ -157,6 +166,8 @@ describe("weekly hours", () => {
       { weekday: 2, startsAt: "09:00", endsAt: "12:00" },
       { weekday: 2, startsAt: "13:00", endsAt: "14:00" },
     ]);
+    // Based on the week as it was read.
+    expect(plain(basis())).toEqual(plain(read));
     expect(screen.getByText("Horaires enregistrés.")).toBeTruthy();
     expect(day("Samedi").getByText("Fermé ce jour-là.")).toBeTruthy();
   });
@@ -282,6 +293,11 @@ describe("weekly hours", () => {
     await flush();
     expect(sent()).toEqual([
       { weekday: 1, startsAt: "09:00", endsAt: "17:00" },
+    ]);
+    // Replacing on purpose: based on the week it was shown, not the
+    // outdated one.
+    expect(plain(basis())).toEqual([
+      { weekday: 1, startsAt: "08:00", endsAt: "12:00" },
     ]);
   });
 

@@ -7,6 +7,11 @@ import { TextAreaField, TextField } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { Sheet } from "@/components/ui/sheet";
 import {
+  fingerprintOf,
+  requestKeyFor,
+  type RequestKey,
+} from "@/features/agenda/client/request-id";
+import {
   callAction,
   type UiError,
   type UiResult,
@@ -48,9 +53,10 @@ export type ServiceSheetTarget =
  * Creates or edits a service. Drafts are kept per target while the page is
  * open (closing never loses them). While a save is pending the fields are
  * read only, the sheet cannot be dismissed and nothing is sent twice; success
- * is only shown once the backend confirmed it. A lost answer on a creation
- * is reconciled against the list before anything is sent again (the
- * creation contract has no idempotency key).
+ * is only shown once the backend confirmed it. A creation carries one
+ * request id per command, so a resend never creates twice; a lost answer is
+ * still reconciled against the list first (to be retired by the UI pass,
+ * docs/SETUP_WRITE_GUARANTEES_HANDOFF.md).
  */
 export function ServiceSheet({
   target,
@@ -152,6 +158,8 @@ function ServiceForm({
   const formRef = useRef<HTMLFormElement>(null);
   /** The last creation's answer was lost: check the list before resending. */
   const unsure = useRef(false);
+  /** One request id per creation command: a resend never creates twice. */
+  const requestKey = useRef<RequestKey | null>(null);
 
   useEffect(() => {
     alive.current = true;
@@ -210,17 +218,25 @@ function ServiceForm({
     const creating = target.mode === "create";
     let saved: ServiceView | null = null;
     let result: UiResult<ServiceView> | null = null;
-    // After a lost answer, the creation may have been written: look first,
-    // never send it twice blindly (no idempotency key in this contract).
+    // After a lost answer, the creation may have been written: look first.
+    // A resend carries the same request id and never creates twice.
     if (creating && unsure.current) saved = await reconcileCreate(command);
     if (!saved) {
+      if (creating) {
+        requestKey.current = requestKeyFor(
+          requestKey.current,
+          fingerprintOf(command),
+        );
+      }
+      const requestId = requestKey.current?.id;
       result = await callAction(() =>
         target.mode === "edit"
           ? updateServiceAction({
               serviceId: target.service.id,
+              expectedVersion: target.service.version,
               changes: serviceChanges(target.service, command),
             })
-          : createServiceAction(command),
+          : createServiceAction({ ...command, requestId }),
       );
       if (result.ok) saved = result.data;
       else if (creating && result.error.code === "network") {

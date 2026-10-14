@@ -16,11 +16,39 @@ describe("replaceBusinessHoursSchema", () => {
           { weekday: 1, startsAt: "13:00", endsAt: "19:00" },
           { weekday: 5, startsAt: "20:00", endsAt: "24:00" },
         ],
+        expected: [],
       }).success,
     ).toBe(true);
+    expect(
+      replaceBusinessHoursSchema.safeParse({ hours: [], expected: [] }).success,
+    ).toBe(true);
+  });
+
+  it("requires the week it was edited from (any ranges as read, ids ignored)", () => {
     expect(replaceBusinessHoursSchema.safeParse({ hours: [] }).success).toBe(
-      true,
+      false,
     );
+    expect(
+      replaceBusinessHoursSchema.parse({
+        hours: [],
+        expected: [
+          { id: "x", weekday: 1, startsAt: "09:00", endsAt: "12:00" },
+          { id: "y", weekday: 1, startsAt: "09:00", endsAt: "12:00" },
+        ],
+      }),
+    ).toEqual({
+      hours: [],
+      expected: [
+        { weekday: 1, startsAt: "09:00", endsAt: "12:00" },
+        { weekday: 1, startsAt: "09:00", endsAt: "12:00" },
+      ],
+    });
+    expect(
+      replaceBusinessHoursSchema.safeParse({
+        hours: [],
+        expected: [{ weekday: 7, startsAt: "09:00", endsAt: "12:00" }],
+      }).success,
+    ).toBe(false);
   });
 
   it.each([
@@ -36,7 +64,9 @@ describe("replaceBusinessHoursSchema", () => {
     ["24:30", [{ weekday: 1, startsAt: "10:00", endsAt: "24:30" }]],
     ["weekday 7", [{ weekday: 7, startsAt: "10:00", endsAt: "11:00" }]],
   ])("rejects %s", (_label, hours) => {
-    expect(replaceBusinessHoursSchema.safeParse({ hours }).success).toBe(false);
+    expect(
+      replaceBusinessHoursSchema.safeParse({ hours, expected: [] }).success,
+    ).toBe(false);
   });
 });
 

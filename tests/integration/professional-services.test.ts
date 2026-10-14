@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { createPublicBooking } from "@/features/appointments/data/public-booking";
@@ -69,6 +71,7 @@ describe("services CRUD", () => {
       owner.client,
       business.id,
       createServiceSchema.parse({
+        requestId: randomUUID(),
         name: "  Pose cil à cil ",
         durationMinutes: 120,
         priceCents: 8900,
@@ -78,6 +81,7 @@ describe("services CRUD", () => {
       owner.client,
       business.id,
       createServiceSchema.parse({
+        requestId: randomUUID(),
         name: "Remplissage",
         description: "3 semaines",
         durationMinutes: 60,
@@ -132,17 +136,20 @@ describe("services CRUD", () => {
       owner.client,
       business.id,
       createServiceSchema.parse({
+        requestId: randomUUID(),
         name: "Dépose",
         durationMinutes: 30,
         priceCents: 2000,
       }),
     );
 
-    const updated = await updateService(owner.client, business.id, service.id, {
-      priceCents: 2500,
-      durationMinutes: 45,
-      description: null,
-    });
+    const updated = await updateService(
+      owner.client,
+      business.id,
+      service.id,
+      { priceCents: 2500, durationMinutes: 45, description: null },
+      service.version,
+    );
 
     expect(updated).toMatchObject({
       name: "Dépose",
@@ -178,6 +185,7 @@ describe("services CRUD", () => {
       owner.client,
       business.id,
       createServiceSchema.parse({
+        requestId: randomUUID(),
         name: "Rehaussement",
         durationMinutes: 60,
         priceCents: 5500,
@@ -215,6 +223,7 @@ describe("services CRUD", () => {
       owner.client,
       business.id,
       createServiceSchema.parse({
+        requestId: randomUUID(),
         name: "Temporaire",
         durationMinutes: 30,
         priceCents: 0,
@@ -231,6 +240,7 @@ describe("services CRUD", () => {
       owner.client,
       business.id,
       createServiceSchema.parse({
+        requestId: randomUUID(),
         name: "Réservée",
         durationMinutes: 60,
         priceCents: 1000,
@@ -269,9 +279,13 @@ describe("services of another tenant", () => {
       listServices(owner.client, foreignBusiness.id),
     ).resolves.toEqual([]);
     await expect(
-      updateService(owner.client, foreignBusiness.id, foreignService, {
-        priceCents: 1,
-      }),
+      updateService(
+        owner.client,
+        foreignBusiness.id,
+        foreignService,
+        { priceCents: 1 },
+        1,
+      ),
     ).rejects.toMatchObject({ code: "not_found" });
     await expect(
       setServiceActive(owner.client, foreignBusiness.id, foreignService, false),
@@ -287,6 +301,7 @@ describe("services of another tenant", () => {
         owner.client,
         foreignBusiness.id,
         createServiceSchema.parse({
+          requestId: randomUUID(),
           name: "Intrus",
           durationMinutes: 30,
           priceCents: 0,

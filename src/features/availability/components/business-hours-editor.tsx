@@ -192,8 +192,15 @@ export function BusinessHoursEditor({
     setSaved(false);
   }
 
-  /** Whether the week is saved (confirmed by the backend). */
-  async function save(force = false): Promise<boolean> {
+  /**
+   * Whether the week is saved (confirmed by the backend). `expected` is the
+   * week this draft replaces: the backend refuses it (stale_business_hours)
+   * if the week has changed since.
+   */
+  async function save(
+    force = false,
+    expected: HourRange[] = baseline,
+  ): Promise<boolean> {
     if (busy) return false;
     const found = checkWeek(week);
     setErrors(found);
@@ -207,8 +214,9 @@ export function BusinessHoursEditor({
     setState("loading");
     const sent = hoursFromWeek(week);
 
-    // No version on the schedule: make sure it is still the one this draft
-    // started from, unless the professional chose to replace it anyway.
+    // Make sure it is still the one this draft started from, unless the
+    // professional chose to replace it anyway (the backend checks again,
+    // atomically, against `expected`).
     if (!force) {
       const current = await callAction(() => listBusinessHoursAction());
       if (!alive.current) return false;
@@ -220,7 +228,7 @@ export function BusinessHoursEditor({
     }
 
     const result = await callAction(() =>
-      replaceBusinessHoursAction({ hours: sent }),
+      replaceBusinessHoursAction({ hours: sent, expected }),
     );
     if (!alive.current) return false;
     setState("idle");
@@ -388,7 +396,7 @@ export function BusinessHoursEditor({
                 onClick={() => {
                   setBaseline(conflict);
                   setConflict(null);
-                  void save(true);
+                  void save(true, conflict);
                 }}
               >
                 Remplacer par mes horaires

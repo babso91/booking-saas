@@ -41,9 +41,25 @@ export const businessHourSchema = z
     path: ["endsAt"],
   });
 
-/** Complete weekly schedule. A weekday without range is a closed day. */
+/**
+ * Complete weekly schedule. A weekday without range is a closed day.
+ * `expected` is the week this one was edited from, as listBusinessHoursAction
+ * read it (ids are ignored): the database refuses the replacement
+ * (`stale_business_hours`) when the week has changed since.
+ */
 export const replaceBusinessHoursSchema = z
-  .object({ hours: z.array(businessHourSchema).max(7 * 12) })
+  .object({
+    hours: z.array(businessHourSchema).max(7 * 12),
+    expected: z
+      .array(
+        z.object({
+          weekday: weekdaySchema,
+          startsAt: localTimeSchema,
+          endsAt: localTimeSchema,
+        }),
+      )
+      .max(7 * 12),
+  })
   .superRefine(({ hours }, ctx) => {
     const byDay = new Map<number, { start: number; end: number }[]>();
 

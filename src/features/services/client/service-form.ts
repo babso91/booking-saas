@@ -24,6 +24,8 @@ export type ServiceView = {
   priceCents: number;
   active: boolean;
   displayOrder: number;
+  /** As last read: sent back as `expectedVersion` with an edit. */
+  version: number;
 };
 
 export const EMPTY_SERVICE: ServiceDraft = {

@@ -140,7 +140,9 @@ describe("a newly onboarded professional", () => {
     ];
     const created = [];
     for (const command of commands) {
-      created.push(ok(await createServiceAction(command)));
+      created.push(
+        ok(await createServiceAction({ ...command, requestId: randomUUID() })),
+      );
     }
     expect(created.map((service) => service.displayOrder)).toEqual([0, 1, 2]);
 
@@ -148,6 +150,7 @@ describe("a newly onboarded professional", () => {
     const edited = ok(
       await updateServiceAction({
         serviceId: created[2]!.id,
+        expectedVersion: created[2]!.version,
         changes: { priceCents: 7000 },
       }),
     );
@@ -163,7 +166,7 @@ describe("a newly onboarded professional", () => {
       { weekday, startsAt: "13:30", endsAt: "19:00" },
     ]);
     week.push({ weekday: 6, startsAt: "10:00", endsAt: "16:00" });
-    ok(await replaceBusinessHoursAction({ hours: week }));
+    ok(await replaceBusinessHoursAction({ hours: week, expected: [] }));
 
     // 3. Everything is read back as saved (a reload).
     expect(
@@ -312,6 +315,7 @@ describe("another business", () => {
     failure(
       await updateServiceAction({
         serviceId: services[0]!.id,
+        expectedVersion: services[0]!.version,
         changes: { priceCents: 1 },
       }),
       "not_found",
@@ -325,7 +329,7 @@ describe("another business", () => {
     );
     // The business comes from the session: this replaces the intruder's own
     // (empty) schedule, never the owner's.
-    ok(await replaceBusinessHoursAction({ hours: [] }));
+    ok(await replaceBusinessHoursAction({ hours: [], expected: [] }));
 
     sessionClient = owner.client;
     expect(ok(await listServicesAction())).toEqual(services);
@@ -341,6 +345,7 @@ describe("another business", () => {
           { weekday: 1, startsAt: "09:00", endsAt: "13:00" },
           { weekday: 1, startsAt: "12:00", endsAt: "18:00" },
         ],
+        expected: before,
       }),
       "validation_error",
     );

@@ -4,17 +4,20 @@ import type {
   CreateServiceInput,
   UpdateServiceInput,
 } from "@/features/services/schemas/service";
-import { AppException } from "@/lib/errors";
+import { AppException, appErrorMessages } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 import type { Tables, TablesUpdate } from "@/types/database.generated";
 
 // Professional data access for services. Every query is issued with the
 // user's client (RLS enforced) and additionally scoped to the business
-// resolved from the session.
+// resolved from the session. Creation is one SQL function call
+// (public.create_service, idempotent by request); edits are a compare and
+// swap on the version the professional read (services.version, owned by the
+// database).
 
 const SERVICE_COLUMNS =
-  "id, name, description, duration_minutes, price_cents, active, display_order";
+  "id, name, description, duration_minutes, price_cents, active, display_order, version";
 
 type ServiceRow = Pick<
   Tables<"services">,
@@ -25,6 +28,7 @@ type ServiceRow = Pick<
   | "price_cents"
   | "active"
   | "display_order"
+  | "version"
 >;
 
 export type ServiceDto = {
@@ -35,6 +39,8 @@ export type ServiceDto = {
   priceCents: number;
   active: boolean;
   displayOrder: number;
+  /** Pass it back as `expectedVersion` to edit this service. */
+  version: number;
 };
 
 function toServiceDto(row: ServiceRow): ServiceDto {
@@ -46,6 +52,7 @@ function toServiceDto(row: ServiceRow): ServiceDto {
     priceCents: row.price_cents,
     active: row.active,
     displayOrder: row.display_order,
+    version: row.version,
   };
 }
 
@@ -90,56 +97,57 @@ export async function getService(
   return toServiceDto(data);
 }
 
+/**
+ * Creates a service, once per `requestId`: a retry of the same command (a
+ * lost answer, a double submission) answers the service it created, as it
+ * is now. Two requests create two services, even with the same name.
+ */
 export async function createService(
   client: AppSupabaseClient,
   businessId: string,
   input: CreateServiceInput,
 ): Promise<ServiceDto> {
-  let displayOrder = input.displayOrder;
-
-  if (displayOrder === undefined) {
-    const { data: last, error: lastError } = await client
-      .from("services")
-      .select("display_order")
-      .eq("business_id", businessId)
-      .order("display_order", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (lastError) {
-      throw databaseException(lastError);
-    }
-
-    displayOrder = last ? last.display_order + 1 : 0;
-  }
-
   const { data, error } = await client
-    .from("services")
-    .insert({
-      business_id: businessId,
-      name: input.name,
-      description: input.description,
-      duration_minutes: input.durationMinutes,
-      price_cents: input.priceCents,
-      active: input.active,
-      display_order: displayOrder,
+    .rpc("create_service", {
+      p_business_id: businessId,
+      p_request_id: input.requestId,
+      p_name: input.name,
+      p_description: input.description ?? undefined,
+      p_duration_minutes: input.durationMinutes,
+      p_price_cents: input.priceCents,
+      p_active: input.active,
+      p_display_order: input.displayOrder,
     })
-    .select(SERVICE_COLUMNS)
     .single();
 
   if (error) {
     throw databaseException(error);
   }
+  // This request created a service, deleted since: never created again.
+  if (data.status === "deleted") {
+    throw serviceDeleted();
+  }
 
-  return toServiceDto(data);
+  try {
+    return await getService(client, businessId, data.service_id);
+  } catch (error) {
+    // A replay answered just before a concurrent deletion committed.
+    if (error instanceof AppException && error.code === "not_found") {
+      throw serviceDeleted();
+    }
+    throw error;
+  }
 }
 
-export async function updateService(
-  client: AppSupabaseClient,
-  businessId: string,
-  serviceId: string,
-  changes: UpdateServiceInput["changes"],
-): Promise<ServiceDto> {
+function serviceDeleted() {
+  return new AppException("service_deleted", {
+    fieldErrors: { requestId: [appErrorMessages.service_deleted] },
+  });
+}
+
+type ServiceChanges = UpdateServiceInput["changes"];
+
+function servicePatch(changes: ServiceChanges): TablesUpdate<"services"> {
   const patch: TablesUpdate<"services"> = {};
 
   if (changes.name !== undefined) patch.name = changes.name;
@@ -152,32 +160,100 @@ export async function updateService(
   if (changes.displayOrder !== undefined)
     patch.display_order = changes.displayOrder;
 
-  const { data, error } = await client
+  return patch;
+}
+
+/** Whether the service already has every value of `patch`. */
+function hasValues(row: ServiceRow, patch: TablesUpdate<"services">) {
+  return (Object.keys(patch) as (keyof typeof patch)[]).every(
+    (column) => row[column as keyof ServiceRow] === patch[column],
+  );
+}
+
+/**
+ * Writes only the changed fields, if the service is still at
+ * `expectedVersion` (one UPDATE: the compare and swap is its WHERE, so two
+ * concurrent edits of one version never both apply). Otherwise:
+ *   - `not_found` when there is no such service of this business;
+ *   - the service as it is, when it already has exactly these values (a
+ *     retried edit, whatever the version);
+ *   - `stale_service`: it changed since it was read; nothing is written.
+ * Without `expectedVersion` (activation only) the write is by value.
+ */
+async function writeService(
+  client: AppSupabaseClient,
+  businessId: string,
+  serviceId: string,
+  changes: ServiceChanges,
+  expectedVersion: number | undefined,
+): Promise<ServiceDto> {
+  const patch = servicePatch(changes);
+
+  let query = client
     .from("services")
     .update(patch)
     .eq("business_id", businessId)
-    .eq("id", serviceId)
-    .select(SERVICE_COLUMNS)
-    .maybeSingle();
+    .eq("id", serviceId);
+  if (expectedVersion !== undefined)
+    query = query.eq("version", expectedVersion);
+
+  const { data, error } = await query.select(SERVICE_COLUMNS).maybeSingle();
 
   if (error) {
     throw databaseException(error);
   }
-  // A row of another tenant is invisible under RLS: same answer as a missing id.
-  if (!data) {
-    throw new AppException("not_found");
+  if (data) {
+    return toServiceDto(data);
   }
 
-  return toServiceDto(data);
+  // Nothing written: a row of another tenant is invisible under RLS, same
+  // answer as a missing id.
+  const { data: current, error: readError } = await client
+    .from("services")
+    .select(SERVICE_COLUMNS)
+    .eq("business_id", businessId)
+    .eq("id", serviceId)
+    .maybeSingle();
+
+  if (readError) {
+    throw databaseException(readError);
+  }
+  if (!current) {
+    throw new AppException("not_found");
+  }
+  if (hasValues(current, patch)) {
+    return toServiceDto(current);
+  }
+  throw new AppException("stale_service", {
+    fieldErrors: { expectedVersion: [appErrorMessages.stale_service] },
+  });
 }
 
+export function updateService(
+  client: AppSupabaseClient,
+  businessId: string,
+  serviceId: string,
+  changes: ServiceChanges,
+  expectedVersion: number,
+): Promise<ServiceDto> {
+  return writeService(client, businessId, serviceId, changes, expectedVersion);
+}
+
+/** By value; with `expectedVersion`, refused if the service changed since. */
 export function setServiceActive(
   client: AppSupabaseClient,
   businessId: string,
   serviceId: string,
   active: boolean,
-) {
-  return updateService(client, businessId, serviceId, { active });
+  expectedVersion?: number,
+): Promise<ServiceDto> {
+  return writeService(
+    client,
+    businessId,
+    serviceId,
+    { active },
+    expectedVersion,
+  );
 }
 
 export async function reorderServices(

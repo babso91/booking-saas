@@ -56,11 +56,12 @@ La réservation en ligne par les clientes n'existe pas encore (`/b/[slug]` est u
 
 ## Limites connues
 
-Elles sont reproduites contre PostgreSQL réel par des tests `it.fails` (`tests/integration/professional-setup-concurrency.test.ts`). Leur correction relève du backend (migration et contrat) : voir [`SETUP_WRITE_GUARANTEES_HANDOFF.md`](SETUP_WRITE_GUARANTEES_HANDOFF.md).
+Les garanties d'écriture sont fournies par le backend (migration `20261016090000_setup_write_guarantees.sql`). Elles sont testées contre PostgreSQL réel dans `tests/integration/professional-setup-concurrency.test.ts`. Contrat et passation UI : [`SETUP_WRITE_GUARANTEES_HANDOFF.md`](SETUP_WRITE_GUARANTEES_HANDOFF.md).
 
-- **Création de prestation non idempotente :** un nouvel essai après une réponse perdue peut créer un doublon. La relecture côté client réduit ce risque sans l'exclure.
-- **Prestations sans version :** deux sessions qui modifient le _même_ champ, et la dernière l'emporte sans le dire. Des champs différents sont tous conservés.
-- **Horaires sans version :** la relecture avant enregistrement détecte un formulaire périmé, mais deux enregistrements simultanés après cette relecture restent possibles (fenêtre de quelques millisecondes).
+- **Création de prestation idempotente :** un nouvel essai avec le même `requestId` ne crée jamais de seconde prestation.
+- **Prestations versionnées :** une modification fondée sur une lecture périmée est refusée (`stale_service`), jamais appliquée sans le dire.
+- **Horaires comparés à la semaine lue :** un enregistrement fondé sur une semaine périmée est refusé (`stale_business_hours`), de façon atomique.
+- **Reste à faire dans l'interface :** l'expérience de conflit (comparer, puis choisir) pour `stale_service` et `stale_business_hours`, et le retrait des relectures de précaution (§ 5 de la passation).
 - **Pas encore d'écran :** le fuseau de l'activité et les exceptions (fermetures, ouvertures exceptionnelles) ont déjà leurs actions.
 
 ## Recette en staging (comptes fictifs uniquement)

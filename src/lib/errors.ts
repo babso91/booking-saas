@@ -27,6 +27,12 @@ export const appErrorMessages = {
   stale_note:
     "Cette note a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_unavailable: "Cette prestation n’est pas disponible.",
+  stale_service:
+    "Cette prestation a été modifiée entre-temps. Rechargez-la avant de réessayer.",
+  service_deleted:
+    "Cette prestation a déjà été créée, puis supprimée. Elle n’a pas été recréée.",
+  stale_business_hours:
+    "Les horaires ont été modifiés entre-temps. Rechargez-les avant de réessayer.",
   stale_appointment:
     "Ce rendez-vous a été modifié entre-temps. Rechargez-le avant de réessayer.",
   stale_block:
@@ -139,6 +145,9 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   note_deleted: 410,
   stale_note: 409,
   service_unavailable: 409,
+  stale_service: 409,
+  service_deleted: 410,
+  stale_business_hours: 409,
   stale_appointment: 409,
   stale_block: 409,
   invalid_status_transition: 409,

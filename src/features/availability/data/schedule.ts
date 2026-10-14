@@ -113,7 +113,18 @@ export async function listBusinessHours(
   return data.map(toBusinessHourDto);
 }
 
-/** Replaces the whole weekly schedule atomically (single SQL function call). */
+const toRangeRow = (range: ReplaceBusinessHoursInput["hours"][number]) => ({
+  weekday: range.weekday,
+  starts_at: range.startsAt,
+  ends_at: range.endsAt,
+});
+
+/**
+ * Replaces the whole weekly schedule atomically (single SQL function call),
+ * if it is still the week it was edited from (`expected`), under the
+ * schedule lock: `stale_business_hours` otherwise, nothing written. Saving
+ * the week it already is answers it, whatever `expected` (a retry).
+ */
 export async function replaceBusinessHours(
   client: AppSupabaseClient,
   businessId: string,
@@ -121,11 +132,8 @@ export async function replaceBusinessHours(
 ): Promise<BusinessHourDto[]> {
   const { data, error } = await client.rpc("replace_business_hours", {
     p_business_id: businessId,
-    p_hours: input.hours.map((range) => ({
-      weekday: range.weekday,
-      starts_at: range.startsAt,
-      ends_at: range.endsAt,
-    })),
+    p_hours: input.hours.map(toRangeRow),
+    p_expected: input.expected.map(toRangeRow),
   });
 
   if (error) {

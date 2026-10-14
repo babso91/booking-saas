@@ -18,6 +18,7 @@ const service = {
   priceCents: 6500,
   active: true,
   displayOrder: 0,
+  version: 1,
 };
 
 describe("service form", () => {

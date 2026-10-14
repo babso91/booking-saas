@@ -65,6 +65,7 @@ const service = (overrides: Partial<ServiceView> = {}): ServiceView => {
     priceCents: 6500,
     active: true,
     displayOrder: sequence,
+    version: 1,
     ...overrides,
   };
 };
@@ -177,6 +178,7 @@ describe("creating a service", () => {
       description: null,
       durationMinutes: 120,
       priceCents: 11050,
+      requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
     // Locked while it is sent: typing cannot slip in and be dropped.
     expect((field(/^Nom/) as HTMLInputElement).readOnly).toBe(true);
@@ -307,6 +309,7 @@ describe("editing and deactivating", () => {
     await flush();
     expect(actions.updateServiceAction).toHaveBeenCalledWith({
       serviceId: existing.id,
+      expectedVersion: existing.version,
       changes: { priceCents: 7000 },
     });
     expect(list().getByText(/70,00\s€/)).toBeTruthy();
