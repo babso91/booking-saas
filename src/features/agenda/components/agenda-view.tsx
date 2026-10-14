@@ -28,7 +28,6 @@ import type {
   AgendaDto,
 } from "@/features/agenda/data/agenda";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
-import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
 
@@ -87,13 +86,11 @@ const DEFAULT_TIME = "09:00";
 export function AgendaView({
   today: initialToday,
   initialDate,
-  slug,
 }: {
   /** Day to open on (a link from a customer profile); today otherwise. */
   initialDate?: string;
   /** The business's date today, from PostgreSQL. */
   today: string;
-  slug: string;
 }) {
   const wide = useMediaQuery("(min-width: 768px)");
   const view: View = wide ? "week" : "day";
@@ -482,8 +479,8 @@ export function AgendaView({
                   : "Ta journée est encore libre."}
               </p>
               <p className="text-[14.5px] text-ink-soft">
-                Ajoute un rendez-vous ou partage ton lien : tes clientes
-                réservent elles-mêmes.
+                Ajoute tes rendez-vous ici. La réservation en ligne par tes
+                clientes arrive bientôt.
               </p>
               <Button
                 size="md"
@@ -492,14 +489,6 @@ export function AgendaView({
               >
                 Ajouter un rendez-vous
               </Button>
-              <a
-                href={`/b/${slug}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[13.5px] text-ink-muted underline decoration-line-strong underline-offset-4 hover:text-ink"
-              >
-                {bookingHost()}/b/{slug}
-              </a>
             </div>
           </div>
         ) : null}

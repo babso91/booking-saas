@@ -2,16 +2,22 @@ import type { Metadata } from "next";
 
 import { BrandMark } from "@/components/shared/brand-mark";
 import { requireReadyBusiness } from "@/features/auth/data/guards";
+import { getSetupProgress } from "@/features/businesses/data/setup-progress";
 import { OnboardingSuccess } from "@/features/onboarding/components/onboarding-success";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
   title: "Ton espace est prêt",
 };
 
-// End of onboarding. Behind the /app guard (ready state only); the slug and
-// name come from the server session, never from client state.
+// End of onboarding. Behind the /app guard (ready state only); the name and
+// the setup progress come from the server, never from client state.
 export default async function WelcomePage() {
   const { business } = await requireReadyBusiness();
+  const progress = await getSetupProgress(
+    await createServerSupabaseClient(),
+    business.id,
+  );
 
   return (
     <div className="relative flex min-h-dvh flex-1 flex-col overflow-hidden px-5 pt-[max(env(safe-area-inset-top),0.75rem)] sm:px-10">
@@ -23,7 +29,7 @@ export default async function WelcomePage() {
         <BrandMark />
       </header>
       <main className="relative flex flex-1 flex-col justify-center py-10 pb-[max(env(safe-area-inset-bottom),2.5rem)]">
-        <OnboardingSuccess slug={business.slug} businessName={business.name} />
+        <OnboardingSuccess businessName={business.name} progress={progress} />
       </main>
     </div>
   );

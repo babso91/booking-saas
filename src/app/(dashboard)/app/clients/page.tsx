@@ -22,7 +22,7 @@ export default async function ClientsPage({
       business={{ name: business.name, slug: business.slug }}
       current="clients"
     >
-      <ClientDirectory initial={initial} slug={business.slug} />
+      <ClientDirectory initial={initial} />
     </AppShell>
   );
 }
