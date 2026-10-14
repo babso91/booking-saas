@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button, type ButtonState } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CloseIcon, PlusIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
 import { Switch } from "@/components/ui/switch";
@@ -47,8 +49,22 @@ const linkAction =
  * built from the read, never a partial draft. The schedule has no version,
  * so it is read again before saving: a change made elsewhere is never
  * overwritten without an explicit choice.
+ *
+ * Unsaved changes are never dropped silently: an in-app link asks first
+ * (save and continue, quit without saving, keep editing), closing or
+ * reloading the tab asks the browser, and a week left another way (back
+ * button) is kept for the session and offered back on return, only while
+ * the saved schedule is still the one it started from.
  */
-export function BusinessHoursEditor({ timezone }: { timezone: string }) {
+export function BusinessHoursEditor({
+  timezone,
+  draftKey,
+}: {
+  timezone: string;
+  /** Session storage key of the unsaved week (one per business). */
+  draftKey: string;
+}) {
+  const router = useRouter();
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [run, setRun] = useState(0);
   /** The schedule as last read or saved (what "unsaved" compares to). */
@@ -59,6 +75,12 @@ export function BusinessHoursEditor({ timezone }: { timezone: string }) {
   const [failure, setFailure] = useState<UiError | null>(null);
   const [conflict, setConflict] = useState<HourRange[] | null>(null);
   const [saved, setSaved] = useState(false);
+  /** Where an intercepted in-app link was going (unsaved changes). */
+  const [leaving, setLeaving] = useState<string | null>(null);
+  /** A kept unsaved week: offered back, or dropped because outdated. */
+  const [restored, setRestored] = useState<"restored" | "outdated" | null>(
+    null,
+  );
   const reads = useRef(0);
   const alive = useRef(true);
 
@@ -78,25 +100,83 @@ export function BusinessHoursEditor({ timezone }: { timezone: string }) {
         return;
       }
       setBaseline(result.data);
-      setWeek(weekFromHours(result.data));
+      const kept = readDraft(draftKey);
+      if (kept && kept.baseline === scheduleKey(result.data)) {
+        // Left without saving (e.g. back button): offered back as it was.
+        setWeek(kept.week);
+        setRestored("restored");
+      } else {
+        // Never over a schedule changed since: said, then dropped.
+        if (kept) setRestored("outdated");
+        clearDraft(draftKey);
+        setWeek(weekFromHours(result.data));
+      }
       setLoad({ status: "ready" });
     });
     return () => {
       reads.current += 1;
     };
-  }, [run]);
+  }, [run, draftKey]);
 
   const busy = state !== "idle";
   const draftHours = hoursFromWeek(week);
   const dirty = scheduleKey(draftHours) !== scheduleKey(baseline);
 
-  // Leaving the page with unsaved changes, or during a save, asks first.
+  // Closing or reloading the tab with unsaved changes asks the browser.
   useEffect(() => {
     if (!dirty && !busy) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, busy]);
+
+  // An in-app link (sidebar, tab bar, account sheet…) would unmount this
+  // page and drop the draft: while there are unsaved changes, it asks
+  // first. Only plain same-origin clicks to another page are held; new
+  // tabs, downloads and external links keep their usual behaviour.
+  useEffect(() => {
+    if (!dirty && !busy) return;
+    const hold = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      const anchor = (event.target as Element | null)?.closest?.("a[href]");
+      if (
+        !(anchor instanceof HTMLAnchorElement) ||
+        (anchor.target && anchor.target !== "_self") ||
+        anchor.hasAttribute("download")
+      ) {
+        return;
+      }
+      const url = new URL(anchor.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (
+        url.pathname === window.location.pathname &&
+        url.search === window.location.search
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setLeaving(`${url.pathname}${url.search}${url.hash}`);
+    };
+    document.addEventListener("click", hold, true);
+    return () => document.removeEventListener("click", hold, true);
+  }, [dirty, busy]);
+
+  // The unsaved week, kept for the session (back button, other exits).
+  useEffect(() => {
+    if (load.status !== "ready") return;
+    if (dirty) writeDraft(draftKey, scheduleKey(baseline), week);
+    else clearDraft(draftKey);
+  }, [load.status, dirty, draftKey, baseline, week]);
 
   function edit(weekday: number, change: (day: DayDraft) => DayDraft) {
     // Locked while saving: what is sent is what is saved.
@@ -112,14 +192,15 @@ export function BusinessHoursEditor({ timezone }: { timezone: string }) {
     setSaved(false);
   }
 
-  async function save(force = false) {
-    if (busy) return;
+  /** Whether the week is saved (confirmed by the backend). */
+  async function save(force = false): Promise<boolean> {
+    if (busy) return false;
     const found = checkWeek(week);
     setErrors(found);
     const first = Object.keys(found)[0];
     if (first !== undefined) {
       document.getElementById(`day-${first}`)?.focus();
-      return;
+      return false;
     }
     setFailure(null);
     setSaved(false);
@@ -130,29 +211,52 @@ export function BusinessHoursEditor({ timezone }: { timezone: string }) {
     // started from, unless the professional chose to replace it anyway.
     if (!force) {
       const current = await callAction(() => listBusinessHoursAction());
-      if (!alive.current) return;
+      if (!alive.current) return false;
       if (current.ok && scheduleKey(current.data) !== scheduleKey(baseline)) {
         setConflict(current.data);
         setState("idle");
-        return;
+        return false;
       }
     }
 
     const result = await callAction(() =>
       replaceBusinessHoursAction({ hours: sent }),
     );
-    if (!alive.current) return;
+    if (!alive.current) return false;
     setState("idle");
     if (result.ok) {
       setBaseline(result.data);
       setWeek(weekFromHours(result.data));
       setConflict(null);
       setSaved(true);
-      return;
+      setRestored(null);
+      clearDraft(draftKey);
+      return true;
     }
     const refused = serverDayErrors(sent, result.error.fieldErrors);
     setErrors(refused);
     setFailure(result.error);
+    return false;
+  }
+
+  /** Saves, then follows the held link only once the week is saved. */
+  async function saveAndLeave() {
+    const target = leaving;
+    if (!target) return;
+    const done = await save();
+    if (!alive.current) return;
+    setLeaving(null);
+    if (done) router.push(target as Parameters<typeof router.push>[0]);
+  }
+
+  function leaveWithoutSaving() {
+    const target = leaving;
+    if (!target) return;
+    clearDraft(draftKey);
+    setLeaving(null);
+    // The guard is off once nothing is left to protect.
+    setWeek(weekFromHours(baseline));
+    router.push(target as Parameters<typeof router.push>[0]);
   }
 
   if (load.status === "loading") {
@@ -215,6 +319,35 @@ export function BusinessHoursEditor({ timezone }: { timezone: string }) {
         }}
         className="flex flex-col gap-3"
       >
+        {restored === "restored" ? (
+          <Notice
+            tone="info"
+            title="Brouillon non enregistré restauré"
+            action={
+              <button
+                type="button"
+                className={linkAction}
+                onClick={() => {
+                  setWeek(weekFromHours(baseline));
+                  setRestored(null);
+                  setErrors({});
+                }}
+              >
+                Abandonner ce brouillon
+              </button>
+            }
+          >
+            Tu avais quitté la page sans enregistrer ces horaires. Vérifie-les
+            puis enregistre-les.
+          </Notice>
+        ) : restored === "outdated" ? (
+          <Notice tone="warning" title="Brouillon non restauré">
+            Tu avais quitté la page sans enregistrer, mais tes horaires ont
+            changé depuis : ton brouillon n’a pas été restauré pour ne pas les
+            écraser. Voici les horaires actuels.
+          </Notice>
+        ) : null}
+
         {baseline.length === 0 && !dirty ? (
           <Notice tone="info" title="Aucun horaire pour l’instant">
             Ouvre les jours où tu travailles et indique tes plages. Les jours
@@ -319,6 +452,26 @@ export function BusinessHoursEditor({ timezone }: { timezone: string }) {
           </div>
         </div>
       </form>
+
+      <ConfirmDialog
+        open={leaving !== null}
+        title="Modifications non enregistrées"
+        description="Tes horaires modifiés ne sont pas encore enregistrés."
+        confirmLabel="Enregistrer et continuer"
+        cancelLabel="Continuer à modifier"
+        state={state}
+        onConfirm={() => void saveAndLeave()}
+        onCancel={() => setLeaving(null)}
+      >
+        <button
+          type="button"
+          disabled={busy}
+          onClick={leaveWithoutSaving}
+          className="flex h-11 cursor-pointer items-center text-[14.5px] font-medium text-danger underline decoration-danger/40 underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Quitter sans enregistrer
+        </button>
+      </ConfirmDialog>
     </Frame>
   );
 }
@@ -577,5 +730,39 @@ function SaveFailure({
           conservées.
         </Notice>
       );
+  }
+}
+
+// The unsaved week of one business, for the session only (never the
+// source of truth: it is offered back only over the schedule it started
+// from). Storage may be unavailable: the editor works without it.
+type KeptDraft = { baseline: string; week: DayDraft[] };
+
+function readDraft(key: string): KeptDraft | null {
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as KeptDraft;
+    return typeof value?.baseline === "string" && Array.isArray(value.week)
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(key: string, baseline: string, week: DayDraft[]) {
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify({ baseline, week }));
+  } catch {
+    // Storage unavailable or full: the in-app guard still protects.
+  }
+}
+
+function clearDraft(key: string) {
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Storage unavailable.
   }
 }

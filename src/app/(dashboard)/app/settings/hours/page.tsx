@@ -19,7 +19,10 @@ export default async function BusinessHoursPage() {
       current="hours"
     >
       {/* The business's zone (from the session), never the browser's. */}
-      <BusinessHoursEditor timezone={business.timezone} />
+      <BusinessHoursEditor
+        timezone={business.timezone}
+        draftKey={`hours-draft:${business.id}`}
+      />
     </AppShell>
   );
 }

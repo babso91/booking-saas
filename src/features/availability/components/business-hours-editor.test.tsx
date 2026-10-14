@@ -2,6 +2,10 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  nextNavigationMock,
+  router,
+} from "../../../../tests/support/next-router";
 import { BusinessHoursEditor } from "./business-hours-editor";
 
 // The weekly hours screen, from what the professional sees and does. The
@@ -14,6 +18,7 @@ const { actions } = vi.hoisted(() => ({
     replaceBusinessHoursAction: vi.fn(),
   },
 }));
+vi.mock("next/navigation", () => nextNavigationMock);
 vi.mock("@/features/availability/actions/schedule", () => ({
   listBusinessHoursAction: (...args: unknown[]) =>
     actions.listBusinessHoursAction(...args),
@@ -55,7 +60,16 @@ const sent = () =>
 
 async function renderEditor(hours: ReturnType<typeof range>[]) {
   actions.listBusinessHoursAction.mockResolvedValue(ok(hours));
-  const view = render(<BusinessHoursEditor timezone="America/Vancouver" />);
+  const view = render(
+    <>
+      {/* Stands for the sidebar: an ordinary in-app link. */}
+      <a href="/app/services">Prestations</a>
+      <BusinessHoursEditor
+        timezone="America/Vancouver"
+        draftKey="hours-draft:test"
+      />
+    </>,
+  );
   await flush();
   return view;
 }
@@ -67,6 +81,8 @@ const saveButton = () =>
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   Object.values(actions).forEach((mock) => mock.mockReset());
+  router.push.mockReset();
+  window.sessionStorage.clear();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -296,7 +312,12 @@ describe("weekly hours", () => {
 
   it("a failed read says so and retries", async () => {
     actions.listBusinessHoursAction.mockResolvedValueOnce(fail("internal"));
-    render(<BusinessHoursEditor timezone="Europe/Paris" />);
+    render(
+      <BusinessHoursEditor
+        timezone="Europe/Paris"
+        draftKey="hours-draft:test"
+      />,
+    );
     await flush();
     expect(
       screen.getByText("Tes horaires n’ont pas pu être chargés."),
@@ -305,5 +326,140 @@ describe("weekly hours", () => {
     fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
     await flush();
     expect(screen.getByText("Aucun horaire pour l’instant")).toBeTruthy();
+  });
+});
+
+describe("leaving with unsaved hours", () => {
+  const edit = () =>
+    fireEvent.change(
+      day("Lundi").getByRole("combobox", { name: "Fin de la plage 1, Lundi" }),
+      { target: { value: "17:00" } },
+    );
+  const sidebarLink = () => screen.getByRole("link", { name: "Prestations" });
+  const leaveDialog = () =>
+    within(
+      screen.getByRole("dialog", { name: "Modifications non enregistrées" }),
+    );
+
+  it("an in-app link does not drop the edited week silently: the professional decides", async () => {
+    await renderEditor([range(1, "09:00", "18:00")]);
+    edit();
+    // fireEvent returns false when the navigation was prevented.
+    expect(fireEvent.click(sidebarLink())).toBe(false);
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(
+      leaveDialog().getByText(/ne sont pas encore enregistrés/),
+    ).toBeTruthy();
+
+    // Keep editing: the draft is intact.
+    fireEvent.click(
+      leaveDialog().getByRole("button", { name: "Continuer à modifier" }),
+    );
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      (
+        day("Lundi").getByRole("combobox", {
+          name: "Fin de la plage 1, Lundi",
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("17:00");
+  });
+
+  it("quitting without saving is an explicit choice, then navigates", async () => {
+    await renderEditor([range(1, "09:00", "18:00")]);
+    edit();
+    fireEvent.click(sidebarLink());
+    await flush();
+    fireEvent.click(
+      leaveDialog().getByRole("button", { name: "Quitter sans enregistrer" }),
+    );
+    await flush();
+    expect(actions.replaceBusinessHoursAction).not.toHaveBeenCalled();
+    expect(router.push).toHaveBeenCalledWith("/app/services");
+    expect(window.sessionStorage.getItem("hours-draft:test")).toBeNull();
+  });
+
+  it("save and continue: navigates only once the complete week is saved", async () => {
+    await renderEditor([range(1, "09:00", "18:00")]);
+    edit();
+    fireEvent.click(sidebarLink());
+    await flush();
+    const pending = deferred();
+    actions.replaceBusinessHoursAction.mockReturnValueOnce(pending.promise);
+    fireEvent.click(
+      leaveDialog().getByRole("button", { name: /^Enregistrer et continuer/ }),
+    );
+    await flush();
+    expect(sent()).toEqual([
+      { weekday: 1, startsAt: "09:00", endsAt: "17:00" },
+    ]);
+    expect(router.push).not.toHaveBeenCalled();
+    pending.resolve(ok([range(1, "09:00", "17:00")]));
+    await flush();
+    expect(router.push).toHaveBeenCalledWith("/app/services");
+  });
+
+  it("save and continue fails: stays, with the draft and the error", async () => {
+    await renderEditor([range(1, "09:00", "18:00")]);
+    edit();
+    fireEvent.click(sidebarLink());
+    await flush();
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(fail("internal"));
+    fireEvent.click(
+      leaveDialog().getByRole("button", { name: /^Enregistrer et continuer/ }),
+    );
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("Enregistrement impossible")).toBeTruthy();
+    expect(
+      (
+        day("Lundi").getByRole("combobox", {
+          name: "Fin de la plage 1, Lundi",
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("17:00");
+  });
+
+  it("nothing unsaved: links are not intercepted", async () => {
+    await renderEditor([range(1, "09:00", "18:00")]);
+    expect(fireEvent.click(sidebarLink())).toBe(true);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("left another way (back button): the unsaved week is offered back on return, if the saved one has not changed", async () => {
+    const view = await renderEditor([range(1, "09:00", "18:00")]);
+    edit();
+    view.unmount();
+
+    await renderEditor([range(1, "09:00", "18:00")]);
+    expect(screen.getByText("Brouillon non enregistré restauré")).toBeTruthy();
+    expect(
+      (
+        day("Lundi").getByRole("combobox", {
+          name: "Fin de la plage 1, Lundi",
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("17:00");
+    expect(screen.getByText("Modifications non enregistrées.")).toBeTruthy();
+  });
+
+  it("…but never over a schedule changed since: said, not restored", async () => {
+    const view = await renderEditor([range(1, "09:00", "18:00")]);
+    edit();
+    view.unmount();
+
+    await renderEditor([range(1, "08:00", "12:00")]);
+    expect(screen.getByText(/n’a pas été restauré/)).toBeTruthy();
+    expect(
+      (
+        day("Lundi").getByRole("combobox", {
+          name: "Début de la plage 1, Lundi",
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("08:00");
+    expect(window.sessionStorage.getItem("hours-draft:test")).toBeNull();
   });
 });
