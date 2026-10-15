@@ -1,43 +1,43 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
-import { ArrowRightIcon, CheckIcon, CopyIcon } from "@/components/ui/icons";
-import { bookingHost, bookingUrl } from "@/lib/brand";
+import { ArrowRightIcon } from "@/components/ui/icons";
+import type { SetupProgressDto } from "@/features/businesses/data/setup-progress";
 import { cn } from "@/lib/cn";
+
+import { SetupChecklist } from "./setup-checklist";
 
 const petals = Array.from({ length: 10 }, (_, index) => index * 36);
 
-/** Rendered by /app/welcome with the business read from the server session. */
+/**
+ * Rendered by /app/welcome with the business and its setup progress read
+ * from the server. Online booking is not available yet: the next steps are
+ * configuring services and hours, then adding appointments in the agenda.
+ */
 export function OnboardingSuccess({
-  slug,
   businessName,
+  progress,
 }: {
-  slug: string;
   businessName: string;
+  progress: SetupProgressDto;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
   }, []);
 
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 2000);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(bookingUrl(slug));
-      setCopied(true);
-    } catch {
-      // Clipboard can be blocked; the link stays visible and selectable.
-    }
-  }
+  const firstStep =
+    progress.activeServices === 0
+      ? { href: "/app/services" as const, label: "Ajouter mes prestations" }
+      : progress.openingRanges === 0
+        ? {
+            href: "/app/settings/hours" as const,
+            label: "Configurer mes horaires",
+          }
+        : { href: "/app" as const, label: "Accéder à mon agenda" };
 
   return (
     <div className="flex flex-col items-center text-center">
@@ -97,40 +97,33 @@ export function OnboardingSuccess({
       >
         Ton espace est prêt.
       </h1>
-      <p className="mt-4 max-w-[34ch] animate-rise text-[16px] leading-relaxed text-ink-soft [animation-delay:420ms]">
-        Ajoute tes prestations et tes horaires, puis partage ton lien.
+      <p className="mt-4 max-w-[38ch] animate-rise text-[16px] leading-relaxed text-ink-soft [animation-delay:420ms]">
+        Configure tes prestations et tes horaires, puis ajoute tes rendez-vous
+        dans l’agenda.
       </p>
 
-      <div className="mt-8 flex w-full max-w-[420px] animate-rise items-center gap-2 rounded-2xl border border-line bg-paper-raised p-2 pl-4 [animation-delay:480ms]">
-        <p className="min-w-0 flex-1 text-left text-[15px] leading-snug [overflow-wrap:anywhere] text-ink-muted">
-          {bookingHost()}/b/
-          <span className="font-semibold text-ink">{slug}</span>
-        </p>
-        <button
-          type="button"
-          onClick={copy}
-          className={cn(
-            "flex h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-xl px-3.5 text-[14px] font-medium transition-colors duration-200",
-            copied
-              ? "bg-success-soft text-success"
-              : "bg-sand text-ink hover:bg-sand-deep",
-          )}
-        >
-          {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
-          <span aria-live="polite">{copied ? "Copié" : "Copier"}</span>
-        </button>
+      <div className="mt-8 w-full max-w-[460px] animate-rise [animation-delay:480ms]">
+        <SetupChecklist progress={progress} />
       </div>
 
       <Link
-        href="/app"
-        className="group mt-6 inline-flex h-14 w-full max-w-[420px] animate-rise items-center justify-center gap-2.5 rounded-2xl bg-ink text-base font-medium text-paper-raised shadow-[0_10px_24px_-12px_rgba(35,28,24,0.55)] transition-[background-color,transform] duration-200 [animation-delay:540ms] hover:bg-[#382d27] active:scale-[0.985]"
+        href={firstStep.href}
+        className="group mt-6 inline-flex h-14 w-full max-w-[460px] animate-rise items-center justify-center gap-2.5 rounded-2xl bg-ink text-base font-medium text-paper-raised shadow-[0_10px_24px_-12px_rgba(35,28,24,0.55)] transition-[background-color,transform] duration-200 [animation-delay:540ms] hover:bg-[#382d27] active:scale-[0.985]"
       >
-        Accéder à mon espace
+        {firstStep.label}
         <ArrowRightIcon
           size={18}
           className="transition-transform duration-200 group-hover:translate-x-0.5"
         />
       </Link>
+      {firstStep.href !== "/app" ? (
+        <Link
+          href="/app"
+          className="mt-3 animate-rise text-[14.5px] text-ink-soft underline decoration-line-strong underline-offset-4 [animation-delay:560ms] hover:text-ink"
+        >
+          Plus tard : aller à mon agenda
+        </Link>
+      ) : null}
     </div>
   );
 }

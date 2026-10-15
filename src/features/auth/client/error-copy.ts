@@ -120,6 +120,19 @@ export const errorCopy: Record<
     title: "Prestation indisponible",
     message: "Cette prestation n’est pas disponible.",
   },
+  stale_service: {
+    title: "Modifiée entre-temps",
+    message: "Cette prestation a changé. Recharge-la avant de réessayer.",
+  },
+  service_deleted: {
+    title: "Déjà supprimée",
+    message:
+      "Cette prestation avait déjà été créée, puis supprimée. Elle n’a pas été recréée.",
+  },
+  stale_business_hours: {
+    title: "Modifiés entre-temps",
+    message: "Tes horaires ont changé. Recharge-les avant de réessayer.",
+  },
   stale_appointment: {
     title: "Modifié entre-temps",
     message: "Ce rendez-vous a changé. Recharge-le avant de réessayer.",

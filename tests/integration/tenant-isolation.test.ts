@@ -262,6 +262,7 @@ describe("writes across tenants", () => {
     const hours = await userA.client.rpc("replace_business_hours", {
       p_business_id: businessB.id,
       p_hours: [],
+      p_expected: [],
     });
     const reorder = await userA.client.rpc("reorder_services", {
       p_business_id: businessB.id,

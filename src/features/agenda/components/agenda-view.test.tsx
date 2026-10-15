@@ -84,7 +84,7 @@ function useViewport(wide: boolean) {
 }
 
 function renderAgenda() {
-  return render(<AgendaView today={TODAY} slug="studio-mila" />);
+  return render(<AgendaView today={TODAY} />);
 }
 
 const lastCall = (mock: ReturnType<typeof vi.fn>) =>
@@ -222,14 +222,20 @@ describe("loading", () => {
     );
   });
 
-  it("shows a real empty state with the public link", async () => {
+  it("shows a real empty state, without promising online booking", async () => {
     actions.getAgendaAction.mockResolvedValue(ok(agenda(TODAY, TODAY)));
     renderAgenda();
 
     expect(
       await screen.findByText("Ta journée est encore libre."),
     ).toBeTruthy();
-    expect(screen.getByRole("link", { name: /\/b\/studio-mila/ })).toBeTruthy();
+    // Online booking does not exist yet: no link to a page that cannot book.
+    expect(screen.queryByRole("link", { name: /\/b\// })).toBeNull();
+    expect(
+      screen.getByText(
+        /La réservation en ligne par tes clientes arrive bientôt/,
+      ),
+    ).toBeTruthy();
     expect(
       screen.getByRole("button", { name: /Ajouter un rendez-vous/ }),
     ).toBeTruthy();
@@ -643,7 +649,7 @@ describe("existing appointment", () => {
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
       ok(agenda(startDate, endDate, { appointments: [repeated] })),
     );
-    render(<AgendaView today="2026-10-21" slug="studio-mila" />);
+    render(<AgendaView today="2026-10-21" />);
     const details = await openAppointment(
       user,
       /02:30 \(heure d’été, UTC\+2\)/,
@@ -1063,7 +1069,7 @@ describe("blocks", () => {
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
       ok(agenda(startDate, endDate, { blocks: [repeated] })),
     );
-    render(<AgendaView today="2026-10-21" slug="studio-mila" />);
+    render(<AgendaView today="2026-10-21" />);
     const card = await screen.findByRole("button", {
       name: "Bloqué · Heure en double, 02:30 – 02:30",
     });
@@ -1227,9 +1233,7 @@ describe("links with the customer profiles", () => {
     actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
       ok(agenda(startDate, endDate)),
     );
-    render(
-      <AgendaView today={TODAY} initialDate="2026-10-24" slug="studio-mila" />,
-    );
+    render(<AgendaView today={TODAY} initialDate="2026-10-24" />);
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenCalledWith({
         startDate: "2026-10-19",

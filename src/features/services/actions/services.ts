@@ -31,6 +31,11 @@ export async function listServicesAction() {
   );
 }
 
+/**
+ * Creates a service. Idempotent by `requestId` (one per form): a retry
+ * answers the service it created, `idempotency_conflict` for another
+ * command, `service_deleted` once that service was deleted.
+ */
 export async function createServiceAction(input: unknown) {
   const result = await runBusinessAction(
     createServiceSchema,
@@ -41,23 +46,37 @@ export async function createServiceAction(input: unknown) {
   return result;
 }
 
+/** Writes the changed fields, based on `expectedVersion` (`stale_service`). */
 export async function updateServiceAction(input: unknown) {
   const result = await runBusinessAction(
     updateServiceSchema,
     input,
     ({ client, businessId }, data) =>
-      updateService(client, businessId, data.serviceId, data.changes),
+      updateService(
+        client,
+        businessId,
+        data.serviceId,
+        data.changes,
+        data.expectedVersion,
+      ),
   );
   if (result.ok) revalidateServicePages();
   return result;
 }
 
+/** Activates or deactivates; with `expectedVersion`, as updateServiceAction. */
 export async function setServiceActiveAction(input: unknown) {
   const result = await runBusinessAction(
     setServiceActiveSchema,
     input,
     ({ client, businessId }, data) =>
-      setServiceActive(client, businessId, data.serviceId, data.active),
+      setServiceActive(
+        client,
+        businessId,
+        data.serviceId,
+        data.active,
+        data.expectedVersion,
+      ),
   );
   if (result.ok) revalidateServicePages();
   return result;

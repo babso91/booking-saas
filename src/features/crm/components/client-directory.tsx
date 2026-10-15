@@ -19,7 +19,6 @@ import {
   type ClientSort,
   type DirectoryClientDto,
 } from "@/features/crm/types";
-import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 import { filterLabels, sortLabels } from "../client/copy";
@@ -71,13 +70,7 @@ type Request = { state: DirectoryQuery; seq: number };
  * re-read they say so; if that read fails they stay, marked as possibly
  * out of date, with a retry. Rows of other criteria are never shown.
  */
-export function ClientDirectory({
-  initial,
-  slug,
-}: {
-  initial: DirectoryQuery;
-  slug: string;
-}) {
+export function ClientDirectory({ initial }: { initial: DirectoryQuery }) {
   const [text, setText] = useState(initial.query);
   const [request, setRequest] = useState<Request>({ state: initial, seq: 0 });
   /** Last rows read successfully (for `listing.key`). */
@@ -347,7 +340,7 @@ export function ClientDirectory({
               }}
             />
           ) : (
-            <NoClientsYet slug={slug} onCreate={() => setCreating(true)} />
+            <NoClientsYet onCreate={() => setCreating(true)} />
           )
         ) : (
           <section
@@ -589,22 +582,15 @@ function EmptyResult({
   );
 }
 
-function NoClientsYet({
-  slug,
-  onCreate,
-}: {
-  slug: string;
-  onCreate: () => void;
-}) {
+function NoClientsYet({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="flex flex-col items-start gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-7">
       <p className="font-display text-[26px] leading-tight text-ink">
         Tes clientes apparaîtront ici
       </p>
       <p className="max-w-prose text-[14.5px] text-ink-soft">
-        Chaque réservation en ligne ou chaque rendez-vous ajouté dans l’agenda
-        crée ou complète la fiche de la cliente. Tu peux aussi en ajouter une
-        toi-même.
+        Chaque rendez-vous ajouté dans l’agenda crée ou complète la fiche de la
+        cliente. Tu peux aussi en ajouter une toi-même.
       </p>
       <div className="flex flex-wrap items-center gap-4 pt-1">
         <button
@@ -620,15 +606,6 @@ function NoClientsYet({
         >
           Ouvrir l’agenda
         </Link>
-        <a
-          href={`/b/${slug}`}
-          target="_blank"
-          rel="noreferrer"
-          className="text-[14.5px] text-ink-soft underline decoration-line-strong underline-offset-4"
-        >
-          {bookingHost()}/b/{slug}
-          <span className="sr-only"> (ta page de réservation)</span>
-        </a>
       </div>
     </div>
   );

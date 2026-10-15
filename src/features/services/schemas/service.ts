@@ -21,6 +21,9 @@ const serviceFields = {
 
 export const serviceIdSchema = z.uuid();
 
+/** A service's version as last read (ServiceDto.version). */
+const versionSchema = z.number().int().min(1).max(2_147_483_647);
+
 export const createServiceSchema = z.object({
   name: serviceFields.name,
   description: serviceFields.description,
@@ -28,10 +31,14 @@ export const createServiceSchema = z.object({
   priceCents: serviceFields.priceCents,
   active: serviceFields.active.default(true),
   displayOrder: serviceFields.displayOrder.optional(),
+  /** One per creation form: a retry of the same command creates nothing more. */
+  requestId: z.uuid(),
 });
 
+/** Only the changed fields, on the basis of the version they were read at. */
 export const updateServiceSchema = z.object({
   serviceId: serviceIdSchema,
+  expectedVersion: versionSchema,
   changes: z
     .object({
       name: serviceFields.name.optional(),
@@ -46,9 +53,11 @@ export const updateServiceSchema = z.object({
     }),
 });
 
+/** By value (idempotent); with a version, refused if the service changed since. */
 export const setServiceActiveSchema = z.object({
   serviceId: serviceIdSchema,
   active: z.boolean(),
+  expectedVersion: versionSchema.optional(),
 });
 
 export const reorderServicesSchema = z.object({

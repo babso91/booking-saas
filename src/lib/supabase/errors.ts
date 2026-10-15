@@ -23,6 +23,7 @@ const domainMessages: Record<string, AppErrorCode> = {
   client_note_deleted: "note_deleted",
   stale_note: "stale_note",
   service_unavailable: "service_unavailable",
+  stale_business_hours: "stale_business_hours",
   stale_appointment: "stale_appointment",
   invalid_status_transition: "invalid_status_transition",
   appointment_not_editable: "appointment_not_editable",

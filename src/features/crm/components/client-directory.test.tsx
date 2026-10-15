@@ -71,10 +71,7 @@ const ZOE = directoryClient({
 
 async function renderDirectory(initial: Partial<DirectoryQuery> = {}) {
   const view = render(
-    <ClientDirectory
-      initial={{ ...DEFAULT_QUERY, ...initial }}
-      slug="studio-mila"
-    />,
+    <ClientDirectory initial={{ ...DEFAULT_QUERY, ...initial }} />,
   );
   await flush();
   return view;
@@ -303,11 +300,8 @@ describe("empty, loading and errors", () => {
         .getByRole("link", { name: "Ouvrir l’agenda" })
         .getAttribute("href"),
     ).toBe("/app");
-    expect(
-      screen
-        .getByRole("link", { name: /ta page de réservation/ })
-        .getAttribute("href"),
-    ).toBe("/b/studio-mila");
+    // Online booking does not exist yet: no link to a page that cannot book.
+    expect(screen.queryByRole("link", { name: /réservation/ })).toBeNull();
     expect(
       screen.queryByRole("button", { name: /Nouvelle cliente/ }),
     ).toBeNull();
@@ -333,7 +327,7 @@ describe("empty, loading and errors", () => {
     listClientsAction.mockReturnValueOnce(
       new Promise((resolve) => (answer = resolve)),
     );
-    render(<ClientDirectory initial={DEFAULT_QUERY} slug="studio-mila" />);
+    render(<ClientDirectory initial={DEFAULT_QUERY} />);
     expect(
       screen.getAllByText("Chargement des clientes…").length,
     ).toBeGreaterThan(0);
@@ -528,7 +522,7 @@ it("StrictMode: the first, cleaned-up run of the read never overwrites the newer
     .mockResolvedValueOnce(ok(directoryPage([INES])));
   render(
     <StrictMode>
-      <ClientDirectory initial={DEFAULT_QUERY} slug="studio-mila" />
+      <ClientDirectory initial={DEFAULT_QUERY} />
     </StrictMode>,
   );
   await flush();

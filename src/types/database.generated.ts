@@ -451,13 +451,13 @@ isOneToOne: false
                   ]
                 },"services": {
                   Row: {
-                    "active": boolean,"business_id": string,"created_at": string,"description": string | null,"display_order": number,"duration_minutes": number,"id": string,"name": string,"price_cents": number,"updated_at": string
+                    "active": boolean,"business_id": string,"created_at": string,"description": string | null,"display_order": number,"duration_minutes": number,"id": string,"name": string,"price_cents": number,"updated_at": string,"version": number
                   }
                   Insert: {
-                    "active"?: boolean,"business_id": string,"created_at"?: string,"description"?: string | null,"display_order"?: number,"duration_minutes": number,"id"?: string,"name": string,"price_cents": number,"updated_at"?: string
+                    "active"?: boolean,"business_id": string,"created_at"?: string,"description"?: string | null,"display_order"?: number,"duration_minutes": number,"id"?: string,"name": string,"price_cents": number,"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "active"?: boolean,"business_id"?: string,"created_at"?: string,"description"?: string | null,"display_order"?: number,"duration_minutes"?: number,"id"?: string,"name"?: string,"price_cents"?: number,"updated_at"?: string
+                    "active"?: boolean,"business_id"?: string,"created_at"?: string,"description"?: string | null,"display_order"?: number,"duration_minutes"?: number,"id"?: string,"name"?: string,"price_cents"?: number,"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -658,6 +658,11 @@ isOneToOne: false
               "appointment_id": string,"business_name": string,"currency": string,"duration_minutes": number,"ends_at": string,"price_cents": number,"service_name": string,"starts_at": string,"timezone": string
             }[]
                            },
+"create_service":
+{ Args: { "p_active"?: boolean,"p_business_id": string,"p_description"?: string,"p_display_order"?: number,"p_duration_minutes": number,"p_name": string,"p_price_cents": number,"p_request_id": string }; Returns: {
+              "service_id": string,"status": string
+            }[]
+                           },
 "crm_assert_member":
 { Args: { "p_business_id": string }; Returns: undefined
                            },
@@ -736,7 +741,7 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_service_ids": (string)[] }; Returns: undefined
                            },
 "replace_business_hours":
-{ Args: { "p_business_id": string,"p_hours": Json }; Returns: {
+{ Args: { "p_business_id": string,"p_expected": Json,"p_hours": Json }; Returns: {
               "business_id": string,
 "created_at": string,
 "ends_at": string,

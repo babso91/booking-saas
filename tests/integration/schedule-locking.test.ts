@@ -39,22 +39,42 @@ function local(time: string) {
 
 type Range = [number, string, string];
 
-function replaceIn(
+const rangeRows = (ranges: Range[]) =>
+  JSON.stringify(
+    ranges.map(([weekday, starts_at, ends_at]) => ({
+      weekday,
+      starts_at,
+      ends_at,
+    })),
+  );
+
+/** The committed week, as an edit would have read it. */
+async function committedWeek(businessId: string): Promise<Range[]> {
+  const { rows } = await db.query<{
+    weekday: number;
+    starts_at: string;
+    ends_at: string;
+  }>(
+    `select weekday, to_char(starts_at, 'HH24:MI') as starts_at, to_char(ends_at, 'HH24:MI') as ends_at
+     from public.business_hours where business_id = $1 order by weekday, starts_at`,
+    [businessId],
+  );
+  return rows.map((row) => [row.weekday, row.starts_at, row.ends_at]);
+}
+
+/** Replaces the week, based on `expected` (default: the committed week). */
+async function replaceIn(
   transaction: OpenTransaction,
   businessId: string,
   ranges: Range[],
+  expected?: Range[],
 ) {
   return transaction.connection.query(
-    "select * from public.replace_business_hours($1, $2)",
+    "select * from public.replace_business_hours($1, $2, $3)",
     [
       businessId,
-      JSON.stringify(
-        ranges.map(([weekday, starts_at, ends_at]) => ({
-          weekday,
-          starts_at,
-          ends_at,
-        })),
-      ),
+      rangeRows(ranges),
+      rangeRows(expected ?? (await committedWeek(businessId))),
     ],
   );
 }
@@ -132,38 +152,43 @@ describe("replace_business_hours is an atomic replacement", () => {
   const MORNING: Range[] = [[1, "09:00", "12:00"]];
   const AFTERNOON: Range[] = [[1, "14:00", "18:00"]];
 
-  // `firstStarter` runs its replacement first and holds the lock; the other
-  // one starts afterwards and must wait, then fully replace.
+  // T1 runs its replacement first and holds the lock; T2 starts afterwards
+  // and must wait. Both were edited from the same week: once T1 commits,
+  // T2 sees T1's week (a fresh snapshot after the lock), refuses to replace
+  // it and writes nothing. Never a merge, never a lost week.
   it.each([
     ["T1 starts before T2", MORNING, AFTERNOON],
     ["T2 starts before T1", AFTERNOON, MORNING],
   ])(
-    "on an empty schedule, %s: the last serialised call wins, never a merge",
+    "on an empty schedule, %s: the second call based on the same week is refused, never a merge",
     async (_label, first, second) => {
+      await setWeeklyHours(business.id, []);
       const t1 = await ownerTransaction();
       const t2 = await ownerTransaction();
 
-      await replaceIn(t1, business.id, first);
-      const secondResult = outcome(replaceIn(t2, business.id, second));
+      await replaceIn(t1, business.id, first, []);
+      const secondResult = outcome(replaceIn(t2, business.id, second, []));
       await waitUntilBlocked(t2.pid);
 
       await closeTransaction(t1, "commit");
-      expect(await secondResult).toBe("ok");
-      await closeTransaction(t2, "commit");
+      expect(await secondResult).toBe("stale_business_hours");
+      await closeTransaction(t2, "rollback");
 
       expect(await hoursOf(business.id)).toEqual(
-        second.map(([weekday, start, end]) => `${weekday} ${start}-${end}`),
+        first.map(([weekday, start, end]) => `${weekday} ${start}-${end}`),
       );
     },
   );
 
-  it("replaces a non-empty schedule completely under concurrency", async () => {
-    await setWeeklyHours(business.id, everyDay(["08:00", "20:00"]));
+  it("on an empty schedule, a waiting call based on the week committed meanwhile replaces it entirely", async () => {
+    await setWeeklyHours(business.id, []);
     const t1 = await ownerTransaction();
     const t2 = await ownerTransaction();
 
-    await replaceIn(t1, business.id, MORNING);
-    const secondResult = outcome(replaceIn(t2, business.id, AFTERNOON));
+    await replaceIn(t1, business.id, MORNING, []);
+    const secondResult = outcome(
+      replaceIn(t2, business.id, AFTERNOON, MORNING),
+    );
     await waitUntilBlocked(t2.pid);
     await closeTransaction(t1, "commit");
     expect(await secondResult).toBe("ok");
@@ -172,13 +197,30 @@ describe("replace_business_hours is an atomic replacement", () => {
     expect(await hoursOf(business.id)).toEqual(["1 14:00-18:00"]);
   });
 
-  it("keeps only the waiting call's schedule when the first one rolls back", async () => {
-    await setWeeklyHours(business.id, [[3, "10:00", "11:00"]]);
+  it("replaces a non-empty schedule once under concurrency: the second edit of the same week is refused", async () => {
+    await setWeeklyHours(business.id, everyDay(["08:00", "20:00"]));
+    const read = await committedWeek(business.id);
     const t1 = await ownerTransaction();
     const t2 = await ownerTransaction();
 
-    await replaceIn(t1, business.id, MORNING);
-    const secondResult = outcome(replaceIn(t2, business.id, AFTERNOON));
+    await replaceIn(t1, business.id, MORNING, read);
+    const secondResult = outcome(replaceIn(t2, business.id, AFTERNOON, read));
+    await waitUntilBlocked(t2.pid);
+    await closeTransaction(t1, "commit");
+    expect(await secondResult).toBe("stale_business_hours");
+    await closeTransaction(t2, "rollback");
+
+    expect(await hoursOf(business.id)).toEqual(["1 09:00-12:00"]);
+  });
+
+  it("keeps only the waiting call's schedule when the first one rolls back", async () => {
+    await setWeeklyHours(business.id, [[3, "10:00", "11:00"]]);
+    const read = await committedWeek(business.id);
+    const t1 = await ownerTransaction();
+    const t2 = await ownerTransaction();
+
+    await replaceIn(t1, business.id, MORNING, read);
+    const secondResult = outcome(replaceIn(t2, business.id, AFTERNOON, read));
     await waitUntilBlocked(t2.pid);
     await closeTransaction(t1, "rollback");
     expect(await secondResult).toBe("ok");

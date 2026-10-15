@@ -107,7 +107,7 @@ function setVisibility(state: DocumentVisibilityState) {
 }
 
 async function renderAgenda(strict = false) {
-  const view = <AgendaView today={pgToday().date} slug="studio-mila" />;
+  const view = <AgendaView today={pgToday().date} />;
   const rendered = render(strict ? <StrictMode>{view}</StrictMode> : view);
   await flush();
   return rendered;

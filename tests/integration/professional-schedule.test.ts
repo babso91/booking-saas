@@ -55,6 +55,7 @@ describe("weekly hours", () => {
           { weekday: 2, startsAt: "14:00", endsAt: "19:00" },
           { weekday: 6, startsAt: "20:00", endsAt: "24:00" },
         ],
+        expected: await listBusinessHours(owner.client, business.id),
       }),
     );
 
@@ -81,6 +82,7 @@ describe("weekly hours", () => {
           { weekday: 1, startsAt: "10:00", endsAt: "13:00" },
           { weekday: 1, startsAt: "12:00", endsAt: "15:00" },
         ],
+        expected: before,
       }).success,
     ).toBe(false);
 
@@ -91,6 +93,7 @@ describe("weekly hours", () => {
           { weekday: 1, startsAt: "10:00", endsAt: "13:00" },
           { weekday: 1, startsAt: "12:00", endsAt: "15:00" },
         ],
+        expected: before,
       }),
     ).rejects.toMatchObject({ code: "conflict" });
 
@@ -99,7 +102,10 @@ describe("weekly hours", () => {
 
   it("refuses to replace the schedule of another business", async () => {
     await expect(
-      replaceBusinessHours(owner.client, foreign.id, { hours: [] }),
+      replaceBusinessHours(owner.client, foreign.id, {
+        hours: [],
+        expected: [],
+      }),
     ).rejects.toMatchObject({ code: "forbidden" });
   });
 });
@@ -206,7 +212,10 @@ describe("availability exceptions", () => {
       minimumBookingNoticeMinutes: 0,
       maximumBookingAdvanceDays: 365,
     });
-    await replaceBusinessHours(owner.client, business.id, { hours: [] });
+    await replaceBusinessHours(owner.client, business.id, {
+      hours: [],
+      expected: await listBusinessHours(owner.client, business.id),
+    });
 
     const date = new Date(Date.now() + 20 * 86_400_000)
       .toISOString()
