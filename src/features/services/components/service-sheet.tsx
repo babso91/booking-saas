@@ -11,16 +11,17 @@ import {
   requestKeyFor,
   type RequestKey,
 } from "@/features/agenda/client/request-id";
-import {
-  callAction,
-  type UiError,
-  type UiResult,
-} from "@/features/auth/client/call-action";
+import { callAction, type UiError } from "@/features/auth/client/call-action";
 import {
   createServiceAction,
   updateServiceAction,
 } from "@/features/services/actions/services";
 
+import {
+  clearPendingCreation,
+  readPendingCreation,
+  writePendingCreation,
+} from "../client/pending-creation";
 import {
   checkService,
   draftFromService,
@@ -28,8 +29,11 @@ import {
   EMPTY_SERVICE,
   MAX_DESCRIPTION,
   MAX_NAME,
+  rebaseServiceDraft,
   serviceChanges,
+  serviceChangedElsewhere,
   serviceFieldErrors,
+  serviceFieldLabels,
   type ServiceDraft,
   type ServiceField,
   type ServiceView,
@@ -43,45 +47,69 @@ const FIELD_ORDER: ServiceField[] = [
 ];
 
 const linkAction =
-  "cursor-pointer text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4";
+  "cursor-pointer text-left text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4";
 
 /** Which form is open: a new service, or an existing one. */
 export type ServiceSheetTarget =
   { mode: "create" } | { mode: "edit"; service: ServiceView };
 
+/** A kept edit: what was typed, and the service (version) it started from. */
+type EditDraft = { draft: ServiceDraft; base: ServiceView };
+
+/** The service as it is now, read after a refused edit. */
+export type CurrentService =
+  | { status: "found"; service: ServiceView }
+  | { status: "gone" }
+  | { status: "error"; error: UiError };
+
+const sameDraft = (a: ServiceDraft, b: ServiceDraft) =>
+  FIELD_ORDER.every((field) => a[field] === b[field]);
+
 /**
- * Creates or edits a service. Drafts are kept per target while the page is
- * open (closing never loses them). While a save is pending the fields are
- * read only, the sheet cannot be dismissed and nothing is sent twice; success
- * is only shown once the backend confirmed it. A creation carries one
- * request id per command, so a resend never creates twice; a lost answer is
- * still reconciled against the list first (to be retired by the UI pass,
- * docs/SETUP_WRITE_GUARANTEES_HANDOFF.md).
+ * Creates or edits a service (docs/SETUP_WRITE_GUARANTEES_HANDOFF.md).
+ *
+ * - Creation: one request id per command. A resend of the same values
+ *   (lost answer, double tap) carries the same id: the backend answers the
+ *   service it created, never a second one. The creation in progress
+ *   (values, id, unconfirmed answer) is kept for the browser session, so
+ *   closing the form or leaving the page never forgets it. A new id is only
+ *   used for changed values or by the professional's explicit choice.
+ * - Edit: sent with the version it was read at. A service changed elsewhere
+ *   (stale_service) is read again and compared field by field; nothing is
+ *   sent until the professional chooses.
+ *
+ * While a save is pending the fields are read only, the sheet cannot be
+ * dismissed and nothing is sent twice; success is only shown once the
+ * backend confirmed it.
  */
 export function ServiceSheet({
   target,
   currency,
+  creationStoreKey,
   onClose,
   onSaved,
   onGone,
-  reconcileCreate,
+  onReload,
+  readCurrent,
 }: {
   target: ServiceSheetTarget | null;
   currency: string;
+  /** Session storage key of the creation in progress (one per business). */
+  creationStoreKey: string;
   onClose: () => void;
   onSaved: (service: ServiceView, created: boolean) => void;
   /** The edited service no longer exists. */
   onGone: () => void;
-  /** After a lost answer: the service created by this command, if any. */
-  reconcileCreate: (command: {
-    name: string;
-    durationMinutes: number;
-    priceCents: number;
-  }) => Promise<ServiceView | null>;
+  /** The list should be read again (a creation refused as deleted). */
+  onReload: () => void;
+  /** The service as it is now (after a refused edit). */
+  readCurrent: (serviceId: string) => Promise<CurrentService>;
 }) {
-  const [drafts] = useState(() => new Map<string, ServiceDraft>());
+  // Edits kept per service while the page is open; the creation in
+  // progress is kept for the session (pending-creation.ts).
+  const [edits] = useState(() => new Map<string, EditDraft>());
   const [saving, setSaving] = useState(false);
-  const key = target
+  const formKey = target
     ? target.mode === "create"
       ? "new"
       : target.service.id
@@ -101,53 +129,63 @@ export function ServiceSheet({
           : "Elle sera proposée dans l’agenda dès son enregistrement."
       }
     >
-      {target && key ? (
-        <ServiceForm
-          key={key}
-          target={target}
-          draftKey={key}
-          drafts={drafts}
+      {target?.mode === "create" ? (
+        <CreateForm
+          key={formKey}
+          storeKey={creationStoreKey}
           currency={currency}
           onSavingChange={setSaving}
           onClose={onClose}
-          onSaved={onSaved}
+          onSaved={(service) => onSaved(service, true)}
+          onReload={onReload}
+        />
+      ) : target?.mode === "edit" ? (
+        <EditForm
+          key={formKey}
+          service={target.service}
+          edits={edits}
+          currency={currency}
+          onSavingChange={setSaving}
+          onClose={onClose}
+          onSaved={(service) => onSaved(service, false)}
           onGone={onGone}
-          reconcileCreate={reconcileCreate}
+          readCurrent={readCurrent}
         />
       ) : null}
     </Sheet>
   );
 }
 
-function ServiceForm({
-  target,
-  draftKey,
-  drafts,
+// ---------------------------------------------------------------------------
+// Creation
+// ---------------------------------------------------------------------------
+
+function CreateForm({
+  storeKey,
   currency,
   onSavingChange,
   onClose,
   onSaved,
-  onGone,
-  reconcileCreate,
+  onReload,
 }: {
-  target: ServiceSheetTarget;
-  draftKey: string;
-  drafts: Map<string, ServiceDraft>;
+  storeKey: string;
   currency: string;
   onSavingChange: (saving: boolean) => void;
   onClose: () => void;
-  onSaved: (service: ServiceView, created: boolean) => void;
-  onGone: () => void;
-  reconcileCreate: (command: {
-    name: string;
-    durationMinutes: number;
-    priceCents: number;
-  }) => Promise<ServiceView | null>;
+  onSaved: (service: ServiceView) => void;
+  onReload: () => void;
 }) {
-  const initial =
-    target.mode === "edit" ? draftFromService(target.service) : EMPTY_SERVICE;
+  const [kept] = useState(() => readPendingCreation(storeKey));
   const [draft, setDraft] = useState<ServiceDraft>(
-    () => drafts.get(draftKey) ?? initial,
+    () => kept?.draft ?? EMPTY_SERVICE,
+  );
+  /** The request id of the last command sent (kept with the draft). */
+  const key = useRef<RequestKey | null>(kept?.key ?? null);
+  /** The last answer was lost: the creation may already exist. */
+  const [unconfirmed, setUnconfirmed] = useState(kept?.unconfirmed ?? false);
+  /** The values of that unconfirmed command (to tell a changed resend). */
+  const [sentFingerprint, setSentFingerprint] = useState<string | null>(() =>
+    kept?.unconfirmed ? (kept.key?.fingerprint ?? null) : null,
   );
   const [errors, setErrors] = useState<Partial<Record<ServiceField, string>>>(
     {},
@@ -156,10 +194,6 @@ function ServiceForm({
   const [state, setState] = useState<ButtonState>("idle");
   const alive = useRef(true);
   const formRef = useRef<HTMLFormElement>(null);
-  /** The last creation's answer was lost: check the list before resending. */
-  const unsure = useRef(false);
-  /** One request id per creation command: a resend never creates twice. */
-  const requestKey = useRef<RequestKey | null>(null);
 
   useEffect(() => {
     alive.current = true;
@@ -167,11 +201,25 @@ function ServiceForm({
       alive.current = false;
     };
   }, []);
-  // Never leave the sheet locked once this form is gone.
   useEffect(() => () => onSavingChange(false), [onSavingChange]);
 
   const busy = state !== "idle";
-  const pending = FIELD_ORDER.some((field) => draft[field] !== initial[field]);
+  const pending = !sameDraft(draft, EMPTY_SERVICE) || unconfirmed;
+  const checked = checkService(draft);
+  // Values changed since the unconfirmed command: saving is a new creation.
+  const changedSinceUnconfirmed =
+    unconfirmed &&
+    sentFingerprint !== null &&
+    checked.ok &&
+    fingerprintOf(checked.command) !== sentFingerprint;
+
+  function keep(next: { draft: ServiceDraft; unconfirmed: boolean }) {
+    if (sameDraft(next.draft, EMPTY_SERVICE) && !next.unconfirmed) {
+      clearPendingCreation(storeKey);
+    } else {
+      writePendingCreation(storeKey, { ...next, key: key.current });
+    }
+  }
 
   function change(field: ServiceField, value: string) {
     // Locked while saving: a late event never changes what was sent.
@@ -179,110 +227,70 @@ function ServiceForm({
     const next = { ...draft, [field]: value };
     setDraft(next);
     setErrors((current) => ({ ...current, [field]: undefined }));
-    if (FIELD_ORDER.some((name) => next[name] !== initial[name])) {
-      drafts.set(draftKey, next);
-    } else {
-      drafts.delete(draftKey);
-    }
+    // "Resend without changing anything" no longer applies: the notice
+    // above says whether saving is still the same creation.
+    if (unconfirmed) setFailure(null);
+    keep({ draft: next, unconfirmed });
   }
 
-  function focusFirstError(found: Partial<Record<ServiceField, string>>) {
-    const index = FIELD_ORDER.findIndex((field) => found[field]);
-    if (index < 0) return;
-    formRef.current
-      ?.querySelectorAll<HTMLElement>("input, textarea")
-      [index]?.focus();
-  }
-
-  async function save() {
+  /** `fresh`: a new request id, by the professional's explicit choice. */
+  async function save(fresh = false) {
     if (busy) return;
-    const checked = checkService(draft);
-    if (!checked.ok) {
-      setErrors(checked.errors);
-      focusFirstError(checked.errors);
+    const found = checkService(draft);
+    if (!found.ok) {
+      setErrors(found.errors);
+      focusFirstError(formRef.current, found.errors);
       return;
     }
     setErrors({});
-    const { command } = checked;
-    if (target.mode === "edit") {
-      const changes = serviceChanges(target.service, command);
-      if (Object.keys(changes).length === 0) {
-        drafts.delete(draftKey);
-        onClose();
-        return;
-      }
-    }
+    const { command } = found;
+    const fingerprint = fingerprintOf(command);
+    // Same values: same request id (never a second service). Changed
+    // values, or an explicit choice: a new command.
+    key.current = fresh
+      ? { fingerprint, id: crypto.randomUUID() }
+      : requestKeyFor(key.current, fingerprint);
+    const requestId = key.current.id;
+    keep({ draft, unconfirmed });
     setFailure(null);
     setState("loading");
     onSavingChange(true);
-    const creating = target.mode === "create";
-    let saved: ServiceView | null = null;
-    let result: UiResult<ServiceView> | null = null;
-    // After a lost answer, the creation may have been written: look first.
-    // A resend carries the same request id and never creates twice.
-    if (creating && unsure.current) saved = await reconcileCreate(command);
-    if (!saved) {
-      if (creating) {
-        requestKey.current = requestKeyFor(
-          requestKey.current,
-          fingerprintOf(command),
-        );
-      }
-      const requestId = requestKey.current?.id;
-      result = await callAction(() =>
-        target.mode === "edit"
-          ? updateServiceAction({
-              serviceId: target.service.id,
-              expectedVersion: target.service.version,
-              changes: serviceChanges(target.service, command),
-            })
-          : createServiceAction({ ...command, requestId }),
-      );
-      if (result.ok) saved = result.data;
-      else if (creating && result.error.code === "network") {
-        saved = await reconcileCreate(command);
-      }
-    }
-    unsure.current =
-      creating &&
-      !saved &&
-      result?.ok === false &&
-      result.error.code === "network";
+    const result = await callAction(() =>
+      createServiceAction({ ...command, requestId }),
+    );
     if (!alive.current) return;
     setState("idle");
     onSavingChange(false);
-    if (saved) {
-      drafts.delete(draftKey);
-      onSaved(saved, target.mode === "create");
+    if (result.ok) {
+      key.current = null;
+      clearPendingCreation(storeKey);
+      onSaved(result.data);
       onClose();
       return;
     }
-    if (result && !result.ok) {
-      const refused = serviceFieldErrors(result.error.fieldErrors);
-      setErrors(refused);
-      focusFirstError(refused);
-      if (result.error.code === "not_found") onGone();
-      if (
-        result.error.code !== "validation_error" ||
-        Object.keys(refused).length === 0
-      ) {
-        setFailure(result.error);
-      }
+    const error = result.error;
+    const lost = error.code === "network" || error.code === "internal";
+    // A lost answer: the creation may exist. Its resend keeps the same id.
+    setUnconfirmed(lost);
+    setSentFingerprint(lost ? fingerprint : null);
+    keep({ draft, unconfirmed: lost });
+    if (error.code === "service_deleted") onReload();
+    const refused = serviceFieldErrors(error.fieldErrors);
+    setErrors(refused);
+    focusFirstError(formRef.current, refused);
+    if (
+      error.code !== "validation_error" ||
+      Object.keys(refused).length === 0
+    ) {
+      setFailure(error);
     }
   }
 
   function discard() {
-    drafts.delete(draftKey);
+    key.current = null;
+    clearPendingCreation(storeKey);
     onClose();
   }
-
-  const minutes = /^\d+$/.test(draft.duration.trim())
-    ? Number(draft.duration)
-    : null;
-  const symbol =
-    new Intl.NumberFormat("fr-FR", { style: "currency", currency })
-      .formatToParts(0)
-      .find((part) => part.type === "currency")?.value ?? currency;
 
   return (
     <form
@@ -295,10 +303,462 @@ function ServiceForm({
       }}
       className="flex flex-col gap-5 pt-1"
     >
+      {unconfirmed && !failure ? (
+        <Notice tone="warning" title="Création non confirmée">
+          {changedSinceUnconfirmed
+            ? "Tu as modifié la prestation depuis l’envoi non confirmé : l’enregistrer en créera une nouvelle. Si la première avait été enregistrée, elle apparaîtra aussi dans ta liste."
+            : "La connexion s’était interrompue. Enregistre à nouveau sans rien changer : si la prestation avait déjà été créée, elle ne le sera pas une seconde fois."}
+        </Notice>
+      ) : null}
+
+      <ServiceFields
+        draft={draft}
+        errors={errors}
+        busy={busy}
+        currency={currency}
+        onChange={change}
+      />
+
+      {failure ? (
+        <CreateFailure
+          error={failure}
+          onRetry={() => void save()}
+          onSendAsNew={() => void save(true)}
+          onDiscard={discard}
+        />
+      ) : null}
+
+      <Footer
+        state={state}
+        pending={pending}
+        onClose={onClose}
+        onDiscard={discard}
+        discardLabel="Abandonner cette prestation"
+      />
+    </form>
+  );
+}
+
+function CreateFailure({
+  error,
+  onRetry,
+  onSendAsNew,
+  onDiscard,
+}: {
+  error: UiError;
+  onRetry: () => void;
+  onSendAsNew: () => void;
+  onDiscard: () => void;
+}) {
+  const choices = (
+    <div className="flex flex-wrap gap-x-5 gap-y-2">
+      <button type="button" onClick={onSendAsNew} className={linkAction}>
+        La créer comme nouvelle prestation
+      </button>
+      <button type="button" onClick={onDiscard} className={linkAction}>
+        Abandonner
+      </button>
+    </div>
+  );
+  switch (error.code) {
+    case "network":
+    case "internal":
+      return (
+        <Notice
+          tone={error.code === "network" ? "offline" : "error"}
+          title="Création non confirmée"
+          action={
+            <button type="button" onClick={onRetry} className={linkAction}>
+              Réessayer
+            </button>
+          }
+        >
+          La prestation a peut-être été créée. Réessaie sans rien changer : le
+          même envoi ne crée jamais deux prestations. Ta saisie est conservée,
+          même si tu fermes ce formulaire.
+        </Notice>
+      );
+    case "idempotency_conflict":
+      return (
+        <Notice tone="warning" title="Rien n’a été créé" action={choices}>
+          Cet envoi avait déjà servi à créer une prestation différente. Vérifie
+          ta liste : si celle-ci n’y est pas, tu peux la créer comme nouvelle
+          prestation.
+        </Notice>
+      );
+    case "service_deleted":
+      return (
+        <Notice
+          tone="warning"
+          title="Prestation supprimée depuis"
+          action={choices}
+        >
+          Cette prestation avait déjà été créée, puis supprimée : elle n’a pas
+          été recréée. Ta liste a été actualisée.
+        </Notice>
+      );
+    default:
+      return <CommonFailure error={error} onRetry={onRetry} />;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Edit
+// ---------------------------------------------------------------------------
+
+function EditForm({
+  service,
+  edits,
+  currency,
+  onSavingChange,
+  onClose,
+  onSaved,
+  onGone,
+  readCurrent,
+}: {
+  service: ServiceView;
+  edits: Map<string, EditDraft>;
+  currency: string;
+  onSavingChange: (saving: boolean) => void;
+  onClose: () => void;
+  onSaved: (service: ServiceView) => void;
+  onGone: () => void;
+  readCurrent: (serviceId: string) => Promise<CurrentService>;
+}) {
+  const kept = edits.get(service.id);
+  // A kept draft started from an older version: compare before saving.
+  const outdated = kept !== undefined && kept.base.version !== service.version;
+  const [draft, setDraft] = useState<ServiceDraft>(
+    () => kept?.draft ?? draftFromService(service),
+  );
+  /** The service (and version) the draft is based on. */
+  const [base, setBase] = useState<ServiceView>(() => kept?.base ?? service);
+  const [errors, setErrors] = useState<Partial<Record<ServiceField, string>>>(
+    {},
+  );
+  const [failure, setFailure] = useState<UiError | null>(
+    outdated ? { code: "stale_service" } : null,
+  );
+  const [current, setCurrent] = useState<
+    CurrentService | { status: "loading" } | null
+  >(outdated ? { status: "found", service } : null);
+  const [state, setState] = useState<ButtonState>("idle");
+  const alive = useRef(true);
+  const reads = useRef(0);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  useEffect(() => () => onSavingChange(false), [onSavingChange]);
+
+  const busy = state !== "idle";
+  const pending = !sameDraft(draft, draftFromService(base));
+  const stale = failure?.code === "stale_service";
+
+  function keep(next: ServiceDraft, from: ServiceView) {
+    if (sameDraft(next, draftFromService(from))) edits.delete(service.id);
+    else edits.set(service.id, { draft: next, base: from });
+  }
+
+  function change(field: ServiceField, value: string) {
+    if (busy) return;
+    const next = { ...draft, [field]: value };
+    setDraft(next);
+    setErrors((existing) => ({ ...existing, [field]: undefined }));
+    keep(next, base);
+  }
+
+  function compare() {
+    setCurrent({ status: "loading" });
+    const read = (reads.current += 1);
+    void readCurrent(service.id).then((found) => {
+      if (!alive.current || read !== reads.current) return;
+      setCurrent(found);
+      if (found.status === "gone") onGone();
+    });
+  }
+
+  async function save() {
+    if (busy || stale) return;
+    const found = checkService(draft);
+    if (!found.ok) {
+      setErrors(found.errors);
+      focusFirstError(formRef.current, found.errors);
+      return;
+    }
+    setErrors({});
+    // Only what the professional changed, on the version it was read at.
+    const changes = serviceChanges(base, found.command);
+    if (Object.keys(changes).length === 0) {
+      edits.delete(service.id);
+      onClose();
+      return;
+    }
+    setFailure(null);
+    setCurrent(null);
+    setState("loading");
+    onSavingChange(true);
+    const result = await callAction(() =>
+      updateServiceAction({
+        serviceId: service.id,
+        expectedVersion: base.version,
+        changes,
+      }),
+    );
+    if (!alive.current) return;
+    setState("idle");
+    onSavingChange(false);
+    if (result.ok) {
+      edits.delete(service.id);
+      onSaved(result.data);
+      onClose();
+      return;
+    }
+    const error = result.error;
+    const refused = serviceFieldErrors(error.fieldErrors);
+    setErrors(refused);
+    focusFirstError(formRef.current, refused);
+    if (error.code === "not_found") onGone();
+    if (
+      error.code !== "validation_error" ||
+      Object.keys(refused).length === 0
+    ) {
+      setFailure(error);
+    }
+    // Changed elsewhere: read it now, to compare.
+    if (error.code === "stale_service") compare();
+  }
+
+  /** Keeps what was typed on the version read now (others take it). */
+  function keepMine(latest: ServiceView) {
+    const next = rebaseServiceDraft(base, latest, draft);
+    setDraft(next);
+    setBase(latest);
+    keep(next, latest);
+    setFailure(null);
+    setCurrent(null);
+  }
+
+  /** Drops what was typed for the version read now. */
+  function takeTheirs(latest: ServiceView) {
+    const next = draftFromService(latest);
+    setDraft(next);
+    setBase(latest);
+    edits.delete(service.id);
+    setFailure(null);
+    setCurrent(null);
+    setErrors({});
+  }
+
+  function discard() {
+    edits.delete(service.id);
+    onClose();
+  }
+
+  return (
+    <form
+      ref={formRef}
+      noValidate
+      aria-busy={state === "loading"}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+      className="flex flex-col gap-5 pt-1"
+    >
+      <ServiceFields
+        draft={draft}
+        errors={errors}
+        busy={busy}
+        currency={currency}
+        onChange={change}
+      />
+
+      {stale ? (
+        <StaleService
+          base={base}
+          current={current}
+          typed={draft}
+          onCompare={compare}
+          onKeepMine={keepMine}
+          onTakeTheirs={takeTheirs}
+        />
+      ) : failure?.code === "not_found" || current?.status === "gone" ? (
+        <Notice tone="warning" title="Prestation supprimée entre-temps">
+          Elle n’existe plus. Ta saisie est conservée : tu peux la recopier dans
+          une nouvelle prestation.
+        </Notice>
+      ) : failure ? (
+        <CommonFailure error={failure} onRetry={() => void save()} />
+      ) : null}
+
+      <Footer
+        state={state}
+        pending={pending}
+        saveDisabled={stale}
+        onClose={onClose}
+        onDiscard={discard}
+        discardLabel="Abandonner mes modifications"
+      />
+    </form>
+  );
+}
+
+type StaleProps = {
+  base: ServiceView;
+  current: CurrentService | { status: "loading" } | null;
+  typed: ServiceDraft;
+  onCompare: () => void;
+  onKeepMine: (latest: ServiceView) => void;
+  onTakeTheirs: (latest: ServiceView) => void;
+};
+
+function StaleService(props: StaleProps) {
+  // Below the fields: brought into view, otherwise "Enregistrer" is disabled
+  // with no visible reason on a small screen.
+  const box = useRef<HTMLDivElement>(null);
+  const status = props.current?.status;
+  useEffect(() => {
+    box.current?.scrollIntoView?.({ block: "nearest" });
+  }, [status]);
+  return (
+    // Clear of the sticky footer.
+    <div ref={box} className="scroll-mb-56">
+      <StaleNotice {...props} />
+    </div>
+  );
+}
+
+function StaleNotice({
+  base,
+  current,
+  typed,
+  onCompare,
+  onKeepMine,
+  onTakeTheirs,
+}: StaleProps) {
+  if (current?.status === "found") {
+    const latest = current.service;
+    const changes = serviceChangedElsewhere(base, latest, typed);
+    const mine = changes.some((change) => change.edited);
+    return (
+      <Notice tone="warning" title="Version actuelle de la prestation">
+        {changes.length === 0 ? (
+          <p>
+            Ses nom, description, durée et prix n’ont pas changé ailleurs
+            {latest.active !== base.active
+              ? ` : elle a été ${latest.active ? "réactivée" : "désactivée"}.`
+              : "."}
+          </p>
+        ) : (
+          <dl className="mt-1 flex flex-col gap-2">
+            {changes.map((change) => (
+              <div key={change.field} className="flex flex-col">
+                <dt className="font-semibold">
+                  {serviceFieldLabels[change.field]}
+                </dt>
+                <dd className="wrap-anywhere">
+                  Maintenant : {change.current || "non renseigné"}
+                </dd>
+                <dd className="wrap-anywhere">
+                  {change.edited
+                    ? `Ta saisie : ${change.typed || "non renseigné"}`
+                    : "Tu ne l’avais pas modifié : la valeur actuelle sera gardée."}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        <p className="mt-2">
+          Rien n’a été enregistré. Choisis, puis enregistre.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
+          <button
+            type="button"
+            onClick={() => onKeepMine(latest)}
+            className={linkAction}
+          >
+            {mine || changes.length === 0
+              ? "Garder ma saisie"
+              : "Garder mes modifications"}
+          </button>
+          <button
+            type="button"
+            onClick={() => onTakeTheirs(latest)}
+            className={linkAction}
+          >
+            Reprendre la version actuelle
+          </button>
+        </div>
+      </Notice>
+    );
+  }
+  return (
+    <Notice
+      tone="warning"
+      title="Prestation modifiée ailleurs"
+      action={
+        current?.status === "loading" ? (
+          <span className="text-[14px]">
+            Chargement de la version actuelle…
+          </span>
+        ) : (
+          <button type="button" onClick={onCompare} className={linkAction}>
+            Voir la version actuelle
+          </button>
+        )
+      }
+    >
+      {current?.status === "error"
+        ? "La version actuelle n’a pas pu être chargée. Ta saisie est conservée : réessaie."
+        : "Cette prestation a changé depuis que tu l’as ouverte. Rien n’a été enregistré et ta saisie est conservée."}
+    </Notice>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared
+// ---------------------------------------------------------------------------
+
+function focusFirstError(
+  form: HTMLFormElement | null,
+  found: Partial<Record<ServiceField, string>>,
+) {
+  const index = FIELD_ORDER.findIndex((field) => found[field]);
+  if (index < 0) return;
+  form?.querySelectorAll<HTMLElement>("input, textarea")[index]?.focus();
+}
+
+function ServiceFields({
+  draft,
+  errors,
+  busy,
+  currency,
+  onChange,
+}: {
+  draft: ServiceDraft;
+  errors: Partial<Record<ServiceField, string>>;
+  busy: boolean;
+  currency: string;
+  onChange: (field: ServiceField, value: string) => void;
+}) {
+  const minutes = /^\d+$/.test(draft.duration.trim())
+    ? Number(draft.duration)
+    : null;
+  const symbol =
+    new Intl.NumberFormat("fr-FR", { style: "currency", currency })
+      .formatToParts(0)
+      .find((part) => part.type === "currency")?.value ?? currency;
+  return (
+    <>
       <TextField
         label="Nom"
         value={draft.name}
-        onChange={(event) => change("name", event.target.value)}
+        onChange={(event) => onChange("name", event.target.value)}
         error={errors.name}
         readOnly={busy}
         maxLength={MAX_NAME}
@@ -310,7 +770,7 @@ function ServiceForm({
         label="Description"
         optional
         value={draft.description}
-        onChange={(event) => change("description", event.target.value)}
+        onChange={(event) => onChange("description", event.target.value)}
         error={errors.description}
         readOnly={busy}
         counterMax={MAX_DESCRIPTION}
@@ -320,7 +780,7 @@ function ServiceForm({
         <TextField
           label="Durée"
           value={draft.duration}
-          onChange={(event) => change("duration", event.target.value)}
+          onChange={(event) => onChange("duration", event.target.value)}
           error={errors.duration}
           readOnly={busy}
           inputMode="numeric"
@@ -333,7 +793,7 @@ function ServiceForm({
         <TextField
           label="Prix"
           value={draft.price}
-          onChange={(event) => change("price", event.target.value)}
+          onChange={(event) => onChange("price", event.target.value)}
           error={errors.price}
           readOnly={busy}
           inputMode="decimal"
@@ -344,53 +804,63 @@ function ServiceForm({
           }
         />
       </div>
-
-      {failure ? (
-        <SaveFailure
-          error={failure}
-          creating={target.mode === "create"}
-          onRetry={() => void save()}
-        />
-      ) : null}
-
-      <div className="sticky -bottom-6 -mx-5 -mb-6 flex flex-col gap-2 border-t border-line bg-paper-raised px-5 pt-3 pb-[max(env(safe-area-inset-bottom),1.25rem)] sm:-mx-6 sm:px-6">
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button variant="ghost" size="md" onClick={onClose} disabled={busy}>
-            {pending ? "Garder pour plus tard" : "Annuler"}
-          </Button>
-          <Button
-            type="submit"
-            size="md"
-            state={state}
-            loadingLabel="Enregistrement…"
-            className="sm:min-w-36"
-          >
-            Enregistrer
-          </Button>
-        </div>
-        {pending ? (
-          <Button
-            variant="ghost"
-            size="md"
-            onClick={discard}
-            disabled={busy}
-            className="sm:self-start"
-          >
-            <span className="text-danger">Abandonner mes modifications</span>
-          </Button>
-        ) : null}
-      </div>
-    </form>
+    </>
   );
 }
 
-function SaveFailure({
+function Footer({
+  state,
+  pending,
+  saveDisabled = false,
+  onClose,
+  onDiscard,
+  discardLabel,
+}: {
+  state: ButtonState;
+  pending: boolean;
+  saveDisabled?: boolean;
+  onClose: () => void;
+  onDiscard: () => void;
+  discardLabel: string;
+}) {
+  const busy = state !== "idle";
+  return (
+    <div className="sticky -bottom-6 -mx-5 -mb-6 flex flex-col gap-2 border-t border-line bg-paper-raised px-5 pt-3 pb-[max(env(safe-area-inset-bottom),1.25rem)] sm:-mx-6 sm:px-6">
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button variant="ghost" size="md" onClick={onClose} disabled={busy}>
+          {pending ? "Garder pour plus tard" : "Annuler"}
+        </Button>
+        <Button
+          type="submit"
+          size="md"
+          state={state}
+          loadingLabel="Enregistrement…"
+          disabled={saveDisabled}
+          className="sm:min-w-36"
+        >
+          Enregistrer
+        </Button>
+      </div>
+      {pending ? (
+        <Button
+          variant="ghost"
+          size="md"
+          onClick={onDiscard}
+          disabled={busy}
+          className="sm:self-start"
+        >
+          <span className="text-danger">{discardLabel}</span>
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function CommonFailure({
   error,
-  creating,
   onRetry,
 }: {
   error: UiError;
-  creating: boolean;
   onRetry: () => void;
 }) {
   switch (error.code) {
@@ -405,16 +875,8 @@ function SaveFailure({
             </button>
           }
         >
-          {creating
-            ? "La prestation n’apparaît pas encore dans ta liste. Réessaie : ta liste sera vérifiée avant tout nouvel envoi. Ta saisie est conservée."
-            : "La modification a peut-être été enregistrée. Réessaie : les mêmes valeurs ne changent rien."}
-        </Notice>
-      );
-    case "not_found":
-      return (
-        <Notice tone="warning" title="Prestation introuvable">
-          Elle a été supprimée entre-temps. Ta saisie est conservée : tu peux la
-          recopier dans une nouvelle prestation.
+          La modification a peut-être été enregistrée. Réessaie : les mêmes
+          valeurs ne changent rien.
         </Notice>
       );
     case "unauthenticated":

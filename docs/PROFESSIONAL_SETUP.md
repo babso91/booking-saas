@@ -1,6 +1,6 @@
 # Configuration de l'activité : prestations et horaires (PR #20)
 
-Une professionnelle nouvellement inscrite configure seule ses prestations et ses horaires. Ces réglages sont enregistrés dans Supabase et utilisés par le moteur existant (agenda, disponibilités). Cette PR ne contient que des écrans, sans nouveau contrat serveur.
+Une professionnelle nouvellement inscrite configure seule ses prestations et ses horaires. Ces réglages sont enregistrés dans Supabase et utilisés par le moteur existant (agenda, disponibilités). Les garanties d'écriture (création idempotente, versions, semaine attendue) viennent du backend : voir [`SETUP_WRITE_GUARANTEES_HANDOFF.md`](SETUP_WRITE_GUARANTEES_HANDOFF.md).
 
 ## Écrans
 
@@ -18,10 +18,10 @@ Une professionnelle nouvellement inscrite configure seule ses prestations et ses
 
 Ces pages restent accessibles à tout moment, pas seulement après l'inscription.
 
-## Contrats réutilisés (inchangés)
+## Contrats utilisés
 
-- **Prestations :** `listServicesAction`, `createServiceAction`, `updateServiceAction` (seuls les champs modifiés), `setServiceActiveAction`, `reorderServicesAction` (la liste complète, comme l'exige `reorder_services`), `deleteServiceAction` (`in_use` si la prestation a été réservée : l'écran propose alors de la désactiver).
-- **Horaires :** `listBusinessHoursAction` et `replaceBusinessHoursAction`, qui remplace la semaine entière de façon atomique (`replace_business_hours`). L'écran envoie toujours la semaine complète, reconstruite depuis la lecture ; un jour fermé n'a aucune plage.
+- **Prestations :** `listServicesAction`, `createServiceAction` (avec `requestId`), `updateServiceAction` (seuls les champs modifiés, avec `expectedVersion`), `setServiceActiveAction` (par valeur, sans version), `reorderServicesAction` (la liste complète, comme l'exige `reorder_services`), `deleteServiceAction` (`in_use` si la prestation a été réservée : l'écran propose alors de la désactiver).
+- **Horaires :** `listBusinessHoursAction` et `replaceBusinessHoursAction`, qui remplace la semaine entière de façon atomique (`replace_business_hours`), seulement si elle est encore la semaine `expected`. L'écran envoie toujours la semaine complète, reconstruite depuis la lecture ; un jour fermé n'a aucune plage.
 - **Devise :** `getBookingSettingsAction`.
 - **Fuseau :** celui de l'activité, lu dans la session (`business.timezone`). Les heures sont des heures murales `HH:MM`, comparées en minutes, sans `Date` ni fuseau du navigateur.
 - **Progression :** `getSetupProgress` (nouvelle fonction de lecture, `src/features/businesses/data/setup-progress.ts`) compte les prestations actives et les plages horaires, sous RLS.
@@ -38,8 +38,18 @@ Ce sont les mêmes règles que pour la PR #19.
 - **Succès :** affiché seulement après confirmation du serveur.
 - **Échec :** brouillon exact conservé et déverrouillé, avec un nouvel essai.
 - **Brouillons :** conservés par prestation tant que la page reste ouverte, avec « Garder pour plus tard » et « Abandonner mes modifications » sur une ligne à part.
-- **Création d'une prestation :** le contrat n'a pas de clé d'idempotence. Après une réponse perdue, la liste est relue avant tout nouvel envoi, et une prestation identique apparue entre-temps est reconnue comme créée.
-- **Horaires :** ils n'ont pas de version. L'écran les relit avant d'enregistrer. S'ils ont changé ailleurs depuis l'ouverture, rien n'est remplacé sans un choix explicite : « Remplacer par mes horaires » ou « Reprendre les horaires actuels ».
+- **Création d'une prestation :** un `requestId` par création.
+  - Après une réponse perdue (« Création non confirmée »), renvoyer les mêmes valeurs réutilise le même `requestId` : le backend renvoie la prestation déjà créée, jamais une seconde.
+  - La création en cours (saisie, `requestId`, réponse perdue) est gardée pour la session, par activité : fermer le formulaire ou quitter la page ne l'oublie pas. La liste l'indique (« Une création n'a pas été confirmée », « Reprendre la création »).
+  - Des valeurs modifiées, ou une nouvelle création volontaire, ont un nouveau `requestId` ; l'écran le dit si une création non confirmée est en cours.
+  - `idempotency_conflict` : rien n'est renvoyé automatiquement. Choix explicite : « La créer comme nouvelle prestation » (nouveau `requestId`) ou « Abandonner ».
+  - `service_deleted` : jamais recréée implicitement ; la liste est relue et l'écran le dit.
+- **Modification d'une prestation :** envoyée avec la version lue (`expectedVersion`). En cas de `stale_service`, la version actuelle est relue et comparée champ par champ, la saisie est conservée et rien n'est envoyé avant un choix :
+  - « Garder mes modifications » / « Garder ma saisie » : les champs modifiés par la professionnelle sont gardés, les autres prennent la valeur actuelle, et seuls ses champs sont envoyés, sur la nouvelle version ;
+  - « Reprendre la version actuelle ».
+  - Un brouillon gardé puis rouvert sur une prestation changée entre-temps est comparé de la même façon.
+- **Activation :** par valeur, sans version. Le bouton envoie l'état inverse de celui affiché : une vue périmée ne peut produire qu'une écriture sans effet, et la réponse remplace la ligne (version comprise). L'ordre ne change pas la version.
+- **Horaires :** envoyés avec la semaine de départ du brouillon (`expected`), sans relecture préalable. En cas de `stale_business_hours`, la semaine actuelle est lue et affichée, le brouillon est conservé et rien n'est remplacé sans un choix : « Remplacer par mes horaires » (envoyé contre la semaine affichée ; refusé et comparé à nouveau si elle change encore), « Reprendre les horaires actuels » ou « Continuer à modifier ».
 - **Horaires non enregistrés : jamais perdus en silence.**
   - Un lien interne (barre latérale, barre d'onglets, feuille « Compte »…) ouvre une demande : « Enregistrer et continuer » (la navigation n'a lieu qu'après confirmation de l'enregistrement), « Quitter sans enregistrer » ou « Continuer à modifier ». Seuls les clics simples vers une autre page de l'application sont retenus, et seulement tant qu'il y a des modifications.
   - Fermer ou recharger l'onglet demande une confirmation au navigateur (`beforeunload`).
@@ -61,7 +71,7 @@ Les garanties d'écriture sont fournies par le backend (migration `2026101609000
 - **Création de prestation idempotente :** un nouvel essai avec le même `requestId` ne crée jamais de seconde prestation.
 - **Prestations versionnées :** une modification fondée sur une lecture périmée est refusée (`stale_service`), jamais appliquée sans le dire.
 - **Horaires comparés à la semaine lue :** un enregistrement fondé sur une semaine périmée est refusé (`stale_business_hours`), de façon atomique.
-- **Reste à faire dans l'interface :** l'expérience de conflit (comparer, puis choisir) pour `stale_service` et `stale_business_hours`, et le retrait des relectures de précaution (§ 5 de la passation).
+- **Interface :** branchée sur ces garanties (voir « Sûreté des écritures »).
 - **Pas encore d'écran :** le fuseau de l'activité et les exceptions (fermetures, ouvertures exceptionnelles) ont déjà leurs actions.
 
 ## Recette en staging (comptes fictifs uniquement)

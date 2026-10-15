@@ -18,7 +18,8 @@ export default async function ServicesPage() {
       business={{ name: business.name, slug: business.slug }}
       current="services"
     >
-      <ServicesManager />
+      {/* The creation in progress is kept per business (session only). */}
+      <ServicesManager creationStoreKey={`service-create:${business.id}`} />
     </AppShell>
   );
 }

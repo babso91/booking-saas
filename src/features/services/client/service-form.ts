@@ -173,3 +173,70 @@ export function serviceFieldErrors(fieldErrors?: Record<string, string[]>) {
   }
   return errors;
 }
+
+const FIELDS: ServiceField[] = ["name", "description", "duration", "price"];
+
+/** Whether two drafts would send the same values (as the backend reads them). */
+function sameField(field: ServiceField, a: ServiceDraft, b: ServiceDraft) {
+  const left = checkService(a);
+  const right = checkService(b);
+  if (left.ok && right.ok) {
+    const key = {
+      name: "name",
+      description: "description",
+      duration: "durationMinutes",
+      price: "priceCents",
+    }[field] as keyof typeof left.command;
+    return left.command[key] === right.command[key];
+  }
+  return a[field].trim() === b[field].trim();
+}
+
+/**
+ * Fields changed elsewhere since the draft's base was read: the value now,
+ * the value typed, and whether the professional changed that field herself
+ * (only then is it a real conflict). Same approach as the CRM record.
+ */
+export function serviceChangedElsewhere(
+  base: ServiceView,
+  current: ServiceView,
+  draft: ServiceDraft,
+) {
+  const before = draftFromService(base);
+  const now = draftFromService(current);
+  return FIELDS.filter((field) => !sameField(field, before, now)).map(
+    (field) => ({
+      field,
+      current: now[field],
+      typed: draft[field],
+      edited: !sameField(field, draft, before),
+    }),
+  );
+}
+
+/**
+ * The draft moved onto the current service: what the professional changed
+ * is kept, every other field takes its current value (a change made
+ * elsewhere is never reverted by a field she did not touch).
+ */
+export function rebaseServiceDraft(
+  base: ServiceView,
+  current: ServiceView,
+  draft: ServiceDraft,
+): ServiceDraft {
+  const before = draftFromService(base);
+  const now = draftFromService(current);
+  return Object.fromEntries(
+    FIELDS.map((field) => [
+      field,
+      sameField(field, draft, before) ? now[field] : draft[field],
+    ]),
+  ) as ServiceDraft;
+}
+
+export const serviceFieldLabels: Record<ServiceField, string> = {
+  name: "Nom",
+  description: "Description",
+  duration: "Durée (min)",
+  price: "Prix",
+};

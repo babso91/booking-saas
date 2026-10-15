@@ -97,6 +97,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  // jsdom has no scrollIntoView; some tests add one.
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
 });
 
 describe("weekly hours", () => {
@@ -268,21 +270,72 @@ describe("weekly hours", () => {
     expect(screen.queryByText(/backend text/)).toBeNull();
   });
 
-  it("a schedule changed elsewhere is never overwritten silently: compare, then choose", async () => {
+  it("sends the week it started from; nothing is read before saving", async () => {
+    await renderEditor([range(1, "09:00", "18:00")]);
+    actions.listBusinessHoursAction.mockClear();
+    fireEvent.change(
+      day("Lundi").getByRole("combobox", { name: "Fin de la plage 1, Lundi" }),
+      { target: { value: "17:00" } },
+    );
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "09:00", "17:00")]),
+    );
+    fireEvent.click(saveButton());
+    await flush();
+    expect(actions.listBusinessHoursAction).not.toHaveBeenCalled();
+    expect(plain(basis())).toEqual([
+      { weekday: 1, startsAt: "09:00", endsAt: "18:00" },
+    ]);
+    expect(screen.getByText("Horaires enregistrés.")).toBeTruthy();
+  });
+
+  it("J. changed elsewhere: the refusal shows the current week, the draft is kept, nothing is resent", async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
     await renderEditor([range(1, "09:00", "18:00")]);
     fireEvent.change(
       day("Lundi").getByRole("combobox", { name: "Fin de la plage 1, Lundi" }),
       { target: { value: "17:00" } },
     );
-    // Edited on another device since this page was read.
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
+    );
     actions.listBusinessHoursAction.mockResolvedValueOnce(
       ok([range(1, "08:00", "12:00")]),
     );
     fireEvent.click(saveButton());
     await flush();
-    expect(actions.replaceBusinessHoursAction).not.toHaveBeenCalled();
+    expect(actions.replaceBusinessHoursAction).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Horaires modifiés ailleurs")).toBeTruthy();
     expect(screen.getByText(/8 h – 12 h/)).toBeTruthy();
+    // Brought into view: below the fields, above the sticky bar.
+    expect(scrolled).toHaveBeenCalled();
+    // The draft is untouched, and saving waits for a choice.
+    expect(
+      (
+        day("Lundi").getByRole("combobox", {
+          name: "Fin de la plage 1, Lundi",
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("17:00");
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("Horaires enregistrés.")).toBeNull();
+  });
+
+  it("K. replacing on purpose sends the draft against the week just shown", async () => {
+    await renderEditor([range(1, "09:00", "18:00")]);
+    fireEvent.change(
+      day("Lundi").getByRole("combobox", { name: "Fin de la plage 1, Lundi" }),
+      { target: { value: "17:00" } },
+    );
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
+    );
+    actions.listBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "08:00", "12:00")]),
+    );
+    fireEvent.click(saveButton());
+    await flush();
 
     actions.replaceBusinessHoursAction.mockResolvedValueOnce(
       ok([range(1, "09:00", "17:00")]),
@@ -294,11 +347,53 @@ describe("weekly hours", () => {
     expect(sent()).toEqual([
       { weekday: 1, startsAt: "09:00", endsAt: "17:00" },
     ]);
-    // Replacing on purpose: based on the week it was shown, not the
-    // outdated one.
     expect(plain(basis())).toEqual([
       { weekday: 1, startsAt: "08:00", endsAt: "12:00" },
     ]);
+    expect(screen.getByText("Horaires enregistrés.")).toBeTruthy();
+    expect(screen.queryByText("Horaires modifiés ailleurs")).toBeNull();
+  });
+
+  it("L. changed again during the reconciliation: refused again, compared again, never overwritten", async () => {
+    await renderEditor([range(1, "09:00", "18:00")]);
+    fireEvent.change(
+      day("Lundi").getByRole("combobox", { name: "Fin de la plage 1, Lundi" }),
+      { target: { value: "17:00" } },
+    );
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
+    );
+    actions.listBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "08:00", "12:00")]),
+    );
+    fireEvent.click(saveButton());
+    await flush();
+
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
+    );
+    actions.listBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "10:00", "11:00")]),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remplacer par mes horaires" }),
+    );
+    await flush();
+    expect(actions.replaceBusinessHoursAction).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/10 h – 11 h/)).toBeTruthy();
+    expect(screen.queryByText(/8 h – 12 h/)).toBeNull();
+
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "09:00", "17:00")]),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remplacer par mes horaires" }),
+    );
+    await flush();
+    expect(plain(basis())).toEqual([
+      { weekday: 1, startsAt: "10:00", endsAt: "11:00" },
+    ]);
+    expect(screen.getByText("Horaires enregistrés.")).toBeTruthy();
   });
 
   it("…or take the current schedule instead of the draft", async () => {
@@ -306,6 +401,9 @@ describe("weekly hours", () => {
     fireEvent.change(
       day("Lundi").getByRole("combobox", { name: "Fin de la plage 1, Lundi" }),
       { target: { value: "17:00" } },
+    );
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
     );
     actions.listBusinessHoursAction.mockResolvedValueOnce(
       ok([range(1, "08:00", "12:00")]),
@@ -323,7 +421,75 @@ describe("weekly hours", () => {
       ).value,
     ).toBe("08:00");
     expect(screen.getByText("Tout est enregistré.")).toBeTruthy();
-    expect(actions.replaceBusinessHoursAction).not.toHaveBeenCalled();
+    expect(actions.replaceBusinessHoursAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("…or keep editing: the draft stays, and the next save is checked again", async () => {
+    await renderEditor([range(1, "09:00", "18:00")]);
+    fireEvent.change(
+      day("Lundi").getByRole("combobox", { name: "Fin de la plage 1, Lundi" }),
+      { target: { value: "17:00" } },
+    );
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
+    );
+    actions.listBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "08:00", "12:00")]),
+    );
+    fireEvent.click(saveButton());
+    await flush();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continuer à modifier" }),
+    );
+    expect(screen.queryByText("Horaires modifiés ailleurs")).toBeNull();
+    fireEvent.change(
+      day("Lundi").getByRole("combobox", { name: "Fin de la plage 1, Lundi" }),
+      { target: { value: "16:00" } },
+    );
+    expect(screen.getByText("Modifications non enregistrées.")).toBeTruthy();
+
+    // Not an implicit overwrite: still based on the week first read.
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
+    );
+    actions.listBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "08:00", "12:00")]),
+    );
+    fireEvent.click(saveButton());
+    await flush();
+    expect(sent()).toEqual([
+      { weekday: 1, startsAt: "09:00", endsAt: "16:00" },
+    ]);
+    expect(plain(basis())).toEqual([
+      { weekday: 1, startsAt: "09:00", endsAt: "18:00" },
+    ]);
+    expect(screen.getByText("Horaires modifiés ailleurs")).toBeTruthy();
+  });
+
+  it("refused as changed, but the current week cannot be read: said, nothing written, retry compares", async () => {
+    await renderEditor([range(1, "09:00", "18:00")]);
+    fireEvent.change(
+      day("Lundi").getByRole("combobox", { name: "Fin de la plage 1, Lundi" }),
+      { target: { value: "17:00" } },
+    );
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
+    );
+    actions.listBusinessHoursAction.mockResolvedValueOnce(fail("network"));
+    fireEvent.click(saveButton());
+    await flush();
+    expect(
+      screen.getByText(/les horaires actuels n’ont pas pu être chargés/),
+    ).toBeTruthy();
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
+    );
+    actions.listBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "08:00", "12:00")]),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+    await flush();
+    expect(screen.getByText(/8 h – 12 h/)).toBeTruthy();
   });
 
   it("a failed read says so and retries", async () => {

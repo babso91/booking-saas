@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -20,8 +20,13 @@ import {
 } from "@/features/services/actions/services";
 import { cn } from "@/lib/cn";
 
+import { pendingCreationSnapshot } from "../client/pending-creation";
 import { durationLabel, type ServiceView } from "../client/service-form";
-import { ServiceSheet, type ServiceSheetTarget } from "./service-sheet";
+import {
+  ServiceSheet,
+  type CurrentService,
+  type ServiceSheetTarget,
+} from "./service-sheet";
 
 type Load =
   | { status: "loading" }
@@ -39,8 +44,18 @@ const linkAction =
  * list, create, edit, activate or deactivate, reorder, delete when never
  * booked. Every change is shown once the backend confirmed it; reads apply
  * only when they are the latest.
+ *
+ * Activating or deactivating is sent by value, without version: it sets the
+ * one state the professional sees the opposite of, so a stale list can only
+ * make it a no-op (the state is already the requested one), never undo a
+ * change made elsewhere; the returned service replaces the row.
  */
-export function ServicesManager() {
+export function ServicesManager({
+  creationStoreKey,
+}: {
+  /** Session storage key of the creation in progress (one per business). */
+  creationStoreKey: string;
+}) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [run, setRun] = useState(0);
   const [sheet, setSheet] = useState<ServiceSheetTarget | null>(null);
@@ -49,8 +64,13 @@ export function ServicesManager() {
   const [deleting, setDeleting] = useState<ServiceView | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const reads = useRef(0);
-  /** Services known when a creation form opened (for reconciliation). */
-  const knownAtCreate = useRef<Set<string>>(new Set());
+  // An unconfirmed creation kept from earlier (closed form, other page).
+  const pendingRaw = useSyncExternalStore(
+    noSubscription,
+    () => pendingCreationSnapshot(creationStoreKey),
+    () => null,
+  );
+  const unconfirmedCreation = isUnconfirmed(pendingRaw) && sheet === null;
 
   useEffect(() => {
     const read = (reads.current += 1);
@@ -89,23 +109,16 @@ export function ServicesManager() {
     );
   }
 
-  /** The service this creation wrote, if the list now holds it. */
-  async function reconcileCreate(command: {
-    name: string;
-    durationMinutes: number;
-    priceCents: number;
-  }) {
+  /** The service as it is now (after a refused edit). */
+  async function readCurrent(serviceId: string): Promise<CurrentService> {
     const result = await callAction(() => listServicesAction());
-    if (!result.ok) return null;
-    return (
-      result.data.find(
-        (service) =>
-          !knownAtCreate.current.has(service.id) &&
-          service.name === command.name &&
-          service.durationMinutes === command.durationMinutes &&
-          service.priceCents === command.priceCents,
-      ) ?? null
+    if (!result.ok) return { status: "error", error: result.error };
+    // The list is read again anyway: keep it in step.
+    setLoad((value) =>
+      value.status === "ready" ? { ...value, services: result.data } : value,
     );
+    const service = result.data.find((item) => item.id === serviceId);
+    return service ? { status: "found", service } : { status: "gone" };
   }
 
   /** `afterDelete`: offered by a refused deletion, whose row state it replaces. */
@@ -185,11 +198,6 @@ export function ServicesManager() {
   }
 
   function openCreate() {
-    if (load.status === "ready") {
-      knownAtCreate.current = new Set(
-        load.services.map((service) => service.id),
-      );
-    }
     setSheet({ mode: "create" });
   }
 
@@ -217,6 +225,22 @@ export function ServicesManager() {
             Ajouter une prestation
           </Button>
         </header>
+
+        {unconfirmedCreation && load.status === "ready" ? (
+          <Notice
+            tone="warning"
+            title="Une création n’a pas été confirmée"
+            action={
+              <button type="button" onClick={openCreate} className={linkAction}>
+                Reprendre la création
+              </button>
+            }
+          >
+            La connexion s’était interrompue pendant l’ajout d’une prestation.
+            Reprends-la pour la renvoyer : si elle avait déjà été créée, elle ne
+            le sera pas une seconde fois.
+          </Notice>
+        ) : null}
 
         {load.status === "loading" ? (
           <div className="flex flex-col gap-3" aria-busy="true">
@@ -321,12 +345,23 @@ export function ServicesManager() {
         <ServiceSheet
           target={sheet}
           currency={load.currency}
+          creationStoreKey={creationStoreKey}
           onClose={() => setSheet(null)}
           onSaved={(service, created) => {
             if (created) {
+              // A resend may answer a service already listed: once only.
               setLoad((value) =>
                 value.status === "ready"
-                  ? { ...value, services: [...value.services, service] }
+                  ? {
+                      ...value,
+                      services: value.services.some(
+                        (item) => item.id === service.id,
+                      )
+                        ? value.services.map((item) =>
+                            item.id === service.id ? service : item,
+                          )
+                        : [...value.services, service],
+                    }
                   : value,
               );
               setAnnouncement(`${service.name} a été ajoutée.`);
@@ -338,7 +373,8 @@ export function ServicesManager() {
             reload();
           }}
           onGone={reload}
-          reconcileCreate={reconcileCreate}
+          onReload={reload}
+          readCurrent={readCurrent}
         />
       ) : null}
 
@@ -518,4 +554,15 @@ function ServiceRow({
       </div>
     </li>
   );
+}
+
+const noSubscription = () => () => {};
+
+function isUnconfirmed(raw: string | null) {
+  if (!raw) return false;
+  try {
+    return (JSON.parse(raw) as { unconfirmed?: boolean }).unconfirmed === true;
+  } catch {
+    return false;
+  }
 }

@@ -2,7 +2,7 @@
 
 Ces trois garanties ont été repérées dans la PR #20 (écrans des prestations et des horaires). Le backend les fournit désormais : migration `supabase/migrations/20261016090000_setup_write_guarantees.sql`, plus les Server Actions existantes, dont le contrat évolue.
 
-Ce document est la passation pour l'interface (Claude UI) : entrées, sorties, codes d'erreur, nouvel essai et relecture. Le câblage minimal fait dans cette PR pour que l'application compile et reste utilisable est décrit au § 5. L'expérience complète de conflit reste à faire côté UI.
+Ce document est la passation pour l'interface (Claude UI) : entrées, sorties, codes d'erreur, nouvel essai et relecture. Le câblage minimal fait dans cette PR pour que l'application compile et reste utilisable est décrit au § 5. L'expérience complète de conflit a depuis été faite côté UI ; elle est décrite dans [`PROFESSIONAL_SETUP.md`](PROFESSIONAL_SETUP.md) (« Sûreté des écritures »). Les sections « À faire côté UI » ci-dessous restent comme trace du contrat demandé. Seul écart : l'activation reste par valeur, sans `expectedVersion` (justification dans ce même document).
 
 Les tests `it.fails` qui reproduisaient ces défauts sont devenus des tests ordinaires dans `tests/integration/professional-setup-concurrency.test.ts`, contre PostgreSQL réel.
 

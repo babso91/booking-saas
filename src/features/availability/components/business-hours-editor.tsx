@@ -74,6 +74,7 @@ export function BusinessHoursEditor({
   const [state, setState] = useState<ButtonState>("idle");
   const [failure, setFailure] = useState<UiError | null>(null);
   const [conflict, setConflict] = useState<HourRange[] | null>(null);
+  const conflictBox = useRef<HTMLDivElement>(null);
   const [saved, setSaved] = useState(false);
   /** Where an intercepted in-app link was going (unsaved changes). */
   const [leaving, setLeaving] = useState<string | null>(null);
@@ -90,6 +91,12 @@ export function BusinessHoursEditor({
       alive.current = false;
     };
   }, []);
+
+  // Below the week: brought into view, otherwise saving is disabled with no
+  // visible reason.
+  useEffect(() => {
+    if (conflict) conflictBox.current?.scrollIntoView?.({ block: "nearest" });
+  }, [conflict]);
 
   useEffect(() => {
     const read = (reads.current += 1);
@@ -197,10 +204,7 @@ export function BusinessHoursEditor({
    * week this draft replaces: the backend refuses it (stale_business_hours)
    * if the week has changed since.
    */
-  async function save(
-    force = false,
-    expected: HourRange[] = baseline,
-  ): Promise<boolean> {
+  async function save(expected: HourRange[] = baseline): Promise<boolean> {
     if (busy) return false;
     const found = checkWeek(week);
     setErrors(found);
@@ -214,23 +218,23 @@ export function BusinessHoursEditor({
     setState("loading");
     const sent = hoursFromWeek(week);
 
-    // Make sure it is still the one this draft started from, unless the
-    // professional chose to replace it anyway (the backend checks again,
-    // atomically, against `expected`).
-    if (!force) {
-      const current = await callAction(() => listBusinessHoursAction());
-      if (!alive.current) return false;
-      if (current.ok && scheduleKey(current.data) !== scheduleKey(baseline)) {
-        setConflict(current.data);
-        setState("idle");
-        return false;
-      }
-    }
-
+    // The backend replaces the week only if it is still `expected` (the
+    // week this draft started from), atomically: otherwise it refuses
+    // (stale_business_hours) and nothing is written.
     const result = await callAction(() =>
       replaceBusinessHoursAction({ hours: sent, expected }),
     );
     if (!alive.current) return false;
+    if (!result.ok && result.error.code === "stale_business_hours") {
+      // Changed elsewhere: read the week now and compare. Nothing is sent
+      // again until the professional chooses.
+      const latest = await callAction(() => listBusinessHoursAction());
+      if (!alive.current) return false;
+      setState("idle");
+      if (latest.ok) setConflict(latest.data);
+      else setFailure(result.error);
+      return false;
+    }
     setState("idle");
     if (result.ok) {
       setBaseline(result.data);
@@ -374,47 +378,60 @@ export function BusinessHoursEditor({
         ))}
 
         {conflict ? (
-          <Notice tone="warning" title="Horaires modifiés ailleurs">
-            <p>
-              Tes horaires ont changé depuis l’ouverture de cette page. Rien n’a
-              été enregistré. Horaires actuels :
-            </p>
-            <ul className="mt-1.5 flex flex-col gap-0.5">
-              {weekFromHours(conflict).map((day) => (
-                <li key={day.weekday}>
-                  <span className="font-semibold">
-                    {WEEKDAY_LABELS[day.weekday]}
-                  </span>{" "}
-                  : {day.open ? day.ranges.map(rangeLabel).join(", ") : "fermé"}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
-              <button
-                type="button"
-                className={linkAction}
-                onClick={() => {
-                  setBaseline(conflict);
-                  setConflict(null);
-                  void save(true, conflict);
-                }}
-              >
-                Remplacer par mes horaires
-              </button>
-              <button
-                type="button"
-                className={linkAction}
-                onClick={() => {
-                  setBaseline(conflict);
-                  setWeek(weekFromHours(conflict));
-                  setConflict(null);
-                  setErrors({});
-                }}
-              >
-                Reprendre les horaires actuels
-              </button>
-            </div>
-          </Notice>
+          // Clear of the sticky save bar.
+          <div ref={conflictBox} className="scroll-mb-44">
+            <Notice tone="warning" title="Horaires modifiés ailleurs">
+              <p>
+                Tes horaires ont changé depuis l’ouverture de cette page. Rien
+                n’a été enregistré. Horaires actuels :
+              </p>
+              <ul className="mt-1.5 flex flex-col gap-0.5">
+                {weekFromHours(conflict).map((day) => (
+                  <li key={day.weekday}>
+                    <span className="font-semibold">
+                      {WEEKDAY_LABELS[day.weekday]}
+                    </span>{" "}
+                    :{" "}
+                    {day.open ? day.ranges.map(rangeLabel).join(", ") : "fermé"}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
+                <button
+                  type="button"
+                  className={linkAction}
+                  onClick={() => {
+                    // Explicit: the local week, against the week just read
+                    // (refused again if it changes once more meanwhile).
+                    setBaseline(conflict);
+                    setConflict(null);
+                    void save(conflict);
+                  }}
+                >
+                  Remplacer par mes horaires
+                </button>
+                <button
+                  type="button"
+                  className={linkAction}
+                  onClick={() => {
+                    setBaseline(conflict);
+                    setWeek(weekFromHours(conflict));
+                    setConflict(null);
+                    setErrors({});
+                  }}
+                >
+                  Reprendre les horaires actuels
+                </button>
+                <button
+                  type="button"
+                  className={linkAction}
+                  onClick={() => setConflict(null)}
+                >
+                  Continuer à modifier
+                </button>
+              </div>
+            </Notice>
+          </div>
         ) : null}
 
         {failure ? (
@@ -528,7 +545,7 @@ function DayEditor({
       tabIndex={-1}
       aria-describedby={error ? `day-${day.weekday}-error` : undefined}
       className={cn(
-        "flex min-w-0 flex-col gap-3 rounded-3xl border bg-paper-raised px-4 py-4 focus:outline-none sm:px-5",
+        "relative flex min-w-0 flex-col gap-3 rounded-3xl border bg-paper-raised px-4 py-4 focus:outline-none sm:px-5",
         error ? "border-danger/60" : "border-line",
         !day.open && "bg-paper",
       )}
@@ -702,6 +719,18 @@ function SaveFailure({
     </button>
   );
   switch (error.code) {
+    case "stale_business_hours":
+      return (
+        <Notice
+          tone="warning"
+          title="Horaires modifiés ailleurs"
+          action={retry}
+        >
+          Tes horaires ont changé depuis l’ouverture de cette page : rien n’a
+          été enregistré, et les horaires actuels n’ont pas pu être chargés.
+          Réessaie pour les comparer aux tiens.
+        </Notice>
+      );
     case "network":
       return (
         <Notice tone="offline" title="Connexion interrompue" action={retry}>
