@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -69,18 +76,21 @@ const plain = (
 ) =>
   hours.map(({ weekday, startsAt, endsAt }) => ({ weekday, startsAt, endsAt }));
 
-async function renderEditor(hours: ReturnType<typeof range>[]) {
+// Two identities (signed-in user and business), as the page passes them.
+const A = { userId: "user-a", businessId: "business-a" };
+const B = { userId: "user-b", businessId: "business-b" };
+
+const page = (scope = A) => (
+  <>
+    {/* Stands for the sidebar: an ordinary in-app link. */}
+    <a href="/app/services">Prestations</a>
+    <BusinessHoursEditor timezone="America/Vancouver" scope={scope} />
+  </>
+);
+
+async function renderEditor(hours: ReturnType<typeof range>[], scope = A) {
   actions.listBusinessHoursAction.mockResolvedValue(ok(hours));
-  const view = render(
-    <>
-      {/* Stands for the sidebar: an ordinary in-app link. */}
-      <a href="/app/services">Prestations</a>
-      <BusinessHoursEditor
-        timezone="America/Vancouver"
-        draftKey="hours-draft:test"
-      />
-    </>,
-  );
+  const view = render(page(scope));
   await flush();
   return view;
 }
@@ -494,12 +504,7 @@ describe("weekly hours", () => {
 
   it("a failed read says so and retries", async () => {
     actions.listBusinessHoursAction.mockResolvedValueOnce(fail("internal"));
-    render(
-      <BusinessHoursEditor
-        timezone="Europe/Paris"
-        draftKey="hours-draft:test"
-      />,
-    );
+    render(<BusinessHoursEditor timezone="Europe/Paris" scope={A} />);
     await flush();
     expect(
       screen.getByText("Tes horaires n’ont pas pu être chargés."),
@@ -518,6 +523,18 @@ describe("leaving with unsaved hours", () => {
       { target: { value: "17:00" } },
     );
   const sidebarLink = () => screen.getByRole("link", { name: "Prestations" });
+  const mondayStart = () =>
+    (
+      day("Lundi").getByRole("combobox", {
+        name: "Début de la plage 1, Lundi",
+      }) as HTMLSelectElement
+    ).value;
+  const mondayEnd = () =>
+    (
+      day("Lundi").getByRole("combobox", {
+        name: "Fin de la plage 1, Lundi",
+      }) as HTMLSelectElement
+    ).value;
   const leaveDialog = () =>
     within(
       screen.getByRole("dialog", { name: "Modifications non enregistrées" }),
@@ -560,7 +577,11 @@ describe("leaving with unsaved hours", () => {
     await flush();
     expect(actions.replaceBusinessHoursAction).not.toHaveBeenCalled();
     expect(router.push).toHaveBeenCalledWith("/app/services");
-    expect(window.sessionStorage.getItem("hours-draft:test")).toBeNull();
+    // Nothing is offered back on return.
+    cleanup();
+    await renderEditor([range(1, "09:00", "18:00")]);
+    expect(screen.queryByText(/Brouillon/)).toBeNull();
+    expect(mondayEnd()).toBe("18:00");
   });
 
   it("save and continue: navigates only once the complete week is saved", async () => {
@@ -628,20 +649,239 @@ describe("leaving with unsaved hours", () => {
     expect(screen.getByText("Modifications non enregistrées.")).toBeTruthy();
   });
 
-  it("…but never over a schedule changed since: said, not restored", async () => {
+  it("N. over a schedule changed since: the kept week is restored, compared, never dropped", async () => {
     const view = await renderEditor([range(1, "09:00", "18:00")]);
     edit();
     view.unmount();
 
+    // Saved elsewhere meanwhile.
     await renderEditor([range(1, "08:00", "12:00")]);
-    expect(screen.getByText(/n’a pas été restauré/)).toBeTruthy();
+    expect(
+      screen.getByText("Brouillon restauré, horaires modifiés"),
+    ).toBeTruthy();
+    expect(mondayEnd()).toBe("17:00");
+    expect(screen.getByText("Horaires modifiés ailleurs")).toBeTruthy();
+    expect(screen.getByText(/8 h – 12 h/)).toBeTruthy();
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+    expect(actions.replaceBusinessHoursAction).not.toHaveBeenCalled();
+
+    // Not dropped by being shown: still there on the next return.
+    cleanup();
+    await renderEditor([range(1, "08:00", "12:00")]);
+    expect(mondayEnd()).toBe("17:00");
+  });
+
+  it("O. replacing on purpose sends the kept week against the current one", async () => {
+    const view = await renderEditor([range(1, "09:00", "18:00")]);
+    edit();
+    view.unmount();
+    await renderEditor([range(1, "08:00", "12:00")]);
+
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "09:00", "17:00")]),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remplacer par mes horaires" }),
+    );
+    await flush();
+    expect(sent()).toEqual([
+      { weekday: 1, startsAt: "09:00", endsAt: "17:00" },
+    ]);
+    expect(plain(basis())).toEqual([
+      { weekday: 1, startsAt: "08:00", endsAt: "12:00" },
+    ]);
+    expect(screen.getByText("Horaires enregistrés.")).toBeTruthy();
+    expect(screen.queryByText(/Brouillon/)).toBeNull();
+  });
+
+  it("O. …or taking the current week drops the kept one, on purpose", async () => {
+    const view = await renderEditor([range(1, "09:00", "18:00")]);
+    edit();
+    view.unmount();
+    await renderEditor([range(1, "08:00", "12:00")]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reprendre les horaires actuels" }),
+    );
+    await flush();
+    expect(mondayStart()).toBe("08:00");
+    expect(screen.getByText("Tout est enregistré.")).toBeTruthy();
+    cleanup();
+    await renderEditor([range(1, "08:00", "12:00")]);
+    expect(screen.queryByText(/Brouillon/)).toBeNull();
+    expect(mondayStart()).toBe("08:00");
+  });
+
+  it("O. …or keep editing: still based on the week it started from, so saving is checked again", async () => {
+    const view = await renderEditor([range(1, "09:00", "18:00")]);
+    edit();
+    view.unmount();
+    await renderEditor([range(1, "08:00", "12:00")]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continuer à modifier" }),
+    );
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
+    );
+    actions.listBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "08:00", "12:00")]),
+    );
+    fireEvent.click(saveButton());
+    await flush();
+    expect(plain(basis())).toEqual([
+      { weekday: 1, startsAt: "09:00", endsAt: "18:00" },
+    ]);
+    expect(screen.getByText("Horaires modifiés ailleurs")).toBeTruthy();
+    expect(mondayEnd()).toBe("17:00");
+  });
+
+  it("P. changed once more while reconciling: refused, compared again, the kept week survives", async () => {
+    const view = await renderEditor([range(1, "09:00", "18:00")]);
+    edit();
+    view.unmount();
+    await renderEditor([range(1, "08:00", "12:00")]);
+
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      fail("stale_business_hours"),
+    );
+    actions.listBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "10:00", "11:00")]),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remplacer par mes horaires" }),
+    );
+    await flush();
+    expect(screen.getByText(/10 h – 11 h/)).toBeTruthy();
+    expect(mondayEnd()).toBe("17:00");
+
+    // Left again before choosing: still kept, against the newest week.
+    cleanup();
+    await renderEditor([range(1, "10:00", "11:00")]);
+    expect(mondayEnd()).toBe("17:00");
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "09:00", "17:00")]),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remplacer par mes horaires" }),
+    );
+    await flush();
+    expect(plain(basis())).toEqual([
+      { weekday: 1, startsAt: "10:00", endsAt: "11:00" },
+    ]);
+  });
+});
+
+// The page is rendered again for another identity (sign-in as someone else,
+// another business) WITHOUT unmounting: same component instance, new props,
+// as a Server Component refresh does. Nothing of A may reach B.
+describe("another identity on the same mounted page", () => {
+  const mondayEnd = () =>
+    (
+      day("Lundi").getByRole("combobox", {
+        name: "Fin de la plage 1, Lundi",
+      }) as HTMLSelectElement
+    ).value;
+  const editMonday = (value: string) =>
+    fireEvent.change(
+      day("Lundi").getByRole("combobox", { name: "Fin de la plage 1, Lundi" }),
+      { target: { value } },
+    );
+
+  it("B. C. A's unsaved week is not shown, kept or sent under B, even with an identical schedule", async () => {
+    const week = () => [range(1, "09:00", "18:00")];
+    const view = await renderEditor(week(), A);
+    editMonday("17:00");
+    expect(screen.getByText("Modifications non enregistrées.")).toBeTruthy();
+
+    actions.listBusinessHoursAction.mockResolvedValue(ok(week()));
+    view.rerender(page(B));
+    await flush();
+    expect(mondayEnd()).toBe("18:00");
+    expect(screen.getByText("Tout est enregistré.")).toBeTruthy();
+    expect(screen.queryByText(/Brouillon/)).toBeNull();
+
+    // Nothing of A is offered to B on return either.
+    cleanup();
+    await renderEditor(week(), B);
+    expect(mondayEnd()).toBe("18:00");
+    expect(screen.queryByText(/Brouillon/)).toBeNull();
+
+    // B saves its own week only.
+    editMonday("16:00");
+    actions.replaceBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(1, "09:00", "16:00")]),
+    );
+    fireEvent.click(saveButton());
+    await flush();
+    expect(actions.replaceBusinessHoursAction).toHaveBeenCalledTimes(1);
+    expect(sent()).toEqual([
+      { weekday: 1, startsAt: "09:00", endsAt: "16:00" },
+    ]);
+
+    // A's draft was neither copied nor cleared: offered back to A.
+    cleanup();
+    await renderEditor(week(), A);
+    expect(screen.getByText("Brouillon non enregistré restauré")).toBeTruthy();
+    expect(mondayEnd()).toBe("17:00");
+  });
+
+  it("D. A's read answering after the switch never lands in B's editor", async () => {
+    const pendingA = deferred();
+    actions.listBusinessHoursAction.mockReturnValueOnce(pendingA.promise);
+    const view = render(page(A));
+    await flush();
+
+    actions.listBusinessHoursAction.mockResolvedValueOnce(
+      ok([range(2, "10:00", "12:00")]),
+    );
+    view.rerender(page(B));
+    await flush();
+    pendingA.resolve(ok([range(1, "07:00", "08:00")]));
+    await flush();
+    expect(day("Lundi").getByText("Fermé ce jour-là.")).toBeTruthy();
     expect(
       (
-        day("Lundi").getByRole("combobox", {
-          name: "Début de la plage 1, Lundi",
+        day("Mardi").getByRole("combobox", {
+          name: "Début de la plage 1, Mardi",
         }) as HTMLSelectElement
       ).value,
-    ).toBe("08:00");
-    expect(window.sessionStorage.getItem("hours-draft:test")).toBeNull();
+    ).toBe("10:00");
+  });
+
+  it("E. A's save answering after the switch: no success, navigation or change under B", async () => {
+    const view = await renderEditor([range(1, "09:00", "18:00")], A);
+    editMonday("17:00");
+    // Save and continue (navigates once saved), answer delayed.
+    fireEvent.click(screen.getByRole("link", { name: "Prestations" }));
+    await flush();
+    const pendingSave = deferred();
+    actions.replaceBusinessHoursAction.mockReturnValueOnce(pendingSave.promise);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enregistrer et continuer" }),
+    );
+    await flush();
+    expect(sent()).toEqual([
+      { weekday: 1, startsAt: "09:00", endsAt: "17:00" },
+    ]);
+
+    actions.listBusinessHoursAction.mockResolvedValue(
+      ok([range(3, "09:00", "12:00")]),
+    );
+    view.rerender(page(B));
+    await flush();
+    pendingSave.resolve(ok([range(1, "09:00", "17:00")]));
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(screen.queryByText("Horaires enregistrés.")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(day("Lundi").getByText("Fermé ce jour-là.")).toBeTruthy();
+    expect(screen.getByText("Tout est enregistré.")).toBeTruthy();
+    // B can work normally: nothing is left locked.
+    expect(
+      (
+        day("Mercredi").getByRole("combobox", {
+          name: "Fin de la plage 1, Mercredi",
+        }) as HTMLSelectElement
+      ).disabled,
+    ).toBe(false);
   });
 });

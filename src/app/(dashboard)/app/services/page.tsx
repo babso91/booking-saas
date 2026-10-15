@@ -11,15 +11,15 @@ export const metadata: Metadata = {
 export default async function ServicesPage() {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
-  const { business } = await requireReadyBusiness();
+  const { user, business } = await requireReadyBusiness();
 
   return (
     <AppShell
       business={{ name: business.name, slug: business.slug }}
       current="services"
     >
-      {/* The creation in progress is kept per business (session only). */}
-      <ServicesManager creationStoreKey={`service-create:${business.id}`} />
+      {/* Drafts belong to this identity, from the server session only. */}
+      <ServicesManager scope={{ userId: user.id, businessId: business.id }} />
     </AppShell>
   );
 }

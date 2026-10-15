@@ -12,6 +12,14 @@ import { Switch } from "@/components/ui/switch";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
 import { describeError } from "@/features/auth/client/error-copy";
 import {
+  draftKeyFor,
+  readDraftRaw,
+  removeDraft,
+  scopeId,
+  writeDraftRaw,
+  type DraftScope,
+} from "@/features/businesses/client/draft-scope";
+import {
   listBusinessHoursAction,
   replaceBusinessHoursAction,
 } from "@/features/availability/actions/schedule";
@@ -46,22 +54,47 @@ const linkAction =
  * the browser's time zone plays no part). The whole week is edited as a
  * draft and saved at once through replaceBusinessHoursAction, which
  * replaces the complete schedule: what is sent is always the full week
- * built from the read, never a partial draft. The schedule has no version,
- * so it is read again before saving: a change made elsewhere is never
- * overwritten without an explicit choice.
+ * built from the read, never a partial draft. It is sent with the week the
+ * draft started from (`expected`): a change made elsewhere since is refused
+ * by the backend, shown, and never overwritten without an explicit choice.
  *
  * Unsaved changes are never dropped silently: an in-app link asks first
  * (save and continue, quit without saving, keep editing), closing or
  * reloading the tab asks the browser, and a week left another way (back
- * button) is kept for the session and offered back on return, only while
- * the saved schedule is still the one it started from.
+ * button) is kept for the session and offered back on return. If the
+ * schedule changed since, the kept week is still restored, compared with
+ * the current one, and reconciled only by an explicit choice.
+ *
+ * Drafts belong to one identity (signed-in user and business).
  */
 export function BusinessHoursEditor({
+  timezone,
+  scope,
+}: {
+  timezone: string;
+  /** Whose week this is (signed-in user and business, from the session). */
+  scope: DraftScope;
+}) {
+  // One editor per identity. The page can be rendered again for another
+  // identity without being unmounted: the key replaces the editor during
+  // that same render, so a week typed for one identity is never shown,
+  // kept or sent under another, and late answers of the previous editor
+  // land on an unmounted tree and are dropped.
+  return (
+    <HoursEditor
+      key={scopeId(scope)}
+      timezone={timezone}
+      draftKey={draftKeyFor(scope, "hours")}
+    />
+  );
+}
+
+function HoursEditor({
   timezone,
   draftKey,
 }: {
   timezone: string;
-  /** Session storage key of the unsaved week (one per business). */
+  /** Session storage key of the unsaved week (this identity only). */
   draftKey: string;
 }) {
   const router = useRouter();
@@ -69,6 +102,8 @@ export function BusinessHoursEditor({
   const [run, setRun] = useState(0);
   /** The schedule as last read or saved (what "unsaved" compares to). */
   const [baseline, setBaseline] = useState<HourRange[]>([]);
+  /** The schedule as most recently read or saved (what "discard" takes). */
+  const [latest, setLatest] = useState<HourRange[]>([]);
   const [week, setWeek] = useState<DayDraft[]>(() => weekFromHours([]));
   const [errors, setErrors] = useState<DayErrors>({});
   const [state, setState] = useState<ButtonState>("idle");
@@ -78,10 +113,10 @@ export function BusinessHoursEditor({
   const [saved, setSaved] = useState(false);
   /** Where an intercepted in-app link was going (unsaved changes). */
   const [leaving, setLeaving] = useState<string | null>(null);
-  /** A kept unsaved week: offered back, or dropped because outdated. */
-  const [restored, setRestored] = useState<"restored" | "outdated" | null>(
-    null,
-  );
+  /** A kept unsaved week, offered back (over a changed schedule: stale). */
+  const [restored, setRestored] = useState<"restored" | "stale" | null>(null);
+  /** Bring the comparison into view (after a save, not on arrival). */
+  const reveal = useRef(false);
   const reads = useRef(0);
   const alive = useRef(true);
 
@@ -95,7 +130,9 @@ export function BusinessHoursEditor({
   // Below the week: brought into view, otherwise saving is disabled with no
   // visible reason.
   useEffect(() => {
-    if (conflict) conflictBox.current?.scrollIntoView?.({ block: "nearest" });
+    if (!conflict || !reveal.current) return;
+    reveal.current = false;
+    conflictBox.current?.scrollIntoView?.({ block: "nearest" });
   }, [conflict]);
 
   useEffect(() => {
@@ -106,17 +143,26 @@ export function BusinessHoursEditor({
         setLoad({ status: "error", error: result.error });
         return;
       }
-      setBaseline(result.data);
+      setLatest(result.data);
       const kept = readDraft(draftKey);
-      if (kept && kept.baseline === scheduleKey(result.data)) {
+      const current = scheduleKey(result.data);
+      if (!kept || scheduleKey(hoursFromWeek(kept.week)) === current) {
+        // Nothing kept, or it is already the saved week.
+        setBaseline(result.data);
+        setWeek(weekFromHours(result.data));
+      } else if (scheduleKey(kept.baseline) === current) {
         // Left without saving (e.g. back button): offered back as it was.
+        setBaseline(result.data);
         setWeek(kept.week);
         setRestored("restored");
       } else {
-        // Never over a schedule changed since: said, then dropped.
-        if (kept) setRestored("outdated");
-        clearDraft(draftKey);
-        setWeek(weekFromHours(result.data));
+        // Changed elsewhere since: the kept week is still the draft, based
+        // on the week it started from, and compared with the current one.
+        // Nothing is dropped or sent until the professional chooses.
+        setBaseline(kept.baseline);
+        setWeek(kept.week);
+        setConflict(result.data);
+        setRestored("stale");
       }
       setLoad({ status: "ready" });
     });
@@ -181,7 +227,7 @@ export function BusinessHoursEditor({
   // The unsaved week, kept for the session (back button, other exits).
   useEffect(() => {
     if (load.status !== "ready") return;
-    if (dirty) writeDraft(draftKey, scheduleKey(baseline), week);
+    if (dirty) writeDraft(draftKey, baseline, week);
     else clearDraft(draftKey);
   }, [load.status, dirty, draftKey, baseline, week]);
 
@@ -228,16 +274,22 @@ export function BusinessHoursEditor({
     if (!result.ok && result.error.code === "stale_business_hours") {
       // Changed elsewhere: read the week now and compare. Nothing is sent
       // again until the professional chooses.
-      const latest = await callAction(() => listBusinessHoursAction());
+      const current = await callAction(() => listBusinessHoursAction());
       if (!alive.current) return false;
       setState("idle");
-      if (latest.ok) setConflict(latest.data);
-      else setFailure(result.error);
+      if (current.ok) {
+        reveal.current = true;
+        setLatest(current.data);
+        setConflict(current.data);
+      } else {
+        setFailure(result.error);
+      }
       return false;
     }
     setState("idle");
     if (result.ok) {
       setBaseline(result.data);
+      setLatest(result.data);
       setWeek(weekFromHours(result.data));
       setConflict(null);
       setSaved(true);
@@ -249,6 +301,16 @@ export function BusinessHoursEditor({
     setErrors(refused);
     setFailure(result.error);
     return false;
+  }
+
+  /** Drops the draft for the schedule as most recently read or saved. */
+  function discard() {
+    setBaseline(latest);
+    setWeek(weekFromHours(latest));
+    setErrors({});
+    setFailure(null);
+    setConflict(null);
+    setRestored(null);
   }
 
   /** Saves, then follows the held link only once the week is saved. */
@@ -336,15 +398,7 @@ export function BusinessHoursEditor({
             tone="info"
             title="Brouillon non enregistré restauré"
             action={
-              <button
-                type="button"
-                className={linkAction}
-                onClick={() => {
-                  setWeek(weekFromHours(baseline));
-                  setRestored(null);
-                  setErrors({});
-                }}
-              >
+              <button type="button" className={linkAction} onClick={discard}>
                 Abandonner ce brouillon
               </button>
             }
@@ -352,11 +406,11 @@ export function BusinessHoursEditor({
             Tu avais quitté la page sans enregistrer ces horaires. Vérifie-les
             puis enregistre-les.
           </Notice>
-        ) : restored === "outdated" ? (
-          <Notice tone="warning" title="Brouillon non restauré">
-            Tu avais quitté la page sans enregistrer, mais tes horaires ont
-            changé depuis : ton brouillon n’a pas été restauré pour ne pas les
-            écraser. Voici les horaires actuels.
+        ) : restored === "stale" ? (
+          <Notice tone="warning" title="Brouillon restauré, horaires modifiés">
+            Tu avais quitté la page sans enregistrer, et tes horaires ont changé
+            depuis. Ton brouillon est affiché ci-dessous, rien n’a été
+            enregistré : compare-le aux horaires actuels, puis choisis.
           </Notice>
         ) : null}
 
@@ -405,6 +459,7 @@ export function BusinessHoursEditor({
                     // (refused again if it changes once more meanwhile).
                     setBaseline(conflict);
                     setConflict(null);
+                    setRestored(null);
                     void save(conflict);
                   }}
                 >
@@ -417,6 +472,7 @@ export function BusinessHoursEditor({
                     setBaseline(conflict);
                     setWeek(weekFromHours(conflict));
                     setConflict(null);
+                    setRestored(null);
                     setErrors({});
                   }}
                 >
@@ -425,7 +481,12 @@ export function BusinessHoursEditor({
                 <button
                   type="button"
                   className={linkAction}
-                  onClick={() => setConflict(null)}
+                  onClick={() => {
+                    // Still based on the week it started from: saving is
+                    // refused and compared again if it is still outdated.
+                    setConflict(null);
+                    setRestored(null);
+                  }}
                 >
                   Continuer à modifier
                 </button>
@@ -454,12 +515,7 @@ export function BusinessHoursEditor({
                 variant="ghost"
                 size="md"
                 disabled={busy}
-                onClick={() => {
-                  setWeek(weekFromHours(baseline));
-                  setErrors({});
-                  setFailure(null);
-                  setConflict(null);
-                }}
+                onClick={discard}
               >
                 <span className="text-danger">Annuler mes modifications</span>
               </Button>
@@ -770,36 +826,39 @@ function SaveFailure({
   }
 }
 
-// The unsaved week of one business, for the session only (never the
-// source of truth: it is offered back only over the schedule it started
-// from). Storage may be unavailable: the editor works without it.
-type KeptDraft = { baseline: string; week: DayDraft[] };
+// The unsaved week of one identity, for the session only (never the
+// source of truth), with the week it started from: over a schedule changed
+// since, it is compared, never dropped. Storage may be unavailable: the
+// editor works without it.
+type KeptDraft = { baseline: HourRange[]; week: DayDraft[] };
+
+const plainRanges = (hours: HourRange[]): HourRange[] =>
+  hours.map(({ weekday, startsAt, endsAt }) => ({ weekday, startsAt, endsAt }));
+
+const isRanges = (value: unknown): value is HourRange[] =>
+  Array.isArray(value) &&
+  value.every(
+    (range: Partial<HourRange> | null) =>
+      typeof range?.weekday === "number" &&
+      typeof range.startsAt === "string" &&
+      typeof range.endsAt === "string",
+  );
 
 function readDraft(key: string): KeptDraft | null {
   try {
-    const raw = window.sessionStorage.getItem(key);
+    const raw = readDraftRaw(key);
     if (!raw) return null;
-    const value = JSON.parse(raw) as KeptDraft;
-    return typeof value?.baseline === "string" && Array.isArray(value.week)
-      ? value
+    const value = JSON.parse(raw) as Partial<KeptDraft> | null;
+    return isRanges(value?.baseline) && Array.isArray(value.week)
+      ? { baseline: value.baseline, week: value.week as DayDraft[] }
       : null;
   } catch {
     return null;
   }
 }
 
-function writeDraft(key: string, baseline: string, week: DayDraft[]) {
-  try {
-    window.sessionStorage.setItem(key, JSON.stringify({ baseline, week }));
-  } catch {
-    // Storage unavailable or full: the in-app guard still protects.
-  }
+function writeDraft(key: string, baseline: HourRange[], week: DayDraft[]) {
+  writeDraftRaw(key, JSON.stringify({ baseline: plainRanges(baseline), week }));
 }
 
-function clearDraft(key: string) {
-  try {
-    window.sessionStorage.removeItem(key);
-  } catch {
-    // Storage unavailable.
-  }
-}
+const clearDraft = removeDraft;

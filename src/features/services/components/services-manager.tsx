@@ -11,6 +11,10 @@ import { Switch } from "@/components/ui/switch";
 import { formatPrice } from "@/features/agenda/client/money";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
 import { describeError } from "@/features/auth/client/error-copy";
+import {
+  scopeId,
+  type DraftScope,
+} from "@/features/businesses/client/draft-scope";
 import { getBookingSettingsAction } from "@/features/availability/actions/schedule";
 import {
   deleteServiceAction,
@@ -20,7 +24,7 @@ import {
 } from "@/features/services/actions/services";
 import { cn } from "@/lib/cn";
 
-import { pendingCreationSnapshot } from "../client/pending-creation";
+import { creationKey, pendingCreationSnapshot } from "../client/service-drafts";
 import { durationLabel, type ServiceView } from "../client/service-form";
 import {
   ServiceSheet,
@@ -50,12 +54,18 @@ const linkAction =
  * make it a no-op (the state is already the requested one), never undo a
  * change made elsewhere; the returned service replaces the row.
  */
-export function ServicesManager({
-  creationStoreKey,
-}: {
-  /** Session storage key of the creation in progress (one per business). */
-  creationStoreKey: string;
-}) {
+export function ServicesManager({ scope }: { scope: DraftScope }) {
+  // One screen per identity (signed-in user and business). The page can be
+  // rendered again for another identity without being unmounted (sign-in
+  // as someone else, another business): the key replaces the whole screen
+  // during that same render, so no state, draft or pending answer of the
+  // previous identity is ever shown, kept or sent under the new one. Late
+  // answers of the previous screen land on an unmounted tree and are
+  // dropped.
+  return <ServicesScreen key={scopeId(scope)} scope={scope} />;
+}
+
+function ServicesScreen({ scope }: { scope: DraftScope }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [run, setRun] = useState(0);
   const [sheet, setSheet] = useState<ServiceSheetTarget | null>(null);
@@ -67,7 +77,7 @@ export function ServicesManager({
   // An unconfirmed creation kept from earlier (closed form, other page).
   const pendingRaw = useSyncExternalStore(
     noSubscription,
-    () => pendingCreationSnapshot(creationStoreKey),
+    () => pendingCreationSnapshot(creationKey(scope)),
     () => null,
   );
   const unconfirmedCreation = isUnconfirmed(pendingRaw) && sheet === null;
@@ -123,7 +133,7 @@ export function ServicesManager({
 
   /** `afterDelete`: offered by a refused deletion, whose row state it replaces. */
   async function toggleActive(service: ServiceView, afterDelete = false) {
-    if ((row && !afterDelete) || ordering === "saving") return;
+    if ((row && !row.error && !afterDelete) || ordering === "saving") return;
     setRow({ id: service.id, kind: "active" });
     const result = await callAction(() =>
       setServiceActiveAction({
@@ -146,7 +156,8 @@ export function ServicesManager({
   }
 
   async function move(index: number, delta: -1 | 1) {
-    if (load.status !== "ready" || row || ordering === "saving") return;
+    if (load.status !== "ready" || (row && !row.error) || ordering === "saving")
+      return;
     const ids = load.services.map((service) => service.id);
     const target = index + delta;
     if (target < 0 || target >= ids.length) return;
@@ -199,6 +210,15 @@ export function ServicesManager({
 
   function openCreate() {
     setSheet({ mode: "create" });
+  }
+
+  /** A row operation is in flight (an error shown on a row locks nothing). */
+  const pending = row !== null && row.error === undefined;
+
+  /** Closes the deletion dialog, whatever its state: nothing stays locked. */
+  function closeDelete() {
+    setDeleting(null);
+    setRow(null);
   }
 
   const deleteError =
@@ -322,7 +342,7 @@ export function ServicesManager({
                   index={index}
                   count={load.services.length}
                   row={row?.id === service.id ? row : null}
-                  locked={Boolean(row) || ordering === "saving"}
+                  locked={pending || ordering === "saving"}
                   onEdit={() => setSheet({ mode: "edit", service })}
                   onToggle={() => void toggleActive(service)}
                   onMove={(delta) => void move(index, delta)}
@@ -345,7 +365,7 @@ export function ServicesManager({
         <ServiceSheet
           target={sheet}
           currency={load.currency}
-          creationStoreKey={creationStoreKey}
+          scope={scope}
           onClose={() => setSheet(null)}
           onSaved={(service, created) => {
             if (created) {
@@ -388,14 +408,9 @@ export function ServicesManager({
         tone={deleteError?.code === "in_use" ? "default" : "danger"}
         state={row?.kind === "delete" && !row.error ? "loading" : "idle"}
         onConfirm={() =>
-          deleteError?.code === "in_use"
-            ? setDeleting(null)
-            : void confirmDelete()
+          deleteError?.code === "in_use" ? closeDelete() : void confirmDelete()
         }
-        onCancel={() => {
-          setDeleting(null);
-          setRow(null);
-        }}
+        onCancel={closeDelete}
       >
         {deleteError ? (
           deleteError.code === "in_use" ? (
@@ -409,8 +424,7 @@ export function ServicesManager({
                     className={linkAction}
                     onClick={() => {
                       const service = deleting;
-                      setDeleting(null);
-                      setRow(null);
+                      closeDelete();
                       if (service) void toggleActive(service, true);
                     }}
                   >

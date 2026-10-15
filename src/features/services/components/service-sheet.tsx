@@ -13,15 +13,23 @@ import {
 } from "@/features/agenda/client/request-id";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
 import {
+  scopeId,
+  type DraftScope,
+} from "@/features/businesses/client/draft-scope";
+import {
   createServiceAction,
   updateServiceAction,
 } from "@/features/services/actions/services";
 
 import {
-  clearPendingCreation,
+  clearServiceDraft,
+  creationKey,
+  editKey,
+  readEditDraft,
   readPendingCreation,
+  writeEditDraft,
   writePendingCreation,
-} from "../client/pending-creation";
+} from "../client/service-drafts";
 import {
   checkService,
   draftFromService,
@@ -53,9 +61,6 @@ const linkAction =
 export type ServiceSheetTarget =
   { mode: "create" } | { mode: "edit"; service: ServiceView };
 
-/** A kept edit: what was typed, and the service (version) it started from. */
-type EditDraft = { draft: ServiceDraft; base: ServiceView };
-
 /** The service as it is now, read after a refused edit. */
 export type CurrentService =
   | { status: "found"; service: ServiceView }
@@ -76,7 +81,11 @@ const sameDraft = (a: ServiceDraft, b: ServiceDraft) =>
  *   used for changed values or by the professional's explicit choice.
  * - Edit: sent with the version it was read at. A service changed elsewhere
  *   (stale_service) is read again and compared field by field; nothing is
- *   sent until the professional chooses.
+ *   sent until the professional chooses. An edit kept for later survives
+ *   leaving the page; reopened on a service changed since, it is compared
+ *   the same way before anything is sent.
+ * - Drafts belong to one identity (user and business): never shown, kept or
+ *   sent under another.
  *
  * While a save is pending the fields are read only, the sheet cannot be
  * dismissed and nothing is sent twice; success is only shown once the
@@ -85,7 +94,7 @@ const sameDraft = (a: ServiceDraft, b: ServiceDraft) =>
 export function ServiceSheet({
   target,
   currency,
-  creationStoreKey,
+  scope,
   onClose,
   onSaved,
   onGone,
@@ -94,8 +103,8 @@ export function ServiceSheet({
 }: {
   target: ServiceSheetTarget | null;
   currency: string;
-  /** Session storage key of the creation in progress (one per business). */
-  creationStoreKey: string;
+  /** Whose drafts these are (signed-in user and business). */
+  scope: DraftScope;
   onClose: () => void;
   onSaved: (service: ServiceView, created: boolean) => void;
   /** The edited service no longer exists. */
@@ -105,14 +114,13 @@ export function ServiceSheet({
   /** The service as it is now (after a refused edit). */
   readCurrent: (serviceId: string) => Promise<CurrentService>;
 }) {
-  // Edits kept per service while the page is open; the creation in
-  // progress is kept for the session (pending-creation.ts).
-  const [edits] = useState(() => new Map<string, EditDraft>());
+  // The creation in progress and the edits kept for later are kept for the
+  // session, for this identity only (service-drafts.ts).
   const [saving, setSaving] = useState(false);
+  // One form per identity and target: state never carries over from one
+  // to the other (the screen is also remounted per identity).
   const formKey = target
-    ? target.mode === "create"
-      ? "new"
-      : target.service.id
+    ? `${scopeId(scope)}:${target.mode === "create" ? "new" : target.service.id}`
     : null;
   return (
     <Sheet
@@ -132,7 +140,7 @@ export function ServiceSheet({
       {target?.mode === "create" ? (
         <CreateForm
           key={formKey}
-          storeKey={creationStoreKey}
+          storeKey={creationKey(scope)}
           currency={currency}
           onSavingChange={setSaving}
           onClose={onClose}
@@ -143,7 +151,7 @@ export function ServiceSheet({
         <EditForm
           key={formKey}
           service={target.service}
-          edits={edits}
+          storeKey={editKey(scope, target.service.id)}
           currency={currency}
           onSavingChange={setSaving}
           onClose={onClose}
@@ -215,7 +223,7 @@ function CreateForm({
 
   function keep(next: { draft: ServiceDraft; unconfirmed: boolean }) {
     if (sameDraft(next.draft, EMPTY_SERVICE) && !next.unconfirmed) {
-      clearPendingCreation(storeKey);
+      clearServiceDraft(storeKey);
     } else {
       writePendingCreation(storeKey, { ...next, key: key.current });
     }
@@ -251,7 +259,10 @@ function CreateForm({
       ? { fingerprint, id: crypto.randomUUID() }
       : requestKeyFor(key.current, fingerprint);
     const requestId = key.current.id;
-    keep({ draft, unconfirmed });
+    // Kept as unconfirmed while in flight: an answer that never reaches
+    // this form (page left, identity switched, tab closed) is offered back
+    // as such, and resent with the same request id.
+    keep({ draft, unconfirmed: true });
     setFailure(null);
     setState("loading");
     onSavingChange(true);
@@ -263,7 +274,7 @@ function CreateForm({
     onSavingChange(false);
     if (result.ok) {
       key.current = null;
-      clearPendingCreation(storeKey);
+      clearServiceDraft(storeKey);
       onSaved(result.data);
       onClose();
       return;
@@ -288,7 +299,7 @@ function CreateForm({
 
   function discard() {
     key.current = null;
-    clearPendingCreation(storeKey);
+    clearServiceDraft(storeKey);
     onClose();
   }
 
@@ -408,7 +419,7 @@ function CreateFailure({
 
 function EditForm({
   service,
-  edits,
+  storeKey,
   currency,
   onSavingChange,
   onClose,
@@ -417,7 +428,8 @@ function EditForm({
   readCurrent,
 }: {
   service: ServiceView;
-  edits: Map<string, EditDraft>;
+  /** Where this edit is kept for later (this identity, this service). */
+  storeKey: string;
   currency: string;
   onSavingChange: (saving: boolean) => void;
   onClose: () => void;
@@ -425,9 +437,9 @@ function EditForm({
   onGone: () => void;
   readCurrent: (serviceId: string) => Promise<CurrentService>;
 }) {
-  const kept = edits.get(service.id);
+  const [kept] = useState(() => readEditDraft(storeKey, service.id));
   // A kept draft started from an older version: compare before saving.
-  const outdated = kept !== undefined && kept.base.version !== service.version;
+  const outdated = kept !== null && kept.base.version !== service.version;
   const [draft, setDraft] = useState<ServiceDraft>(
     () => kept?.draft ?? draftFromService(service),
   );
@@ -460,8 +472,8 @@ function EditForm({
   const stale = failure?.code === "stale_service";
 
   function keep(next: ServiceDraft, from: ServiceView) {
-    if (sameDraft(next, draftFromService(from))) edits.delete(service.id);
-    else edits.set(service.id, { draft: next, base: from });
+    if (sameDraft(next, draftFromService(from))) clearServiceDraft(storeKey);
+    else writeEditDraft(storeKey, { draft: next, base: from });
   }
 
   function change(field: ServiceField, value: string) {
@@ -494,7 +506,7 @@ function EditForm({
     // Only what the professional changed, on the version it was read at.
     const changes = serviceChanges(base, found.command);
     if (Object.keys(changes).length === 0) {
-      edits.delete(service.id);
+      clearServiceDraft(storeKey);
       onClose();
       return;
     }
@@ -513,7 +525,7 @@ function EditForm({
     setState("idle");
     onSavingChange(false);
     if (result.ok) {
-      edits.delete(service.id);
+      clearServiceDraft(storeKey);
       onSaved(result.data);
       onClose();
       return;
@@ -548,14 +560,14 @@ function EditForm({
     const next = draftFromService(latest);
     setDraft(next);
     setBase(latest);
-    edits.delete(service.id);
+    clearServiceDraft(storeKey);
     setFailure(null);
     setCurrent(null);
     setErrors({});
   }
 
   function discard() {
-    edits.delete(service.id);
+    clearServiceDraft(storeKey);
     onClose();
   }
 

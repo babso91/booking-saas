@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 export default async function BusinessHoursPage() {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
-  const { business } = await requireReadyBusiness();
+  const { user, business } = await requireReadyBusiness();
 
   return (
     <AppShell
@@ -21,7 +21,7 @@ export default async function BusinessHoursPage() {
       {/* The business's zone (from the session), never the browser's. */}
       <BusinessHoursEditor
         timezone={business.timezone}
-        draftKey={`hours-draft:${business.id}`}
+        scope={{ userId: user.id, businessId: business.id }}
       />
     </AppShell>
   );

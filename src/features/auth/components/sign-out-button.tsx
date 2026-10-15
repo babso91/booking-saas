@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Button, type ButtonState } from "@/components/ui/button";
 import { signOutAction } from "@/features/auth/actions/auth";
 import { callAction } from "@/features/auth/client/call-action";
+import { clearSetupDrafts } from "@/features/businesses/client/draft-scope";
 import { clearAllDrafts } from "@/features/onboarding/draft";
 
 /** Ends the session server-side, then hands over to /login. */
@@ -25,6 +26,7 @@ export function SignOutButton() {
       return;
     }
     clearAllDrafts();
+    clearSetupDrafts();
     router.replace(result.data.next);
   }
 

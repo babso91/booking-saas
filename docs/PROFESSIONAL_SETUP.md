@@ -37,8 +37,9 @@ Ce sont les mêmes règles que pour la PR #19.
   - aucun double envoi.
 - **Succès :** affiché seulement après confirmation du serveur.
 - **Échec :** brouillon exact conservé et déverrouillé, avec un nouvel essai.
-- **Brouillons :** conservés par prestation tant que la page reste ouverte, avec « Garder pour plus tard » et « Abandonner mes modifications » sur une ligne à part.
-- **Création d'une prestation :** un `requestId` par création.
+- **Brouillons :** conservés pour la session du navigateur, par prestation, avec « Garder pour plus tard » et « Abandonner mes modifications » sur une ligne à part. Quitter la page ne les perd pas. Rouvert sur une prestation modifiée entre-temps, un brouillon est comparé (voir plus bas), jamais envoyé ni supprimé sans choix. Il n'est effacé qu'après un enregistrement confirmé ou un abandon explicite.
+- **Brouillons par identité :** chaque brouillon (création, modification, horaires) appartient à l'utilisateur connecté **et** à l'activité, tous deux lus dans la session serveur (`requireReadyBusiness`), jamais fournis par le client. L'écran est recréé pour chaque identité : si la page est rendue à nouveau pour une autre identité sans être démontée (autre compte, autre activité), aucun état, brouillon ou réponse tardive de la précédente n'est affiché, conservé ni envoyé. Les vérifications d'appartenance côté serveur restent la seule autorisation. Tous les brouillons sont effacés à la déconnexion. Seules des valeurs saisies (nom, prix, horaires) et l'identifiant de requête sont stockés, en `sessionStorage`.
+- **Création d'une prestation :** un `requestId` par création. Elle est gardée comme « non confirmée » dès l'envoi : une réponse qui n'atteint jamais le formulaire (page quittée, changement d'identité) est signalée au retour et renvoyée avec le même `requestId`.
   - Après une réponse perdue (« Création non confirmée »), renvoyer les mêmes valeurs réutilise le même `requestId` : le backend renvoie la prestation déjà créée, jamais une seconde.
   - La création en cours (saisie, `requestId`, réponse perdue) est gardée pour la session, par activité : fermer le formulaire ou quitter la page ne l'oublie pas. La liste l'indique (« Une création n'a pas été confirmée », « Reprendre la création »).
   - Des valeurs modifiées, ou une nouvelle création volontaire, ont un nouveau `requestId` ; l'écran le dit si une création non confirmée est en cours.
@@ -48,12 +49,13 @@ Ce sont les mêmes règles que pour la PR #19.
   - « Garder mes modifications » / « Garder ma saisie » : les champs modifiés par la professionnelle sont gardés, les autres prennent la valeur actuelle, et seuls ses champs sont envoyés, sur la nouvelle version ;
   - « Reprendre la version actuelle ».
   - Un brouillon gardé puis rouvert sur une prestation changée entre-temps est comparé de la même façon.
+- **Erreurs sur une ligne :** une suppression refusée (`in_use`) ou une activation refusée est affichée sur la ligne, mais ne verrouille rien ; seule une opération en cours verrouille la liste.
 - **Activation :** par valeur, sans version. Le bouton envoie l'état inverse de celui affiché : une vue périmée ne peut produire qu'une écriture sans effet, et la réponse remplace la ligne (version comprise). L'ordre ne change pas la version.
 - **Horaires :** envoyés avec la semaine de départ du brouillon (`expected`), sans relecture préalable. En cas de `stale_business_hours`, la semaine actuelle est lue et affichée, le brouillon est conservé et rien n'est remplacé sans un choix : « Remplacer par mes horaires » (envoyé contre la semaine affichée ; refusé et comparé à nouveau si elle change encore), « Reprendre les horaires actuels » ou « Continuer à modifier ».
 - **Horaires non enregistrés : jamais perdus en silence.**
   - Un lien interne (barre latérale, barre d'onglets, feuille « Compte »…) ouvre une demande : « Enregistrer et continuer » (la navigation n'a lieu qu'après confirmation de l'enregistrement), « Quitter sans enregistrer » ou « Continuer à modifier ». Seuls les clics simples vers une autre page de l'application sont retenus, et seulement tant qu'il y a des modifications.
   - Fermer ou recharger l'onglet demande une confirmation au navigateur (`beforeunload`).
-  - Une autre sortie (bouton Précédent) garde la semaine non enregistrée pour la session. Elle est proposée au retour (« Brouillon non enregistré restauré »), seulement si les horaires enregistrés n'ont pas changé depuis. Sinon, l'écran le dit et ne restaure rien.
+  - Une autre sortie (bouton Précédent) garde la semaine non enregistrée pour la session, avec la semaine dont elle est partie. Elle est proposée au retour (« Brouillon non enregistré restauré »). Si les horaires enregistrés ont changé depuis, elle est quand même restaurée (« Brouillon restauré, horaires modifiés ») et comparée aux horaires actuels, avec les trois mêmes choix ; « Continuer à modifier » reste fondé sur la semaine de départ, donc l'enregistrement est de nouveau refusé et comparé tant qu'elle est périmée.
 
 ## Ce qui n'est pas promis
 

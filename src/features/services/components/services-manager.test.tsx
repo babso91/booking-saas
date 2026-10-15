@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ServiceView } from "../client/service-form";
@@ -77,15 +84,18 @@ const settings = ok({
   maximumBookingAdvanceDays: 90,
 });
 
-async function renderManager(services: ServiceView[]) {
+// Two identities (signed-in user and business), as the page passes them.
+const A = { userId: "user-a", businessId: "business-a" };
+const B = { userId: "user-b", businessId: "business-b" };
+
+async function renderManager(services: ServiceView[], scope = A) {
   actions.listServicesAction.mockResolvedValue(ok(services));
   actions.getBookingSettingsAction.mockResolvedValue(settings);
-  const view = render(<ServicesManager creationStoreKey={STORE} />);
+  const view = render(<ServicesManager scope={scope} />);
   await flush();
   return view;
 }
 
-const STORE = "service-create:test";
 const openCreate = () =>
   fireEvent.click(
     screen.getAllByRole("button", { name: /Ajouter une prestation/ })[0]!,
@@ -158,7 +168,7 @@ describe("services list", () => {
   it("a failed read says so and retries", async () => {
     actions.listServicesAction.mockResolvedValueOnce(fail("network"));
     actions.getBookingSettingsAction.mockResolvedValue(settings);
-    render(<ServicesManager creationStoreKey={STORE} />);
+    render(<ServicesManager scope={A} />);
     await flush();
     expect(
       screen.getByText("Tes prestations n’ont pas pu être chargées."),
@@ -275,7 +285,11 @@ describe("creating a service", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByText("Soin a été ajoutée.")).toBeTruthy();
     expect(list().getAllByRole("heading", { name: "Soin" })).toHaveLength(1);
-    expect(window.sessionStorage.getItem(STORE)).toBeNull();
+    // Nothing left to resume.
+    expect(screen.queryByText("Une création n’a pas été confirmée")).toBeNull();
+    openCreate();
+    await flush();
+    expect(field(/^Nom/).value).toBe("");
   });
 
   it("B. closed after a lost answer: the list says so, and resuming resends with the same request id", async () => {
@@ -421,7 +435,10 @@ describe("creating a service", () => {
     fireEvent.click(dialog().getByRole("button", { name: "Abandonner" }));
     await flush();
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(window.sessionStorage.getItem(STORE)).toBeNull();
+    expect(screen.queryByText("Une création n’a pas été confirmée")).toBeNull();
+    openCreate();
+    await flush();
+    expect(field(/^Nom/).value).toBe("");
   });
 
   it("M. a refused save keeps the exact draft and unlocks it; closing keeps it for later", async () => {
@@ -772,5 +789,393 @@ describe("editing and deactivating", () => {
       serviceId: unused.id,
     });
     expect(list().queryByRole("heading", { name: "Essai" })).toBeNull();
+  });
+});
+
+describe("deletion refused, then acknowledged", () => {
+  it("H. in_use, then « Compris »: every action of every row works again", async () => {
+    const booked = service({ name: "Pose" });
+    const other = service({ name: "Autre" });
+    await renderManager([booked, other]);
+    fireEvent.click(list().getByRole("button", { name: "Supprimer Pose" }));
+    await flush();
+    actions.deleteServiceAction.mockResolvedValueOnce(fail("in_use"));
+    fireEvent.click(dialog().getByRole("button", { name: "Supprimer" }));
+    await flush();
+    fireEvent.click(dialog().getByRole("button", { name: "Compris" }));
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(list().getByRole("heading", { name: "Pose" })).toBeTruthy();
+
+    for (const name of ["Pose", "Autre"]) {
+      for (const control of [
+        list().getByRole("button", { name: `Modifier ${name}` }),
+        list().getByRole("button", { name: `Supprimer ${name}` }),
+        list().getByRole("switch", { name: `Proposer ${name}` }),
+      ]) {
+        expect((control as HTMLButtonElement).disabled).toBe(false);
+      }
+    }
+    actions.setServiceActiveAction.mockResolvedValueOnce(
+      ok({ ...booked, active: false, version: 2 }),
+    );
+    fireEvent.click(list().getByRole("switch", { name: "Proposer Pose" }));
+    await flush();
+    expect(actions.setServiceActiveAction).toHaveBeenCalledWith({
+      serviceId: booked.id,
+      active: false,
+    });
+    fireEvent.click(list().getByRole("button", { name: "Modifier Autre" }));
+    await flush();
+    expect(
+      screen.getByRole("dialog", { name: "Modifier la prestation" }),
+    ).toBeTruthy();
+  });
+
+  it("H. …dismissed with Escape instead: nothing stays locked either", async () => {
+    const booked = service({ name: "Pose" });
+    await renderManager([booked]);
+    fireEvent.click(list().getByRole("button", { name: "Supprimer Pose" }));
+    await flush();
+    actions.deleteServiceAction.mockResolvedValueOnce(fail("in_use"));
+    fireEvent.click(dialog().getByRole("button", { name: "Supprimer" }));
+    await flush();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      (
+        list().getByRole("button", {
+          name: "Modifier Pose",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+  });
+
+  it("a refused activation is said on its row, and locks nothing (retry included)", async () => {
+    const first = service({ name: "Un" });
+    await renderManager([first, service({ name: "Deux" })]);
+    actions.setServiceActiveAction.mockResolvedValueOnce(fail("internal"));
+    fireEvent.click(list().getByRole("switch", { name: "Proposer Un" }));
+    await flush();
+    expect(list().getByRole("alert").textContent).toMatch(
+      /n’a pas pu être enregistré/,
+    );
+    expect(
+      (
+        list().getByRole("button", {
+          name: "Modifier Deux",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    actions.setServiceActiveAction.mockResolvedValueOnce(
+      ok({ ...first, active: false, version: 2 }),
+    );
+    fireEvent.click(list().getByRole("switch", { name: "Proposer Un" }));
+    await flush();
+    expect(actions.setServiceActiveAction).toHaveBeenCalledTimes(2);
+    expect(list().queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("an edit kept for later", () => {
+  const openEdit = (name: string) =>
+    fireEvent.click(list().getByRole("button", { name: `Modifier ${name}` }));
+  const keepForLater = () =>
+    fireEvent.click(
+      dialog().getByRole("button", { name: "Garder pour plus tard" }),
+    );
+
+  it("I. survives leaving the page: restored on return, and saved from there", async () => {
+    const existing = service({ name: "Rehaussement", priceCents: 6500 });
+    const view = await renderManager([existing]);
+    openEdit("Rehaussement");
+    await flush();
+    type(/^Prix/, "70");
+    keepForLater();
+    await flush();
+    view.unmount(); // another page of the app
+
+    await renderManager([existing]);
+    openEdit("Rehaussement");
+    await flush();
+    expect(field(/^Prix/).value).toBe("70");
+    expect(dialog().queryByText(/Version actuelle/)).toBeNull();
+    actions.updateServiceAction.mockResolvedValueOnce(
+      ok({ ...existing, priceCents: 7000, version: 2 }),
+    );
+    save();
+    await flush();
+    expect(actions.updateServiceAction).toHaveBeenCalledWith({
+      serviceId: existing.id,
+      expectedVersion: 1,
+      changes: { priceCents: 7000 },
+    });
+  });
+
+  it("J. restored on a service changed since: compared, nothing sent, the draft kept", async () => {
+    const existing = service({ name: "Rehaussement", priceCents: 6500 });
+    const view = await renderManager([existing]);
+    openEdit("Rehaussement");
+    await flush();
+    type(/^Prix/, "70");
+    keepForLater();
+    await flush();
+    view.unmount();
+
+    const changed = { ...existing, name: "Rehaussement XL", version: 2 };
+    await renderManager([changed]);
+    openEdit("Rehaussement XL");
+    await flush();
+    expect(
+      dialog().getByText("Version actuelle de la prestation"),
+    ).toBeTruthy();
+    expect(dialog().getByText("Maintenant : Rehaussement XL")).toBeTruthy();
+    expect(field(/^Prix/).value).toBe("70");
+    expect(
+      (
+        dialog().getByRole("button", {
+          name: /^Enregistrer/,
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(
+      dialog().getByRole("button", { name: "Garder mes modifications" }),
+    );
+    actions.updateServiceAction.mockResolvedValueOnce(
+      ok({ ...changed, priceCents: 7000, version: 3 }),
+    );
+    save();
+    await flush();
+    expect(actions.updateServiceAction).toHaveBeenCalledWith({
+      serviceId: existing.id,
+      expectedVersion: 2,
+      changes: { priceCents: 7000 },
+    });
+  });
+
+  it("K. a confirmed save clears only that service's draft", async () => {
+    const one = service({ name: "Un", priceCents: 1000 });
+    const two = service({ name: "Deux", priceCents: 2000 });
+    const view = await renderManager([one, two]);
+    openEdit("Un");
+    await flush();
+    type(/^Prix/, "11");
+    keepForLater();
+    await flush();
+    openEdit("Deux");
+    await flush();
+    type(/^Prix/, "22");
+    actions.updateServiceAction.mockResolvedValueOnce(
+      ok({ ...two, priceCents: 2200, version: 2 }),
+    );
+    save();
+    await flush();
+    view.unmount();
+
+    await renderManager([one, { ...two, priceCents: 2200, version: 2 }]);
+    openEdit("Un");
+    await flush();
+    expect(field(/^Prix/).value).toBe("11");
+    keepForLater();
+    await flush();
+    openEdit("Deux");
+    await flush();
+    expect(field(/^Prix/).value).toMatch(/^22/);
+    expect(dialog().queryByRole("button", { name: /Abandonner/ })).toBeNull();
+  });
+
+  it("L. a failed save keeps the draft, even after leaving the page", async () => {
+    const existing = service({ name: "Rehaussement" });
+    const view = await renderManager([existing]);
+    openEdit("Rehaussement");
+    await flush();
+    type(/^Nom/, "Rehaussement teinté");
+    actions.updateServiceAction.mockResolvedValueOnce(fail("network"));
+    save();
+    await flush();
+    expect(field(/^Nom/).value).toBe("Rehaussement teinté");
+    view.unmount();
+
+    await renderManager([existing]);
+    openEdit("Rehaussement");
+    await flush();
+    expect(field(/^Nom/).value).toBe("Rehaussement teinté");
+  });
+
+  it("discarding it on purpose removes it", async () => {
+    const existing = service({ name: "Rehaussement" });
+    const view = await renderManager([existing]);
+    openEdit("Rehaussement");
+    await flush();
+    type(/^Nom/, "Autre nom");
+    fireEvent.click(
+      dialog().getByRole("button", { name: "Abandonner mes modifications" }),
+    );
+    await flush();
+    view.unmount();
+    await renderManager([existing]);
+    openEdit("Rehaussement");
+    await flush();
+    expect(field(/^Nom/).value).toBe("Rehaussement");
+  });
+});
+
+// The page is rendered again for another identity (sign-in as someone else,
+// another business) WITHOUT unmounting: same component instance, new props,
+// as a Server Component refresh does. Nothing of A may reach B.
+describe("another identity on the same mounted page", () => {
+  it("A. F. an open creation of A is never shown or sent under B", async () => {
+    const view = await renderManager([service({ name: "Chez A" })], A);
+    openCreate();
+    await flush();
+    fillSoin();
+
+    actions.listServicesAction.mockResolvedValue(
+      ok([service({ name: "Chez B" })]),
+    );
+    view.rerender(<ServicesManager scope={B} />);
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(list().getByRole("heading", { name: "Chez B" })).toBeTruthy();
+    expect(list().queryByRole("heading", { name: "Chez A" })).toBeNull();
+
+    openCreate();
+    await flush();
+    expect(field(/^Nom/).value).toBe("");
+    type(/^Nom/, "Soin B");
+    type(/^Prix/, "30");
+    actions.createServiceAction.mockResolvedValueOnce(
+      ok(service({ name: "Soin B" })),
+    );
+    save();
+    await flush();
+    expect(actions.createServiceAction).toHaveBeenCalledTimes(1);
+    expect(actions.createServiceAction.mock.calls[0]![0]).toMatchObject({
+      name: "Soin B",
+      priceCents: 3000,
+    });
+  });
+
+  it("A. F. an open edit of A is never sent under B, even for a service id B also lists", async () => {
+    const shared = service({ name: "Pose", priceCents: 5000 });
+    const view = await renderManager([shared], A);
+    fireEvent.click(list().getByRole("button", { name: "Modifier Pose" }));
+    await flush();
+    type(/^Prix/, "99");
+
+    actions.listServicesAction.mockResolvedValue(ok([shared]));
+    view.rerender(<ServicesManager scope={B} />);
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(list().getByRole("button", { name: "Modifier Pose" }));
+    await flush();
+    expect(field(/^Prix/).value).toBe("50");
+    expect(actions.updateServiceAction).not.toHaveBeenCalled();
+  });
+
+  it("G. A's unconfirmed creation and kept edits never appear under B", async () => {
+    const shared = service({ name: "Pose", priceCents: 5000 });
+    const view = await renderManager([shared], A);
+    fireEvent.click(list().getByRole("button", { name: "Modifier Pose" }));
+    await flush();
+    type(/^Prix/, "99");
+    fireEvent.click(
+      dialog().getByRole("button", { name: "Garder pour plus tard" }),
+    );
+    await flush();
+    openCreate();
+    await flush();
+    fillSoin();
+    actions.createServiceAction.mockResolvedValueOnce(fail("network"));
+    save();
+    await flush();
+    fireEvent.click(
+      dialog().getByRole("button", { name: "Garder pour plus tard" }),
+    );
+    await flush();
+    expect(screen.getByText("Une création n’a pas été confirmée")).toBeTruthy();
+
+    view.rerender(<ServicesManager scope={B} />);
+    await flush();
+    expect(screen.queryByText("Une création n’a pas été confirmée")).toBeNull();
+    openCreate();
+    await flush();
+    expect(field(/^Nom/).value).toBe("");
+    fireEvent.keyDown(document, { key: "Escape" });
+    await flush();
+    fireEvent.click(list().getByRole("button", { name: "Modifier Pose" }));
+    await flush();
+    expect(field(/^Prix/).value).toBe("50");
+
+    // Still A's, untouched: offered back to A.
+    cleanup();
+    await renderManager([shared], A);
+    expect(screen.getByText("Une création n’a pas été confirmée")).toBeTruthy();
+    fireEvent.click(list().getByRole("button", { name: "Modifier Pose" }));
+    await flush();
+    expect(field(/^Prix/).value).toBe("99");
+  });
+
+  it("D. A's list answering after the switch never replaces B's", async () => {
+    const pendingA = deferred();
+    actions.listServicesAction.mockReturnValueOnce(pendingA.promise);
+    actions.getBookingSettingsAction.mockResolvedValue(settings);
+    const view = render(<ServicesManager scope={A} />);
+    await flush();
+
+    actions.listServicesAction.mockResolvedValue(
+      ok([service({ name: "Chez B" })]),
+    );
+    view.rerender(<ServicesManager scope={B} />);
+    await flush();
+    pendingA.resolve(ok([service({ name: "Chez A" })]));
+    await flush();
+    expect(list().getByRole("heading", { name: "Chez B" })).toBeTruthy();
+    expect(list().queryByRole("heading", { name: "Chez A" })).toBeNull();
+  });
+
+  it("E. A's creation answering after the switch: nothing under B, and A's resend keeps its request id", async () => {
+    const view = await renderManager([], A);
+    openCreate();
+    await flush();
+    fillSoin();
+    const pendingCreate = deferred();
+    actions.createServiceAction.mockReturnValueOnce(pendingCreate.promise);
+    save();
+    await flush();
+
+    actions.listServicesAction.mockResolvedValue(
+      ok([service({ name: "Chez B" })]),
+    );
+    view.rerender(<ServicesManager scope={B} />);
+    await flush();
+    pendingCreate.resolve(ok(service({ name: "Soin" })));
+    await flush();
+    expect(screen.queryByText("Soin a été ajoutée.")).toBeNull();
+    expect(list().queryByRole("heading", { name: "Soin" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      (
+        list().getByRole("button", {
+          name: "Modifier Chez B",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+
+    // Back to A: its command was not reinterpreted. Resending the same
+    // values carries the same request id (never a second service).
+    cleanup();
+    await renderManager([service({ name: "Soin" })], A);
+    expect(screen.getByText("Une création n’a pas été confirmée")).toBeTruthy();
+    openCreate();
+    await flush();
+    expect(field(/^Nom/).value).toBe("Soin");
+    actions.createServiceAction.mockResolvedValueOnce(
+      ok(service({ name: "Soin" })),
+    );
+    save();
+    await flush();
+    expect(requestIds()[1]).toBe(requestIds()[0]);
   });
 });
