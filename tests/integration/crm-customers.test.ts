@@ -18,6 +18,7 @@ import {
   setWeeklyHours,
   type Professional,
   type TestBusiness,
+  bookingClient,
 } from "./support/fixtures";
 import {
   closeTransaction,
@@ -68,7 +69,7 @@ function publicBooking(
   target: { business: TestBusiness; service: string } = { business, service },
 ) {
   return createPublicBooking(
-    anon,
+    bookingClient(),
     createPublicBookingSchema.parse({
       slug: target.business.slug,
       serviceId: target.service,
@@ -77,7 +78,9 @@ function publicBooking(
       email: fields.email,
       lastName: fields.lastName,
       phone: fields.phone,
+      requestId: randomUUID(),
     }),
+    randomUUID(),
   );
 }
 

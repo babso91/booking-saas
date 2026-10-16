@@ -34,6 +34,21 @@ const adminClient = createClient<Database>(
   clientOptions,
 );
 
+/**
+ * The client of the public booking route: the service role (the booking
+ * function is executable by it only; the route passes the client key).
+ */
+export function bookingClient(): AppSupabaseClient {
+  return adminClient as AppSupabaseClient;
+}
+
+/** A public booking request: a fresh request id and client key per call. */
+export function bookingRequest<T extends object>(
+  input: T,
+): T & { requestId: string } {
+  return { ...input, requestId: randomUUID() };
+}
+
 export type Professional = {
   userId: string;
   email: string;

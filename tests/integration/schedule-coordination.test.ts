@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createPublicBooking } from "@/features/appointments/data/public-booking";
@@ -8,7 +10,6 @@ import {
 import { zonedLocalToUtc } from "@/lib/time/zoned";
 
 import {
-  anonClient,
   createBusiness,
   createClientRecord,
   createProfessional,
@@ -21,6 +22,8 @@ import {
   updateSettings,
   type Professional,
   type TestBusiness,
+  bookingClient,
+  bookingRequest,
 } from "./support/fixtures";
 import {
   closeTransaction,
@@ -66,21 +69,26 @@ function block(
 }
 
 function book(time: string, email: string, serviceId = service) {
-  return createPublicBooking(anonClient(), {
-    slug: business.slug,
-    serviceId,
-    startsAt: local(time),
-    firstName: "Cliente",
-    email,
-  });
+  return createPublicBooking(
+    bookingClient(),
+    bookingRequest({
+      slug: business.slug,
+      serviceId,
+      startsAt: local(time),
+      firstName: "Cliente",
+      email,
+    }),
+    randomUUID(),
+  );
 }
 
-/** Booking RPC inside an open transaction (anonymous caller). */
+/** Booking RPC inside an open transaction (the public route's caller). */
 function bookIn(transaction: OpenTransaction, time: string, email: string) {
   return transaction.connection.query(
     `select appointment_id from public.create_public_booking(
        p_slug => $1, p_service_id => $2, p_starts_at => $3,
-       p_first_name => 'Cliente', p_email => $4)`,
+       p_first_name => 'Cliente', p_email => $4,
+       p_request_id => gen_random_uuid(), p_client_key => gen_random_uuid()::text)`,
     [business.slug, service, local(time), email],
   );
 }
@@ -284,7 +292,7 @@ describe("appointments and existing blocks", () => {
 
 describe("concurrent booking and block", () => {
   it("booking first: the concurrent block waits, then is refused", async () => {
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     const blocking = await openTransaction({
       role: "authenticated",
       userId: owner.userId,
@@ -310,7 +318,7 @@ describe("concurrent booking and block", () => {
       role: "authenticated",
       userId: owner.userId,
     });
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
 
     await blockIn(blocking, "10:30", "11:30");
     const bookingResult = outcome(bookIn(booking, "10:00", "first@x.test"));
@@ -328,7 +336,7 @@ describe("concurrent booking and block", () => {
   });
 
   it("the waiting side succeeds when the first one rolls back (both orders)", async () => {
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     const blocking = await openTransaction({
       role: "authenticated",
       userId: owner.userId,
@@ -345,7 +353,7 @@ describe("concurrent booking and block", () => {
       role: "authenticated",
       userId: owner.userId,
     });
-    const booking2 = await openTransaction({ role: "anon" });
+    const booking2 = await openTransaction({ role: "service_role" });
     await blockIn(blocking2, "14:00", "15:00");
     const bookingResult = outcome(bookIn(booking2, "14:30", "second@x.test"));
     await waitUntilBlocked(booking2.pid);
@@ -362,7 +370,7 @@ describe("concurrent booking and block", () => {
 
   it("moving a block while a booking is in flight cannot create an overlap", async () => {
     const moved = await block("blocked", "16:00", "17:00");
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     const moving = await openTransaction({
       role: "authenticated",
       userId: owner.userId,
@@ -455,7 +463,7 @@ describe("booking uses one consistent set of values", () => {
     );
 
     // 10:00 + 60 min would overlap 10:30; 10:00 + 30 min fits exactly.
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     const result = bookIn(booking, "10:00", "new@x.test");
     await waitUntilBlocked(booking.pid);
     await closeTransaction(editor, "commit");
@@ -482,7 +490,7 @@ describe("booking uses one consistent set of values", () => {
       [service],
     );
 
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     const result = outcome(bookIn(booking, "10:00", "new@x.test"));
     await waitUntilBlocked(booking.pid);
     await closeTransaction(editor, "commit");
@@ -492,7 +500,7 @@ describe("booking uses one consistent set of values", () => {
   });
 
   it("keeps the validated duration when the service changes during the booking", async () => {
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     const { rows } = await bookIn(booking, "09:00", "new@x.test");
 
     // The edit waits for the booking to commit instead of changing its values.
@@ -524,7 +532,7 @@ describe("booking uses one consistent set of values", () => {
     );
 
     // 09:30–10:30 fits with buffer 0 but not with 30 (next appointment 10:30).
-    const refused = await openTransaction({ role: "anon" });
+    const refused = await openTransaction({ role: "service_role" });
     const refusedResult = outcome(bookIn(refused, "09:30", "refused@x.test"));
     await waitUntilBlocked(refused.pid);
     await closeTransaction(editor, "commit");
@@ -541,7 +549,7 @@ describe("booking uses one consistent set of values", () => {
   });
 
   it("keeps the validated buffer when settings change during the booking", async () => {
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     const { rows } = await bookIn(booking, "09:00", "new@x.test");
 
     const editor = await openTransaction();
@@ -572,7 +580,7 @@ describe("booking uses one consistent set of values", () => {
     );
 
     // 12:15 is on the 15-minute grid but not on the new 60-minute grid.
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     const result = outcome(bookIn(booking, "12:15", "grid@x.test"));
     await waitUntilBlocked(booking.pid);
     await closeTransaction(editor, "commit");

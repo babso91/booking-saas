@@ -16,18 +16,28 @@ export type PublicBookingDto = {
   priceCents: number;
   currency: string;
   businessName: string;
+  /** `confirmed`, or the current status when a retry finds a later change. */
+  status: string;
+  /** true: this request had already booked; nothing new was written. */
+  replayed: boolean;
 };
 
 /**
  * Creates a public booking through `public.create_public_booking`, a single
  * transaction that re-validates the slot, finds or creates the client within
- * the business, inserts the appointment and queues the confirmation email.
- * Double booking is ultimately prevented by the `appointments_no_overlap`
- * exclusion constraint and surfaces as `slot_unavailable`.
+ * the business, inserts the appointment and queues the confirmation email
+ * (outbox only). Double booking is ultimately prevented by the
+ * `appointments_no_overlap` exclusion constraint and surfaces as
+ * `slot_unavailable`. Idempotent by `requestId`; abuse limits per
+ * `clientKey` (the caller's network address) and per email.
+ *
+ * `client` must be the service role (the function is not executable by the
+ * public roles): only the public route calls it, with a trusted client key.
  */
 export async function createPublicBooking(
   client: AppSupabaseClient,
   input: CreatePublicBookingInput,
+  clientKey: string,
 ): Promise<PublicBookingDto> {
   const { data, error } = await client.rpc("create_public_booking", {
     p_slug: input.slug,
@@ -35,6 +45,8 @@ export async function createPublicBooking(
     p_starts_at: input.startsAt,
     p_first_name: input.firstName,
     p_email: input.email,
+    p_request_id: input.requestId,
+    p_client_key: clientKey,
     p_last_name: input.lastName,
     p_phone: input.phone,
   });
@@ -59,5 +71,7 @@ export async function createPublicBooking(
     priceCents: row.price_cents,
     currency: row.currency,
     businessName: row.business_name,
+    status: row.status,
+    replayed: row.replayed,
   };
 }

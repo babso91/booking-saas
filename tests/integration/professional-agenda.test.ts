@@ -33,6 +33,8 @@ import {
   setWeeklyHours,
   type Professional,
   type TestBusiness,
+  bookingClient,
+  bookingRequest,
 } from "./support/fixtures";
 import {
   closeTransaction,
@@ -541,13 +543,17 @@ describe("reading a range", () => {
       "update public.business_settings set minimum_booking_notice_minutes = 0 where business_id = $1",
       [p.business.id],
     );
-    const publicBooking = await createPublicBooking(anonClient(), {
-      slug: p.business.slug,
-      serviceId: p.service,
-      startsAt: utc(p, FUTURE, "09:00"),
-      firstName: "Léa",
-      email: "lea@x.test",
-    });
+    const publicBooking = await createPublicBooking(
+      bookingClient(),
+      bookingRequest({
+        slug: p.business.slug,
+        serviceId: p.service,
+        startsAt: utc(p, FUTURE, "09:00"),
+        firstName: "Léa",
+        email: "lea@x.test",
+      }),
+      randomUUID(),
+    );
     await createOk(p, "14:00");
 
     const agenda = ok(
@@ -888,13 +894,14 @@ describe("concurrency (PostgreSQL)", () => {
       "update public.business_settings set minimum_booking_notice_minutes = 0 where business_id = $1",
       [a.business.id],
     );
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     const creating = await asOwner(a);
 
     await booking.connection.query(
       `select appointment_id from public.create_public_booking(
          p_slug => $1, p_service_id => $2, p_starts_at => $3,
-         p_first_name => 'Léa', p_email => 'lea@x.test')`,
+         p_first_name => 'Léa', p_email => 'lea@x.test',
+       p_request_id => gen_random_uuid(), p_client_key => gen_random_uuid()::text)`,
       [a.business.slug, a.service, utc(a, FUTURE, "10:00")],
     );
     const result = outcome(createIn(creating, a, "10:00"));
@@ -1910,13 +1917,17 @@ describe("DST: the repeated autumn hour (Europe/Paris, 2026-10-25)", () => {
     expect(slots).toContain(SECOND);
 
     // A client books the first one; the agenda shows it as such.
-    const booking = await createPublicBooking(anonClient(), {
-      slug: a.business.slug,
-      serviceId: a.service,
-      startsAt: FIRST,
-      firstName: "Léa",
-      email: "lea@x.test",
-    });
+    const booking = await createPublicBooking(
+      bookingClient(),
+      bookingRequest({
+        slug: a.business.slug,
+        serviceId: a.service,
+        startsAt: FIRST,
+        firstName: "Léa",
+        email: "lea@x.test",
+      }),
+      randomUUID(),
+    );
     as(a.owner);
     const shown = ok(
       await getAgendaAppointmentAction({
@@ -2390,13 +2401,17 @@ describe("DST guarantees across paths", () => {
     await setWeeklyHours(a.business.id, [[0, "00:00", "06:00"]]);
     const SECOND = "2026-10-25T01:30:00.000Z";
 
-    const booking = await createPublicBooking(anonClient(), {
-      slug: a.business.slug,
-      serviceId: a.service,
-      startsAt: SECOND,
-      firstName: "Léa",
-      email: "lea2@x.test",
-    });
+    const booking = await createPublicBooking(
+      bookingClient(),
+      bookingRequest({
+        slug: a.business.slug,
+        serviceId: a.service,
+        startsAt: SECOND,
+        firstName: "Léa",
+        email: "lea2@x.test",
+      }),
+      randomUUID(),
+    );
     as(a.owner);
     const shown = ok(
       await getAgendaAppointmentAction({

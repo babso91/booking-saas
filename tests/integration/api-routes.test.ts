@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { NextRequest } from "next/server";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -18,7 +20,9 @@ import {
 } from "./support/fixtures";
 
 // Calls the Route Handlers directly (as Next.js does) against the local stack.
-// They only receive the publishable key: no service-role secret is involved.
+// The read routes use the publishable key only; POST /api/bookings calls the
+// booking function as the service role (the function is not executable by
+// the public roles) and passes the caller's address as the abuse-limit key.
 
 const DATE = dateInDays(9);
 
@@ -32,7 +36,7 @@ beforeAll(async () => {
   process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
   process.env.NEXT_PUBLIC_SUPABASE_URL = env.apiUrl;
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = env.anonKey;
-  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = env.serviceRoleKey;
 
   const owner = await createProfessional("api");
   business = await createBusiness(owner.userId);
@@ -136,6 +140,7 @@ describe("POST /api/bookings", () => {
     lastName: "",
     email: "lea@example.test",
     phone: "",
+    requestId: randomUUID(),
   });
 
   it("creates a booking (201) then refuses the same slot (409)", async () => {

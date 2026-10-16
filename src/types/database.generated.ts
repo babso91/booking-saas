@@ -654,8 +654,8 @@ isOneToOne: false
             }[]
                            },
 "create_public_booking":
-{ Args: { "p_email": string,"p_first_name": string,"p_last_name"?: string,"p_phone"?: string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
-              "appointment_id": string,"business_name": string,"currency": string,"duration_minutes": number,"ends_at": string,"price_cents": number,"service_name": string,"starts_at": string,"timezone": string
+{ Args: { "p_client_key": string,"p_email": string,"p_first_name": string,"p_last_name"?: string,"p_phone"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
+              "appointment_id": string,"business_name": string,"currency": string,"duration_minutes": number,"ends_at": string,"price_cents": number,"replayed": boolean,"service_name": string,"starts_at": string,"status": string,"timezone": string
             }[]
                            },
 "create_service":
