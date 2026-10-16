@@ -2,7 +2,7 @@
 
 Le parcours : une cliente, sans compte, ouvre `/b/[slug]`, choisit une prestation active puis un créneau réel, saisit ses coordonnées et confirme. Le rendez-vous est validé de façon atomique, apparaît dans l'agenda de la professionnelle, et la cliente est liée dans le CRM.
 
-Ce document décrit le contrat que l'interface (Claude UI) doit utiliser. La PR #21 ne construit aucun écran.
+Ce document décrit le contrat que l'interface (Claude UI) doit utiliser. L'interface livrée ensuite dans cette même PR est décrite au § 8.
 
 - **Migration :** `supabase/migrations/20261017090000_public_booking_guarantees.sql`.
 - **Code :**
@@ -132,3 +132,52 @@ La réponse ne contient **rien de la fiche cliente** : pas d'identifiant de clie
   - sans limites : 2 tests échouent.
 - **`tests/upgrade/public-booking-guarantees.test.ts` :** base peuplée ; rendez-vous existants intacts ; rejeu ; refus pour `anon`.
 - **Suites existantes inchangées dans leur intention :** `public-booking`, `public-booking-dst`, `concurrency`, `schedule-*`, `crm-customers`, `api-routes`. Elles appellent désormais la réservation comme la route, en rôle de service, avec un `requestId`.
+
+## 8. Interface livrée (Claude UI)
+
+Le parcours `/b/[slug]` utilise ce contrat tel quel, sans aucun changement backend.
+
+- **Page :** `src/app/(public)/b/[slug]/page.tsx`. Elle lit le profil et les prestations actives avec les mêmes RPC publics que `GET /api/public/businesses/:slug`. Un slug inconnu ou invalide donne `not-found.tsx` (404). La page n'est pas indexée.
+- **Logique, sans présentation** (`src/features/public-booking/client/`) :
+  - `use-booking-flow.ts` contient toutes les règles du parcours ;
+  - `api.ts` appelle les routes et ne lève jamais d'exception : erreur réseau, délai dépassé ou réponse illisible donnent `network` ;
+  - `business-time.ts` gère les jours civils et les heures murales ;
+  - `contact.ts` reprend les mêmes limites que le schéma zod ;
+  - `pending-booking.ts` conserve la demande non confirmée.
+
+  Un futur mini-site de marque réutilise ce hook et ne remplace que la présentation.
+
+- **Présentation fonctionnelle** (`src/features/public-booking/components/`) :
+  - quatre étapes (prestation, créneau, coordonnées, vérification), puis la confirmation ;
+  - à chaque étape, le focus va sur le titre.
+
+### Règles appliquées
+
+- **Créneaux :**
+  - jamais calculés dans le navigateur ;
+  - affichés avec `localStartsAt` ;
+  - les jours vont d'aujourd'hui (date civile du business) jusqu'à `maximumBookingAdvanceDays` ;
+  - une lecture qui n'est plus la dernière (autre jour ou autre prestation choisis entre-temps) est abandonnée.
+- **Fuseau :** les heures sont toujours celles de l'établissement. Si l'appareil est réglé sur un autre fuseau, l'écran le précise.
+- **`requestId` :**
+  - un par contenu (prestation, créneau, coordonnées) ;
+  - il est conservé tant que ce contenu ne change pas ;
+  - la demande est écrite dans `sessionStorage` (onglet, clé `public-booking:<slug>`) **avant** l'envoi, et effacée une fois la réponse lue.
+- **Réponse perdue** (réseau, `internal`, page quittée, rechargement) : « Réservation non confirmée ». La même demande peut être renvoyée **à l'identique** (même corps, même `requestId`) ou abandonnée.
+- **Une autre réservation** reste bloquée tant que la précédente n'est ni renvoyée ni abandonnée.
+- **`idempotency_conflict` :** l'écran l'explique ; une nouvelle demande (nouveau `requestId`) n'est envoyée que sur un choix explicite. La ligne du § 3 (« régénérer… ») est appliquée ainsi, sans renvoi automatique.
+- **`slot_unavailable` :** retour aux créneaux du même jour, relus ; les coordonnées sont conservées.
+- **`rate_limited` :** message neutre, aucun nouvel essai automatique.
+- **`service_not_found` :** les prestations sont relues via `GET /api/public/businesses/:slug`.
+- **`business_not_found` :** « Réservation indisponible ».
+- **Confirmation :**
+  - uniquement celle de la réponse du backend ;
+  - en cas de rejeu, l'écran indique qu'il s'agit du même rendez-vous ;
+  - un statut autre que `confirmed` est signalé ;
+  - **aucun email n'est promis.**
+
+### Écarts de contrat relevés (pour Claude Cloud)
+
+1. **Date civile du business :** les routes publiques ne donnent pas la date du jour chez le business, et `public.business_time` est réservé à `authenticated`. L'UI la calcule donc avec Intl, **pour la navigation seulement** (premier jour proposé). La disponibilité reste seule juge. Proposition : ajouter `today` au profil public.
+2. **Heure murale de la réservation :** `PublicBookingDto` n'a pas d'heure murale (`localStartsAt`). L'UI réutilise celle du créneau envoyé. Si un rejeu répond avec un autre `startsAt` (rendez-vous déplacé depuis), l'UI ne peut pas afficher l'heure sans convertir avec Intl, ce que l'architecture interdit (§ 8 d'`ARCHITECTURE.md`). Elle indique donc « modifiées depuis par l'établissement ». Proposition : ajouter `localStartsAt` et `localEndsAt` à la réponse.
+3. **« Activité indisponible » :** il n'existe pas de code dédié. Une activité sans prestation active est affichée comme « aucune prestation en ligne ».
