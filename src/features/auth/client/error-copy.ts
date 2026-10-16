@@ -129,6 +129,11 @@ export const errorCopy: Record<
     message:
       "Cette prestation avait déjà été créée, puis supprimée. Elle n’a pas été recréée.",
   },
+  booking_unavailable: {
+    title: "Réservation indisponible",
+    message:
+      "La réservation en ligne ne répond pas pour le moment. Réessaie dans quelques minutes.",
+  },
   stale_business_hours: {
     title: "Modifiés entre-temps",
     message: "Tes horaires ont changé. Recharge-les avant de réessayer.",

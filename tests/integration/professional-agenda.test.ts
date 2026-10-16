@@ -35,6 +35,7 @@ import {
   type TestBusiness,
   bookingClient,
   bookingRequest,
+  randomIp,
 } from "./support/fixtures";
 import {
   closeTransaction,
@@ -552,7 +553,7 @@ describe("reading a range", () => {
         firstName: "Léa",
         email: "lea@x.test",
       }),
-      randomUUID(),
+      randomIp(),
     );
     await createOk(p, "14:00");
 
@@ -901,7 +902,7 @@ describe("concurrency (PostgreSQL)", () => {
       `select appointment_id from public.create_public_booking(
          p_slug => $1, p_service_id => $2, p_starts_at => $3,
          p_first_name => 'Léa', p_email => 'lea@x.test',
-       p_request_id => gen_random_uuid(), p_client_key => gen_random_uuid()::text)`,
+       p_request_id => gen_random_uuid(), p_client_ip => ('10.' || floor(random() * 256)::int || '.' || floor(random() * 256)::int || '.' || floor(random() * 256)::int)::inet)`,
       [a.business.slug, a.service, utc(a, FUTURE, "10:00")],
     );
     const result = outcome(createIn(creating, a, "10:00"));
@@ -1926,7 +1927,7 @@ describe("DST: the repeated autumn hour (Europe/Paris, 2026-10-25)", () => {
         firstName: "Léa",
         email: "lea@x.test",
       }),
-      randomUUID(),
+      randomIp(),
     );
     as(a.owner);
     const shown = ok(
@@ -2410,7 +2411,7 @@ describe("DST guarantees across paths", () => {
         firstName: "Léa",
         email: "lea2@x.test",
       }),
-      randomUUID(),
+      randomIp(),
     );
     as(a.owner);
     const shown = ok(

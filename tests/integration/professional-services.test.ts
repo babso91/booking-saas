@@ -30,6 +30,7 @@ import {
   type TestBusiness,
   bookingClient,
   bookingRequest,
+  randomIp,
 } from "./support/fixtures";
 
 let owner: Professional;
@@ -214,7 +215,7 @@ describe("services CRUD", () => {
           firstName: "Léa",
           email: "lea@example.test",
         }),
-        randomUUID(),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "service_not_found" });
 
@@ -264,7 +265,7 @@ describe("services CRUD", () => {
         firstName: "Léa",
         email: "booked@example.test",
       }),
-      randomUUID(),
+      randomIp(),
     );
 
     await expect(

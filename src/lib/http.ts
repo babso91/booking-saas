@@ -34,15 +34,3 @@ export async function readJsonBody(request: Request): Promise<unknown> {
     });
   }
 }
-
-/**
- * The caller's network address, as the hosting platform reports it (the
- * first `x-forwarded-for` entry, set by the platform's edge), else
- * `x-real-ip`. Used only as an abuse-limit key, hashed by the database.
- */
-export function clientKeyOf(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0];
-  return (
-    forwarded?.trim() || request.headers.get("x-real-ip")?.trim() || "unknown"
-  );
-}

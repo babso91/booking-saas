@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import type pg from "pg";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -20,6 +18,7 @@ import {
   type TestBusiness,
   bookingClient,
   bookingRequest,
+  randomIp,
 } from "./support/fixtures";
 import { openTransaction, waitUntilBlocked } from "./support/transactions";
 
@@ -49,7 +48,7 @@ function book(connection: pg.PoolClient, startsAt: string, email: string) {
      from public.create_public_booking(
        p_slug => $1, p_service_id => $2, p_starts_at => $3,
        p_first_name => 'Cliente', p_email => $4,
-       p_request_id => gen_random_uuid(), p_client_key => gen_random_uuid()::text
+       p_request_id => gen_random_uuid(), p_client_ip => ('10.' || floor(random() * 256)::int || '.' || floor(random() * 256)::int || '.' || floor(random() * 256)::int)::inet
      )`,
     [business.slug, service, startsAt, email],
   );
@@ -154,7 +153,7 @@ describe("concurrent public bookings", () => {
             firstName: "Cliente",
             email: `burst-${time.replace(":", "")}-${index}@x.test`,
           }),
-          randomUUID(),
+          randomIp(),
         ),
       ),
     );

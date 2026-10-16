@@ -654,7 +654,7 @@ isOneToOne: false
             }[]
                            },
 "create_public_booking":
-{ Args: { "p_client_key": string,"p_email": string,"p_first_name": string,"p_last_name"?: string,"p_phone"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
+{ Args: { "p_client_ip": unknown,"p_email": string,"p_first_name": string,"p_last_name"?: string,"p_phone"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
               "appointment_id": string,"business_name": string,"currency": string,"duration_minutes": number,"ends_at": string,"price_cents": number,"replayed": boolean,"service_name": string,"starts_at": string,"status": string,"timezone": string
             }[]
                            },
@@ -723,7 +723,7 @@ isOneToOne: false
                            },
 "get_public_business":
 { Args: { "p_slug": string }; Returns: {
-              "cancellation_policy": string,"currency": string,"description": string,"location": string,"logo_path": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"name": string,"slot_interval_minutes": number,"slug": string,"timezone": string
+              "cancellation_policy": string,"currency": string,"description": string,"location": string,"logo_path": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"name": string,"slot_interval_minutes": number,"slug": string,"timezone": string,"today": string
             }[]
                            },
 "get_public_services":

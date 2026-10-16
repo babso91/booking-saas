@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createPublicBooking } from "@/features/appointments/data/public-booking";
@@ -24,6 +22,7 @@ import {
   type TestBusiness,
   bookingClient,
   bookingRequest,
+  randomIp,
 } from "./support/fixtures";
 import {
   closeTransaction,
@@ -78,7 +77,7 @@ function book(time: string, email: string, serviceId = service) {
       firstName: "Cliente",
       email,
     }),
-    randomUUID(),
+    randomIp(),
   );
 }
 
@@ -88,7 +87,7 @@ function bookIn(transaction: OpenTransaction, time: string, email: string) {
     `select appointment_id from public.create_public_booking(
        p_slug => $1, p_service_id => $2, p_starts_at => $3,
        p_first_name => 'Cliente', p_email => $4,
-       p_request_id => gen_random_uuid(), p_client_key => gen_random_uuid()::text)`,
+       p_request_id => gen_random_uuid(), p_client_ip => ('10.' || floor(random() * 256)::int || '.' || floor(random() * 256)::int || '.' || floor(random() * 256)::int)::inet)`,
     [business.slug, service, local(time), email],
   );
 }

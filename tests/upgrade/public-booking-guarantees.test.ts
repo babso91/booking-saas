@@ -85,7 +85,7 @@ describe("upgrading to the public booking guarantees", () => {
           `select appointment_id, replayed from public.create_public_booking(
              p_slug => $1, p_service_id => $2, p_starts_at => $3,
              p_first_name => 'Léa', p_email => 'after@x.test',
-             p_request_id => $4, p_client_key => 'upgrade')`,
+             p_request_id => $4, p_client_ip => '192.0.2.10')`,
           [business.slug, service, inDays(4, 10), requestId],
         );
         await connection.query("commit");

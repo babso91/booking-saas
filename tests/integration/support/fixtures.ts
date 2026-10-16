@@ -42,7 +42,13 @@ export function bookingClient(): AppSupabaseClient {
   return adminClient as AppSupabaseClient;
 }
 
-/** A public booking request: a fresh request id and client key per call. */
+/** A random private IPv4 address: a distinct network identity per call. */
+export function randomIp(): string {
+  const byte = () => Math.floor(Math.random() * 256);
+  return `10.${byte()}.${byte()}.${byte()}`;
+}
+
+/** A public booking request: a fresh request id per call. */
 export function bookingRequest<T extends object>(
   input: T,
 ): T & { requestId: string } {

@@ -25,6 +25,7 @@ import {
   type Professional,
   type TestBusiness,
   bookingClient,
+  randomIp,
 } from "./support/fixtures";
 
 // Public booking flow through the real DAL functions and the anonymous
@@ -135,7 +136,7 @@ describe("booking an available slot", () => {
         email: "  Lea.Martin@Example.TEST ",
         phone: "+33 6 12 34 56 78",
       }),
-      randomUUID(),
+      randomIp(),
     );
 
     expect(result).toMatchObject({
@@ -203,7 +204,7 @@ describe("booking an available slot", () => {
     const result = await createPublicBooking(
       bookingClient(),
       booking(),
-      randomUUID(),
+      randomIp(),
     );
 
     expect(result.startsAt).toBe(local("10:00"));
@@ -224,7 +225,7 @@ describe("rejections", () => {
       }),
     ).rejects.toMatchObject({ code: "service_not_found" });
     await expect(
-      createPublicBooking(bookingClient(), booking(), randomUUID()),
+      createPublicBooking(bookingClient(), booking(), randomIp()),
     ).rejects.toMatchObject({
       code: "service_not_found",
     });
@@ -238,7 +239,7 @@ describe("rejections", () => {
       createPublicBooking(
         bookingClient(),
         booking({ serviceId: foreign }),
-        randomUUID(),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "service_not_found" });
   });
@@ -248,7 +249,7 @@ describe("rejections", () => {
       createPublicBooking(
         bookingClient(),
         booking({ slug: "nobody-here" }),
-        randomUUID(),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "business_not_found" });
   });
@@ -264,7 +265,7 @@ describe("rejections", () => {
       createPublicBooking(
         bookingClient(),
         booking({ startsAt: local(time) }),
-        randomUUID(),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
   });
@@ -276,14 +277,14 @@ describe("rejections", () => {
       createPublicBooking(
         bookingClient(),
         booking({ startsAt: local("10:00") }),
-        randomUUID(),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
     await expect(
       createPublicBooking(
         bookingClient(),
         booking({ startsAt: local("11:00") }),
-        randomUUID(),
+        randomIp(),
       ),
     ).resolves.toMatchObject({ startsAt: local("11:00") });
   });
@@ -297,7 +298,7 @@ describe("rejections", () => {
     );
 
     await expect(
-      createPublicBooking(bookingClient(), booking(), randomUUID()),
+      createPublicBooking(bookingClient(), booking(), randomIp()),
     ).rejects.toMatchObject({
       code: "slot_unavailable",
     });
@@ -310,11 +311,11 @@ describe("rejections", () => {
       createPublicBooking(
         bookingClient(),
         booking({ startsAt: local("10:00", dateInDays(-1)) }),
-        randomUUID(),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
     await expect(
-      createPublicBooking(bookingClient(), booking(), randomUUID()),
+      createPublicBooking(bookingClient(), booking(), randomIp()),
     ).rejects.toMatchObject({
       code: "slot_unavailable",
     });
@@ -327,7 +328,7 @@ describe("rejections", () => {
       createPublicBooking(
         bookingClient(),
         booking({ startsAt: local("10:00", dateInDays(2)) }),
-        randomUUID(),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
   });
@@ -339,14 +340,14 @@ describe("rejections", () => {
       createPublicBooking(
         bookingClient(),
         booking({ serviceId: long, startsAt: local("11:45") }),
-        randomUUID(),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
     await expect(
       createPublicBooking(
         bookingClient(),
         booking({ serviceId: long, startsAt: local("11:30") }),
-        randomUUID(),
+        randomIp(),
       ),
     ).resolves.toMatchObject({ endsAt: local("13:00"), durationMinutes: 90 });
   });
@@ -355,7 +356,7 @@ describe("rejections", () => {
     await createPublicBooking(
       bookingClient(),
       booking({ startsAt: local("10:00") }),
-      randomUUID(),
+      randomIp(),
     );
 
     for (const time of ["09:15", "10:00", "10:45"]) {
@@ -366,7 +367,7 @@ describe("rejections", () => {
             startsAt: local(time),
             email: `h${time.replace(":", "")}@x.test`,
           }),
-          randomUUID(),
+          randomIp(),
         ),
       ).rejects.toMatchObject({ code: "slot_unavailable" });
     }
@@ -374,7 +375,7 @@ describe("rejections", () => {
       createPublicBooking(
         bookingClient(),
         booking({ startsAt: local("11:00"), email: "next@x.test" }),
-        randomUUID(),
+        randomIp(),
       ),
     ).resolves.toBeDefined();
   });
@@ -384,7 +385,7 @@ describe("rejections", () => {
     await createPublicBooking(
       bookingClient(),
       booking({ startsAt: local("10:00") }),
-      randomUUID(),
+      randomIp(),
     );
 
     for (const time of ["08:45", "09:15", "11:00", "11:15"]) {
@@ -395,7 +396,7 @@ describe("rejections", () => {
             startsAt: local(time),
             email: `h${time.replace(":", "")}@x.test`,
           }),
-          randomUUID(),
+          randomIp(),
         ),
       ).rejects.toMatchObject({ code: "slot_unavailable" });
     }
@@ -403,14 +404,14 @@ describe("rejections", () => {
       createPublicBooking(
         bookingClient(),
         booking({ startsAt: local("11:30"), email: "b@x.test" }),
-        randomUUID(),
+        randomIp(),
       ),
     ).resolves.toBeDefined();
     await expect(
       createPublicBooking(
         bookingClient(),
         booking({ startsAt: local("09:00"), email: "c@x.test" }),
-        randomUUID(),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
   });
@@ -421,7 +422,7 @@ describe("rejections", () => {
       p_service_id: service,
       p_starts_at: local("10:00"),
       p_request_id: randomUUID(),
-      p_client_key: "203.0.113.7",
+      p_client_ip: "203.0.113.7",
     };
     const { error } = await bookingClient().rpc("create_public_booking", {
       ...direct,
@@ -448,7 +449,7 @@ describe("rejections", () => {
         p_first_name: "Léa",
         p_email: "lea@example.test",
         p_request_id: randomUUID(),
-        p_client_key: "203.0.113.7",
+        p_client_ip: "203.0.113.7",
       });
       expect(error).not.toBeNull();
     }
@@ -465,14 +466,14 @@ describe("cancellation", () => {
     const first = await createPublicBooking(
       bookingClient(),
       booking({ email: "first@x.test" }),
-      randomUUID(),
+      randomIp(),
     );
 
     await expect(
       createPublicBooking(
         bookingClient(),
         booking({ email: "second@x.test" }),
-        randomUUID(),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
 
@@ -485,7 +486,7 @@ describe("cancellation", () => {
       createPublicBooking(
         bookingClient(),
         booking({ email: "second@x.test" }),
-        randomUUID(),
+        randomIp(),
       ),
     ).resolves.toMatchObject({ startsAt: local("10:00") });
   });
@@ -502,12 +503,12 @@ describe("clients are scoped to their business", () => {
     await createPublicBooking(
       bookingClient(),
       booking({ firstName: "Léa" }),
-      randomUUID(),
+      randomIp(),
     );
     await createPublicBooking(
       bookingClient(),
       booking({ slug: other.slug, serviceId: otherService, firstName: "Lea" }),
-      randomUUID(),
+      randomIp(),
     );
 
     const { rows } = await db.query(
@@ -526,7 +527,7 @@ describe("clients are scoped to their business", () => {
     await createPublicBooking(
       bookingClient(),
       booking({ firstName: "Léa", phone: "0612345678" }),
-      randomUUID(),
+      randomIp(),
     );
     await createPublicBooking(
       bookingClient(),
@@ -536,7 +537,7 @@ describe("clients are scoped to their business", () => {
         email: "LEA@EXAMPLE.TEST",
         phone: "0000000000",
       }),
-      randomUUID(),
+      randomIp(),
     );
 
     const { rows } = await db.query(

@@ -15,6 +15,8 @@ export type PublicBusinessDto = {
   slotIntervalMinutes: number;
   minimumBookingNoticeMinutes: number;
   maximumBookingAdvanceDays: number;
+  /** Today in the business time zone (YYYY-MM-DD), by the database's clock. */
+  today: string;
 };
 
 export type PublicServiceDto = {
@@ -56,6 +58,7 @@ export async function getPublicBusiness(
     slotIntervalMinutes: row.slot_interval_minutes,
     minimumBookingNoticeMinutes: row.minimum_booking_notice_minutes,
     maximumBookingAdvanceDays: row.maximum_booking_advance_days,
+    today: row.today,
   };
 }
 

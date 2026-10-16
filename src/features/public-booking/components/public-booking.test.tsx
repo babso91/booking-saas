@@ -34,6 +34,8 @@ const business: PublicBusiness = {
   currency: "EUR",
   slotIntervalMinutes: 15,
   minimumBookingNoticeMinutes: 120,
+  // The server answers the business-local date; the test uses the same one.
+  today: businessToday(TZ),
   maximumBookingAdvanceDays: 30,
 };
 const services: PublicService[] = [

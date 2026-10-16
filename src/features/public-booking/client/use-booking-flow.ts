@@ -103,7 +103,11 @@ export function useBookingFlow({
   const [services, setServices] = useState(initialServices);
   const [step, setStep] = useState<BookingStep>("service");
   const [serviceId, setServiceId] = useState<string | null>(null);
-  const [today] = useState(() => businessToday(business.timezone));
+  // The business-local date by the server's clock; the device's only as a
+  // fallback (a page rendered before the server answered it).
+  const [today] = useState(
+    () => business.today ?? businessToday(business.timezone),
+  );
   const [date, setDate] = useState(today);
   const [slots, setSlots] = useState<SlotsState>({ status: "idle" });
   const [slot, setSlot] = useState<Slot | null>(null);
