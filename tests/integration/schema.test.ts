@@ -84,8 +84,8 @@ describe("migrated schema", () => {
        order by p.proname`,
     );
 
+    // The booking itself goes through the public route only (service role).
     expect(rows.map((row) => row.proname)).toEqual([
-      "create_public_booking",
       "get_available_slots",
       "get_public_business",
       "get_public_services",

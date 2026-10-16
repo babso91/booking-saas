@@ -96,7 +96,8 @@ function bookIn(transaction: OpenTransaction, time: string, email: string) {
   return transaction.connection.query(
     `select appointment_id from public.create_public_booking(
        p_slug => $1, p_service_id => $2, p_starts_at => $3,
-       p_first_name => 'Cliente', p_email => $4)`,
+       p_first_name => 'Cliente', p_email => $4,
+       p_request_id => gen_random_uuid(), p_client_ip => ('10.' || floor(random() * 256)::int || '.' || floor(random() * 256)::int || '.' || floor(random() * 256)::int)::inet)`,
     [business.slug, service, local(time), email],
   );
 }
@@ -305,7 +306,7 @@ describe("isolation level of schedule writes", () => {
 
   describe("READ COMMITTED: a snapshot older than the concurrent commit is refreshed", () => {
     it("booking after a block committed during its transaction is refused", async () => {
-      const booking = await openTransaction({ role: "anon" });
+      const booking = await openTransaction({ role: "service_role" });
       // Any statement establishes the snapshot (anon cannot read tables).
       await booking.connection.query("select 1");
 
@@ -330,7 +331,7 @@ describe("isolation level of schedule writes", () => {
         "select count(*) from public.availability_exceptions",
       );
 
-      const booking = await openTransaction({ role: "anon" });
+      const booking = await openTransaction({ role: "service_role" });
       await bookIn(booking, "10:00", "first@x.test");
       await closeTransaction(booking, "commit");
 
@@ -350,7 +351,10 @@ describe("isolation level of schedule writes", () => {
     "%s: explicitly refused before any data is written",
     (isolation) => {
       it("booking with a snapshot taken before a block was committed", async () => {
-        const booking = await openTransaction({ role: "anon", isolation });
+        const booking = await openTransaction({
+          role: "service_role",
+          isolation,
+        });
         // Any statement establishes the snapshot (anon cannot read tables).
         await booking.connection.query("select 1");
 
@@ -375,7 +379,7 @@ describe("isolation level of schedule writes", () => {
           "select count(*) from public.appointments",
         );
 
-        const booking = await openTransaction({ role: "anon" });
+        const booking = await openTransaction({ role: "service_role" });
         await bookIn(booking, "10:00", "first@x.test");
         await closeTransaction(booking, "commit");
 
@@ -391,7 +395,7 @@ describe("isolation level of schedule writes", () => {
       });
 
       it("block waiting behind a concurrent booking", async () => {
-        const booking = await openTransaction({ role: "anon" });
+        const booking = await openTransaction({ role: "service_role" });
         await bookIn(booking, "10:00", "first@x.test");
 
         const blocking = await ownerTransaction(isolation);
@@ -435,7 +439,7 @@ describe("isolation level of schedule writes", () => {
       });
 
       it("still allows writes that only free time", async () => {
-        const booked = await openTransaction({ role: "anon" });
+        const booked = await openTransaction({ role: "service_role" });
         const { rows } = await bookIn(booked, "10:00", "free@x.test");
         await closeTransaction(booked, "commit");
         const blockId = (
@@ -477,7 +481,7 @@ describe("lock order: schedule lock first, then business rows", () => {
       "update public.business_settings set buffer_minutes = 5 where business_id = $1",
       [business.id],
     );
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     const bookingResult = outcome(bookIn(booking, "10:00", "a@x.test"));
     await waitUntilBlocked(booking.pid);
     await closeTransaction(edit, "commit");
@@ -485,7 +489,7 @@ describe("lock order: schedule lock first, then business rows", () => {
     await closeTransaction(booking, "commit");
 
     // Booking first, edit second.
-    const booking2 = await openTransaction({ role: "anon" });
+    const booking2 = await openTransaction({ role: "service_role" });
     await bookIn(booking2, "14:00", "b@x.test");
     const edit2 = await openTransaction();
     const editResult = outcome(
@@ -504,7 +508,7 @@ describe("lock order: schedule lock first, then business rows", () => {
 
   it("a booking and a schedule replacement serialise without deadlock", async () => {
     await setWeeklyHours(business.id, everyDay(["09:00", "18:00"]));
-    const booking = await openTransaction({ role: "anon" });
+    const booking = await openTransaction({ role: "service_role" });
     await bookIn(booking, "10:00", "a@x.test");
 
     const replace = await ownerTransaction();

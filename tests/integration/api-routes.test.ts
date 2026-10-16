@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { NextRequest } from "next/server";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -13,12 +15,15 @@ import {
   dateInDays,
   env,
   everyDay,
+  randomIp,
   setWeeklyHours,
   type TestBusiness,
 } from "./support/fixtures";
 
 // Calls the Route Handlers directly (as Next.js does) against the local stack.
-// They only receive the publishable key: no service-role secret is involved.
+// The read routes use the publishable key only; POST /api/bookings calls the
+// booking function as the service role (the function is not executable by
+// the public roles) with the caller's address from the trusted proxy.
 
 const DATE = dateInDays(9);
 
@@ -26,13 +31,17 @@ let business: TestBusiness;
 let service: string;
 let inactive: string;
 
+// The trusted reverse proxy's secret (src/lib/client-identity.ts).
+const PROXY_SECRET = "api-routes-proxy-secret-0123456789abcdef";
+
 const params = (slug: string) => ({ params: Promise.resolve({ slug }) });
 
 beforeAll(async () => {
   process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
   process.env.NEXT_PUBLIC_SUPABASE_URL = env.apiUrl;
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = env.anonKey;
-  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = env.serviceRoleKey;
+  process.env.BOOKING_PROXY_SECRET = PROXY_SECRET;
 
   const owner = await createProfessional("api");
   business = await createBusiness(owner.userId);
@@ -124,6 +133,11 @@ describe("POST /api/bookings", () => {
     postBooking(
       new Request("http://localhost/api/bookings", {
         method: "POST",
+        // As the trusted proxy forwards it (the peer address and its secret).
+        headers: {
+          "x-booking-client-ip": randomIp(),
+          "x-booking-proxy-secret": PROXY_SECRET,
+        },
         body: typeof body === "string" ? body : JSON.stringify(body),
       }),
     );
@@ -136,6 +150,7 @@ describe("POST /api/bookings", () => {
     lastName: "",
     email: "lea@example.test",
     phone: "",
+    requestId: randomUUID(),
   });
 
   it("creates a booking (201) then refuses the same slot (409)", async () => {

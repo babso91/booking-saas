@@ -31,6 +31,8 @@ export const appErrorMessages = {
     "Cette prestation a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_deleted:
     "Cette prestation a déjà été créée, puis supprimée. Elle n’a pas été recréée.",
+  booking_unavailable:
+    "La réservation en ligne est momentanément indisponible. Merci de réessayer plus tard.",
   stale_business_hours:
     "Les horaires ont été modifiés entre-temps. Rechargez-les avant de réessayer.",
   stale_appointment:
@@ -148,6 +150,7 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   stale_service: 409,
   service_deleted: 410,
   stale_business_hours: 409,
+  booking_unavailable: 503,
   stale_appointment: 409,
   stale_block: 409,
   invalid_status_transition: 409,

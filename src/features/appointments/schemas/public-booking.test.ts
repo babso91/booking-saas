@@ -8,9 +8,20 @@ const valid = {
   startsAt: "2026-10-05T08:00:00.000Z",
   firstName: "Léa",
   email: "lea@example.test",
+  requestId: "6c0b7a0e-6c35-4c8a-9a39-3f4d8c1b2a10",
 };
 
 describe("createPublicBookingSchema", () => {
+  it("requires a request id (UUID), one per booking form", () => {
+    const withoutId: Partial<typeof valid> = { ...valid };
+    delete withoutId.requestId;
+    expect(createPublicBookingSchema.safeParse(withoutId).success).toBe(false);
+    expect(
+      createPublicBookingSchema.safeParse({ ...valid, requestId: "retry-1" })
+        .success,
+    ).toBe(false);
+  });
+
   it("requires first name and email only", () => {
     expect(createPublicBookingSchema.parse(valid)).toEqual({
       ...valid,

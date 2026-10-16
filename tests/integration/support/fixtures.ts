@@ -34,6 +34,27 @@ const adminClient = createClient<Database>(
   clientOptions,
 );
 
+/**
+ * The client of the public booking route: the service role (the booking
+ * function is executable by it only; the route passes the client key).
+ */
+export function bookingClient(): AppSupabaseClient {
+  return adminClient as AppSupabaseClient;
+}
+
+/** A random private IPv4 address: a distinct network identity per call. */
+export function randomIp(): string {
+  const byte = () => Math.floor(Math.random() * 256);
+  return `10.${byte()}.${byte()}.${byte()}`;
+}
+
+/** A public booking request: a fresh request id per call. */
+export function bookingRequest<T extends object>(
+  input: T,
+): T & { requestId: string } {
+  return { ...input, requestId: randomUUID() };
+}
+
 export type Professional = {
   userId: string;
   email: string;

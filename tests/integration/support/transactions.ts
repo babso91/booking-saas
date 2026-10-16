@@ -14,7 +14,7 @@ export type OpenTransaction = { connection: pg.PoolClient; pid: number };
  */
 export async function openTransaction(
   options: {
-    role?: "anon" | "authenticated";
+    role?: "anon" | "authenticated" | "service_role";
     userId?: string;
     isolation?: "read committed" | "repeatable read" | "serializable";
   } = {},

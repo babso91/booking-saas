@@ -28,6 +28,9 @@ import {
   setWeeklyHours,
   type Professional,
   type TestBusiness,
+  bookingClient,
+  bookingRequest,
+  randomIp,
 } from "./support/fixtures";
 
 let owner: Professional;
@@ -200,16 +203,20 @@ describe("services CRUD", () => {
     );
     expect(publicServices.map((s) => s.id)).not.toContain(service.id);
     await expect(
-      createPublicBooking(anonClient(), {
-        slug: business.slug,
-        serviceId: service.id,
-        startsAt: zonedLocalToUtc(
-          `${date}T10:00`,
-          "Europe/Paris",
-        ).toISOString(),
-        firstName: "Léa",
-        email: "lea@example.test",
-      }),
+      createPublicBooking(
+        bookingClient(),
+        bookingRequest({
+          slug: business.slug,
+          serviceId: service.id,
+          startsAt: zonedLocalToUtc(
+            `${date}T10:00`,
+            "Europe/Paris",
+          ).toISOString(),
+          firstName: "Léa",
+          email: "lea@example.test",
+        }),
+        randomIp(),
+      ),
     ).rejects.toMatchObject({ code: "service_not_found" });
 
     await setServiceActive(owner.client, business.id, service.id, true);
@@ -246,16 +253,20 @@ describe("services CRUD", () => {
         priceCents: 1000,
       }),
     );
-    await createPublicBooking(anonClient(), {
-      slug: business.slug,
-      serviceId: booked.id,
-      startsAt: zonedLocalToUtc(
-        `${dateInDays(12)}T09:00`,
-        "Europe/Paris",
-      ).toISOString(),
-      firstName: "Léa",
-      email: "booked@example.test",
-    });
+    await createPublicBooking(
+      bookingClient(),
+      bookingRequest({
+        slug: business.slug,
+        serviceId: booked.id,
+        startsAt: zonedLocalToUtc(
+          `${dateInDays(12)}T09:00`,
+          "Europe/Paris",
+        ).toISOString(),
+        firstName: "Léa",
+        email: "booked@example.test",
+      }),
+      randomIp(),
+    );
 
     await expect(
       deleteService(owner.client, business.id, booked.id),

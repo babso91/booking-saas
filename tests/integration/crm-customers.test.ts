@@ -18,6 +18,8 @@ import {
   setWeeklyHours,
   type Professional,
   type TestBusiness,
+  bookingClient,
+  randomIp,
 } from "./support/fixtures";
 import {
   closeTransaction,
@@ -68,7 +70,7 @@ function publicBooking(
   target: { business: TestBusiness; service: string } = { business, service },
 ) {
   return createPublicBooking(
-    anon,
+    bookingClient(),
     createPublicBookingSchema.parse({
       slug: target.business.slug,
       serviceId: target.service,
@@ -77,7 +79,9 @@ function publicBooking(
       email: fields.email,
       lastName: fields.lastName,
       phone: fields.phone,
+      requestId: randomUUID(),
     }),
+    randomIp(),
   );
 }
 
@@ -384,7 +388,7 @@ describe("identity: the canonical email within one business", () => {
 });
 
 describe("resolution of an existing customer", () => {
-  it("reuses it: fills a missing last name and phone, never overwrites a value; the appointment keeps what was submitted", async () => {
+  it("reuses it as it is: an unverified public booking never fills nor overwrites the record; the appointment keeps what was submitted", async () => {
     const first = await rawPublicBooking("09:00", "lea@x.test", "Léa");
     expect(await customers()).toMatchObject([
       { first_name: "Léa", last_name: null, phone: null },
@@ -405,12 +409,13 @@ describe("resolution of an existing customer", () => {
       phone: "0000000000",
     });
 
+    // Nobody proved owning this email: the record stays as it was created.
     expect(await customers()).toMatchObject([
       {
         first_name: "Léa",
-        last_name: "Martin",
+        last_name: null,
         email: "lea@x.test",
-        phone: "0612345678",
+        phone: null,
         appointments: 3,
       },
     ]);
@@ -593,13 +598,12 @@ describe("concurrency", () => {
           time,
           email: index % 2 === 0 ? "rush@x.test" : "  RUSH@X.test ",
           firstName: `Léa ${index}`,
-          phone: index === 5 ? "0612345678" : undefined,
         }),
       ),
     );
     expect(results).toHaveLength(times.length);
     expect(await customers()).toMatchObject([
-      { email: "rush@x.test", phone: "0612345678", appointments: times.length },
+      { email: "rush@x.test", appointments: times.length },
     ]);
   });
 
@@ -627,11 +631,12 @@ describe("concurrency", () => {
     expect(await customers()).toMatchObject([{ appointments: 1 }]);
   });
 
-  it("lock order: a member editing the customer and a booking resolving it wait for each other, never deadlock", async () => {
+  it("lock order: a booking waits for a member's edit of the customer, a member's edit never waits for a booking; no deadlock, the member's edit stays", async () => {
     const id = await createClientRecord(business.id, "lock@x.test", "Léa");
 
-    // 1. The member's edit holds the customer row; the booking (schedule
-    //    lock taken) waits for it, then reuses the customer.
+    // 1. The member's edit holds the customer row: the booking (schedule
+    //    lock taken) waits for its email uniqueness check, then links the
+    //    customer as edited. The edit never needs the schedule lock.
     const edit = await openTransaction({
       role: "authenticated",
       userId: owner.userId,
@@ -652,8 +657,8 @@ describe("concurrency", () => {
     expect(await pending).toBe("ok");
     await closeTransaction(booking, "commit");
 
-    // 2. The booking holds the schedule lock and the customer row; the
-    //    member's edit waits, then applies.
+    // 2. A booking in progress never changes the customer, so it does not
+    //    hold the row: the member's edit goes through at once.
     const second = await openTransaction();
     await second.connection.query(
       `select private.create_public_booking_at(now(), $1, $2, $3::timestamptz, 'Léa', 'lock@x.test', 'Martin')`,
@@ -663,22 +668,22 @@ describe("concurrency", () => {
       role: "authenticated",
       userId: owner.userId,
     });
-    const renamed = outcome(
-      rename.connection.query(
-        "update public.clients set first_name = 'Léa' where id = $1",
-        [id],
+    expect(
+      await outcome(
+        rename.connection.query(
+          "update public.clients set first_name = 'Léa' where id = $1",
+          [id],
+        ),
       ),
-    );
-    await waitUntilBlocked(rename.pid);
-    await closeTransaction(second, "commit");
-    expect(await renamed).toBe("ok");
+    ).toBe("ok");
     await closeTransaction(rename, "commit");
+    await closeTransaction(second, "commit");
 
     expect(await customers()).toMatchObject([
       {
         id,
         first_name: "Léa",
-        last_name: "Martin",
+        last_name: null,
         phone: "0612345678",
         appointments: 2,
       },

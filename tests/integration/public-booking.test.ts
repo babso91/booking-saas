@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createPublicBooking } from "@/features/appointments/data/public-booking";
@@ -22,6 +24,8 @@ import {
   updateSettings,
   type Professional,
   type TestBusiness,
+  bookingClient,
+  randomIp,
 } from "./support/fixtures";
 
 // Public booking flow through the real DAL functions and the anonymous
@@ -50,6 +54,7 @@ function booking(
     startsAt: local("10:00"),
     firstName: "Léa",
     email: "lea@example.test",
+    requestId: randomUUID(),
     ...overrides,
   });
 }
@@ -124,13 +129,14 @@ describe("booking an available slot", () => {
     });
 
     const result = await createPublicBooking(
-      client,
+      bookingClient(),
       booking({
         startsAt: slots[0]!.startsAt,
         lastName: "Martin",
         email: "  Lea.Martin@Example.TEST ",
         phone: "+33 6 12 34 56 78",
       }),
+      randomIp(),
     );
 
     expect(result).toMatchObject({
@@ -195,7 +201,11 @@ describe("booking an available slot", () => {
   });
 
   it("works with the minimal required fields (first name + email)", async () => {
-    const result = await createPublicBooking(client, booking());
+    const result = await createPublicBooking(
+      bookingClient(),
+      booking(),
+      randomIp(),
+    );
 
     expect(result.startsAt).toBe(local("10:00"));
   });
@@ -214,7 +224,9 @@ describe("rejections", () => {
         date: DATE,
       }),
     ).rejects.toMatchObject({ code: "service_not_found" });
-    await expect(createPublicBooking(client, booking())).rejects.toMatchObject({
+    await expect(
+      createPublicBooking(bookingClient(), booking(), randomIp()),
+    ).rejects.toMatchObject({
       code: "service_not_found",
     });
   });
@@ -224,13 +236,21 @@ describe("rejections", () => {
     const foreign = await createService(other.id);
 
     await expect(
-      createPublicBooking(client, booking({ serviceId: foreign })),
+      createPublicBooking(
+        bookingClient(),
+        booking({ serviceId: foreign }),
+        randomIp(),
+      ),
     ).rejects.toMatchObject({ code: "service_not_found" });
   });
 
   it("rejects an unknown business", async () => {
     await expect(
-      createPublicBooking(client, booking({ slug: "nobody-here" })),
+      createPublicBooking(
+        bookingClient(),
+        booking({ slug: "nobody-here" }),
+        randomIp(),
+      ),
     ).rejects.toMatchObject({ code: "business_not_found" });
   });
 
@@ -242,7 +262,11 @@ describe("rejections", () => {
     ["off the slot grid", "10:07"],
   ])("rejects a slot %s", async (_label, time) => {
     await expect(
-      createPublicBooking(client, booking({ startsAt: local(time) })),
+      createPublicBooking(
+        bookingClient(),
+        booking({ startsAt: local(time) }),
+        randomIp(),
+      ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
   });
 
@@ -250,10 +274,18 @@ describe("rejections", () => {
     await addException(business.id, "blocked", local("10:30"), local("11:00"));
 
     await expect(
-      createPublicBooking(client, booking({ startsAt: local("10:00") })),
+      createPublicBooking(
+        bookingClient(),
+        booking({ startsAt: local("10:00") }),
+        randomIp(),
+      ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
     await expect(
-      createPublicBooking(client, booking({ startsAt: local("11:00") })),
+      createPublicBooking(
+        bookingClient(),
+        booking({ startsAt: local("11:00") }),
+        randomIp(),
+      ),
     ).resolves.toMatchObject({ startsAt: local("11:00") });
   });
 
@@ -265,7 +297,9 @@ describe("rejections", () => {
       local("00:00", dateInDays(16)),
     );
 
-    await expect(createPublicBooking(client, booking())).rejects.toMatchObject({
+    await expect(
+      createPublicBooking(bookingClient(), booking(), randomIp()),
+    ).rejects.toMatchObject({
       code: "slot_unavailable",
     });
   });
@@ -275,11 +309,14 @@ describe("rejections", () => {
 
     await expect(
       createPublicBooking(
-        client,
+        bookingClient(),
         booking({ startsAt: local("10:00", dateInDays(-1)) }),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
-    await expect(createPublicBooking(client, booking())).rejects.toMatchObject({
+    await expect(
+      createPublicBooking(bookingClient(), booking(), randomIp()),
+    ).rejects.toMatchObject({
       code: "slot_unavailable",
     });
 
@@ -289,8 +326,9 @@ describe("rejections", () => {
     });
     await expect(
       createPublicBooking(
-        client,
+        bookingClient(),
         booking({ startsAt: local("10:00", dateInDays(2)) }),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
   });
@@ -300,101 +338,143 @@ describe("rejections", () => {
 
     await expect(
       createPublicBooking(
-        client,
+        bookingClient(),
         booking({ serviceId: long, startsAt: local("11:45") }),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
     await expect(
       createPublicBooking(
-        client,
+        bookingClient(),
         booking({ serviceId: long, startsAt: local("11:30") }),
+        randomIp(),
       ),
     ).resolves.toMatchObject({ endsAt: local("13:00"), durationMinutes: 90 });
   });
 
   it("rejects an overlap with an existing appointment", async () => {
-    await createPublicBooking(client, booking({ startsAt: local("10:00") }));
+    await createPublicBooking(
+      bookingClient(),
+      booking({ startsAt: local("10:00") }),
+      randomIp(),
+    );
 
     for (const time of ["09:15", "10:00", "10:45"]) {
       await expect(
         createPublicBooking(
-          client,
+          bookingClient(),
           booking({
             startsAt: local(time),
             email: `h${time.replace(":", "")}@x.test`,
           }),
+          randomIp(),
         ),
       ).rejects.toMatchObject({ code: "slot_unavailable" });
     }
     await expect(
       createPublicBooking(
-        client,
+        bookingClient(),
         booking({ startsAt: local("11:00"), email: "next@x.test" }),
+        randomIp(),
       ),
     ).resolves.toBeDefined();
   });
 
   it("enforces the buffer between two appointments", async () => {
     await updateSettings(business.id, { buffer_minutes: 30 });
-    await createPublicBooking(client, booking({ startsAt: local("10:00") }));
+    await createPublicBooking(
+      bookingClient(),
+      booking({ startsAt: local("10:00") }),
+      randomIp(),
+    );
 
     for (const time of ["08:45", "09:15", "11:00", "11:15"]) {
       await expect(
         createPublicBooking(
-          client,
+          bookingClient(),
           booking({
             startsAt: local(time),
             email: `h${time.replace(":", "")}@x.test`,
           }),
+          randomIp(),
         ),
       ).rejects.toMatchObject({ code: "slot_unavailable" });
     }
     await expect(
       createPublicBooking(
-        client,
+        bookingClient(),
         booking({ startsAt: local("11:30"), email: "b@x.test" }),
+        randomIp(),
       ),
     ).resolves.toBeDefined();
     await expect(
       createPublicBooking(
-        client,
+        bookingClient(),
         booking({ startsAt: local("09:00"), email: "c@x.test" }),
+        randomIp(),
       ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
   });
 
   it("re-validates input on the server even when the API is called directly", async () => {
-    const { error } = await client.rpc("create_public_booking", {
+    const direct = {
       p_slug: business.slug,
       p_service_id: service,
       p_starts_at: local("10:00"),
+      p_request_id: randomUUID(),
+      p_client_ip: "203.0.113.7",
+    };
+    const { error } = await bookingClient().rpc("create_public_booking", {
+      ...direct,
       p_first_name: "  ",
       p_email: "not-an-email",
     });
 
     expect(error?.message).toBe("invalid_first_name");
 
-    const { error: emailError } = await client.rpc("create_public_booking", {
-      p_slug: business.slug,
-      p_service_id: service,
-      p_starts_at: local("10:00"),
-      p_first_name: "Léa",
-      p_email: "not-an-email",
-    });
+    const { error: emailError } = await bookingClient().rpc(
+      "create_public_booking",
+      { ...direct, p_first_name: "Léa", p_email: "not-an-email" },
+    );
 
     expect(emailError?.message).toBe("invalid_email");
+  });
+
+  it("is not callable with the publishable key: the public route is the only entry", async () => {
+    for (const caller of [client, owner.client]) {
+      const { error } = await caller.rpc("create_public_booking", {
+        p_slug: business.slug,
+        p_service_id: service,
+        p_starts_at: local("10:00"),
+        p_first_name: "Léa",
+        p_email: "lea@example.test",
+        p_request_id: randomUUID(),
+        p_client_ip: "203.0.113.7",
+      });
+      expect(error).not.toBeNull();
+    }
+    const { rows } = await db.query(
+      "select count(*)::int as count from public.appointments where business_id = $1",
+      [business.id],
+    );
+    expect(rows[0]).toEqual({ count: 0 });
   });
 });
 
 describe("cancellation", () => {
   it("frees the slot for another client once cancelled", async () => {
     const first = await createPublicBooking(
-      client,
+      bookingClient(),
       booking({ email: "first@x.test" }),
+      randomIp(),
     );
 
     await expect(
-      createPublicBooking(client, booking({ email: "second@x.test" })),
+      createPublicBooking(
+        bookingClient(),
+        booking({ email: "second@x.test" }),
+        randomIp(),
+      ),
     ).rejects.toMatchObject({ code: "slot_unavailable" });
 
     await db.query(
@@ -403,7 +483,11 @@ describe("cancellation", () => {
     );
 
     await expect(
-      createPublicBooking(client, booking({ email: "second@x.test" })),
+      createPublicBooking(
+        bookingClient(),
+        booking({ email: "second@x.test" }),
+        randomIp(),
+      ),
     ).resolves.toMatchObject({ startsAt: local("10:00") });
   });
 });
@@ -416,10 +500,15 @@ describe("clients are scoped to their business", () => {
     const otherService = await createService(other.id);
     await setWeeklyHours(other.id, everyDay(["09:00", "18:00"]));
 
-    await createPublicBooking(client, booking({ firstName: "Léa" }));
     await createPublicBooking(
-      client,
+      bookingClient(),
+      booking({ firstName: "Léa" }),
+      randomIp(),
+    );
+    await createPublicBooking(
+      bookingClient(),
       booking({ slug: other.slug, serviceId: otherService, firstName: "Lea" }),
+      randomIp(),
     );
 
     const { rows } = await db.query(
@@ -436,17 +525,19 @@ describe("clients are scoped to their business", () => {
 
   it("finds the existing client by email within the business without overwriting it", async () => {
     await createPublicBooking(
-      client,
+      bookingClient(),
       booking({ firstName: "Léa", phone: "0612345678" }),
+      randomIp(),
     );
     await createPublicBooking(
-      client,
+      bookingClient(),
       booking({
         startsAt: local("15:00"),
         firstName: "Impostor",
         email: "LEA@EXAMPLE.TEST",
         phone: "0000000000",
       }),
+      randomIp(),
     );
 
     const { rows } = await db.query(

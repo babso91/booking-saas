@@ -23,6 +23,8 @@ export const createPublicBookingSchema = z.object({
     .toLowerCase()
     .max(254)
     .pipe(z.email("Adresse email invalide.")),
+  /** One per booking form: a retry of the same booking never books twice. */
+  requestId: z.uuid(),
   phone: optionalText(
     z
       .string()

@@ -1,28 +1,44 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+import { cache } from "react";
 
-type PublicBusinessPageProps = {
-  params: Promise<{ slug: string }>;
-};
+import {
+  getPublicBusiness,
+  listPublicServices,
+} from "@/features/businesses/data/public-business";
+import { businessSlugSchema } from "@/features/businesses/schemas/slug";
+import { PublicBooking } from "@/features/public-booking/components/public-booking";
+import { createPublicSupabaseClient } from "@/lib/supabase/public";
 
-export const metadata: Metadata = {
-  title: "Réservation",
-};
+// The public booking page of one business. Its profile and active services
+// are read like GET /api/public/businesses/:slug does (same public RPCs,
+// session-less, nothing private); availability and booking go through the
+// public routes from the browser.
+const readPublicPage = cache(async (slug: string) => {
+  const parsed = businessSlugSchema.safeParse(slug);
+  if (!parsed.success) return null;
+  const client = createPublicSupabaseClient();
+  const business = await getPublicBusiness(client, parsed.data);
+  if (!business) return null;
+  const services = await listPublicServices(client, parsed.data);
+  return { business, services };
+});
 
-export default async function PublicBusinessFoundationPage({
+export async function generateMetadata({
   params,
-}: PublicBusinessPageProps) {
-  const { slug } = await params;
+}: PageProps<"/b/[slug]">): Promise<Metadata> {
+  const page = await readPublicPage((await params).slug);
+  return {
+    title: page ? `Réserver chez ${page.business.name}` : "Réservation",
+    robots: { index: false },
+  };
+}
 
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center px-6">
-      <p className="text-sm font-semibold tracking-wide text-rose-700 uppercase">
-        Page publique — fondation
-      </p>
-      <h1 className="mt-3 text-3xl font-semibold text-stone-950">/{slug}</h1>
-      <p className="mt-4 leading-7 text-stone-600">
-        Le catalogue et le parcours de réservation seront ajoutés après
-        l’onboarding et la gestion des prestations.
-      </p>
-    </main>
-  );
+export default async function PublicBookingPage({
+  params,
+}: PageProps<"/b/[slug]">) {
+  const page = await readPublicPage((await params).slug);
+  if (!page) notFound();
+
+  return <PublicBooking business={page.business} services={page.services} />;
 }

@@ -5,7 +5,6 @@ import { createPublicBooking } from "@/features/appointments/data/public-booking
 import { zonedLocalToUtc } from "@/lib/time/zoned";
 
 import {
-  anonClient,
   createBusiness,
   createClientRecord,
   createProfessional,
@@ -17,6 +16,9 @@ import {
   setWeeklyHours,
   type Professional,
   type TestBusiness,
+  bookingClient,
+  bookingRequest,
+  randomIp,
 } from "./support/fixtures";
 import { openTransaction, waitUntilBlocked } from "./support/transactions";
 
@@ -36,8 +38,8 @@ function local(time: string) {
   return zonedLocalToUtc(`${DATE}T${time}`, business.timezone).toISOString();
 }
 
-async function openAnonTransaction() {
-  return openTransaction({ role: "anon" });
+async function openBookingTransaction() {
+  return openTransaction({ role: "service_role" });
 }
 
 function book(connection: pg.PoolClient, startsAt: string, email: string) {
@@ -45,7 +47,8 @@ function book(connection: pg.PoolClient, startsAt: string, email: string) {
     `select appointment_id
      from public.create_public_booking(
        p_slug => $1, p_service_id => $2, p_starts_at => $3,
-       p_first_name => 'Cliente', p_email => $4
+       p_first_name => 'Cliente', p_email => $4,
+       p_request_id => gen_random_uuid(), p_client_ip => ('10.' || floor(random() * 256)::int || '.' || floor(random() * 256)::int || '.' || floor(random() * 256)::int)::inet
      )`,
     [business.slug, service, startsAt, email],
   );
@@ -75,8 +78,8 @@ beforeEach(async () => {
 
 describe("concurrent public bookings", () => {
   it("lets only one of two interleaved overlapping bookings commit", async () => {
-    const first = await openAnonTransaction();
-    const second = await openAnonTransaction();
+    const first = await openBookingTransaction();
+    const second = await openBookingTransaction();
 
     try {
       // T1 books 10:00–11:00 and keeps its transaction open.
@@ -107,8 +110,8 @@ describe("concurrent public bookings", () => {
   });
 
   it("gives the slot to the waiting transaction when the first one rolls back", async () => {
-    const first = await openAnonTransaction();
-    const second = await openAnonTransaction();
+    const first = await openBookingTransaction();
+    const second = await openBookingTransaction();
 
     try {
       await book(first.connection, local("10:00"), "first@x.test");
@@ -141,13 +144,17 @@ describe("concurrent public bookings", () => {
     return Promise.allSettled(
       times.map((time, index) =>
         // A fresh client per request, like distinct visitors.
-        createPublicBooking(anonClient(), {
-          slug: business.slug,
-          serviceId: service,
-          startsAt: local(time),
-          firstName: "Cliente",
-          email: `burst-${time.replace(":", "")}-${index}@x.test`,
-        }),
+        createPublicBooking(
+          bookingClient(),
+          bookingRequest({
+            slug: business.slug,
+            serviceId: service,
+            startsAt: local(time),
+            firstName: "Cliente",
+            email: `burst-${time.replace(":", "")}-${index}@x.test`,
+          }),
+          randomIp(),
+        ),
       ),
     );
   }
