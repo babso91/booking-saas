@@ -17,27 +17,32 @@
 --      * a reminder the day before the appointment, at 18:00 in the
 --        business's time zone (only when that moment is still ahead);
 --      * appointment_changed when a confirmed appointment moves or changes
---        service, unless its confirmation is still queued (it is rendered
---        from the current appointment, so it already says the new time);
---      * appointment_cancelled when a future confirmed appointment is
---        cancelled;
+--        service, and appointment_cancelled when a future one is
+--        cancelled, both only if the customer may have heard of it from us
+--        (an email of the appointment was sent or handed to the provider);
+--        an email not yet handed over gives the current details anyway;
 --      * queued emails that no longer apply are cancelled (reminder of an
 --        old time, anything of a cancelled, completed or no-show
 --        appointment, anything addressed to a former contact).
 --   4. Worker functions, executable by service_role only:
---      email_outbox_claim, _verify, _complete, _fail, _release. A claim
+--      email_outbox_claim, _prepare, _complete, _fail, _release. A claim
 --      locks due rows (FOR UPDATE SKIP LOCKED), re-checks that each email
 --      still applies against the current appointment, and returns what the
---      template needs, read now (never a stale payload); _verify re-checks
---      it right before the send. A lease that expires (crashed or timed out
---      worker) makes the row claimable again. Completion and failure are
---      compare-and-set on the claim id: a late worker never overwrites a
---      newer claim. A business gets at most 300 attempts per 24 hours.
+--      template needs, read now. _prepare, under a lock on the appointment,
+--      re-checks it right before the provider call and freezes the message
+--      (private.email_renderings): every retry sends the same request
+--      under the same idempotency key. A lease that expires (crashed or
+--      timed out worker) makes the row claimable again. Completion and
+--      failure are compare-and-set on the claim id: a late worker never
+--      overwrites a newer claim. A business gets at most 300 attempts per
+--      24 hours, enforced atomically per business.
 --
 -- Delivery is at least once: a worker that crashes after the provider
 -- accepted a message, but before recording it, leads to a second attempt
--- after the lease. The email id is the provider idempotency key, which
--- removes that duplicate where the provider honours it (Resend: 24 hours).
+-- after the lease, with the same frozen message and the email id as
+-- idempotency key, which removes that duplicate where the provider honours
+-- it (Resend: 24 hours). Past that window an unanswered message is not
+-- resent: its delivery stays unconfirmed.
 
 -- ---------------------------------------------------------------------------
 -- 1. Delivery state
@@ -47,6 +52,7 @@ alter table public.email_events
   add column next_attempt_at timestamptz,
   add column claim_id uuid,
   add column lease_until timestamptz,
+  add column first_submitted_at timestamptz,
   add constraint email_events_id_business_key unique (id, business_id);
 
 -- Checked on every new write. NOT VALID: rows written before this migration
@@ -65,6 +71,8 @@ comment on column public.email_events.claim_id is
   'Claim of the worker delivering this email (status processing only).';
 comment on column public.email_events.lease_until is
   'End of the current claim: past it, another worker may claim the email again.';
+comment on column public.email_events.first_submitted_at is
+  'First time the message was handed to the provider (set before the call, under the appointment lock). Null: the customer cannot have received it.';
 comment on column public.email_events.last_error is
   'Stable code of the last failure or cancellation reason. Never a provider message nor an address.';
 
@@ -90,8 +98,10 @@ create table public.email_delivery_attempts (
   started_at timestamptz not null,
   finished_at timestamptz,
   -- null while in flight; lease_expired when the worker never reported;
-  -- cancelled when the email stopped applying right before the send.
-  outcome text check (outcome in ('sent', 'retry', 'failed', 'lease_expired', 'cancelled')),
+  -- cancelled when the email stopped applying right before the send;
+  -- unconfirmed when the provider's answer leaves the delivery unknown and
+  -- it cannot be retried safely.
+  outcome text check (outcome in ('sent', 'retry', 'failed', 'lease_expired', 'cancelled', 'unconfirmed')),
   error_code text check (error_code is null or error_code ~ '^[a-z0-9_]{1,64}$'),
   provider_message_id text
     check (provider_message_id is null or char_length(provider_message_id) <= 200),
@@ -117,6 +127,24 @@ create policy "email_delivery_attempts_select_member"
 
 comment on table public.email_delivery_attempts is
   'One row per delivery attempt of an email_events row: outcome and stable error code only (no recipient, subject nor body). Written by the worker functions.';
+
+-- The message of an email, frozen before its first submission to the
+-- provider: every retry sends exactly the same request under the same
+-- idempotency key (the provider refuses a reused key with another body).
+-- `fingerprint` holds the appointment facts the message states (time,
+-- service, recipient): when they change, the frozen message is obsolete
+-- and never sent again. Private: no API role reads it; removed once the
+-- email is final (sent, failed, cancelled).
+create table private.email_renderings (
+  email_event_id uuid primary key references public.email_events (id) on delete cascade,
+  business_id uuid not null references public.businesses (id) on delete cascade,
+  message jsonb not null,
+  fingerprint jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+alter table private.email_renderings enable row level security;
+revoke all on table private.email_renderings from public, anon, authenticated, service_role;
 
 -- The outbox is written by the database only (booking functions, the
 -- appointment trigger, the worker functions). Members read it under RLS;
@@ -198,6 +226,33 @@ immutable
 set search_path = ''
 as $$ select 300 $$;
 
+-- The provider keeps an idempotency key for 24 hours (Resend). A message
+-- already handed to it is resent, under its key, only within this window;
+-- past it, a resend could deliver a second copy, so the delivery is left
+-- unconfirmed instead.
+create function private.email_idempotency_window()
+returns interval
+language sql
+immutable
+set search_path = ''
+as $$ select interval '23 hours' $$;
+
+-- The appointment facts a message states (time, service, recipient): a
+-- frozen message whose facts changed is never sent again.
+create function private.email_fingerprint(p_appointment public.appointments)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select pg_catalog.jsonb_build_object(
+    'startsAt', pg_catalog.to_char(p_appointment.starts_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'),
+    'endsAt', pg_catalog.to_char(p_appointment.ends_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'),
+    'serviceName', p_appointment.service_name_snapshot,
+    'recipient', pg_catalog.lower(p_appointment.client_email_snapshot)
+  );
+$$;
+
 -- A reminder is no longer sent once the appointment is this close.
 create function private.email_reminder_cutoff()
 returns interval
@@ -274,9 +329,35 @@ begin
 end;
 $$;
 
+-- Whether the appointment's current contact may have received an email
+-- about it: one was delivered, or at least handed to the provider (whose
+-- answer may have been lost). first_submitted_at is set under a lock on the
+-- appointment before any provider call (email_outbox_prepare), so a false
+-- answer is reliable: nothing about this appointment can have reached her.
+create function private.appointment_contact_informed(
+  p_appointment_id uuid,
+  p_business_id uuid,
+  p_recipient text
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.email_events e
+    where e.appointment_id = p_appointment_id
+      and e.business_id = p_business_id
+      and e.recipient_email operator(extensions.=) p_recipient::extensions.citext
+      and (e.status = 'sent' or e.first_submitted_at is not null)
+  );
+$$;
+
 -- Cancels the queued (not yet claimed) emails of an appointment. An email
--- already claimed may still be delivered: the claim re-checks every email
--- right before it is handed to a worker, not after.
+-- already claimed is re-checked by email_outbox_prepare, under a lock on the
+-- appointment, before it reaches the provider.
 create function private.cancel_queued_emails(
   p_appointment_id uuid,
   p_business_id uuid,
@@ -343,10 +424,18 @@ begin
       case when new.status = 'cancelled' then 'appointment_cancelled' else 'appointment_closed' end
     );
 
+    -- A cancellation notice only to a customer who may have heard of the
+    -- appointment from us (confirmation, reminder or change notice handed
+    -- to the provider). Otherwise there is nothing to take back: a booking
+    -- cancelled before its confirmation went out, or an appointment the
+    -- professional entered herself and nothing was ever sent about.
     if new.status = 'cancelled'
       and old.status = 'confirmed'
       and new.client_email_snapshot is not null
-      and new.starts_at > v_now then
+      and new.starts_at > v_now
+      and private.appointment_contact_informed(
+        new.id, new.business_id, new.client_email_snapshot
+      ) then
       insert into public.email_events (
         business_id, client_id, appointment_id, type, recipient_email,
         payload, dedupe_key
@@ -388,20 +477,16 @@ begin
     perform private.queue_appointment_reminder(new, v_timezone, v_now);
   end if;
 
+  -- A change notice only to a customer who may have the former details. An
+  -- email not yet handed to the provider is rendered (and frozen) from the
+  -- current appointment, so it already gives the new ones.
   if v_moved
     and not v_recipient_changed
     and old.status = 'confirmed'
     and new.client_email_snapshot is not null
     and new.starts_at > v_now
-    and not exists (
-      -- A queued confirmation is rendered from the current appointment: it
-      -- already gives the new details.
-      select 1
-      from public.email_events e
-      where e.appointment_id = new.id
-        and e.business_id = new.business_id
-        and e.type = 'booking_confirmation'
-        and e.status = 'pending'
+    and private.appointment_contact_informed(
+      new.id, new.business_id, new.client_email_snapshot
     ) then
     perform private.cancel_queued_emails(
       new.id, new.business_id,
@@ -562,25 +647,28 @@ declare
   v_lease interval := pg_catalog.make_interval(
     secs => least(greatest(coalesce(p_lease_seconds, 120), 30), 900)
   );
+  v_candidates uuid[];
   v_candidate uuid;
+  v_business_ids uuid[];
+  v_business_id uuid;
+  v_remaining jsonb := '{}'::jsonb;
+  v_left integer;
   v_email public.email_events;
   v_appointment public.appointments;
   v_business public.businesses;
   v_reason text;
   v_expected timestamptz;
   v_claim uuid;
+  v_message jsonb;
   v_items jsonb := '[]'::jsonb;
   v_claimed integer := 0;
 begin
-  for v_candidate in
-    with saturated as (
-      select a.business_id
-      from public.email_delivery_attempts a
-      where a.started_at > p_now - interval '24 hours'
-      group by a.business_id
-      having pg_catalog.count(*) >= private.email_daily_cap()
-    )
-    select ranked.id
+  select
+    coalesce(pg_catalog.array_agg(c.id order by c.rank, c.due, c.id), '{}'),
+    coalesce(pg_catalog.array_agg(distinct c.business_id), '{}')
+  into v_candidates, v_business_ids
+  from (
+    select ranked.*
     from (
       select e.id, e.business_id,
              coalesce(e.lease_until, e.next_attempt_at, e.scheduled_for) as due,
@@ -591,7 +679,6 @@ begin
       from public.email_events e
       where e.type = any (private.email_deliverable_types())
         and (p_business_id is null or e.business_id = p_business_id)
-        and e.business_id not in (select s.business_id from saturated s)
         and (
           (e.status = 'pending' and coalesce(e.next_attempt_at, e.scheduled_for) <= p_now)
           or (e.status = 'processing' and (e.lease_until is null or e.lease_until < p_now))
@@ -600,6 +687,29 @@ begin
     where ranked.rank <= v_per_business
     order by ranked.rank, ranked.due, ranked.id
     limit v_limit * 4
+  ) c;
+
+  -- The daily cap, enforced atomically per business: concurrent claims of
+  -- one business count and take its remaining attempts one after the other
+  -- (a transaction lock per business, taken in a fixed order, so no
+  -- deadlock; claims of other businesses never wait). Counted after the
+  -- lock: the attempts of a claim that committed meanwhile are seen.
+  foreach v_business_id in array (
+    select coalesce(pg_catalog.array_agg(b order by b), '{}')
+    from pg_catalog.unnest(v_business_ids) b
+  )
+  loop
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('email_daily_cap:' || v_business_id::text, 0)
+    );
+    select private.email_daily_cap() - pg_catalog.count(*)::integer into v_left
+    from public.email_delivery_attempts a
+    where a.business_id = v_business_id
+      and a.started_at > p_now - interval '24 hours';
+    v_remaining := v_remaining || pg_catalog.jsonb_build_object(v_business_id::text, v_left);
+  end loop;
+
+  foreach v_candidate in array v_candidates
   loop
     exit when v_claimed >= v_limit;
 
@@ -613,6 +723,12 @@ begin
       )
     for update skip locked;
     if not found then
+      continue;
+    end if;
+
+    -- The business's attempts of the last 24 hours are used up: the email
+    -- waits (still pending, nothing lost).
+    if (v_remaining ->> v_email.business_id::text)::integer <= 0 then
       continue;
     end if;
 
@@ -693,6 +809,16 @@ begin
       business_id, email_event_id, attempt_number, claim_id, started_at
     )
     values (v_email.business_id, v_email.id, v_email.attempt_count, v_claim, p_now);
+    v_remaining := pg_catalog.jsonb_set(
+      v_remaining,
+      array[v_email.business_id::text],
+      pg_catalog.to_jsonb((v_remaining ->> v_email.business_id::text)::integer - 1)
+    );
+
+    -- A message already handed to the provider is sent again as it was.
+    select r.message into v_message
+    from private.email_renderings r
+    where r.email_event_id = v_email.id;
 
     v_items := v_items || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
       'id', v_email.id,
@@ -701,6 +827,7 @@ begin
       'type', v_email.type,
       'attempt', v_email.attempt_count,
       'recipient', v_email.recipient_email::text,
+      'message', v_message,
       'business', pg_catalog.jsonb_build_object(
         'name', v_business.name,
         'slug', v_business.slug::text,
@@ -711,6 +838,7 @@ begin
       ),
       'appointment', pg_catalog.jsonb_build_object(
         'id', v_appointment.id,
+        'version', v_appointment.version,
         'status', v_appointment.status,
         'startsAt', v_appointment.starts_at,
         'endsAt', v_appointment.ends_at,
@@ -746,15 +874,31 @@ as $$
   );
 $$;
 
--- Right before the send: does the claimed email still apply? The claim
--- checked it, but a batch is sent one email at a time, and the appointment
--- may have been cancelled or moved meanwhile. When it no longer applies,
--- the email is cancelled (its attempt too) and false is returned: the
--- worker does not send it. A change committed after this check and before
--- the provider accepts the message is not seen (a window of the duration
--- of one provider call).
-create function public.email_outbox_verify(p_id uuid, p_claim_id uuid)
-returns boolean
+-- Right before the provider call, under a lock on the appointment (a
+-- concurrent change of it waits, or is seen): does the claimed email still
+-- apply, and what exactly is sent?
+--
+-- * No longer applies (cancelled, moved, other recipient, or a frozen
+--   message whose facts changed): cancelled, never sent ('cancelled').
+-- * Never handed to the provider: the worker's message, rendered from the
+--   appointment version it claimed, is frozen ('send'); rendered from an
+--   older version, the email is given back to be rendered again
+--   ('rerender', not counted as an attempt).
+-- * Already handed to the provider (a lost answer, a retry): its frozen
+--   message is sent again, byte for byte, under the same idempotency key;
+--   past the provider's idempotency window, it is not resent and the
+--   delivery stays unknown ('unconfirmed').
+--
+-- first_submitted_at is set here, before the call: from then on the
+-- customer may have the message, and a later change or cancellation of the
+-- appointment notifies her.
+create function public.email_outbox_prepare(
+  p_id uuid,
+  p_claim_id uuid,
+  p_appointment_version integer,
+  p_message jsonb
+)
+returns jsonb
 language plpgsql
 volatile
 security definer
@@ -766,6 +910,8 @@ declare
   v_appointment public.appointments;
   v_timezone text;
   v_reason text;
+  v_rendering private.email_renderings;
+  v_message jsonb;
 begin
   select e.* into v_email
   from public.email_events e
@@ -774,28 +920,78 @@ begin
     and e.status = 'processing'
   for update;
   if not found then
-    return false;
+    return pg_catalog.jsonb_build_object('action', 'stale');
   end if;
 
   select a.* into v_appointment
   from public.appointments a
   where a.id = v_email.appointment_id
-    and a.business_id = v_email.business_id;
+    and a.business_id = v_email.business_id
+  for share;
   select b.timezone into v_timezone
   from public.businesses b
   where b.id = v_email.business_id;
+  select r.* into v_rendering
+  from private.email_renderings r
+  where r.email_event_id = p_id;
 
   v_reason := private.email_obsolete_reason(v_email, v_appointment, v_timezone, v_now);
-  if v_reason is null then
-    return true;
+  if v_reason is null
+    and v_rendering.email_event_id is not null
+    and v_rendering.fingerprint <> private.email_fingerprint(v_appointment) then
+    -- The frozen message states former facts; the change notice queued for
+    -- them (the customer may have this message) gives the current ones.
+    v_reason := 'superseded';
+  end if;
+  if v_reason is not null then
+    update public.email_events e
+    set status = 'cancelled', last_error = v_reason,
+        claim_id = null, lease_until = null, next_attempt_at = null
+    where e.id = p_id;
+    perform private.finish_email_attempt(p_claim_id, 'cancelled', v_reason, null, v_now);
+    return pg_catalog.jsonb_build_object('action', 'cancelled', 'code', v_reason);
+  end if;
+
+  if v_rendering.email_event_id is null then
+    if p_appointment_version is distinct from v_appointment.version then
+      update public.email_events e
+      set status = 'pending', claim_id = null, lease_until = null,
+          attempt_count = greatest(e.attempt_count - 1, 0)
+      where e.id = p_id;
+      delete from public.email_delivery_attempts a
+      where a.claim_id = p_claim_id and a.outcome is null;
+      return pg_catalog.jsonb_build_object('action', 'rerender');
+    end if;
+    if p_message is null
+      or pg_catalog.jsonb_typeof(p_message) <> 'object'
+      or pg_catalog.lower(p_message ->> 'to') is distinct from pg_catalog.lower(v_email.recipient_email::text)
+      or pg_catalog.jsonb_typeof(p_message -> 'subject') <> 'string'
+      or pg_catalog.jsonb_typeof(p_message -> 'text') <> 'string'
+      or pg_catalog.jsonb_typeof(p_message -> 'html') <> 'string'
+      or pg_catalog.pg_column_size(p_message) > 524288 then
+      return pg_catalog.jsonb_build_object('action', 'invalid');
+    end if;
+    insert into private.email_renderings (email_event_id, business_id, message, fingerprint)
+    values (p_id, v_email.business_id, p_message, private.email_fingerprint(v_appointment));
+    v_message := p_message;
+  else
+    if v_email.first_submitted_at < v_now - private.email_idempotency_window() then
+      update public.email_events e
+      set status = 'failed', last_error = 'delivery_unconfirmed',
+          claim_id = null, lease_until = null, next_attempt_at = null
+      where e.id = p_id;
+      perform private.finish_email_attempt(
+        p_claim_id, 'unconfirmed', 'idempotency_window_elapsed', null, v_now
+      );
+      return pg_catalog.jsonb_build_object('action', 'unconfirmed');
+    end if;
+    v_message := v_rendering.message;
   end if;
 
   update public.email_events e
-  set status = 'cancelled', last_error = v_reason,
-      claim_id = null, lease_until = null, next_attempt_at = null
+  set first_submitted_at = coalesce(e.first_submitted_at, v_now)
   where e.id = p_id;
-  perform private.finish_email_attempt(p_claim_id, 'cancelled', v_reason, null, v_now);
-  return false;
+  return pg_catalog.jsonb_build_object('action', 'send', 'message', v_message);
 end;
 $$;
 
@@ -836,15 +1032,20 @@ begin
 end;
 $$;
 
--- The attempt failed. A permanent failure, or the last allowed attempt,
--- gives the email up (failed); otherwise it is retried after a backoff.
+-- The attempt failed. p_outcome:
+-- * retry: retried after a backoff (the last allowed attempt gives up);
+-- * permanent: the provider refused this message, given up (failed);
+-- * unconfirmed: the provider's answer leaves the delivery unknown and a
+--   retry cannot settle it (e.g. the idempotency key is bound to another
+--   request): given up as failed, code delivery_unconfirmed, never resent
+--   under a new key. The customer may have received it.
 -- Returns the new status, or null when the claim is no longer the current
 -- one (nothing recorded).
 create function public.email_outbox_fail(
   p_id uuid,
   p_claim_id uuid,
   p_error_code text,
-  p_permanent boolean default false
+  p_outcome text default 'retry'
 )
 returns text
 language plpgsql
@@ -871,7 +1072,16 @@ begin
     return null;
   end if;
 
-  v_final := coalesce(p_permanent, false)
+  if p_outcome = 'unconfirmed' then
+    update public.email_events e
+    set status = 'failed', last_error = 'delivery_unconfirmed',
+        claim_id = null, lease_until = null, next_attempt_at = null
+    where e.id = p_id;
+    perform private.finish_email_attempt(p_claim_id, 'unconfirmed', v_code, null, v_now);
+    return 'failed';
+  end if;
+
+  v_final := p_outcome is distinct from 'retry'
     or v_email.attempt_count >= private.email_max_attempts();
 
   update public.email_events e
@@ -921,6 +1131,29 @@ begin
 end;
 $$;
 
+-- A final email (sent, failed, cancelled) is never sent again: its frozen
+-- message is not kept.
+create function private.drop_final_email_rendering()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from private.email_renderings r where r.email_event_id = new.id;
+  return null;
+end;
+$$;
+
+create trigger email_events_drop_final_rendering
+  after update of status on public.email_events
+  for each row
+  when (new.status in ('sent', 'failed', 'cancelled'))
+  execute function private.drop_final_email_rendering();
+
+revoke all on function private.drop_final_email_rendering() from public;
+revoke all on function private.email_idempotency_window() from public;
+revoke all on function private.email_fingerprint(public.appointments) from public;
 revoke all on function private.email_max_attempts() from public;
 revoke all on function private.email_retry_delay(integer) from public;
 revoke all on function private.email_deliverable_types() from public;
@@ -930,6 +1163,7 @@ revoke all on function private.email_daily_cap() from public;
 revoke all on function private.email_max_age() from public;
 revoke all on function private.email_recipient_valid(text) from public;
 revoke all on function private.queue_appointment_reminder(public.appointments, text, timestamptz) from public;
+revoke all on function private.appointment_contact_informed(uuid, uuid, text) from public;
 revoke all on function private.cancel_queued_emails(uuid, uuid, public.email_event_type[], text, text) from public;
 revoke all on function private.queue_appointment_notifications() from public;
 revoke all on function private.email_obsolete_reason(public.email_events, public.appointments, text, timestamptz) from public;
@@ -938,14 +1172,14 @@ revoke all on function private.email_outbox_claim_at(timestamptz, integer, integ
 
 revoke all on function public.email_outbox_claim(integer, integer, uuid) from public, anon, authenticated;
 revoke all on function public.email_outbox_complete(uuid, uuid, text) from public, anon, authenticated;
-revoke all on function public.email_outbox_fail(uuid, uuid, text, boolean) from public, anon, authenticated;
+revoke all on function public.email_outbox_fail(uuid, uuid, text, text) from public, anon, authenticated;
 revoke all on function public.email_outbox_release(uuid, uuid) from public, anon, authenticated;
-revoke all on function public.email_outbox_verify(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.email_outbox_prepare(uuid, uuid, integer, jsonb) from public, anon, authenticated;
 grant execute on function public.email_outbox_claim(integer, integer, uuid) to service_role;
 grant execute on function public.email_outbox_complete(uuid, uuid, text) to service_role;
-grant execute on function public.email_outbox_fail(uuid, uuid, text, boolean) to service_role;
+grant execute on function public.email_outbox_fail(uuid, uuid, text, text) to service_role;
 grant execute on function public.email_outbox_release(uuid, uuid) to service_role;
-grant execute on function public.email_outbox_verify(uuid, uuid) to service_role;
+grant execute on function public.email_outbox_prepare(uuid, uuid, integer, jsonb) to service_role;
 
 -- ---------------------------------------------------------------------------
 -- 4. Existing appointments

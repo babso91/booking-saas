@@ -23,6 +23,20 @@ export const claimedEmailSchema = z.object({
   type: emailTypeSchema,
   attempt: z.number().int().min(1),
   recipient: z.string().min(3).max(254),
+  /**
+   * The message frozen at its first submission to the provider, when there
+   * was one: sent again as is (same request, same idempotency key).
+   */
+  message: z
+    .object({
+      to: z.string(),
+      from: z.string(),
+      replyTo: z.string().optional(),
+      subject: z.string(),
+      text: z.string(),
+      html: z.string(),
+    })
+    .nullable(),
   business: z.object({
     name: z.string().min(1),
     slug: z.string().min(1),
@@ -33,6 +47,8 @@ export const claimedEmailSchema = z.object({
   }),
   appointment: z.object({
     id: z.uuid(),
+    /** The version the template data was read from (see email_outbox_prepare). */
+    version: z.number().int().min(1),
     status: z.string(),
     startsAt: z.string(),
     endsAt: z.string(),

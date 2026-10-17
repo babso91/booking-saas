@@ -505,6 +505,10 @@ describe("cancelled appointments", () => {
       local(business, dateInDays(7), "15:00"),
       "cancel@example.test",
     );
+    // The confirmation went out: the customer knows of the appointment.
+    const transport = new MemoryTransport();
+    await worker(transport, business.id);
+    expect(transport.sent).toHaveLength(1);
     await setStatus(business.id, booking.appointmentId, "cancelled");
 
     const rows = await emailsOf(booking.appointmentId);
@@ -520,25 +524,20 @@ describe("cancelled appointments", () => {
         status: "cancelled",
         last_error: "appointment_cancelled",
       },
-      {
-        type: "booking_confirmation",
-        status: "cancelled",
-        last_error: "appointment_cancelled",
-      },
+      { type: "booking_confirmation", status: "sent", last_error: null },
       { type: "appointment_cancelled", status: "pending", last_error: null },
     ]);
 
     // Even forced due, the reminder is never claimed again.
     const reminder = rows.find((row) => row.type === "appointment_reminder")!;
     await makeDue(reminder.id);
-    const transport = new MemoryTransport();
     await worker(transport, business.id);
-    expect(transport.sent).toHaveLength(1);
-    expect(transport.sent[0]!.subject).toBe(
+    expect(transport.sent).toHaveLength(2);
+    expect(transport.sent[1]!.subject).toBe(
       "Rendez-vous annulé – Studio Mila Lashes",
     );
-    expect(transport.sent[0]!.text).not.toContain("Prix");
-    expect(transport.sent[0]!.text).toContain(
+    expect(transport.sent[1]!.text).not.toContain("Prix");
+    expect(transport.sent[1]!.text).toContain(
       `Pour reprendre rendez-vous : ${APP_URL}/b/${business.slug}`,
     );
   });
@@ -1226,7 +1225,15 @@ describe("security", () => {
       { p_id: randomUUID(), p_claim_id: randomUUID(), p_error_code: "x" },
     ],
     ["email_outbox_release", { p_id: randomUUID(), p_claim_id: randomUUID() }],
-    ["email_outbox_verify", { p_id: randomUUID(), p_claim_id: randomUUID() }],
+    [
+      "email_outbox_prepare",
+      {
+        p_id: randomUUID(),
+        p_claim_id: randomUUID(),
+        p_appointment_version: 1,
+        p_message: {},
+      },
+    ],
   ] as const;
 
   it("the worker functions are executable by the service role only", async () => {
@@ -1470,5 +1477,564 @@ describe("local delivery (Mailpit)", () => {
     expect(found.messages[0]!.ReplyTo[0]!.Address).toBe(
       `${business.slug}@test.local`,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Corrections after the independent audit of PR #22
+// ---------------------------------------------------------------------------
+
+type ClaimItem = {
+  id: string;
+  claimId: string;
+  appointment: { version: number };
+  message: unknown;
+};
+
+async function claimNow(businessId: string): Promise<ClaimItem[]> {
+  const { data, error } = await bookingClient().rpc("email_outbox_claim", {
+    p_business_id: businessId,
+  });
+  if (error) throw error;
+  return data as ClaimItem[];
+}
+
+async function expireLease(emailId: string) {
+  await db.query(
+    "update public.email_events set lease_until = now() - interval '1 second' where id = $1",
+    [emailId],
+  );
+}
+
+async function retryNow(emailId: string) {
+  await db.query(
+    "update public.email_events set next_attempt_at = now() - interval '1 second' where id = $1",
+    [emailId],
+  );
+}
+
+async function emailRow(emailId: string) {
+  const { rows } = await db.query<
+    EmailRow & { first_submitted_at: Date | null; frozen: boolean }
+  >(
+    `select e.status::text, e.attempt_count, e.last_error, e.first_submitted_at,
+            e.provider_message_id,
+            exists (select 1 from private.email_renderings r where r.email_event_id = e.id) as frozen
+     from public.email_events e where e.id = $1`,
+    [emailId],
+  );
+  return rows[0]!;
+}
+
+describe("idempotent delivery (frozen message)", () => {
+  it("a retry after a lost answer sends the same request; the provider delivers it once", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(30), "10:00"),
+    );
+    const [confirmation] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    const transport = new MemoryTransport({ idempotency: true });
+    transport.acceptThenFailNext("provider_timeout");
+    expect(await worker(transport, business.id)).toMatchObject({ retried: 1 });
+    const afterTimeout = await emailRow(confirmation!.id);
+    expect(afterTimeout).toMatchObject({ status: "pending", frozen: true });
+    expect(afterTimeout.first_submitted_at).not.toBeNull();
+
+    // The business renames itself before the retry: the retry still sends
+    // the frozen request (a re-rendered one would be refused by Resend,
+    // 409 invalid_idempotent_request).
+    await db.query(
+      "update public.businesses set name = 'Nouveau nom' where id = $1",
+      [business.id],
+    );
+    await retryNow(confirmation!.id);
+    expect(await worker(transport, business.id)).toMatchObject({ sent: 1 });
+
+    expect(transport.attempts).toHaveLength(2);
+    expect(transport.attempts[1]).toEqual(transport.attempts[0]);
+    expect(transport.attempts[1]!.subject).toContain("Studio Mila Lashes");
+    expect(transport.sent).toHaveLength(1);
+    expect(await emailRow(confirmation!.id)).toMatchObject({
+      status: "sent",
+      provider_message_id: "memory-1",
+      // Final: the frozen message is not kept.
+      frozen: false,
+    });
+  });
+
+  it("a worker crash after the provider call: the next claim resends the frozen message under the same key", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(31), "10:00"),
+    );
+    const [confirmation] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    const transport = new MemoryTransport({ idempotency: true });
+    // Crash: claimed and prepared (message frozen), sent, never recorded.
+    const [item] = await claimNow(business.id);
+    expect(item!.message).toBeNull();
+    const frozen = {
+      to: confirmation!.recipient_email,
+      from: FROM,
+      subject: "Rendez-vous confirmé – Studio Mila Lashes",
+      text: "texte figé",
+      html: "<p>texte figé</p>",
+    };
+    const { data: prepared } = await bookingClient().rpc(
+      "email_outbox_prepare",
+      {
+        p_id: item!.id,
+        p_claim_id: item!.claimId,
+        p_appointment_version: item!.appointment.version,
+        p_message: frozen,
+      },
+    );
+    expect(prepared).toEqual({ action: "send", message: frozen });
+    await transport.send(
+      { ...frozen, idempotencyKey: item!.id },
+      AbortSignal.timeout(1000),
+    );
+    await expireLease(item!.id);
+
+    expect(await worker(transport, business.id)).toMatchObject({ sent: 1 });
+    expect(transport.attempts[1]).toEqual(transport.attempts[0]);
+    expect(transport.sent).toHaveLength(1);
+    expect((await attemptsOf(item!.id)).map((a) => a.outcome)).toEqual([
+      "lease_expired",
+      "sent",
+    ]);
+  });
+
+  it("409 invalid_idempotent_request: the delivery stays unconfirmed, never resent nor reported unsent", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(32), "10:00"),
+    );
+    const [confirmation] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    const transport = new MemoryTransport();
+    transport.failNext("provider_idempotency_conflict", "unconfirmed");
+    expect(await worker(transport, business.id)).toMatchObject({
+      unconfirmed: 1,
+      retried: 0,
+    });
+    const row = await emailRow(confirmation!.id);
+    expect(row).toMatchObject({
+      status: "failed",
+      last_error: "delivery_unconfirmed",
+    });
+    expect(row.first_submitted_at).not.toBeNull();
+    expect(await attemptsOf(confirmation!.id)).toEqual([
+      {
+        attempt_number: 1,
+        outcome: "unconfirmed",
+        error_code: "provider_idempotency_conflict",
+        provider_message_id: null,
+      },
+    ]);
+    // Never claimed again (no new key, no resend).
+    await retryNow(confirmation!.id);
+    expect(await worker(transport, business.id)).toMatchObject({ claimed: 0 });
+    expect(transport.attempts).toHaveLength(1);
+
+    // She may have it: a cancellation is notified.
+    await setStatus(business.id, booking.appointmentId, "cancelled");
+    expect(
+      (await emailOf(booking.appointmentId, "appointment_cancelled")).map(
+        (e) => e.status,
+      ),
+    ).toEqual(["pending"]);
+  });
+
+  it("past the provider's idempotency window, an unanswered message is not resent", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(33), "10:00"),
+    );
+    const [confirmation] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    const transport = new MemoryTransport();
+    transport.hangNext();
+    expect(
+      await worker(transport, business.id, { sendTimeoutMs: 200 }),
+    ).toMatchObject({ retried: 1 });
+    // The retries were held back (e.g. the daily cap) for a day.
+    await db.query(
+      `update public.email_events
+       set first_submitted_at = now() - interval '24 hours',
+           created_at = now() - interval '1 hour',
+           next_attempt_at = now() - interval '1 second'
+       where id = $1`,
+      [confirmation!.id],
+    );
+    expect(await worker(transport, business.id)).toMatchObject({
+      unconfirmed: 1,
+    });
+    expect(transport.attempts).toHaveLength(1);
+    expect(await emailRow(confirmation!.id)).toMatchObject({
+      status: "failed",
+      last_error: "delivery_unconfirmed",
+    });
+    expect(
+      (await attemptsOf(confirmation!.id)).map((a) => [
+        a.outcome,
+        a.error_code,
+      ]),
+    ).toEqual([
+      ["retry", "provider_timeout"],
+      ["unconfirmed", "idempotency_window_elapsed"],
+    ]);
+  });
+
+  it("an appointment moved after a lost answer: the frozen details are never resent, the change notice gives the new ones", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(34), "10:00"),
+    );
+    const [confirmation] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    const transport = new MemoryTransport({ idempotency: true });
+    transport.acceptThenFailNext("provider_timeout");
+    await worker(transport, business.id);
+    expect(transport.sent[0]!.text).toContain("à 10 h");
+
+    await moveAppointment(
+      business.id,
+      booking.appointmentId,
+      local(business, dateInDays(34), "15:30"),
+    );
+    // She may have the former details: a change notice is queued.
+    expect(
+      (await emailOf(booking.appointmentId, "appointment_changed")).map(
+        (e) => e.status,
+      ),
+    ).toEqual(["pending"]);
+
+    await retryNow(confirmation!.id);
+    await worker(transport, business.id);
+    expect(await emailRow(confirmation!.id)).toMatchObject({
+      status: "cancelled",
+      last_error: "superseded",
+    });
+    expect(transport.sent.map((m) => m.subject)).toEqual([
+      "Rendez-vous confirmé – Studio Mila Lashes",
+      "Rendez-vous modifié – Studio Mila Lashes",
+    ]);
+    expect(transport.sent[1]!.text).toContain("à 15 h 30");
+  });
+
+  it("an appointment changed between the claim and the provider call: rendered again, not counted as an attempt", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(35), "10:00"),
+    );
+    const [item] = await claimNow(business.id);
+    await moveAppointment(
+      business.id,
+      booking.appointmentId,
+      local(business, dateInDays(35), "11:45"),
+    );
+    const { data: prepared } = await bookingClient().rpc(
+      "email_outbox_prepare",
+      {
+        p_id: item!.id,
+        p_claim_id: item!.claimId,
+        p_appointment_version: item!.appointment.version,
+        p_message: { to: "x", subject: "old", text: "old", html: "old" },
+      },
+    );
+    expect(prepared).toEqual({ action: "rerender" });
+    expect(await emailRow(item!.id)).toMatchObject({
+      status: "pending",
+      attempt_count: 0,
+      frozen: false,
+      first_submitted_at: null,
+    });
+    expect(await attemptsOf(item!.id)).toEqual([]);
+
+    const transport = new MemoryTransport();
+    await worker(transport, business.id);
+    expect(transport.sent).toHaveLength(1);
+    expect(transport.sent[0]!.text).toContain("à 11 h 45");
+  });
+});
+
+describe("rendering failures", () => {
+  it("a template error gives the email up at once, without retries nor customer data in logs", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(36), "10:00"),
+      "render@example.test",
+    );
+    const [confirmation] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    const lines: string[] = [];
+    for (const method of ["info", "warn", "error", "log"] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        lines.push(args.map(String).join(" "));
+      });
+    }
+    const transport = new MemoryTransport();
+    const result = await runEmailOutbox(
+      {
+        admin: bookingClient(),
+        transport,
+        from: FROM,
+        appUrl: APP_URL,
+        render: () => {
+          throw new RangeError("Invalid currency for render@example.test");
+        },
+      },
+      { businessId: business.id },
+    );
+    expect(result).toMatchObject({ claimed: 1, failed: 1, retried: 0 });
+    expect(transport.attempts).toEqual([]);
+    expect(await emailRow(confirmation!.id)).toMatchObject({
+      status: "failed",
+      last_error: "render_failed",
+      attempt_count: 1,
+      first_submitted_at: null,
+    });
+    // Not claimed again: no attempts wasted on a deterministic error.
+    await retryNow(confirmation!.id);
+    expect(await worker(transport, business.id)).toMatchObject({ claimed: 0 });
+    expect(lines.join("\n")).not.toContain("render@example.test");
+  });
+});
+
+describe("rendering failures after a submission", () => {
+  it("a retry sends the frozen message without rendering again (a template error now cannot block it)", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(40), "10:00"),
+    );
+    const [confirmation] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    const transport = new MemoryTransport({ idempotency: true });
+    transport.acceptThenFailNext("provider_timeout");
+    await worker(transport, business.id);
+    await retryNow(confirmation!.id);
+    let rendered = 0;
+    const result = await runEmailOutbox(
+      {
+        admin: bookingClient(),
+        transport,
+        from: FROM,
+        appUrl: APP_URL,
+        render: () => {
+          rendered += 1;
+          throw new RangeError("template broken since");
+        },
+      },
+      { businessId: business.id },
+    );
+    expect(result).toMatchObject({ sent: 1, failed: 0 });
+    expect(rendered).toBe(0);
+    expect(transport.attempts[1]).toEqual(transport.attempts[0]);
+  });
+});
+
+describe("cancellation notices", () => {
+  it("a booking cancelled before its confirmation was handed to the provider: no notice", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(37), "10:00"),
+    );
+    await setStatus(business.id, booking.appointmentId, "cancelled");
+    const rows = await emailsOf(booking.appointmentId);
+    expect(rows.map((r) => [r.type, r.status]).sort()).toEqual([
+      ["appointment_reminder", "cancelled"],
+      ["booking_confirmation", "cancelled"],
+    ]);
+    const transport = new MemoryTransport();
+    expect(await worker(transport, business.id)).toMatchObject({ claimed: 0 });
+  });
+
+  it("a confirmation handed to the provider whose answer was lost: the cancellation is notified", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(38), "10:00"),
+    );
+    const transport = new MemoryTransport({ idempotency: true });
+    transport.acceptThenFailNext("provider_network");
+    await worker(transport, business.id);
+    await setStatus(business.id, booking.appointmentId, "cancelled");
+    await worker(transport, business.id);
+    expect(transport.sent.map((m) => m.subject)).toEqual([
+      "Rendez-vous confirmé – Studio Mila Lashes",
+      "Rendez-vous annulé – Studio Mila Lashes",
+    ]);
+  });
+
+  it("an appointment entered by the professional and never emailed: cancelled without notice; once reminded, notified", async () => {
+    const { business, service } = await setup();
+    const clientId = await createClientRecord(
+      business.id,
+      "manual@example.test",
+    );
+    const silent = await insertAppointment({
+      businessId: business.id,
+      clientId,
+      serviceId: service,
+      startsAt: "2027-09-10T08:00:00Z",
+      endsAt: "2027-09-10T09:30:00Z",
+    });
+    await setStatus(business.id, silent, "cancelled");
+    expect(await emailOf(silent, "appointment_cancelled")).toEqual([]);
+
+    const reminded = await insertAppointment({
+      businessId: business.id,
+      clientId,
+      serviceId: service,
+      startsAt: "2027-09-11T08:00:00Z",
+      endsAt: "2027-09-11T09:30:00Z",
+    });
+    const [reminder] = await emailOf(reminded, "appointment_reminder");
+    await makeDue(reminder!.id);
+    await worker(new MemoryTransport(), business.id);
+    await setStatus(business.id, reminded, "cancelled");
+    expect(
+      (await emailOf(reminded, "appointment_cancelled")).map((e) => e.status),
+    ).toEqual(["pending"]);
+  });
+
+  it("a cancelled appointment never becomes confirmed again: one cancellation per appointment", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(39), "10:00"),
+    );
+    await setStatus(business.id, booking.appointmentId, "cancelled");
+    await expect(
+      setStatus(business.id, booking.appointmentId, "confirmed"),
+    ).rejects.toMatchObject({ message: "invalid_status_transition" });
+    // Members cannot write appointments directly either.
+    const { data, error } = await owner.client
+      .from("appointments")
+      .update({ status: "confirmed" })
+      .eq("id", booking.appointmentId)
+      .select();
+    expect(error !== null || (data ?? []).length === 0).toBe(true);
+    const { rows } = await db.query<{ status: string }>(
+      "select status::text from public.appointments where id = $1",
+      [booking.appointmentId],
+    );
+    expect(rows[0]!.status).toBe("cancelled");
+  });
+});
+
+describe("daily cap under concurrency", () => {
+  it("concurrent claims never take more than the business's remaining attempts; other businesses are not held", async () => {
+    const capped = await setup();
+    const other = await setup();
+    const clientA = await createClientRecord(
+      capped.business.id,
+      "capped@example.test",
+    );
+    const clientB = await createClientRecord(
+      other.business.id,
+      "other@example.test",
+    );
+    const due = async (
+      business: TestBusiness,
+      service: string,
+      clientId: string,
+      count: number,
+    ) => {
+      for (let i = 0; i < count; i++) {
+        await insertAppointment({
+          businessId: business.id,
+          clientId,
+          serviceId: service,
+          startsAt: new Date(Date.UTC(2027, 10, 1 + i, 8)).toISOString(),
+          endsAt: new Date(Date.UTC(2027, 10, 1 + i, 9, 30)).toISOString(),
+        });
+      }
+      await db.query(
+        `update public.email_events set scheduled_for = now() - interval '1 minute'
+         where business_id = $1 and type = 'appointment_reminder'`,
+        [business.id],
+      );
+    };
+    await due(capped.business, capped.service, clientA, 20);
+    await due(other.business, other.service, clientB, 6);
+    // 295 attempts already today: 5 left.
+    const { rows: anyEmail } = await db.query<{ id: string }>(
+      "select id from public.email_events where business_id = $1 limit 1",
+      [capped.business.id],
+    );
+    await db.query(
+      `insert into public.email_delivery_attempts
+         (business_id, email_event_id, attempt_number, claim_id, started_at, outcome)
+       select $1, $2, n, gen_random_uuid(), now() - interval '1 hour', 'sent'
+       from generate_series(1, 295) n`,
+      [capped.business.id, anyEmail[0]!.id],
+    );
+
+    const claim = (businessId: string) =>
+      bookingClient().rpc("email_outbox_claim", {
+        p_business_id: businessId,
+        p_limit: 20,
+        p_per_business: 20,
+      });
+    const results = await Promise.all([
+      ...Array.from({ length: 10 }, () => claim(capped.business.id)),
+      ...Array.from({ length: 3 }, () => claim(other.business.id)),
+    ]);
+    const count = (from: number, to: number) =>
+      results.slice(from, to).reduce((sum, { data, error }) => {
+        expect(error).toBeNull();
+        return sum + (data as unknown[]).length;
+      }, 0);
+    expect(count(0, 10)).toBe(5);
+    expect(count(10, 13)).toBe(6);
+    const { rows } = await db.query<{ n: number }>(
+      `select count(*)::int as n from public.email_delivery_attempts
+       where business_id = $1 and started_at > now() - interval '24 hours'`,
+      [capped.business.id],
+    );
+    expect(rows[0]!.n).toBe(300);
+    const { rows: waiting } = await db.query<{ n: number }>(
+      `select count(*)::int as n from public.email_events
+       where business_id = $1 and type = 'appointment_reminder' and status = 'pending'`,
+      [capped.business.id],
+    );
+    expect(waiting[0]!.n).toBe(15);
   });
 });

@@ -270,13 +270,13 @@ isOneToOne: false
                   ]
                 },"email_events": {
                   Row: {
-                    "appointment_id": string | null,"attempt_count": number,"business_id": string,"claim_id": string | null,"client_id": string | null,"created_at": string,"dedupe_key": string,"id": string,"last_attempt_at": string | null,"last_error": string | null,"lease_until": string | null,"next_attempt_at": string | null,"payload": NonNullable<Json>,"provider_message_id": string | null,"recipient_email": string,"scheduled_for": string,"sent_at": string | null,"status": Database["public"]['Enums']["email_event_status"],"type": Database["public"]['Enums']["email_event_type"],"updated_at": string
+                    "appointment_id": string | null,"attempt_count": number,"business_id": string,"claim_id": string | null,"client_id": string | null,"created_at": string,"dedupe_key": string,"first_submitted_at": string | null,"id": string,"last_attempt_at": string | null,"last_error": string | null,"lease_until": string | null,"next_attempt_at": string | null,"payload": NonNullable<Json>,"provider_message_id": string | null,"recipient_email": string,"scheduled_for": string,"sent_at": string | null,"status": Database["public"]['Enums']["email_event_status"],"type": Database["public"]['Enums']["email_event_type"],"updated_at": string
                   }
                   Insert: {
-                    "appointment_id"?: string | null,"attempt_count"?: number,"business_id": string,"claim_id"?: string | null,"client_id"?: string | null,"created_at"?: string,"dedupe_key": string,"id"?: string,"last_attempt_at"?: string | null,"last_error"?: string | null,"lease_until"?: string | null,"next_attempt_at"?: string | null,"payload"?: NonNullable<Json>,"provider_message_id"?: string | null,"recipient_email": string,"scheduled_for"?: string,"sent_at"?: string | null,"status"?: Database["public"]['Enums']["email_event_status"],"type": Database["public"]['Enums']["email_event_type"],"updated_at"?: string
+                    "appointment_id"?: string | null,"attempt_count"?: number,"business_id": string,"claim_id"?: string | null,"client_id"?: string | null,"created_at"?: string,"dedupe_key": string,"first_submitted_at"?: string | null,"id"?: string,"last_attempt_at"?: string | null,"last_error"?: string | null,"lease_until"?: string | null,"next_attempt_at"?: string | null,"payload"?: NonNullable<Json>,"provider_message_id"?: string | null,"recipient_email": string,"scheduled_for"?: string,"sent_at"?: string | null,"status"?: Database["public"]['Enums']["email_event_status"],"type": Database["public"]['Enums']["email_event_type"],"updated_at"?: string
                   }
                   Update: {
-                    "appointment_id"?: string | null,"attempt_count"?: number,"business_id"?: string,"claim_id"?: string | null,"client_id"?: string | null,"created_at"?: string,"dedupe_key"?: string,"id"?: string,"last_attempt_at"?: string | null,"last_error"?: string | null,"lease_until"?: string | null,"next_attempt_at"?: string | null,"payload"?: NonNullable<Json>,"provider_message_id"?: string | null,"recipient_email"?: string,"scheduled_for"?: string,"sent_at"?: string | null,"status"?: Database["public"]['Enums']["email_event_status"],"type"?: Database["public"]['Enums']["email_event_type"],"updated_at"?: string
+                    "appointment_id"?: string | null,"attempt_count"?: number,"business_id"?: string,"claim_id"?: string | null,"client_id"?: string | null,"created_at"?: string,"dedupe_key"?: string,"first_submitted_at"?: string | null,"id"?: string,"last_attempt_at"?: string | null,"last_error"?: string | null,"lease_until"?: string | null,"next_attempt_at"?: string | null,"payload"?: NonNullable<Json>,"provider_message_id"?: string | null,"recipient_email"?: string,"scheduled_for"?: string,"sent_at"?: string | null,"status"?: Database["public"]['Enums']["email_event_status"],"type"?: Database["public"]['Enums']["email_event_type"],"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -748,12 +748,12 @@ isOneToOne: false
 { Args: { "p_claim_id": string,"p_id": string,"p_provider_message_id"?: string }; Returns: boolean
                            },
 "email_outbox_fail":
-{ Args: { "p_claim_id": string,"p_error_code": string,"p_id": string,"p_permanent"?: boolean }; Returns: string
+{ Args: { "p_claim_id": string,"p_error_code": string,"p_id": string,"p_outcome"?: string }; Returns: string
+                           },
+"email_outbox_prepare":
+{ Args: { "p_appointment_version": number,"p_claim_id": string,"p_id": string,"p_message": Json }; Returns: Json
                            },
 "email_outbox_release":
-{ Args: { "p_claim_id": string,"p_id": string }; Returns: boolean
-                           },
-"email_outbox_verify":
 { Args: { "p_claim_id": string,"p_id": string }; Returns: boolean
                            },
 "get_available_slots":

@@ -31,16 +31,19 @@ Emails envoyés aux clientes au sujet de leur rendez-vous : confirmation, rappel
 
 Un trigger sur `appointments` (`private.queue_appointment_notifications`) s'applique à **tous** les chemins d'écriture : réservation publique, agenda, écriture directe.
 
-| Événement                                               | Email mis en file                                                                                                                                                                                                                                                                                  |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Réservation publique                                    | `booking_confirmation` (existant), puis `appointment_reminder`.                                                                                                                                                                                                                                    |
-| Rendez-vous créé par la professionnelle                 | `appointment_reminder` uniquement (comme avant, pas de confirmation).                                                                                                                                                                                                                              |
-| Rendez-vous confirmé déplacé, ou prestation changée     | Ancien rappel annulé (`rescheduled`) et nouveau rappel. `appointment_changed`, **sauf** si la confirmation n'est pas encore partie : elle est rendue au moment de l'envoi, donc elle donne déjà les nouvelles informations. Une modification remplace la précédente encore en file (`superseded`). |
-| Rendez-vous futur annulé                                | Confirmation, rappel et modification en file annulés (`appointment_cancelled`), et `appointment_cancelled` mis en file.                                                                                                                                                                            |
-| Terminé ou absente (`completed`, `no_show`)             | Emails en file annulés (`appointment_closed`), sans email.                                                                                                                                                                                                                                         |
-| Rendez-vous attribué à une autre cliente                | Emails en file pour l'ancienne adresse annulés (`recipient_changed`), rappel pour la nouvelle. Pas de « modification » à une cliente qui n'a jamais reçu de confirmation.                                                                                                                          |
-| Modification sans effet pour la cliente (note interne…) | Rien.                                                                                                                                                                                                                                                                                              |
+| Événement                                               | Email mis en file                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Réservation publique                                    | `booking_confirmation` (existant), puis `appointment_reminder`.                                                                                                                                                                                                                                |
+| Rendez-vous créé par la professionnelle                 | `appointment_reminder` uniquement (comme avant, pas de confirmation).                                                                                                                                                                                                                          |
+| Rendez-vous confirmé déplacé, ou prestation changée     | Ancien rappel annulé (`rescheduled`) et nouveau rappel. `appointment_changed` **si la cliente a pu être informée** (voir ci-dessous) ; sinon, l'email pas encore transmis donne directement les nouvelles informations. Une modification remplace la précédente encore en file (`superseded`). |
+| Rendez-vous futur annulé                                | Confirmation, rappel et modification en file annulés (`appointment_cancelled`). `appointment_cancelled` mis en file **si la cliente a pu être informée**.                                                                                                                                      |
+| Terminé ou absente (`completed`, `no_show`)             | Emails en file annulés (`appointment_closed`), sans email.                                                                                                                                                                                                                                     |
+| Rendez-vous attribué à une autre cliente                | Emails en file pour l'ancienne adresse annulés (`recipient_changed`), rappel pour la nouvelle. Pas de « modification » à une cliente qui n'a jamais reçu de confirmation.                                                                                                                      |
+| Modification sans effet pour la cliente (note interne…) | Rien.                                                                                                                                                                                                                                                                                          |
 
+- **« La cliente a pu être informée »** (`private.appointment_contact_informed`) : un email de ce rendez-vous, à son adresse actuelle, a été envoyé (`sent`) ou au moins **transmis au fournisseur** (`first_submitted_at`), même si la réponse a été perdue.
+  - `first_submitted_at` est posé sous un verrou sur le rendez-vous, avant tout appel au fournisseur (`email_outbox_prepare`). Une modification ou une annulation concurrente attend ce verrou, ou est vue par le worker : la réponse « non » est donc fiable.
+  - Conséquences : une réservation annulée avant que sa confirmation parte, ou un rendez-vous saisi par la professionnelle dont rien n'a été envoyé, est annulé **sans email**. Dès qu'un email a pu partir, même sans confirmation du fournisseur, l'annulation ou la modification est notifiée.
 - **Rappel :** la veille du rendez-vous, à **18 h 00 à l'heure de l'établissement**.
   - Calculé par PostgreSQL (`private.email_reminder_at`), changements d'heure compris :
     - un 18 h répété prend sa première occurrence ;
@@ -54,7 +57,10 @@ Un trigger sur `appointments` (`private.queue_appointment_notifications`) s'appl
   - `booking_confirmation:<rdv>` ;
   - `appointment_reminder:<rdv>:v<version>` ;
   - `appointment_changed:<rdv>:v<version>` ;
-  - `appointment_cancelled:<rdv>`.
+  - `appointment_cancelled:<rdv>`. Une seule annulation par rendez-vous suffit, car `cancelled` est un état terminal :
+    - `agenda_set_appointment_status`, seul écrivain du statut, n'autorise aucune transition depuis `cancelled` ;
+    - les membres n'ont aucun droit d'écriture directe sur `appointments` ;
+    - aucun code serveur ne modifie le statut autrement (testé).
   - Une réservation rejouée ne met rien de plus en file.
 
 ## 3. Le worker
@@ -72,29 +78,43 @@ Un trigger sur `appointments` (`private.queue_appointment_notifications`) s'appl
    - L'email est revalidé contre le rendez-vous **actuel**. S'il ne s'applique plus, il est annulé avec un code (§ 4). Un destinataire invalide le fait échouer (`invalid_recipient`).
    - Le claim renvoie les données du modèle, lues à cet instant : jamais un payload périmé.
    - Bail de 120 s, avec `attempt_count + 1` et une ligne d'historique.
-2. Juste avant chaque envoi, `email_outbox_verify` revérifie l'email. Un rendez-vous annulé entre le claim et l'envoi n'est donc pas rappelé : l'email et sa tentative passent à `cancelled`.
-3. Envoi par le transport : délai de 15 s, et clé d'idempotence = id de l'email.
-4. `email_outbox_complete` ou `email_outbox_fail`, en compare-and-set sur le claim. Un worker en retard, dont le bail a expiré et que quelqu'un d'autre a repris, n'écrit rien.
-5. Le budget est de 45 s par exécution. Ce qui est revendiqué mais pas tenté est rendu (`email_outbox_release`), sans compter de tentative.
+2. Le message est rendu par le worker, sauf s'il a déjà été transmis au fournisseur : le message figé est alors renvoyé tel quel, sans nouveau rendu.
+   - Un échec du modèle est déterministe : l'email est abandonné aussitôt (`render_failed`), sans épuiser ses tentatives et sans rien journaliser sur la cliente.
+3. Juste avant l'appel au fournisseur, `email_outbox_prepare` verrouille le rendez-vous (`FOR SHARE`) et revérifie l'email :
+   - **ne s'applique plus** (rendez-vous annulé, déplacé, autre destinataire, ou message figé dont les informations ont changé) : annulé, jamais envoyé ;
+   - **jamais transmis** : le message est **figé** (`private.email_renderings`) puis envoyé. S'il a été rendu d'après une version plus ancienne du rendez-vous, l'email est rendu au claim suivant (`rerender`, sans compter de tentative) ;
+   - **déjà transmis** (réponse perdue, reprise) : le message figé est renvoyé **à l'identique**, sous la même clé d'idempotence ;
+   - au-delà de 23 h après la première transmission (la clé reste 24 h chez Resend), il n'est **plus renvoyé** et sa livraison reste **non confirmée** (`failed`, `delivery_unconfirmed`).
+4. Envoi par le transport : délai de 15 s, clé d'idempotence = id de l'email, toujours avec le même message.
+5. `email_outbox_complete` ou `email_outbox_fail`, en compare-and-set sur le claim. Un worker en retard, dont le bail a expiré et que quelqu'un d'autre a repris, n'écrit rien.
+6. Le budget est de 45 s par exécution. Ce qui est revendiqué mais pas tenté est rendu (`email_outbox_release`), sans compter de tentative.
 
 **Erreurs :**
 
-- **Temporaire** (réseau, délai dépassé, 408, 409, 429, 5xx, 401/403) : nouvel essai.
+- **Temporaire** (réseau, délai dépassé, 408, 429, 5xx, 401/403, 409 `concurrent_idempotent_requests` ou `resource_locked`) : nouvel essai, avec le même message figé.
   - Délais successifs : 1 min, 5 min, 15 min, 1 h, 3 h, 6 h, puis 12 h.
   - **8 tentatives au plus**, puis `failed` (`attempts_exhausted` si la limite est atteinte au claim).
   - Un 401/403 est traité comme temporaire : une clé erronée se corrige par configuration, sans perdre les emails entre-temps.
-- **Permanente** (autre 4xx : message refusé) : `failed` immédiatement.
+- **Permanente** (autre 4xx : message refusé ; échec du modèle) : `failed` immédiatement.
+- **Livraison inconnue** (409 `invalid_idempotent_request` : la clé est déjà liée à une autre requête) :
+  - l'email n'est ni renvoyé (une nouvelle clé pourrait le délivrer deux fois), ni déclaré non envoyé ;
+  - il passe en `failed` avec `last_error = delivery_unconfirmed`, et sa tentative en `outcome = unconfirmed` ;
+  - la cliente a pu le recevoir : une annulation ou une modification ultérieure lui est donc notifiée.
+  - Avec le message figé, ce cas ne devrait pas se produire ; s'il survient, il est visible et n'est jamais masqué.
 
 **Plantage :** un worker qui meurt laisse son bail expirer. L'email est revendiqué de nouveau, la tentative interrompue est notée `lease_expired`, et la même clé d'idempotence est réutilisée.
 
 **Fraîcheur :** une confirmation, une modification ou une annulation n'est plus envoyée **48 h** après sa mise en file (`expired`), ni une fois le rendez-vous passé. Un worker arrêté plusieurs jours n'envoie donc pas de nouvelles périmées.
 
-**Volume :** au plus **300 tentatives par établissement sur 24 h glissantes**. Au-delà, ses emails attendent, sans être perdus ni annulés. Une professionnelle, ou quelqu'un qui réserve avec des adresses choisies, ne peut donc pas utiliser la plateforme pour des envois de masse.
+**Volume :** au plus **300 tentatives par établissement sur 24 h glissantes**, appliquées atomiquement.
+
+- Le claim prend un verrou transactionnel par établissement, dans un ordre fixe, puis compte les tentatives sous ce verrou. Des claims concurrents du même établissement se succèdent donc : ils ne dépassent pas la limite (testé sous concurrence). Ceux des autres établissements n'attendent pas.
+- Au-delà de la limite, les emails attendent, sans être perdus ni annulés. Une professionnelle, ou quelqu'un qui réserve avec des adresses choisies, ne peut donc pas utiliser la plateforme pour des envois de masse.
 
 **Garantie de livraison : au moins une fois, pas exactement une fois.**
 
-- Si un worker plante après que le fournisseur a accepté le message, mais avant de l'enregistrer, le message est soumis de nouveau.
-- La clé d'idempotence (l'id de l'email) supprime ce doublon chez les fournisseurs qui l'honorent : Resend pendant 24 h, Mailpit non.
+- Si un worker plante après que le fournisseur a accepté le message, mais avant de l'enregistrer, le **même** message est soumis de nouveau sous la même clé.
+- La clé d'idempotence (l'id de l'email) supprime ce doublon chez les fournisseurs qui l'honorent : Resend pendant 24 h, Mailpit non. Au-delà de cette fenêtre, rien n'est renvoyé (`delivery_unconfirmed`).
 - Des workers concurrents ne tentent jamais deux fois **le même claim** (testé sous contention).
 
 ## 4. Historique et statuts
@@ -104,16 +124,21 @@ Un trigger sur `appointments` (`private.queue_appointment_notifications`) s'appl
   - `attempt_count` ;
   - `last_attempt_at` ;
   - `next_attempt_at` (prochain essai après une erreur temporaire) ;
+  - `first_submitted_at` (première transmission au fournisseur ; nul = la cliente n'a rien pu recevoir) ;
   - `sent_at` ;
   - `provider_message_id` ;
   - `last_error`.
 - `last_error` ne contient **que des codes stables** (`^[a-z0-9_]{1,64}$`, imposé par la base pour toute nouvelle écriture) :
-  - échecs : `provider_unavailable`, `provider_timeout`, `provider_rejected_422`, `invalid_recipient`, `attempts_exhausted`…
+  - échecs : `provider_unavailable`, `provider_timeout`, `provider_rejected_422`, `invalid_recipient`, `attempts_exhausted`, `render_failed`, `invalid_message`…
+  - livraison inconnue : `delivery_unconfirmed` (la tentative porte `provider_idempotency_conflict` ou `idempotency_window_elapsed`) ;
   - annulations : `appointment_cancelled`, `appointment_closed`, `rescheduled`, `superseded`, `recipient_changed`, `expired`, `appointment_past`, `reminder_too_late`.
 - `public.email_delivery_attempts` : une ligne par tentative.
-  - Colonnes : numéro, début, fin, `outcome` (`sent`, `retry`, `failed`, `lease_expired`, `cancelled`), code d'erreur, id du message chez le fournisseur.
+  - Colonnes : numéro, début, fin, `outcome` (`sent`, `retry`, `failed`, `lease_expired`, `cancelled`, `unconfirmed`), code d'erreur, id du message chez le fournisseur.
   - Elle ne contient ni destinataire, ni sujet, ni contenu.
   - Elle est lisible par les membres de l'établissement (RLS) et écrite uniquement par les fonctions du worker.
+- `private.email_renderings` : le message figé (destinataire, expéditeur, sujet, texte, HTML) et les informations du rendez-vous qu'il énonce.
+  - Elle n'est lisible par aucun rôle d'API.
+  - Le message est supprimé dès que l'email est final (`sent`, `failed`, `cancelled`).
 
 ## 5. Contenu des emails
 
@@ -134,7 +159,7 @@ Un trigger sur `appointments` (`private.queue_appointment_notifications`) s'appl
 
 ## 6. Sécurité
 
-- **Fonctions du worker** (`email_outbox_claim`, `_verify`, `_complete`, `_fail`, `_release`) : exécutables par `service_role` uniquement. Le cœur `private.email_outbox_claim_at` n'est exécutable par aucun rôle d'API (testé).
+- **Fonctions du worker** (`email_outbox_claim`, `_prepare`, `_complete`, `_fail`, `_release`) : exécutables par `service_role` uniquement. Le cœur `private.email_outbox_claim_at` n'est exécutable par aucun rôle d'API (testé).
 - **Outbox :**
   - les membres la lisent sous RLS ;
   - ils ne peuvent ni insérer (aucun envoi non autorisé), ni modifier (aucun email annulé ou envoyé ne redevient envoyable), ni supprimer ;
@@ -145,7 +170,7 @@ Un trigger sur `appointments` (`private.queue_appointment_notifications`) s'appl
   - de nouveau dans le worker, avant tout envoi.
   - Une adresse portant une injection d'en-tête (`\r\nBcc:`) n'atteint jamais le transport (testé).
 - **Expéditeur** (`EMAIL_FROM`) : une seule adresse, sur une ligne, sinon la livraison reste désactivée.
-- **Journaux** (`logEmail`) : identifiants, type, statut, code et compteurs uniquement. Jamais une adresse, un sujet, un contenu, une réponse du fournisseur ni une clé (testé). Les réponses d'erreur des fournisseurs ne sont jamais lues.
+- **Journaux** (`logEmail`) : identifiants, type, statut, code et compteurs uniquement. Jamais une adresse, un sujet, un contenu, une réponse du fournisseur ni une clé (testé). D'une réponse d'erreur, seul le type d'un 409 (`name`) est lu, pour distinguer les conflits d'idempotence ; le reste n'est jamais lu.
 - **Tâche périodique :** sans `CRON_SECRET` (32 caractères au moins), chaque appel est refusé (401).
 - **Configuration non activable par erreur :** la clé Resend d'exemple (`re_replace_me`) n'active jamais la livraison.
 
@@ -177,14 +202,15 @@ Aucune interface n'est livrée dans cette PR.
 - **Statuts lisibles par un membre** sur `email_events` (et dans la timeline CRM, déjà branchée) : `pending` (en attente ou nouvel essai prévu, voir `next_attempt_at`), `processing`, `sent`, `failed`, `cancelled`, avec le code `last_error`.
 - **Libellés proposés pour `last_error`** :
 
-  | Code(s)                                                          | Libellé                                  |
-  | ---------------------------------------------------------------- | ---------------------------------------- |
-  | `appointment_cancelled`                                          | « Non envoyé : rendez-vous annulé »      |
-  | `rescheduled`, `superseded`                                      | « Remplacé par un email plus récent »    |
-  | `recipient_changed`                                              | « Non envoyé : cliente changée »         |
-  | `expired`, `appointment_past`, `reminder_too_late`               | « Non envoyé : trop tard »               |
-  | `provider_*` (en `pending`)                                      | « Nouvel essai prévu »                   |
-  | `invalid_recipient`, `provider_rejected_*`, `attempts_exhausted` | « Échec : adresse refusée » ou « Échec » |
+  | Code(s)                                                                                              | Libellé                                  |
+  | ---------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+  | `appointment_cancelled`                                                                              | « Non envoyé : rendez-vous annulé »      |
+  | `rescheduled`, `superseded`                                                                          | « Remplacé par un email plus récent »    |
+  | `recipient_changed`                                                                                  | « Non envoyé : cliente changée »         |
+  | `expired`, `appointment_past`, `reminder_too_late`                                                   | « Non envoyé : trop tard »               |
+  | `provider_*` (en `pending`)                                                                          | « Nouvel essai prévu »                   |
+  | `invalid_recipient`, `provider_rejected_*`, `attempts_exhausted`, `render_failed`, `invalid_message` | « Échec : adresse refusée » ou « Échec » |
+  | `delivery_unconfirmed`                                                                               | « Envoi non confirmé : a pu être reçu »  |
 
 - **Historique détaillé :** `email_delivery_attempts` filtré par `email_event_id`.
 - **Libellés de type :** une seule table de libellés, réutilisée par la timeline CRM.
@@ -197,7 +223,12 @@ Aucune interface n'est livrée dans cette PR.
   - expirant au début du rendez-vous ;
   - une page qui demande confirmation (jamais d'action sur un simple GET, pour éviter les préchargeurs des messageries).
 - **Pas de webhook de délivrabilité** (rebonds, plaintes) : `/api/webhooks/resend` est prévu par l'architecture, non livré.
-- **Fenêtre résiduelle :** une annulation validée pendant l'appel au fournisseur lui-même (au plus 15 s) n'est pas vue. L'email part, puis l'annulation.
+- **Annulation pendant l'appel au fournisseur :** une annulation validée pendant l'appel lui-même (au plus 15 s) arrive trop tard pour retenir l'email. Comme il a été transmis (`first_submitted_at`), l'annulation est notifiée ensuite.
 - **Pas de vérification de l'adresse saisie** à la réservation : quelqu'un peut réserver avec l'adresse d'un tiers, qui reçoit alors la confirmation. Cette réception est bornée par les limites de la réservation publique et le plafond de 300 tentatives par établissement et par jour.
 - **Fidélisation, réactivation, Client Hub :** ajouter un type à `private.email_deliverable_types()`, son producteur et son modèle. Le worker, l'historique, les reprises et la sécurité sont réutilisés tels quels.
 - **Heure du rappel :** fixe (18 h). Un réglage par établissement pourra s'ajouter dans `business_settings`.
+
+## 10. Observations à trancher plus tard (aucun changement dans cette PR)
+
+- **Réservations tardives sans rappel :** un rendez-vous pris après 18 h la veille (ou le jour même) n'a pas de rappel ; seule sa confirmation part. C'est voulu : un rappel juste après la confirmation ferait doublon. Si le produit veut un rappel quelques heures avant ces rendez-vous-là, il faudra une seconde règle (par exemple « 2 h avant si la veille est passée »).
+- **Rappels en attente dans l'historique CRM :** la timeline de la cliente montre chaque ligne `email_events`, y compris un rappel encore `scheduled` pour un rendez-vous à venir. C'est cohérent avec le modèle de lecture (un email existe dès qu'il est mis en file), mais c'est un choix d'interface. Il faudra décider s'il faut masquer les emails futurs, les regrouper ou les présenter comme « prévu le … ».

@@ -28,8 +28,10 @@ function email(overrides: Partial<ClaimedEmail> = {}): ClaimedEmail {
       location: "12 rue des Lilas, Lyon",
       timezone: "Europe/Paris",
     },
+    message: null,
     appointment: {
       id: "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+      version: 1,
       status: "confirmed",
       startsAt: "2026-10-24T08:30:00.000Z",
       endsAt: "2026-10-24T10:00:00.000Z",

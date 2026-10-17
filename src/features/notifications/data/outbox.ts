@@ -1,7 +1,12 @@
 import "server-only";
 
+import { z } from "zod";
+
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
+import type { Json } from "@/types/database.generated";
+
+import type { EmailMessage, FailureOutcome } from "../transport/types";
 
 // The worker side of public.email_events. Every function below is
 // executable by the service role only; each is a compare-and-set on the
@@ -20,21 +25,49 @@ export async function claimEmails(
   return Array.isArray(data) ? data : [];
 }
 
+export type PreparedEmail =
+  | { action: "send"; message: EmailMessage }
+  | { action: "cancelled"; code: string }
+  | { action: "rerender" | "unconfirmed" | "invalid" | "stale" };
+
+const preparedSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("send"),
+    message: z.object({
+      to: z.string(),
+      from: z.string(),
+      replyTo: z.string().optional(),
+      subject: z.string(),
+      text: z.string(),
+      html: z.string(),
+    }),
+  }),
+  z.object({ action: z.literal("cancelled"), code: z.string() }),
+  z.object({
+    action: z.enum(["rerender", "unconfirmed", "invalid", "stale"]),
+  }),
+]);
+
 /**
- * Right before the send: true when the claimed email still applies. False:
- * it was cancelled (appointment cancelled or moved meanwhile) or the claim
- * is no longer current; it must not be sent.
+ * Right before the provider call, under a lock on the appointment: whether
+ * the claimed email still applies, and the exact message to send (the
+ * frozen one when it was already handed to the provider, else `message`,
+ * frozen now; `message` is then ignored). Anything but "send" means: do not call the provider.
  */
-export async function verifyEmail(
+export async function prepareEmail(
   admin: AppSupabaseClient,
   claim: { id: string; claimId: string },
-): Promise<boolean> {
-  const { data, error } = await admin.rpc("email_outbox_verify", {
+  appointmentVersion: number,
+  message: EmailMessage,
+): Promise<PreparedEmail> {
+  const { data, error } = await admin.rpc("email_outbox_prepare", {
     p_id: claim.id,
     p_claim_id: claim.claimId,
+    p_appointment_version: appointmentVersion,
+    p_message: message as unknown as Json,
   });
   if (error) throw databaseException(error);
-  return data === true;
+  return preparedSchema.parse(data);
 }
 
 /** False when the claim is no longer current (nothing recorded). */
@@ -57,13 +90,13 @@ export async function failEmail(
   admin: AppSupabaseClient,
   claim: { id: string; claimId: string },
   code: string,
-  permanent: boolean,
+  outcome: FailureOutcome,
 ): Promise<"pending" | "failed" | null> {
   const { data, error } = await admin.rpc("email_outbox_fail", {
     p_id: claim.id,
     p_claim_id: claim.claimId,
     p_error_code: code,
-    p_permanent: permanent,
+    p_outcome: outcome,
   });
   if (error) throw databaseException(error);
   return data === "pending" || data === "failed" ? data : null;

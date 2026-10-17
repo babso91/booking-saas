@@ -7,14 +7,18 @@ import {
   claimIdentitySchema,
 } from "../schemas/claimed-email";
 import { renderEmail } from "../templates/render";
-import { EmailTransportError, type EmailTransport } from "../transport/types";
+import {
+  EmailTransportError,
+  type EmailMessage,
+  type EmailTransport,
+} from "../transport/types";
 import { logEmail } from "./log";
 import {
   claimEmails,
   completeEmail,
   failEmail,
+  prepareEmail,
   releaseEmail,
-  verifyEmail,
 } from "./outbox";
 
 // Outbox consumer. Each run claims a bounded batch (PostgreSQL decides what
@@ -32,15 +36,21 @@ import {
 // * The run stops sending at its budget and gives back what it claimed but
 //   did not attempt; a send is bounded by its own timeout, well inside the
 //   lease.
-// * Each email is checked again right before its send (an appointment
-//   cancelled after the claim is not reminded). A change committed during
-//   the provider call itself is not seen.
+// * Each email is checked again right before its send, under a lock on the
+//   appointment (email_outbox_prepare): an appointment cancelled or moved
+//   after the claim is not reminded with former details. From that check
+//   on, the email counts as possibly delivered: a later change or
+//   cancellation notifies the customer.
+// * The message is frozen at its first submission: retries send the same
+//   request under the same idempotency key, never a re-rendered one.
 
 export type EmailWorkerDeps = {
   admin: AppSupabaseClient;
   transport: EmailTransport;
   from: string;
   appUrl: string;
+  /** The template (tests replace it to simulate a rendering failure). */
+  render?: typeof renderEmail;
 };
 
 export type EmailWorkerOptions = {
@@ -62,6 +72,8 @@ export type EmailWorkerResult = {
   released: number;
   /** No longer applied right before the send (cancelled, not sent). */
   cancelled: number;
+  /** Delivery unknown and not retryable safely (see FailureOutcome). */
+  unconfirmed: number;
   stale: number;
 };
 
@@ -87,6 +99,7 @@ export async function runEmailOutbox(
     failed: 0,
     released: 0,
     cancelled: 0,
+    unconfirmed: 0,
     stale: 0,
   };
 
@@ -140,10 +153,7 @@ async function deliver(
   const parsed = claimedEmailSchema.safeParse(raw);
   if (!parsed.success || !isDeliverableAddress(parsed.data.recipient)) {
     const code = parsed.success ? "invalid_recipient" : "invalid_payload";
-    const status = await failEmail(deps.admin, claim, code, true);
-    if (status) result.failed += 1;
-    else result.stale += 1;
-    logEmail("email_failed", { emailEventId: claim.id, code }, "warn");
+    await giveUp(deps, claim, code, result);
     return;
   }
   const email = parsed.data;
@@ -155,31 +165,68 @@ async function deliver(
     attempt: email.attempt,
   };
 
-  const rendered = renderEmail(email, { appUrl: deps.appUrl });
-  const replyTo = isDeliverableAddress(email.business.contactEmail)
-    ? email.business.contactEmail!
-    : undefined;
+  // A message already handed to the provider is sent again exactly as it
+  // was; otherwise it is rendered now. Rendering is deterministic on the
+  // claimed data: a failure would repeat at every attempt, so it gives the
+  // email up at once (a stable code, nothing about the customer logged).
+  let message: EmailMessage | null = email.message;
+  if (!message) {
+    try {
+      const rendered = (deps.render ?? renderEmail)(email, {
+        appUrl: deps.appUrl,
+      });
+      message = {
+        to: email.recipient,
+        from: deps.from,
+        replyTo: isDeliverableAddress(email.business.contactEmail)
+          ? email.business.contactEmail!
+          : undefined,
+        subject: rendered.subject,
+        text: rendered.text,
+        html: rendered.html,
+      };
+    } catch {
+      await giveUp(deps, claim, "render_failed", result);
+      return;
+    }
+  }
 
-  // The batch is sent one email at a time: the appointment may have been
-  // cancelled or moved since the claim.
-  if (!(await verifyEmail(deps.admin, claim))) {
-    result.cancelled += 1;
-    logEmail("email_no_longer_applies", fields);
-    return;
+  // Under a lock on the appointment: still applies? which exact message?
+  const prepared = await prepareEmail(
+    deps.admin,
+    claim,
+    email.appointment.version,
+    message,
+  );
+  switch (prepared.action) {
+    case "send":
+      break;
+    case "cancelled":
+      result.cancelled += 1;
+      logEmail("email_no_longer_applies", { ...fields, code: prepared.code });
+      return;
+    case "rerender":
+      // The appointment changed since the claim: rendered again next run.
+      result.released += 1;
+      logEmail("email_rerender", fields);
+      return;
+    case "unconfirmed":
+      result.unconfirmed += 1;
+      logEmail("email_unconfirmed", fields, "warn");
+      return;
+    case "invalid":
+      await giveUp(deps, claim, "invalid_message", result);
+      return;
+    case "stale":
+      result.stale += 1;
+      logEmail("email_stale_claim", fields, "warn");
+      return;
   }
 
   let providerMessageId: string | null;
   try {
     const sent = await deps.transport.send(
-      {
-        to: email.recipient,
-        from: deps.from,
-        replyTo,
-        subject: rendered.subject,
-        text: rendered.text,
-        html: rendered.html,
-        idempotencyKey: email.id,
-      },
+      { ...prepared.message, idempotencyKey: email.id },
       AbortSignal.timeout(sendTimeoutMs),
     );
     providerMessageId = sent.providerMessageId;
@@ -189,15 +236,17 @@ async function deliver(
         ? error
         : error instanceof Error &&
             (error.name === "TimeoutError" || error.name === "AbortError")
-          ? new EmailTransportError("provider_timeout", false)
-          : new EmailTransportError("transport_error", false);
+          ? new EmailTransportError("provider_timeout", "retry")
+          : new EmailTransportError("transport_error", "retry");
     const status = await failEmail(
       deps.admin,
       claim,
       failure.code,
-      failure.permanent,
+      failure.outcome,
     );
     if (status === "pending") result.retried += 1;
+    else if (failure.outcome === "unconfirmed" && status === "failed")
+      result.unconfirmed += 1;
     else if (status === "failed") result.failed += 1;
     else result.stale += 1;
     logEmail(
@@ -217,4 +266,17 @@ async function deliver(
     result.stale += 1;
     logEmail("email_stale_claim", fields, "warn");
   }
+}
+
+/** Gives the email up: a deterministic failure no retry can fix. */
+async function giveUp(
+  deps: EmailWorkerDeps,
+  claim: { id: string; claimId: string },
+  code: string,
+  result: EmailWorkerResult,
+) {
+  const status = await failEmail(deps.admin, claim, code, "permanent");
+  if (status) result.failed += 1;
+  else result.stale += 1;
+  logEmail("email_failed", { emailEventId: claim.id, code }, "warn");
 }

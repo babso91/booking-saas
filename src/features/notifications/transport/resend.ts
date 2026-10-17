@@ -40,9 +40,19 @@ export function resendTransport(
       }
 
       if (!response.ok) {
-        // The body may quote the address: never read into a log or the outbox.
-        await response.body?.cancel().catch(() => undefined);
-        throw httpFailure(response.status);
+        // The body may quote the address: only the error type of a 409 is
+        // read (to tell idempotency conflicts apart), never logged nor
+        // stored; any other body is discarded unread.
+        let errorName: string | null = null;
+        if (response.status === 409) {
+          const body = (await response.json().catch(() => null)) as {
+            name?: unknown;
+          } | null;
+          errorName = typeof body?.name === "string" ? body.name : null;
+        } else {
+          await response.body?.cancel().catch(() => undefined);
+        }
+        throw httpFailure(response.status, errorName);
       }
 
       const body = (await response.json().catch(() => null)) as {

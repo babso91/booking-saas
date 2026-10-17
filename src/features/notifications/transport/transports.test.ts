@@ -25,17 +25,30 @@ function fakeFetch(response: Response | Error) {
 
 describe("httpFailure", () => {
   it.each([
-    [401, "provider_unauthorized", false],
-    [403, "provider_unauthorized", false],
-    [408, "provider_http_408", false],
-    [409, "provider_http_409", false],
-    [429, "provider_http_429", false],
-    [500, "provider_unavailable", false],
-    [503, "provider_unavailable", false],
-    [400, "provider_rejected_400", true],
-    [422, "provider_rejected_422", true],
-  ])("HTTP %i → %s (permanent: %s)", (status, code, permanent) => {
-    expect(httpFailure(status)).toMatchObject({ code, permanent });
+    [401, undefined, "provider_unauthorized", "retry"],
+    [403, undefined, "provider_unauthorized", "retry"],
+    [408, undefined, "provider_http_408", "retry"],
+    [409, undefined, "provider_http_409", "retry"],
+    [409, "resource_locked", "provider_http_409", "retry"],
+    [
+      409,
+      "concurrent_idempotent_requests",
+      "provider_idempotency_in_progress",
+      "retry",
+    ],
+    [
+      409,
+      "invalid_idempotent_request",
+      "provider_idempotency_conflict",
+      "unconfirmed",
+    ],
+    [429, undefined, "provider_http_429", "retry"],
+    [500, undefined, "provider_unavailable", "retry"],
+    [503, undefined, "provider_unavailable", "retry"],
+    [400, undefined, "provider_rejected_400", "permanent"],
+    [422, undefined, "provider_rejected_422", "permanent"],
+  ] as const)("HTTP %i %s → %s (%s)", (status, name, code, outcome) => {
+    expect(httpFailure(status, name)).toMatchObject({ code, outcome });
   });
 
   it("a request without an answer is retried", () => {
@@ -43,11 +56,11 @@ describe("httpFailure", () => {
     timeout.name = "TimeoutError";
     expect(networkFailure(timeout)).toMatchObject({
       code: "provider_timeout",
-      permanent: false,
+      outcome: "retry",
     });
     expect(networkFailure(new TypeError("fetch failed"))).toMatchObject({
       code: "provider_network",
-      permanent: false,
+      outcome: "retry",
     });
   });
 });
@@ -81,7 +94,7 @@ describe("resendTransport", () => {
         "re_k",
         fakeFetch(new Response("slow down", { status: 429 })),
       ).send(message, AbortSignal.timeout(1000)),
-    ).rejects.toMatchObject({ code: "provider_http_429", permanent: false });
+    ).rejects.toMatchObject({ code: "provider_http_429", outcome: "retry" });
     const rejected = resendTransport(
       "re_k",
       fakeFetch(
@@ -102,7 +115,59 @@ describe("resendTransport", () => {
         message,
         AbortSignal.timeout(1000),
       ),
-    ).rejects.toMatchObject({ code: "provider_network", permanent: false });
+    ).rejects.toMatchObject({ code: "provider_network", outcome: "retry" });
+  });
+});
+
+describe("resendTransport: idempotency conflicts (409)", () => {
+  const conflict = (name: string) =>
+    resendTransport(
+      "re_k",
+      fakeFetch(
+        Response.json(
+          {
+            statusCode: 409,
+            name,
+            message: "Request for lea@example.test conflicts",
+          },
+          { status: 409 },
+        ),
+      ),
+    ).send(message, AbortSignal.timeout(1000));
+
+  it("a key reused with another body: delivery unconfirmed, never retried", async () => {
+    const error = await conflict("invalid_idempotent_request").catch(
+      (e: unknown) => e,
+    );
+    expect(error).toMatchObject({
+      code: "provider_idempotency_conflict",
+      outcome: "unconfirmed",
+    });
+    // Only the error type is read: the provider's message (which may
+    // quote the address) is never carried.
+    expect((error as Error).message).not.toContain("lea@");
+  });
+
+  it("a concurrent request with the same key: retried later", async () => {
+    await expect(
+      conflict("concurrent_idempotent_requests"),
+    ).rejects.toMatchObject({
+      code: "provider_idempotency_in_progress",
+      outcome: "retry",
+    });
+    await expect(conflict("resource_locked")).rejects.toMatchObject({
+      code: "provider_http_409",
+      outcome: "retry",
+    });
+  });
+
+  it("an unreadable 409 body is retried (no evidence of a conflict)", async () => {
+    await expect(
+      resendTransport(
+        "re_k",
+        fakeFetch(new Response("<html>", { status: 409 })),
+      ).send(message, AbortSignal.timeout(1000)),
+    ).rejects.toMatchObject({ code: "provider_http_409", outcome: "retry" });
   });
 });
 
@@ -131,7 +196,7 @@ describe("MemoryTransport", () => {
     transport.failNext("provider_unavailable");
     await expect(
       transport.send(message, AbortSignal.timeout(1000)),
-    ).rejects.toMatchObject({ code: "provider_unavailable" });
+    ).rejects.toMatchObject({ code: "provider_unavailable", outcome: "retry" });
     await expect(
       transport.send(message, AbortSignal.timeout(1000)),
     ).resolves.toEqual({
