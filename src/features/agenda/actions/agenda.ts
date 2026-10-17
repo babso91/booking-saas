@@ -31,6 +31,7 @@ import {
 } from "@/features/agenda/schemas/agenda";
 import { runBusinessAction } from "@/features/businesses/actions/run-business-action";
 import { kickCalendarOutbound } from "@/features/calendar/data/outbound-kick";
+import { kickEmailOutbox } from "@/features/notifications/data/kick";
 import { readBusinessToday } from "@/lib/time/business-time";
 import { z } from "zod";
 
@@ -118,6 +119,8 @@ export async function updateAppointmentAction(input: unknown) {
         data,
       );
       kickCalendarOutbound({ businessId });
+      // Change notice (if any) after the response, like the mirror.
+      kickEmailOutbox({ businessId });
       return updated;
     },
   );
@@ -136,6 +139,7 @@ export async function setAppointmentStatusAction(input: unknown) {
         data,
       );
       kickCalendarOutbound({ businessId });
+      kickEmailOutbox({ businessId });
       return changed;
     },
   );
@@ -160,6 +164,7 @@ export async function cancelAppointmentAction(input: unknown) {
         },
       );
       kickCalendarOutbound({ businessId });
+      kickEmailOutbox({ businessId });
       return cancelled;
     },
   );

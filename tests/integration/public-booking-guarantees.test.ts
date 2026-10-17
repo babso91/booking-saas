@@ -182,12 +182,15 @@ describe("the journey", () => {
     );
     expect((await appointments())[0]!.price_cents_snapshot).toBe(6500);
 
-    // The confirmation is recorded in the outbox; nothing sends it yet.
+    // The confirmation and the reminder of the day before are recorded in
+    // the outbox, delivered later by the email worker.
     const { rows: emails } = await db.query(
-      "select type::text, status::text from public.email_events where appointment_id = $1",
+      `select type::text, status::text from public.email_events
+       where appointment_id = $1 order by type`,
       [booked!.id],
     );
     expect(emails).toEqual([
+      { type: "appointment_reminder", status: "pending" },
       { type: "booking_confirmation", status: "pending" },
     ]);
   });
@@ -242,11 +245,12 @@ describe("ambiguous retries", () => {
     expect(replayed).toEqual({ ...first.data.booking, replayed: true });
 
     expect(await appointments()).toHaveLength(1);
+    // One confirmation and one reminder: the retry queued nothing.
     const { rows } = await db.query(
       "select count(*)::int as count from public.email_events where business_id = $1",
       [business.id],
     );
-    expect(rows[0]).toEqual({ count: 1 });
+    expect(rows[0]).toEqual({ count: 2 });
   });
 
   it("concurrent identical retries create one appointment", async () => {

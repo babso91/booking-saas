@@ -283,7 +283,7 @@ Statuts exposés :
 | `cancelled`    | `cancelled`     | annulé                                                                              |
 
 - **Champs jamais exposés :** le payload, l'identifiant fournisseur, le texte d'erreur et la clé de déduplication.
-- **Pas encore d'envoi :** aucun worker n'envoie encore ces emails ; les confirmations de réservation restent donc `scheduled`.
+- **Envoi :** le worker de [`NOTIFICATIONS_CONTRACT.md`](NOTIFICATIONS_CONTRACT.md) délivre ces emails une fois un transport configuré ; d'ici là, ils restent `scheduled`. Un rendez-vous à venir y apparaît donc avec son rappel en file (`appointment_reminder`), et une modification ou une annulation avec l'email correspondant.
 
 #### Notes privées
 

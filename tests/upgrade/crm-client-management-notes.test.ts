@@ -47,8 +47,16 @@ async function tables() {
         from public.clients c where c.business_id = $1) as clients,
        (select md5(string_agg(a::text, '|' order by a.id))
         from public.appointments a where a.business_id = $1) as appointments,
-       (select md5(string_agg(e::text, '|' order by e.id))
-        from public.email_events e where e.business_id = $1) as emails`,
+       -- The columns of that version, and the rows it held: the reminders
+       -- queued by a later migration (20261019090000) are not part of it.
+       (select md5(string_agg(
+          (e.id, e.business_id, e.client_id, e.appointment_id, e.type,
+           e.recipient_email, e.payload, e.dedupe_key, e.status, e.scheduled_for,
+           e.attempt_count, e.last_attempt_at, e.sent_at, e.provider_message_id,
+           e.last_error, e.created_at, e.updated_at)::text,
+          '|' order by e.id))
+        from public.email_events e
+        where e.business_id = $1 and e.type <> 'appointment_reminder') as emails`,
     [businessId],
   );
   return JSON.stringify(rows[0]);
@@ -188,11 +196,18 @@ describe("upgrading to customer management and notes", () => {
       { client_email_snapshot: "lea@x.test", version: 1 },
       { client_email_snapshot: "lea@x.test", version: 1 },
     ]);
+    // The queued confirmation, and the reminder queued for her upcoming
+    // appointment by the email migration (20261019090000): both keep the
+    // address of the appointment.
     const { rows: emails } = await db.query(
-      "select recipient_email::text as recipient from public.email_events where client_id = $1",
+      `select type::text, recipient_email::text as recipient
+       from public.email_events where client_id = $1 order by type`,
       [lea],
     );
-    expect(emails).toEqual([{ recipient: "lea@x.test" }]);
+    expect(emails).toEqual([
+      { type: "appointment_reminder", recipient: "lea@x.test" },
+      { type: "booking_confirmation", recipient: "lea@x.test" },
+    ]);
     expect(
       (
         await db.query(
