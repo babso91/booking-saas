@@ -1,8 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
-
 import { runCalendarJob } from "@/features/calendar/data/cron";
 import { getCalendarDeps } from "@/features/calendar/data/deps";
-import { getCalendarEnv, getCronSecret } from "@/lib/env/server";
+import { isAuthorizedCronRequest } from "@/lib/cron-auth";
+import { getCalendarEnv } from "@/lib/env/server";
 
 // GET|POST /api/cron/calendar — periodic calendar job (schedule every 15
 // minutes at deploy, with `Authorization: Bearer $CRON_SECRET`). See
@@ -11,19 +10,8 @@ import { getCalendarEnv, getCronSecret } from "@/lib/env/server";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-function authorized(request: Request) {
-  const secret = getCronSecret();
-  const header = request.headers.get("authorization") ?? "";
-  if (!secret) return false;
-  const expected = Buffer.from(`Bearer ${secret}`);
-  const received = Buffer.from(header);
-  return (
-    received.length === expected.length && timingSafeEqual(received, expected)
-  );
-}
-
 async function handle(request: Request) {
-  if (!authorized(request)) {
+  if (!isAuthorizedCronRequest(request)) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
   if (!getCalendarEnv()) {

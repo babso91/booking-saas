@@ -398,15 +398,16 @@ Booking reste la source de vérité : Google Calendar n'est qu'un miroir, dans u
 
 ## 9. Emails et tâches planifiées
 
-Resend est appelé uniquement côté serveur. Les emails immédiats et différés passent par l'outbox.
+Le fournisseur (Resend) est appelé uniquement côté serveur, derrière une abstraction de transport. Les emails immédiats et différés passent par l'outbox `email_events`.
 
-- un cron Supabase déclenche périodiquement un Route Handler Vercel protégé par `CRON_SECRET` ;
-- ce handler crée les rappels/réactivations dus de façon idempotente, puis traite un lot d'outbox ;
-- `email_events.dedupe_key` est unique par business ;
-- les relances sont désactivées par défaut ;
-- les tentatives sont bornées et les échecs définitifs restent inspectables.
+- **Mise en file :** un trigger sur `appointments` met en file, sur tous les chemins d'écriture, le rappel de la veille (18 h, heure de l'établissement), les emails de modification et d'annulation, et annule ceux qui ne s'appliquent plus.
+- **Tâche périodique :** l'ordonnanceur de l'infrastructure appelle `/api/cron/emails`, protégé par `CRON_SECRET`, qui traite un lot d'outbox. Un déclenchement après réservation ou modification accélère la livraison, au mieux.
+- **Claim :** il verrouille avec un bail et revalide chaque email contre le rendez-vous actuel, puis encore juste avant l'envoi. Les résultats sont écrits par compare-and-set.
+- **Déduplication :** `email_events.dedupe_key` est unique par business, et l'id de l'email sert de clé d'idempotence chez le fournisseur.
+- **Tentatives :** bornées (8, avec backoff) et historisées dans `email_delivery_attempts`. Les échecs définitifs restent inspectables. Chaque établissement est plafonné à 300 tentatives sur 24 h.
+- **Relances :** désactivées par défaut.
 
-Ce compromis conserve la logique applicative et les templates dans Next.js tout en utilisant le scheduler de la plateforme de données. Si les limites d'hébergement changent, le même worker pourra être invoqué par Vercel Cron sans modifier le métier.
+Contrat : [`docs/NOTIFICATIONS_CONTRACT.md`](NOTIFICATIONS_CONTRACT.md), migration `20261019090000_email_notifications.sql`. Les modèles et la logique d'envoi restent dans Next.js ; l'ordonnanceur est interchangeable (tâche planifiée de l'hôte, pg_cron/pg_net, Vercel Cron) sans modifier le métier.
 
 ## 10. Stockage de fichiers
 
@@ -472,4 +473,4 @@ Cet ordre reflète la direction actuelle, pas une obligation architecturale abso
 
 ## 16. Ce que la fondation actuelle ne prétend pas faire
 
-La fondation et le moteur de réservation sécurisé sont livrés : backend des prestations, horaires et exceptions, calcul des créneaux et réservation publique (RPC, DAL, Server Actions et Route Handlers), avec outbox de confirmation et tests. L'authentification professionnelle et l'onboarding transactionnel sont livrés (backend et écrans). Le backend de l'agenda professionnel V1 est livré (lecture d'une plage, rendez-vous manuels, déplacements, statuts, blocs, versions optimistes). Ne sont pas encore livrés : écrans métier dont l'agenda, synchronisation des calendriers externes, CRM, fidélité, envoi des emails, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables selon la roadmap indicative ci-dessus.
+La fondation et le moteur de réservation sécurisé sont livrés : backend des prestations, horaires et exceptions, calcul des créneaux et réservation publique (RPC, DAL, Server Actions et Route Handlers), avec outbox de confirmation et tests. L'authentification professionnelle et l'onboarding transactionnel sont livrés (backend et écrans). Le backend de l'agenda professionnel V1 est livré (lecture d'une plage, rendez-vous manuels, déplacements, statuts, blocs, versions optimistes). Ne sont pas encore livrés : écrans métier dont l'agenda, synchronisation des calendriers externes, CRM, fidélité, relances, seed de démonstration et statistiques. Ces éléments doivent être ajoutés en verticales testables selon la roadmap indicative ci-dessus.

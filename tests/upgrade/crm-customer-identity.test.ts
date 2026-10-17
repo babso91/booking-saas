@@ -74,7 +74,18 @@ async function history(table: keyof typeof historyBefore) {
      order by ${order}, id`,
     [[businessA, businessB], known],
   );
-  return rows;
+  // The columns of that version: later migrations may add others (e.g. the
+  // email delivery state of 20261019090000).
+  const columns =
+    historyBefore[table][0] && Object.keys(historyBefore[table][0]);
+  return columns
+    ? rows.map(
+        (row) =>
+          Object.fromEntries(
+            columns.map((column) => [column, row[column]]),
+          ) as Row,
+      )
+    : rows;
 }
 
 async function mirrorsOf(businessId: string) {

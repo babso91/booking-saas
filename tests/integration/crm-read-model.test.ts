@@ -120,6 +120,20 @@ async function customer(
   return rows[0]!.id;
 }
 
+/**
+ * The reminders queued by the appointments themselves (one per upcoming
+ * confirmed appointment with an email): persisted outbox rows, so part of
+ * the timeline like any other email.
+ */
+async function reminderEvents(client: string) {
+  const { rows } = await db.query<{ id: string }>(
+    `select id from public.email_events
+     where client_id = $1 and type = 'appointment_reminder'`,
+    [client],
+  );
+  return rows.map((row) => `email:${row.id}`);
+}
+
 async function email(
   business: string,
   client: string,
@@ -135,7 +149,7 @@ async function email(
        (business_id, client_id, appointment_id, type, recipient_email, payload, dedupe_key,
         status, scheduled_for, sent_at, provider_message_id, last_error, created_at, attempt_count)
      values ($1, $2, $3, 'booking_confirmation', 'lea@example.test',
-             '{"secret":"SECRET-PAYLOAD"}', $4, $5, $6, $7, 'PROVIDER-ID-123', 'SMTP-ERROR-TEXT', $6, 1)
+             '{"secret":"SECRET-PAYLOAD"}', $4, $5, $6, $7, 'PROVIDER-ID-123', 'smtp_error_text', $6, 1)
      returning id`,
     [
       business,
@@ -425,11 +439,14 @@ describe("security: professionals of the business only", () => {
       upcomingCount: 1,
     });
     const history = await timeline(c.emmaB!, 50);
+    // Her upcoming appointment's queued reminder is one of the emails.
+    expect(await reminderEvents(c.emmaB!)).toHaveLength(1);
     expect(history.events.map((event) => event.kind).sort()).toEqual([
       "appointment",
       "appointment",
       "appointment",
       "appointment",
+      "email",
       "email",
       "loyalty",
     ]);
@@ -740,9 +757,14 @@ describe("metrics: exact definitions", () => {
       upcomingCount: 1,
     });
     expect(ines.nextAppointment?.id).toBe(appt.inesNext);
+    // No history, only the reminder her booking queued.
+    const reminders = await reminderEvents(c.ines!);
+    expect(reminders).toHaveLength(1);
     expect(
-      ok(await listClientTimelineAction({ clientId: c.ines })).events,
-    ).toEqual([]);
+      ok(await listClientTimelineAction({ clientId: c.ines })).events.map(
+        (event) => event.id,
+      ),
+    ).toEqual(reminders);
   });
 
   it("directory and profile agree for every customer (one definition)", async () => {
@@ -950,7 +972,10 @@ describe("timeline", () => {
     ).events;
   });
 
-  it("holds the persisted history only, upcoming confirmed appointments apart", () => {
+  it("holds the persisted history only, upcoming confirmed appointments apart", async () => {
+    // The reminders of her two upcoming appointments (queued rows).
+    const reminders = await reminderEvents(c.lea!);
+    expect(reminders).toHaveLength(2);
     expect(events.map((event) => event.id).sort()).toEqual(
       [
         ...[
@@ -973,6 +998,7 @@ describe("timeline", () => {
           ev.emailFailed,
           ev.emailSameInstant,
         ].map((id) => `email:${id}`),
+        ...reminders,
       ].sort(),
     );
     expect(events.map((event) => event.id)).not.toContain(
@@ -1070,7 +1096,9 @@ describe("timeline", () => {
     for (const secret of [
       "SECRET-PAYLOAD",
       "PROVIDER-ID-123",
-      "SMTP-ERROR-TEXT",
+      // The outbox stores stable codes only (never a provider's text); even
+      // that code stays out of the timeline.
+      "smtp_error_text",
       "delivered",
     ]) {
       expect(text).not.toContain(secret);

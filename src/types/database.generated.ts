@@ -243,15 +243,40 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
-                },"email_events": {
+                },"email_delivery_attempts": {
                   Row: {
-                    "appointment_id": string | null,"attempt_count": number,"business_id": string,"client_id": string | null,"created_at": string,"dedupe_key": string,"id": string,"last_attempt_at": string | null,"last_error": string | null,"payload": NonNullable<Json>,"provider_message_id": string | null,"recipient_email": string,"scheduled_for": string,"sent_at": string | null,"status": Database["public"]['Enums']["email_event_status"],"type": Database["public"]['Enums']["email_event_type"],"updated_at": string
+                    "attempt_number": number,"business_id": string,"claim_id": string,"email_event_id": string,"error_code": string | null,"finished_at": string | null,"id": number,"outcome": string | null,"provider_message_id": string | null,"started_at": string
                   }
                   Insert: {
-                    "appointment_id"?: string | null,"attempt_count"?: number,"business_id": string,"client_id"?: string | null,"created_at"?: string,"dedupe_key": string,"id"?: string,"last_attempt_at"?: string | null,"last_error"?: string | null,"payload"?: NonNullable<Json>,"provider_message_id"?: string | null,"recipient_email": string,"scheduled_for"?: string,"sent_at"?: string | null,"status"?: Database["public"]['Enums']["email_event_status"],"type": Database["public"]['Enums']["email_event_type"],"updated_at"?: string
+                    "attempt_number": number,"business_id": string,"claim_id": string,"email_event_id": string,"error_code"?: string | null,"finished_at"?: string | null,"id"?: never,"outcome"?: string | null,"provider_message_id"?: string | null,"started_at": string
                   }
                   Update: {
-                    "appointment_id"?: string | null,"attempt_count"?: number,"business_id"?: string,"client_id"?: string | null,"created_at"?: string,"dedupe_key"?: string,"id"?: string,"last_attempt_at"?: string | null,"last_error"?: string | null,"payload"?: NonNullable<Json>,"provider_message_id"?: string | null,"recipient_email"?: string,"scheduled_for"?: string,"sent_at"?: string | null,"status"?: Database["public"]['Enums']["email_event_status"],"type"?: Database["public"]['Enums']["email_event_type"],"updated_at"?: string
+                    "attempt_number"?: number,"business_id"?: string,"claim_id"?: string,"email_event_id"?: string,"error_code"?: string | null,"finished_at"?: string | null,"id"?: never,"outcome"?: string | null,"provider_message_id"?: string | null,"started_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "email_delivery_attempts_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "email_delivery_attempts_email_event_id_business_id_fkey"
+      columns: ["email_event_id","business_id"]
+isOneToOne: false
+      referencedRelation: "email_events"
+      referencedColumns: ["id","business_id"]
+    }
+                  ]
+                },"email_events": {
+                  Row: {
+                    "appointment_id": string | null,"attempt_count": number,"business_id": string,"claim_id": string | null,"client_id": string | null,"created_at": string,"dedupe_key": string,"id": string,"last_attempt_at": string | null,"last_error": string | null,"lease_until": string | null,"next_attempt_at": string | null,"payload": NonNullable<Json>,"provider_message_id": string | null,"recipient_email": string,"scheduled_for": string,"sent_at": string | null,"status": Database["public"]['Enums']["email_event_status"],"type": Database["public"]['Enums']["email_event_type"],"updated_at": string
+                  }
+                  Insert: {
+                    "appointment_id"?: string | null,"attempt_count"?: number,"business_id": string,"claim_id"?: string | null,"client_id"?: string | null,"created_at"?: string,"dedupe_key": string,"id"?: string,"last_attempt_at"?: string | null,"last_error"?: string | null,"lease_until"?: string | null,"next_attempt_at"?: string | null,"payload"?: NonNullable<Json>,"provider_message_id"?: string | null,"recipient_email": string,"scheduled_for"?: string,"sent_at"?: string | null,"status"?: Database["public"]['Enums']["email_event_status"],"type": Database["public"]['Enums']["email_event_type"],"updated_at"?: string
+                  }
+                  Update: {
+                    "appointment_id"?: string | null,"attempt_count"?: number,"business_id"?: string,"claim_id"?: string | null,"client_id"?: string | null,"created_at"?: string,"dedupe_key"?: string,"id"?: string,"last_attempt_at"?: string | null,"last_error"?: string | null,"lease_until"?: string | null,"next_attempt_at"?: string | null,"payload"?: NonNullable<Json>,"provider_message_id"?: string | null,"recipient_email"?: string,"scheduled_for"?: string,"sent_at"?: string | null,"status"?: Database["public"]['Enums']["email_event_status"],"type"?: Database["public"]['Enums']["email_event_type"],"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -715,6 +740,21 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_client_id": string,"p_content": string,"p_expected_version": number,"p_note_id": string }; Returns: {
               "note_id": string,"status": string
             }[]
+                           },
+"email_outbox_claim":
+{ Args: { "p_business_id"?: string,"p_limit"?: number,"p_per_business"?: number }; Returns: Json
+                           },
+"email_outbox_complete":
+{ Args: { "p_claim_id": string,"p_id": string,"p_provider_message_id"?: string }; Returns: boolean
+                           },
+"email_outbox_fail":
+{ Args: { "p_claim_id": string,"p_error_code": string,"p_id": string,"p_permanent"?: boolean }; Returns: string
+                           },
+"email_outbox_release":
+{ Args: { "p_claim_id": string,"p_id": string }; Returns: boolean
+                           },
+"email_outbox_verify":
+{ Args: { "p_claim_id": string,"p_id": string }; Returns: boolean
                            },
 "get_available_slots":
 { Args: { "p_date": string,"p_service_id": string,"p_slug": string }; Returns: {

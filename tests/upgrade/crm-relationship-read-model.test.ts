@@ -37,7 +37,16 @@ async function tables() {
        (select md5(string_agg(a::text, '|' order by a.id)) from public.appointments a where a.business_id = $1) as appointments,
        -- The columns of that version: later migrations may add others.
        (select md5(string_agg((c.id, c.business_id, c.first_name, c.last_name, c.email, c.phone, c.internal_notes, c.loyalty_token_hash, c.created_at, c.updated_at)::text, '|' order by c.id)) from public.clients c where c.business_id = $1) as clients,
-       (select md5(string_agg(e::text, '|' order by e.id)) from public.email_events e where e.business_id = $1) as emails`,
+       -- The columns of that version, and the rows it held: the reminders
+       -- queued by a later migration (20261019090000) are not part of it.
+       (select md5(string_agg(
+          (e.id, e.business_id, e.client_id, e.appointment_id, e.type,
+           e.recipient_email, e.payload, e.dedupe_key, e.status, e.scheduled_for,
+           e.attempt_count, e.last_attempt_at, e.sent_at, e.provider_message_id,
+           e.last_error, e.created_at, e.updated_at)::text,
+          '|' order by e.id))
+        from public.email_events e
+        where e.business_id = $1 and e.type <> 'appointment_reminder') as emails`,
     [businessId],
   );
   return JSON.stringify(rows[0]);
@@ -133,8 +142,11 @@ describe("upgrading to the relationship read model", () => {
       businessId,
       clientId,
     ]);
+    // The recorded email, and the reminder the email migration
+    // (20261019090000) queued for the upcoming appointment.
     expect(events.map((event) => event.event_id.split(":")[0]).sort()).toEqual([
       "appointment",
+      "email",
       "email",
     ]);
     const appointment = events.find(
