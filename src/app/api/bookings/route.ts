@@ -1,6 +1,7 @@
 import { createPublicBooking } from "@/features/appointments/data/public-booking";
 import { createPublicBookingSchema } from "@/features/appointments/schemas/public-booking";
 import { kickCalendarOutbound } from "@/features/calendar/data/outbound-kick";
+import { kickEmailOutbox } from "@/features/notifications/data/kick";
 import { validationException } from "@/lib/errors";
 import { trustedClientIp } from "@/lib/client-identity";
 import { jsonError, jsonOk, readJsonBody } from "@/lib/http";
@@ -34,10 +35,11 @@ export async function POST(request: Request) {
       clientIp,
     );
 
-    // The Google mirror never delays nor fails the booking: it runs after
-    // the response, from the committed desired state.
+    // The Google mirror and the confirmation email never delay nor fail the
+    // booking: they run after the response, from the committed state.
     if (!booking.replayed) {
       kickCalendarOutbound({ appointmentId: booking.appointmentId });
+      kickEmailOutbox({ appointmentId: booking.appointmentId });
     }
 
     return jsonOk({ booking }, { status: booking.replayed ? 200 : 201 });

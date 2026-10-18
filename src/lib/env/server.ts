@@ -6,24 +6,51 @@ const adminEnvSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
 });
 
-const emailEnvSchema = z.object({
-  CRON_SECRET: z.string().min(32),
-  RESEND_API_KEY: z.string().startsWith("re_"),
-  RESEND_FROM_EMAIL: z.string().min(3),
-});
-
 export function getAdminEnv() {
   return adminEnvSchema.parse({
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
   });
 }
 
-export function getEmailEnv() {
-  return emailEnvSchema.parse({
-    CRON_SECRET: process.env.CRON_SECRET,
-    RESEND_API_KEY: process.env.RESEND_API_KEY,
-    RESEND_FROM_EMAIL: process.env.RESEND_FROM_EMAIL,
+// Transactional emails. Nothing is delivered unless EMAIL_TRANSPORT names a
+// transport and its settings are valid: the outbox keeps every email until
+// then. A sender is "Name <address>" or "address", on one line.
+const emailSender = z
+  .string()
+  .trim()
+  .max(320)
+  .regex(
+    /^(?:[^<>\r\n"]{1,120} <[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+>|[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+)$/,
+  );
+
+const emailEnvSchema = z.discriminatedUnion("EMAIL_TRANSPORT", [
+  z.object({
+    EMAIL_TRANSPORT: z.literal("resend"),
+    EMAIL_FROM: emailSender,
+    // A real key: the .env.example placeholder never enables delivery.
+    RESEND_API_KEY: z
+      .string()
+      .regex(/^re_[A-Za-z0-9_-]{16,}$/)
+      .refine((value) => !value.startsWith("re_replace")),
+  }),
+  z.object({
+    EMAIL_TRANSPORT: z.literal("mailpit"),
+    EMAIL_FROM: emailSender,
+    MAILPIT_URL: z.url().default("http://127.0.0.1:54324"),
+  }),
+]);
+
+export type EmailEnv = z.output<typeof emailEnvSchema>;
+
+/** Email delivery settings, or null when delivery is not configured. */
+export function getEmailEnv(): EmailEnv | null {
+  const parsed = emailEnvSchema.safeParse({
+    EMAIL_TRANSPORT: process.env.EMAIL_TRANSPORT || undefined,
+    EMAIL_FROM: process.env.EMAIL_FROM || undefined,
+    RESEND_API_KEY: process.env.RESEND_API_KEY || undefined,
+    MAILPIT_URL: process.env.MAILPIT_URL || undefined,
   });
+  return parsed.success ? parsed.data : null;
 }
 
 // External calendars (Google Calendar). Absent or invalid: the integration

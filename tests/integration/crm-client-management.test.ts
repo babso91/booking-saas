@@ -642,19 +642,25 @@ describe("editing a customer", () => {
         phone: "0604040404",
       }),
     );
+    // Queued: the confirmation inserted above and the appointment's
+    // reminder (queued by the appointment itself, to its contact).
     expect(updated.retained).toEqual({
       upcomingAppointmentsWithOtherEmail: 1,
-      queuedEmailsToOtherAddress: 1,
+      queuedEmailsToOtherAddress: 2,
     });
 
     // Appointments keep their snapshot (and their version); the queued email
     // keeps its recipient.
     expect(await snapshots()).toEqual(snapshotsBefore);
     const { rows: emails } = await db.query(
-      "select recipient_email::text as recipient from public.email_events where client_id = $1",
+      `select type::text, recipient_email::text as recipient
+       from public.email_events where client_id = $1 order by type`,
       [record.id],
     );
-    expect(emails).toEqual([{ recipient: "anna@example.com" }]);
+    expect(emails).toEqual([
+      { type: "appointment_reminder", recipient: "anna@example.com" },
+      { type: "booking_confirmation", recipient: "anna@example.com" },
+    ]);
 
     // The read model: current record in the profile, the contact at the
     // time in the timeline.

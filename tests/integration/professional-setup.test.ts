@@ -22,12 +22,12 @@ import {
 } from "@/features/services/actions/services";
 import type { ActionResult, AppErrorCode } from "@/lib/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
-import { zonedLocalToUtc } from "@/lib/time/zoned";
 
 import {
   createBusiness,
   createProfessional,
   dateInDays,
+  db,
   type Professional,
   type TestBusiness,
 } from "./support/fixtures";
@@ -239,17 +239,29 @@ describe("a newly onboarded professional", () => {
     const agenda = ok(await getAgendaAction({ startDate: DAY, endDate: DAY }));
     const day = agenda.workingHours.days[0]!;
     expect(day.weekday).toBe(new Date(`${DAY}T12:00:00Z`).getUTCDay());
-    expect(day.openRanges).toEqual(
-      [
-        ["09:00", "12:30"],
-        ["13:30", "19:00"],
-      ].map(([start, end]) => ({
-        startsAt: zonedLocalToUtc(`${DAY}T${start}`, ZONE).toISOString(),
-        endsAt: zonedLocalToUtc(`${DAY}T${end}`, ZONE).toISOString(),
+    // The instants are PostgreSQL's reading of the zone, the calendar
+    // authority: Node's tzdata may differ (Node 24 ships 2026c, where
+    // British Columbia stays on UTC−7 from November 2026).
+    const instant = async (local: string) =>
+      (
+        await db.query<{ at: Date }>(
+          "select ($1::timestamp at time zone $2) as at",
+          [local, ZONE],
+        )
+      ).rows[0]!.at.toISOString();
+    const expected = [];
+    for (const [start, end] of [
+      ["09:00", "12:30"],
+      ["13:30", "19:00"],
+    ]) {
+      expected.push({
+        startsAt: await instant(`${DAY}T${start}`),
+        endsAt: await instant(`${DAY}T${end}`),
         localStartsAt: `${DAY}T${start}`,
         localEndsAt: `${DAY}T${end}`,
-      })),
-    );
+      });
+    }
+    expect(day.openRanges).toEqual(expected);
 
     // 6. A manual appointment with a configured service, for a new customer.
     const email = `camille-${randomUUID().slice(0, 8)}@x.test`;

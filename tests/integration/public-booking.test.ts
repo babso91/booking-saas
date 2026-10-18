@@ -177,9 +177,11 @@ describe("booking an available slot", () => {
       },
     ]);
 
+    // The confirmation, and the reminder of the day before (queued by the
+    // appointment itself, see email-notifications.test.ts).
     const { rows: emails } = await db.query(
       `select type, status, recipient_email, dedupe_key, payload->>'business_slug' as slug
-       from public.email_events where appointment_id = $1`,
+       from public.email_events where appointment_id = $1 order by type`,
       [result.appointmentId],
     );
     expect(emails).toEqual([
@@ -189,6 +191,13 @@ describe("booking an available slot", () => {
         recipient_email: "lea.martin@example.test",
         dedupe_key: `booking_confirmation:${result.appointmentId}`,
         slug: business.slug,
+      },
+      {
+        type: "appointment_reminder",
+        status: "pending",
+        recipient_email: "lea.martin@example.test",
+        dedupe_key: `appointment_reminder:${result.appointmentId}:v1`,
+        slug: null,
       },
     ]);
 

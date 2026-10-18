@@ -111,7 +111,7 @@ La réponse ne contient **rien de la fiche cliente** : pas d'identifiant de clie
 
 ## 6. Limites connues
 
-- **Aucun email n'est envoyé.** `email_events` (`booking_confirmation`, `pending`) est un outbox sans worker d'envoi. L'UI ne doit pas écrire « email envoyé ».
+- **Emails :** la confirmation et le rappel de la veille sont mis en file dans `email_events` et délivrés par le worker de [`NOTIFICATIONS_CONTRACT.md`](NOTIFICATIONS_CONTRACT.md). Rien n'est envoyé tant qu'aucun transport n'est configuré : l'UI ne doit toujours pas écrire « email envoyé ».
 - **Adresse réseau :** voir § 9.1. Elle n'est fiable que si le proxy est configuré comme décrit ; sans configuration, les réservations sont refusées.
 - **Lectures non limitées :** la disponibilité et le profil n'ont pas de limite de débit propre (lectures bornées à un jour par requête).
 - **Pas de captcha, pas de vérification d'email :** voir § 9.6 (risque restant et prérequis avant un trafic public réel).
