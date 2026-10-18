@@ -18,9 +18,10 @@
 --        business's time zone (only when that moment is still ahead);
 --      * appointment_changed when a confirmed appointment moves or changes
 --        service, and appointment_cancelled when a future one is
---        cancelled, both only if the customer may have heard of it from us
---        (an email of the appointment was sent or handed to the provider);
---        an email not yet handed over gives the current details anyway;
+--        cancelled, both when the customer knows of it from us (a public
+--        booking, confirmed on screen; or an email of the appointment sent
+--        or handed to the provider); a change notice replaces a
+--        confirmation not yet sent;
 --      * queued emails that no longer apply are cancelled (reminder of an
 --        old time, anything of a cancelled, completed or no-show
 --        appointment, anything addressed to a former contact).
@@ -329,11 +330,17 @@ begin
 end;
 $$;
 
--- Whether the appointment's current contact may have received an email
--- about it: one was delivered, or at least handed to the provider (whose
--- answer may have been lost). first_submitted_at is set under a lock on the
--- appointment before any provider call (email_outbox_prepare), so a false
--- answer is reliable: nothing about this appointment can have reached her.
+-- Whether the appointment's current contact knows of it from us:
+-- * she booked it publicly: the booking page showed it confirmed at once,
+--   whatever became of the confirmation email (only the public booking
+--   queues a booking_confirmation, in the transaction that creates the
+--   appointment, to the address she typed);
+-- * or an email about it reached her, or at least was handed to the
+--   provider (whose answer may have been lost). first_submitted_at is set
+--   under a lock on the appointment before any provider call
+--   (email_outbox_prepare), so a false answer is reliable.
+-- An appointment the professional entered herself, about which nothing was
+-- ever sent, is not known from us: she told the customer her own way.
 create function private.appointment_contact_informed(
   p_appointment_id uuid,
   p_business_id uuid,
@@ -351,7 +358,11 @@ as $$
     where e.appointment_id = p_appointment_id
       and e.business_id = p_business_id
       and e.recipient_email operator(extensions.=) p_recipient::extensions.citext
-      and (e.status = 'sent' or e.first_submitted_at is not null)
+      and (
+        e.type = 'booking_confirmation'
+        or e.status = 'sent'
+        or e.first_submitted_at is not null
+      )
   );
 $$;
 
@@ -424,11 +435,12 @@ begin
       case when new.status = 'cancelled' then 'appointment_cancelled' else 'appointment_closed' end
     );
 
-    -- A cancellation notice only to a customer who may have heard of the
-    -- appointment from us (confirmation, reminder or change notice handed
-    -- to the provider). Otherwise there is nothing to take back: a booking
-    -- cancelled before its confirmation went out, or an appointment the
-    -- professional entered herself and nothing was ever sent about.
+    -- A cancellation notice to a customer who knows of the appointment from
+    -- us: a public booking (confirmed on screen, even if its confirmation
+    -- email never went out), or any appointment an email of which may have
+    -- reached her. The notice gives every detail of the appointment: it
+    -- reads on its own. Nothing for an appointment the professional entered
+    -- herself and nothing was ever sent about.
     if new.status = 'cancelled'
       and old.status = 'confirmed'
       and new.client_email_snapshot is not null
@@ -477,9 +489,11 @@ begin
     perform private.queue_appointment_reminder(new, v_timezone, v_now);
   end if;
 
-  -- A change notice only to a customer who may have the former details. An
-  -- email not yet handed to the provider is rendered (and frozen) from the
-  -- current appointment, so it already gives the new ones.
+  -- A change notice to a customer who may have the former details (same
+  -- rule as cancellations: a public booking saw them on screen). It gives
+  -- every new detail and replaces a confirmation not yet handed to the
+  -- provider: she gets one email with the current appointment, never a
+  -- confirmation followed by a change, nor a stale confirmation.
   if v_moved
     and not v_recipient_changed
     and old.status = 'confirmed'
@@ -490,7 +504,7 @@ begin
     ) then
     perform private.cancel_queued_emails(
       new.id, new.business_id,
-      array['appointment_changed']::public.email_event_type[],
+      array['appointment_changed', 'booking_confirmation']::public.email_event_type[],
       'superseded'
     );
     insert into public.email_events (
@@ -584,6 +598,19 @@ begin
   end if;
   if p_email.created_at < p_now - private.email_max_age() then
     return 'expired';
+  end if;
+  -- A confirmation replaced by a change notice (the appointment moved
+  -- before it went out, or while its delivery was unconfirmed): the
+  -- notice gives the current details; the confirmation is never sent.
+  if p_email.type = 'booking_confirmation' and exists (
+    select 1
+    from public.email_events e
+    where e.appointment_id = p_email.appointment_id
+      and e.business_id = p_email.business_id
+      and e.type = 'appointment_changed'
+      and e.status in ('pending', 'processing', 'sent')
+  ) then
+    return 'superseded';
   end if;
   if p_email.type = 'appointment_changed' and exists (
     select 1

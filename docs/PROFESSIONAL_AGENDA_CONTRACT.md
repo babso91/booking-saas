@@ -209,7 +209,7 @@ type AppointmentClient =
   - Un retry identique après une modification du rendez-vous renvoie le rendez-vous dans son état actuel.
   - Sans `requestId`, une seconde soumission identique est refusée par le chevauchement (`schedule_conflict`).
 - **Atomicité.** Tout se fait dans une seule transaction : création de la nouvelle cliente, contrôles, rendez-vous. Si le rendez-vous est refusé (`schedule_conflict`, `idempotency_conflict`…), la cliente créée pour lui n'est pas conservée.
-- **Emails.** Le rappel de la veille suit le rendez-vous. Un déplacement, un changement de prestation ou une annulation met en file l'email de la cliente (modification ou annulation) si elle a pu recevoir un email de ce rendez-vous. Sinon, elle n'avait rien reçu, et rien n'est envoyé. La livraison dépend de la configuration : voir [`NOTIFICATIONS_CONTRACT.md`](NOTIFICATIONS_CONTRACT.md).
+- **Emails.** Le rappel de la veille suit le rendez-vous. Un déplacement, un changement de prestation ou une annulation met en file l'email de la cliente (modification ou annulation) si elle connaît le rendez-vous par la plateforme : elle l'a réservé en ligne, ou un email de ce rendez-vous a pu lui parvenir. Un rendez-vous saisi par la professionnelle et jamais annoncé par email n'envoie rien. La livraison dépend de la configuration : voir [`NOTIFICATIONS_CONTRACT.md`](NOTIFICATIONS_CONTRACT.md).
 
 **Modification et déplacement** (`updateAppointmentAction`) :
 

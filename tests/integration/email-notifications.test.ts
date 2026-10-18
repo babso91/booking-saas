@@ -690,7 +690,7 @@ describe("cancelled appointments", () => {
 });
 
 describe("changed appointments", () => {
-  it("a move before the confirmation went out: one confirmation, with the new time", async () => {
+  it("a public booking moved before its confirmation went out: one change notice with every new detail, no confirmation", async () => {
     const { business, service } = await setup();
     const date = dateInDays(9);
     const booking = await book(
@@ -703,13 +703,19 @@ describe("changed appointments", () => {
       "appointment_reminder",
     );
 
+    // She saw 10:00 confirmed on the booking page.
     const newStart = local(business, dateInDays(10), "16:15");
     await moveAppointment(business.id, booking.appointmentId, newStart);
 
     const rows = await emailsOf(booking.appointmentId);
-    expect(rows.filter((row) => row.type === "appointment_changed")).toEqual(
-      [],
-    );
+    expect(
+      rows
+        .filter((row) => row.type !== "appointment_reminder")
+        .map(({ type, status, last_error }) => [type, status, last_error]),
+    ).toEqual([
+      ["booking_confirmation", "cancelled", "superseded"],
+      ["appointment_changed", "pending", null],
+    ]);
     const reminders = rows.filter((row) => row.type === "appointment_reminder");
     expect(
       reminders.map(({ id, status, last_error }) => ({
@@ -728,8 +734,14 @@ describe("changed appointments", () => {
     const transport = new MemoryTransport();
     await worker(transport, business.id);
     expect(transport.sent).toHaveLength(1);
-    expect(transport.sent[0]!.subject).toContain("Rendez-vous confirmé");
-    expect(transport.sent[0]!.text).toContain("à 16 h 15");
+    const notice = transport.sent[0]!;
+    expect(notice.subject).toBe("Rendez-vous modifié – Studio Mila Lashes");
+    // Reads on its own: every detail of the appointment as it now is.
+    expect(notice.text).toContain("Établissement : Studio Mila Lashes");
+    expect(notice.text).toContain("Prestation : Volume mixte");
+    expect(notice.text).toContain("à 16 h 15");
+    expect(notice.text).toContain("Durée : 1 h 30");
+    expect(notice.text).toMatch(/Prix : 85,00\s€/u);
   });
 
   it("a move after the confirmation: one change notice per change, the latest only", async () => {
@@ -1744,7 +1756,7 @@ describe("idempotent delivery (frozen message)", () => {
     expect(transport.sent[1]!.text).toContain("à 15 h 30");
   });
 
-  it("an appointment changed between the claim and the provider call: rendered again, not counted as an attempt", async () => {
+  it("an appointment changed (invisibly) between the claim and the provider call: rendered again, not counted as an attempt", async () => {
     const { business, service } = await setup();
     const booking = await book(
       business,
@@ -1752,11 +1764,26 @@ describe("idempotent delivery (frozen message)", () => {
       local(business, dateInDays(35), "10:00"),
     );
     const [item] = await claimNow(business.id);
-    await moveAppointment(
-      business.id,
+    // A change the customer does not see (an internal note): same email,
+    // new appointment version.
+    const { rows: current } = await db.query<{
+      version: number;
+      client_id: string;
+    }>("select version, client_id from public.appointments where id = $1", [
       booking.appointmentId,
-      local(business, dateInDays(35), "11:45"),
+    ]);
+    const { error: noteError } = await owner.client.rpc(
+      "agenda_update_appointment",
+      {
+        p_business_id: business.id,
+        p_appointment_id: booking.appointmentId,
+        p_expected_version: current[0]!.version,
+        p_service_id: service,
+        p_client_id: current[0]!.client_id,
+        p_internal_notes: "Allergie latex",
+      },
     );
+    expect(noteError).toBeNull();
     const { data: prepared } = await bookingClient().rpc(
       "email_outbox_prepare",
       {
@@ -1778,7 +1805,8 @@ describe("idempotent delivery (frozen message)", () => {
     const transport = new MemoryTransport();
     await worker(transport, business.id);
     expect(transport.sent).toHaveLength(1);
-    expect(transport.sent[0]!.text).toContain("à 11 h 45");
+    expect(transport.sent[0]!.subject).toContain("Rendez-vous confirmé");
+    expect(transport.sent[0]!.text).not.toContain("Allergie");
   });
 });
 
@@ -1866,21 +1894,43 @@ describe("rendering failures after a submission", () => {
 });
 
 describe("cancellation notices", () => {
-  it("a booking cancelled before its confirmation was handed to the provider: no notice", async () => {
+  it("a public booking cancelled while its confirmation is still queued: the customer is told, the confirmation never goes", async () => {
     const { business, service } = await setup();
     const booking = await book(
       business,
       service,
       local(business, dateInDays(37), "10:00"),
+      "screen@example.test",
     );
+    // Confirmed on screen; the confirmation email is still pending.
+    expect(booking.status).toBe("confirmed");
     await setStatus(business.id, booking.appointmentId, "cancelled");
     const rows = await emailsOf(booking.appointmentId);
-    expect(rows.map((r) => [r.type, r.status]).sort()).toEqual([
-      ["appointment_reminder", "cancelled"],
-      ["booking_confirmation", "cancelled"],
+    expect(rows.map((r) => [r.type, r.status, r.last_error])).toEqual([
+      ["appointment_reminder", "cancelled", "appointment_cancelled"],
+      ["booking_confirmation", "cancelled", "appointment_cancelled"],
+      ["appointment_cancelled", "pending", null],
     ]);
+
     const transport = new MemoryTransport();
-    expect(await worker(transport, business.id)).toMatchObject({ claimed: 0 });
+    await worker(transport, business.id);
+    expect(transport.sent).toHaveLength(1);
+    const notice = transport.sent[0]!;
+    expect(notice.to).toBe("screen@example.test");
+    expect(notice.subject).toBe("Rendez-vous annulé – Studio Mila Lashes");
+    // Understandable without the confirmation she never received.
+    expect(notice.text).toContain(
+      "Votre rendez-vous a été annulé par l’établissement.",
+    );
+    expect(notice.text).toContain("Établissement : Studio Mila Lashes");
+    expect(notice.text).toContain("Prestation : Volume mixte");
+    expect(notice.text).toMatch(/Date : \w+ \d{1,2} \w+ \d{4} à 10 h/u);
+    expect(notice.text).toContain(`${APP_URL}/b/${business.slug}`);
+
+    // Nothing more, however many runs.
+    await worker(transport, business.id);
+    await worker(transport, business.id);
+    expect(transport.attempts).toHaveLength(1);
   });
 
   it("a confirmation handed to the provider whose answer was lost: the cancellation is notified", async () => {
@@ -2036,5 +2086,124 @@ describe("daily cap under concurrency", () => {
       [capped.business.id],
     );
     expect(waiting[0]!.n).toBe(15);
+  });
+});
+
+describe("public bookings: confirmed on screen", () => {
+  it("a confirmation claimed when the booking is cancelled or moved is never sent", async () => {
+    const { business, service } = await setup();
+    const cancelled = await book(
+      business,
+      service,
+      local(business, dateInDays(41), "10:00"),
+    );
+    const moved = await book(
+      business,
+      service,
+      local(business, dateInDays(42), "10:00"),
+    );
+    // Both confirmations are claimed by a worker, not yet sent.
+    const claimed = await claimNow(business.id);
+    expect(claimed).toHaveLength(2);
+    await setStatus(business.id, cancelled.appointmentId, "cancelled");
+    await moveAppointment(
+      business.id,
+      moved.appointmentId,
+      local(business, dateInDays(42), "14:00"),
+    );
+    for (const item of claimed) await expireLease(item.id);
+
+    const transport = new MemoryTransport();
+    await worker(transport, business.id);
+    expect(transport.sent.map((m) => m.subject).sort()).toEqual([
+      "Rendez-vous annulé – Studio Mila Lashes",
+      "Rendez-vous modifié – Studio Mila Lashes",
+    ]);
+    expect(
+      transport.sent.find((m) => m.subject.startsWith("Rendez-vous modifié"))!
+        .text,
+    ).toContain("à 14 h");
+    const [first] = await emailOf(
+      cancelled.appointmentId,
+      "booking_confirmation",
+    );
+    const [second] = await emailOf(moved.appointmentId, "booking_confirmation");
+    expect([first!.status, first!.last_error]).toEqual([
+      "cancelled",
+      "appointment_cancelled",
+    ]);
+    expect([second!.status, second!.last_error]).toEqual([
+      "cancelled",
+      "superseded",
+    ]);
+  });
+
+  it("a confirmation already handed to the provider, then cancelled: one cancellation, no duplicate", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(43), "10:00"),
+    );
+    const transport = new MemoryTransport({ idempotency: true });
+    await worker(transport, business.id);
+    await setStatus(business.id, booking.appointmentId, "cancelled");
+    for (let i = 0; i < 3; i++) await worker(transport, business.id);
+    expect(transport.sent.map((m) => m.subject)).toEqual([
+      "Rendez-vous confirmé – Studio Mila Lashes",
+      "Rendez-vous annulé – Studio Mila Lashes",
+    ]);
+    expect(
+      await emailOf(booking.appointmentId, "appointment_cancelled"),
+    ).toHaveLength(1);
+  });
+
+  it("a cancellation notice whose answer was lost is retried identically and delivered once", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(44), "10:00"),
+    );
+    await setStatus(business.id, booking.appointmentId, "cancelled");
+    const [notice] = await emailOf(
+      booking.appointmentId,
+      "appointment_cancelled",
+    );
+    const transport = new MemoryTransport({ idempotency: true });
+    transport.acceptThenFailNext("provider_network");
+    expect(await worker(transport, business.id)).toMatchObject({ retried: 1 });
+    await retryNow(notice!.id);
+    expect(await worker(transport, business.id)).toMatchObject({ sent: 1 });
+    expect(transport.attempts).toHaveLength(2);
+    expect(transport.attempts[1]).toEqual(transport.attempts[0]);
+    expect(transport.sent).toHaveLength(1);
+    expect(transport.sent[0]!.subject).toBe(
+      "Rendez-vous annulé – Studio Mila Lashes",
+    );
+  });
+
+  it("an appointment reassigned to another customer: the new contact, who booked nothing, is not told", async () => {
+    const { business, service } = await setup();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(45), "10:00"),
+      "booker@example.test",
+    );
+    const other = await createClientRecord(
+      business.id,
+      "other-contact@example.test",
+    );
+    await moveAppointment(
+      business.id,
+      booking.appointmentId,
+      local(business, dateInDays(45), "10:00"),
+      other,
+    );
+    await setStatus(business.id, booking.appointmentId, "cancelled");
+    expect(
+      await emailOf(booking.appointmentId, "appointment_cancelled"),
+    ).toEqual([]);
   });
 });
