@@ -59,6 +59,7 @@ Un trigger sur `appointments` (`private.queue_appointment_notifications`) s'appl
   - Il n'est mis en file que si ce moment est encore à venir. Un rendez-vous pris après 18 h pour le lendemain n'a que sa confirmation.
   - **Changement de fuseau :** un trigger sur `businesses` recale, dans la même transaction, tous les rappels **en attente** de l'établissement à 18 h la veille dans le nouveau fuseau, que le moment avance ou recule (changements d'heure compris). Le claim ne s'appuie jamais sur l'ancien moment.
     - Un moment déjà passé est dû aussitôt, sauf à moins d'une heure du rendez-vous (`reminder_too_late`).
+    - Un rappel en nouvel essai garde son délai d'attente : il n'est dû qu'au plus tard des deux moments, son heure de rappel (`scheduled_for`) et la fin de l'attente (`next_attempt_at`). Le changement de fuseau ne contourne ni l'un ni l'autre.
     - Un rappel déjà revendiqué est recalé par `email_outbox_prepare` s'il tombe désormais plus tard : il n'est pas envoyé en avance.
     - Les rappels annulés ou envoyés ne bougent pas, et aucun rappel n'est créé.
   - Il n'est plus envoyé à moins d'une heure du rendez-vous (`reminder_too_late`).
@@ -134,7 +135,7 @@ Un trigger sur `appointments` (`private.queue_appointment_notifications`) s'appl
   - `status` ;
   - `attempt_count` ;
   - `last_attempt_at` ;
-  - `next_attempt_at` (prochain essai après une erreur temporaire) ;
+  - `next_attempt_at` (prochain essai après une erreur temporaire ; un email est dû au plus tard de `scheduled_for` et `next_attempt_at`) ;
   - `first_submitted_at` (première transmission au fournisseur ; nul = la cliente n'a rien pu recevoir) ;
   - `sent_at` ;
   - `provider_message_id` ;

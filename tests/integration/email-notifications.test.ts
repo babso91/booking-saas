@@ -2213,10 +2213,12 @@ describe("public bookings: confirmed on screen", () => {
 // ---------------------------------------------------------------------------
 
 async function claimAt(at: string, businessId: string) {
-  const { rows } = await db.query<{ items: { id: string; type: string }[] }>(
-    "select private.email_outbox_claim_at($1, 20, 20, 120, $2) as items",
-    [at, businessId],
-  );
+  const { rows } = await db.query<{
+    items: { id: string; type: string; claimId: string }[];
+  }>("select private.email_outbox_claim_at($1, 20, 20, 120, $2) as items", [
+    at,
+    businessId,
+  ]);
   return rows[0]!.items;
 }
 
@@ -2381,6 +2383,130 @@ describe("reminders follow a change of the business's time zone", () => {
     expect(rows[0]!.scheduled_for.toISOString()).toBe(
       "2027-06-09T16:00:00.000Z",
     );
+  });
+
+  // A reminder claimed at `claimedAt` whose send failed temporarily: the
+  // retry is due at `retryAt` (email_outbox_fail runs on the real clock;
+  // its backoff is placed relative to the simulated claim).
+  async function failedReminder(
+    timezone: string,
+    startsAt: string,
+    claimedAt: string,
+    retryAt: string,
+  ) {
+    const setupResult = await reminderSetup(timezone, startsAt);
+    const [item] = await claimAt(claimedAt, setupResult.business.id);
+    expect(item!.id).toBe(setupResult.reminder.id);
+    const { data: status, error } = await bookingClient().rpc(
+      "email_outbox_fail",
+      {
+        p_id: item!.id,
+        p_claim_id: item!.claimId,
+        p_error_code: "provider_unavailable",
+      },
+    );
+    expect(error).toBeNull();
+    expect(status).toBe("pending");
+    await db.query(
+      "update public.email_events set next_attempt_at = $2 where id = $1",
+      [item!.id, retryAt],
+    );
+    return setupResult;
+  }
+
+  it("a reminder in retry is not sent before the later deadline of the new zone (Tokyo → Paris)", async () => {
+    // Due at 09:00 UTC in Tokyo; the retry is due at 09:01 UTC.
+    const { business, appointmentId, reminder } = await failedReminder(
+      "Asia/Tokyo",
+      "2027-06-10T08:00:00Z",
+      "2027-06-09T09:00:00Z",
+      "2027-06-09T09:01:00Z",
+    );
+    await setTimezone(business.id, "Europe/Paris");
+
+    // The backoff is over, the reminder deadline (16:00 UTC) is not.
+    expect(await claimAt("2027-06-09T09:05:00Z", business.id)).toEqual([]);
+    expect(await claimAt("2027-06-09T15:59:00Z", business.id)).toEqual([]);
+
+    // At the deadline, concurrent workers: one claim, one attempt.
+    const claims = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        claimAt("2027-06-09T16:00:00Z", business.id),
+      ),
+    );
+    expect(claims.flat().map((item) => item.id)).toEqual([reminder.id]);
+    const { rows } = await db.query<{ status: string; attempt_count: number }>(
+      "select status::text, attempt_count from public.email_events where id = $1",
+      [reminder.id],
+    );
+    expect(rows[0]).toEqual({ status: "processing", attempt_count: 2 });
+    expect(
+      (await attemptsOf(reminder.id)).map((attempt) => attempt.outcome),
+    ).toEqual(["retry", null]);
+    expect(await emailOf(appointmentId, "appointment_reminder")).toHaveLength(
+      1,
+    );
+  });
+
+  it("a reminder in retry keeps its backoff when the new zone's deadline is already past (New York → London, end of DST)", async () => {
+    // 7 November 2027, 18:00 EST = 23:00 UTC; in London, 18:00 UTC.
+    const { business, reminder } = await failedReminder(
+      "America/New_York",
+      "2027-11-08T14:00:00Z",
+      "2027-11-07T23:00:00Z",
+      "2027-11-07T23:10:00Z",
+    );
+    await setTimezone(business.id, "Europe/London");
+    const { rows } = await db.query<{ scheduled_for: Date }>(
+      "select scheduled_for from public.email_events where id = $1",
+      [reminder.id],
+    );
+    expect(rows[0]!.scheduled_for.toISOString()).toBe(
+      "2027-11-07T18:00:00.000Z",
+    );
+
+    // The reminder deadline is past, the backoff is not.
+    expect(await claimAt("2027-11-07T23:05:00Z", business.id)).toEqual([]);
+    expect(
+      (await claimAt("2027-11-07T23:10:00Z", business.id)).map((i) => i.id),
+    ).toEqual([reminder.id]);
+  });
+
+  it("other emails in retry keep their own schedule when the zone changes", async () => {
+    const { business, service } = await setup({ timezone: "Asia/Tokyo" });
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(3), "10:00"),
+    );
+    const transport = new MemoryTransport();
+    transport.failNext("provider_unavailable");
+    expect(await worker(transport, business.id)).toMatchObject({
+      retried: 1,
+    });
+    const [before] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    await setTimezone(business.id, "Europe/Paris");
+    const [after] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    expect(after).toMatchObject({
+      status: "pending",
+      scheduled_for: before!.scheduled_for,
+      next_attempt_at: before!.next_attempt_at,
+    });
+    // Due when its backoff ends, as before (JavaScript dates drop the
+    // microseconds: a second later).
+    const retryAt = before!.next_attempt_at!.getTime();
+    expect(
+      await claimAt(new Date(retryAt - 5_000).toISOString(), business.id),
+    ).toEqual([]);
+    expect(
+      await claimAt(new Date(retryAt + 1_000).toISOString(), business.id),
+    ).toMatchObject([{ id: before!.id }]);
   });
 
   it("cancelled reminders stay cancelled and no reminder is duplicated", async () => {

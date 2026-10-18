@@ -67,7 +67,7 @@ alter table public.email_events
     check ((status = 'processing') = (claim_id is not null and lease_until is not null)) not valid;
 
 comment on column public.email_events.next_attempt_at is
-  'Next delivery attempt after a retryable failure (null: scheduled_for).';
+  'Next delivery attempt after a retryable failure. Due at the later of scheduled_for and next_attempt_at (null: scheduled_for).';
 comment on column public.email_events.claim_id is
   'Claim of the worker delivering this email (status processing only).';
 comment on column public.email_events.lease_until is
@@ -78,7 +78,7 @@ comment on column public.email_events.last_error is
   'Stable code of the last failure or cancellation reason. Never a provider message nor an address.';
 
 create index email_events_due_idx
-  on public.email_events ((coalesce(next_attempt_at, scheduled_for)), business_id)
+  on public.email_events ((greatest(scheduled_for, next_attempt_at)), business_id)
   where status = 'pending';
 create index email_events_lease_idx
   on public.email_events (lease_until)
@@ -551,8 +551,10 @@ create trigger appointments_queue_notifications
 -- A change of the business's time zone moves its pending reminders to 18:00
 -- the day before in the new zone, in the same transaction: the claim selects
 -- due reminders on scheduled_for, which is never left at the former zone's
--- moment (earlier or later). A moment already past is due at once (the
--- claim still drops a reminder within an hour of the appointment). Claimed
+-- moment (earlier or later). A moment already past is due at once, or when
+-- the backoff of a retry ends (next_attempt_at is kept: an email is due at
+-- the later of both; the claim still drops a reminder within an hour of the
+-- appointment). Claimed
 -- reminders are re-checked by email_outbox_prepare; cancelled or sent ones
 -- are left as they are; nothing is inserted (no duplicate).
 create function private.reschedule_business_reminders()
@@ -744,16 +746,16 @@ begin
     select ranked.*
     from (
       select e.id, e.business_id,
-             coalesce(e.lease_until, e.next_attempt_at, e.scheduled_for) as due,
+             coalesce(e.lease_until, greatest(e.scheduled_for, e.next_attempt_at)) as due,
              pg_catalog.row_number() over (
                partition by e.business_id
-               order by coalesce(e.lease_until, e.next_attempt_at, e.scheduled_for), e.id
+               order by coalesce(e.lease_until, greatest(e.scheduled_for, e.next_attempt_at)), e.id
              ) as rank
       from public.email_events e
       where e.type = any (private.email_deliverable_types())
         and (p_business_id is null or e.business_id = p_business_id)
         and (
-          (e.status = 'pending' and coalesce(e.next_attempt_at, e.scheduled_for) <= p_now)
+          (e.status = 'pending' and greatest(e.scheduled_for, e.next_attempt_at) <= p_now)
           or (e.status = 'processing' and (e.lease_until is null or e.lease_until < p_now))
         )
     ) ranked
@@ -791,7 +793,7 @@ begin
     from public.email_events e
     where e.id = v_candidate
       and (
-        (e.status = 'pending' and coalesce(e.next_attempt_at, e.scheduled_for) <= p_now)
+        (e.status = 'pending' and greatest(e.scheduled_for, e.next_attempt_at) <= p_now)
         or (e.status = 'processing' and (e.lease_until is null or e.lease_until < p_now))
       )
     for update skip locked;
