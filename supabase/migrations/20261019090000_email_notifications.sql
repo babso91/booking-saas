@@ -238,8 +238,10 @@ immutable
 set search_path = ''
 as $$ select interval '23 hours' $$;
 
--- The appointment facts a message states (time, service, recipient): a
--- frozen message whose facts changed is never sent again.
+-- The appointment facts a message states, from the appointment's own
+-- snapshots (time, service name, duration, price, currency, recipient): a
+-- frozen message whose facts changed is never sent again. A change of the
+-- service catalogue does not touch the snapshots, so it changes nothing.
 create function private.email_fingerprint(p_appointment public.appointments)
 returns jsonb
 language sql
@@ -250,6 +252,9 @@ as $$
     'startsAt', pg_catalog.to_char(p_appointment.starts_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'),
     'endsAt', pg_catalog.to_char(p_appointment.ends_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'),
     'serviceName', p_appointment.service_name_snapshot,
+    'durationMinutes', p_appointment.duration_minutes_snapshot,
+    'priceCents', p_appointment.price_cents_snapshot,
+    'currency', p_appointment.currency,
     'recipient', pg_catalog.lower(p_appointment.client_email_snapshot)
   );
 $$;
@@ -403,6 +408,7 @@ declare
   v_now timestamptz := pg_catalog.now();
   v_timezone text;
   v_moved boolean;
+  v_details_changed boolean;
   v_recipient_changed boolean;
   v_appointment_types public.email_event_type[] := array[
     'booking_confirmation', 'appointment_reminder', 'appointment_changed'
@@ -420,11 +426,18 @@ begin
   v_moved := new.starts_at is distinct from old.starts_at
     or new.ends_at is distinct from old.ends_at
     or new.service_name_snapshot is distinct from old.service_name_snapshot;
+  -- Every fact an email states, from the appointment's snapshots (the
+  -- same as private.email_fingerprint): a new service of the same name
+  -- and duration but another price is a change for the customer.
+  v_details_changed := v_moved
+    or new.duration_minutes_snapshot is distinct from old.duration_minutes_snapshot
+    or new.price_cents_snapshot is distinct from old.price_cents_snapshot
+    or new.currency is distinct from old.currency;
   v_recipient_changed :=
     new.client_email_snapshot is distinct from old.client_email_snapshot;
 
   if new.status is not distinct from old.status
-    and not v_moved
+    and not v_details_changed
     and not v_recipient_changed then
     return null;
   end if;
@@ -494,7 +507,7 @@ begin
   -- every new detail and replaces a confirmation not yet handed to the
   -- provider: she gets one email with the current appointment, never a
   -- confirmation followed by a change, nor a stale confirmation.
-  if v_moved
+  if v_details_changed
     and not v_recipient_changed
     and old.status = 'confirmed'
     and new.client_email_snapshot is not null
@@ -534,6 +547,39 @@ $$;
 create trigger appointments_queue_notifications
   after insert or update on public.appointments
   for each row execute function private.queue_appointment_notifications();
+
+-- A change of the business's time zone moves its pending reminders to 18:00
+-- the day before in the new zone, in the same transaction: the claim selects
+-- due reminders on scheduled_for, which is never left at the former zone's
+-- moment (earlier or later). A moment already past is due at once (the
+-- claim still drops a reminder within an hour of the appointment). Claimed
+-- reminders are re-checked by email_outbox_prepare; cancelled or sent ones
+-- are left as they are; nothing is inserted (no duplicate).
+create function private.reschedule_business_reminders()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.email_events e
+  set scheduled_for = private.email_reminder_at(a.starts_at, new.timezone),
+      payload = e.payload || pg_catalog.jsonb_build_object('timezone', new.timezone)
+  from public.appointments a
+  where e.business_id = new.id
+    and e.type = 'appointment_reminder'
+    and e.status = 'pending'
+    and a.id = e.appointment_id
+    and a.business_id = e.business_id;
+  return null;
+end;
+$$;
+
+create trigger businesses_reschedule_reminders
+  after update of timezone on public.businesses
+  for each row
+  when (old.timezone is distinct from new.timezone)
+  execute function private.reschedule_business_reminders();
 
 -- ---------------------------------------------------------------------------
 -- 3. Worker
@@ -979,6 +1025,24 @@ begin
     return pg_catalog.jsonb_build_object('action', 'cancelled', 'code', v_reason);
   end if;
 
+  -- A reminder claimed before a change of the business's time zone: its
+  -- moment follows the new zone. Still ahead: given back, rescheduled, not
+  -- sent early (not counted as an attempt).
+  if v_email.type = 'appointment_reminder'
+    and (v_email.payload ->> 'timezone') is distinct from v_timezone
+    and private.email_reminder_at(v_appointment.starts_at, v_timezone) > v_now then
+    update public.email_events e
+    set status = 'pending', claim_id = null, lease_until = null,
+        attempt_count = greatest(e.attempt_count - 1, 0),
+        scheduled_for = private.email_reminder_at(v_appointment.starts_at, v_timezone),
+        next_attempt_at = null,
+        payload = e.payload || pg_catalog.jsonb_build_object('timezone', v_timezone)
+    where e.id = p_id;
+    delete from public.email_delivery_attempts a
+    where a.claim_id = p_claim_id and a.outcome is null;
+    return pg_catalog.jsonb_build_object('action', 'rerender');
+  end if;
+
   if v_rendering.email_event_id is null then
     if p_appointment_version is distinct from v_appointment.version then
       update public.email_events e
@@ -1193,6 +1257,7 @@ revoke all on function private.queue_appointment_reminder(public.appointments, t
 revoke all on function private.appointment_contact_informed(uuid, uuid, text) from public;
 revoke all on function private.cancel_queued_emails(uuid, uuid, public.email_event_type[], text, text) from public;
 revoke all on function private.queue_appointment_notifications() from public;
+revoke all on function private.reschedule_business_reminders() from public;
 revoke all on function private.email_obsolete_reason(public.email_events, public.appointments, text, timestamptz) from public;
 revoke all on function private.finish_email_attempt(uuid, text, text, text, timestamptz) from public;
 revoke all on function private.email_outbox_claim_at(timestamptz, integer, integer, integer, uuid) from public;

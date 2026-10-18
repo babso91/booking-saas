@@ -2207,3 +2207,410 @@ describe("public bookings: confirmed on screen", () => {
     ).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Corrections after the Codex audit of PR #22
+// ---------------------------------------------------------------------------
+
+async function claimAt(at: string, businessId: string) {
+  const { rows } = await db.query<{ items: { id: string; type: string }[] }>(
+    "select private.email_outbox_claim_at($1, 20, 20, 120, $2) as items",
+    [at, businessId],
+  );
+  return rows[0]!.items;
+}
+
+async function setTimezone(businessId: string, timezone: string) {
+  const { error } = await owner.client
+    .from("businesses")
+    .update({ timezone })
+    .eq("id", businessId);
+  if (error) throw error;
+}
+
+describe("reminders follow a change of the business's time zone", () => {
+  async function reminderSetup(timezone: string, startsAt: string) {
+    const { business, service } = await setup({ timezone });
+    const clientId = await createClientRecord(
+      business.id,
+      `tz-${randomUUID().slice(0, 6)}@example.test`,
+    );
+    const appointmentId = await insertAppointment({
+      businessId: business.id,
+      clientId,
+      serviceId: service,
+      startsAt,
+      endsAt: new Date(
+        new Date(startsAt).getTime() + 90 * 60_000,
+      ).toISOString(),
+    });
+    const [reminder] = await emailOf(appointmentId, "appointment_reminder");
+    return { business, appointmentId, reminder: reminder! };
+  }
+
+  it("Paris → Tokyo: the reminder moves earlier and is claimed at its new time", async () => {
+    const { business, reminder } = await reminderSetup(
+      "Europe/Paris",
+      "2027-06-10T08:00:00Z",
+    );
+    expect(reminder.scheduled_for.toISOString()).toBe(
+      "2027-06-09T16:00:00.000Z",
+    );
+
+    await setTimezone(business.id, "Asia/Tokyo");
+    // 10 June 08:00 UTC is 17:00 in Tokyo: the reminder is 9 June, 18:00
+    // in Tokyo, 09:00 UTC.
+    const { rows } = await db.query<{ scheduled_for: Date; status: string }>(
+      "select scheduled_for, status::text from public.email_events where id = $1",
+      [reminder.id],
+    );
+    expect(rows[0]).toMatchObject({ status: "pending" });
+    expect(rows[0]!.scheduled_for.toISOString()).toBe(
+      "2027-06-09T09:00:00.000Z",
+    );
+
+    // 10:00 UTC: due under the new zone (the old moment, 16:00, is ahead).
+    const items = await claimAt("2027-06-09T10:00:00Z", business.id);
+    expect(items.map((item) => item.id)).toEqual([reminder.id]);
+  });
+
+  it("Tokyo → Paris: the reminder moves later and is not claimed at its former time", async () => {
+    const { business, reminder } = await reminderSetup(
+      "Asia/Tokyo",
+      "2027-06-10T08:00:00Z",
+    );
+    expect(reminder.scheduled_for.toISOString()).toBe(
+      "2027-06-09T09:00:00.000Z",
+    );
+
+    await setTimezone(business.id, "Europe/Paris");
+    expect(await claimAt("2027-06-09T10:00:00Z", business.id)).toEqual([]);
+    const { rows } = await db.query<{ scheduled_for: Date; status: string }>(
+      "select scheduled_for, status::text from public.email_events where id = $1",
+      [reminder.id],
+    );
+    expect(rows[0]).toMatchObject({ status: "pending" });
+    expect(rows[0]!.scheduled_for.toISOString()).toBe(
+      "2027-06-09T16:00:00.000Z",
+    );
+    expect(
+      (await claimAt("2027-06-09T16:00:00Z", business.id)).map((i) => i.id),
+    ).toEqual([reminder.id]);
+  });
+
+  it("across a clock change: London → New York, the reminder day being the end of DST", async () => {
+    // Monday 8 November 2027; New York leaves DST on Sunday 7 November.
+    const { business, reminder } = await reminderSetup(
+      "Europe/London",
+      "2027-11-08T14:00:00Z",
+    );
+    expect(reminder.scheduled_for.toISOString()).toBe(
+      "2027-11-07T18:00:00.000Z",
+    );
+    await setTimezone(business.id, "America/New_York");
+    // 7 November 18:00 EST (UTC−5) = 23:00 UTC.
+    expect(await claimAt("2027-11-07T22:30:00Z", business.id)).toEqual([]);
+    expect(
+      (await claimAt("2027-11-07T23:00:00Z", business.id)).map((i) => i.id),
+    ).toEqual([reminder.id]);
+  });
+
+  it("a reminder whose new moment is already past is delivered by the worker now", async () => {
+    // Find an appointment start whose reminder is ahead in Los Angeles but
+    // already past at UTC+14 (Kiritimati): a day earlier.
+    const { rows: pick } = await db.query<{ starts_at: Date }>(
+      `select s as starts_at
+       from generate_series(
+              date_trunc('hour', now()) + interval '20 hours',
+              date_trunc('hour', now()) + interval '72 hours',
+              interval '1 hour') s
+       where private.email_reminder_at(s, 'America/Los_Angeles') > now() + interval '1 hour'
+         and private.email_reminder_at(s, 'Pacific/Kiritimati') < now()
+         and s - interval '2 hours' > now()
+       limit 1`,
+    );
+    expect(pick).toHaveLength(1);
+    const { business, reminder } = await reminderSetup(
+      "America/Los_Angeles",
+      pick[0]!.starts_at.toISOString(),
+    );
+    const transport = new MemoryTransport();
+    expect(await worker(transport, business.id)).toMatchObject({ claimed: 0 });
+
+    await setTimezone(business.id, "Pacific/Kiritimati");
+    expect(await worker(transport, business.id)).toMatchObject({ sent: 1 });
+    expect(transport.sent[0]!.idempotencyKey).toBe(reminder.id);
+    expect(transport.sent[0]!.subject).toContain("Rappel");
+  });
+
+  it("a reminder already claimed when the zone moves it later is not sent early", async () => {
+    const { business, reminder } = await reminderSetup(
+      "Asia/Tokyo",
+      "2027-06-10T08:00:00Z",
+    );
+    const [item] = await claimAt("2027-06-09T09:30:00Z", business.id);
+    expect(item!.id).toBe(reminder.id);
+    await setTimezone(business.id, "Europe/Paris");
+    const { rows: claim } = await db.query<{
+      claim_id: string;
+      version: number;
+    }>(
+      `select e.claim_id, a.version from public.email_events e
+       join public.appointments a on a.id = e.appointment_id where e.id = $1`,
+      [reminder.id],
+    );
+    const { data: prepared } = await bookingClient().rpc(
+      "email_outbox_prepare",
+      {
+        p_id: reminder.id,
+        p_claim_id: claim[0]!.claim_id,
+        p_appointment_version: claim[0]!.version,
+        p_message: { to: "x", subject: "s", text: "t", html: "h" },
+      },
+    );
+    expect(prepared).toEqual({ action: "rerender" });
+    const { rows } = await db.query<{
+      scheduled_for: Date;
+      status: string;
+      attempt_count: number;
+    }>(
+      "select scheduled_for, status::text, attempt_count from public.email_events where id = $1",
+      [reminder.id],
+    );
+    expect(rows[0]).toMatchObject({ status: "pending", attempt_count: 0 });
+    expect(rows[0]!.scheduled_for.toISOString()).toBe(
+      "2027-06-09T16:00:00.000Z",
+    );
+  });
+
+  it("cancelled reminders stay cancelled and no reminder is duplicated", async () => {
+    const { business, appointmentId, reminder } = await reminderSetup(
+      "Europe/Paris",
+      "2027-06-12T08:00:00Z",
+    );
+    const other = await reminderSetup("Europe/Paris", "2027-06-13T08:00:00Z");
+    await setStatus(business.id, appointmentId, "cancelled");
+    await setTimezone(business.id, "Asia/Tokyo");
+    const { rows } = await db.query<{ status: string; n: number }>(
+      `select status::text, count(*)::int as n from public.email_events
+       where appointment_id = $1 and type = 'appointment_reminder' group by status`,
+      [appointmentId],
+    );
+    expect(rows).toEqual([{ status: "cancelled", n: 1 }]);
+    expect(reminder.status).toBe("pending");
+    // Another business is not touched.
+    const [untouched] = await emailOf(
+      other.appointmentId,
+      "appointment_reminder",
+    );
+    expect(untouched!.scheduled_for.toISOString()).toBe(
+      "2027-06-12T16:00:00.000Z",
+    );
+  });
+});
+
+describe("customer-visible price changes", () => {
+  async function priced() {
+    const { business, service } = await setup();
+    const sameName = await createService(business.id, {
+      name: "Volume mixte",
+      durationMinutes: 90,
+      priceCents: 8000,
+    });
+    const identical = await createService(business.id, {
+      name: "Volume mixte",
+      durationMinutes: 90,
+      priceCents: 8500,
+    });
+    return { business, service, sameName, identical };
+  }
+
+  async function changeService(
+    businessId: string,
+    appointmentId: string,
+    serviceId: string,
+  ) {
+    const { rows } = await db.query<{ version: number; client_id: string }>(
+      "select version, client_id from public.appointments where id = $1",
+      [appointmentId],
+    );
+    const { error } = await owner.client.rpc("agenda_update_appointment", {
+      p_business_id: businessId,
+      p_appointment_id: appointmentId,
+      p_expected_version: rows[0]!.version,
+      p_service_id: serviceId,
+      p_client_id: rows[0]!.client_id,
+    });
+    if (error) throw error;
+  }
+
+  it("a service of the same name and duration but another price: a change notice with the new price", async () => {
+    const { business, service, sameName } = await priced();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(46), "10:00"),
+    );
+    const transport = new MemoryTransport();
+    await worker(transport, business.id);
+    expect(transport.sent[0]!.text).toMatch(/Prix : 85,00\s€/u);
+
+    await changeService(business.id, booking.appointmentId, sameName);
+    const changes = await emailOf(booking.appointmentId, "appointment_changed");
+    expect(changes.map((c) => c.status)).toEqual(["pending"]);
+    await worker(transport, business.id);
+    expect(transport.sent).toHaveLength(2);
+    expect(transport.sent[1]!.subject).toBe(
+      "Rendez-vous modifié – Studio Mila Lashes",
+    );
+    expect(transport.sent[1]!.text).toMatch(/Prix : 80,00\s€/u);
+  });
+
+  it("a currency change of the appointment is notified", async () => {
+    const { business, service, sameName } = await priced();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(47), "10:00"),
+    );
+    const transport = new MemoryTransport();
+    await worker(transport, business.id);
+    await db.query(
+      "update public.business_settings set currency = 'CHF' where business_id = $1",
+      [business.id],
+    );
+    await changeService(business.id, booking.appointmentId, sameName);
+    await worker(transport, business.id);
+    expect(transport.sent).toHaveLength(2);
+    expect(transport.sent[1]!.text).toMatch(/Prix : 80,00\sCHF/u);
+  });
+
+  it("after a lost answer, a price change never re-submits the old key with another payload; a corrective notice goes", async () => {
+    const { business, service, sameName } = await priced();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(48), "10:00"),
+    );
+    const [confirmation] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    const transport = new MemoryTransport({ idempotency: true });
+    transport.acceptThenFailNext("provider_timeout");
+    await worker(transport, business.id);
+    // The customer may hold the 85 € message.
+    expect(transport.sent[0]!.text).toMatch(/Prix : 85,00\s€/u);
+
+    await changeService(business.id, booking.appointmentId, sameName);
+    await retryNow(confirmation!.id);
+    await worker(transport, business.id);
+
+    // The confirmation's key only ever carried its one payload.
+    const sentUnderKey = transport.attempts.filter(
+      (m) => m.idempotencyKey === confirmation!.id,
+    );
+    expect(sentUnderKey).toHaveLength(1);
+    expect(await emailRow(confirmation!.id)).toMatchObject({
+      status: "cancelled",
+      last_error: "superseded",
+    });
+    expect(transport.sent.map((m) => m.subject)).toEqual([
+      "Rendez-vous confirmé – Studio Mila Lashes",
+      "Rendez-vous modifié – Studio Mila Lashes",
+    ]);
+    expect(transport.sent[1]!.text).toMatch(/Prix : 80,00\s€/u);
+    expect(transport.sent[1]!.idempotencyKey).not.toBe(confirmation!.id);
+  });
+
+  it("a reminder handed to the provider with the former price is never resent; the change notice gives the new one", async () => {
+    const { business, service, sameName } = await priced();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(51), "10:00"),
+    );
+    const transport = new MemoryTransport({ idempotency: true });
+    await worker(transport, business.id); // the confirmation (85 €)
+    const [reminder] = await emailOf(
+      booking.appointmentId,
+      "appointment_reminder",
+    );
+    await makeDue(reminder!.id);
+    transport.acceptThenFailNext("provider_timeout");
+    await worker(transport, business.id); // reminder frozen at 85 €, answer lost
+    expect(await emailRow(reminder!.id)).toMatchObject({
+      status: "pending",
+      frozen: true,
+    });
+
+    await changeService(business.id, booking.appointmentId, sameName);
+    await retryNow(reminder!.id);
+    // The worker claims it (as a lost answer may well be retried), but the
+    // frozen 85 € message no longer matches the appointment.
+    await worker(transport, business.id);
+    expect(await emailRow(reminder!.id)).toMatchObject({
+      status: "cancelled",
+      last_error: "superseded",
+    });
+    expect(
+      transport.attempts.filter((m) => m.idempotencyKey === reminder!.id),
+    ).toHaveLength(1);
+    const notices = transport.sent.filter((m) =>
+      m.subject.startsWith("Rendez-vous modifié"),
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.text).toMatch(/Prix : 80,00\s€/u);
+  });
+
+  it("a price change of the catalogue only keeps the booked price; nothing is sent again", async () => {
+    const { business, service } = await priced();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(49), "10:00"),
+    );
+    const [confirmation] = await emailOf(
+      booking.appointmentId,
+      "booking_confirmation",
+    );
+    const transport = new MemoryTransport({ idempotency: true });
+    transport.acceptThenFailNext("provider_timeout");
+    await worker(transport, business.id);
+
+    await db.query(
+      "update public.services set price_cents = 9900 where id = $1",
+      [service],
+    );
+    await retryNow(confirmation!.id);
+    await worker(transport, business.id);
+    expect(transport.attempts[1]).toEqual(transport.attempts[0]);
+    expect(transport.sent).toHaveLength(1);
+    expect(transport.sent[0]!.text).toMatch(/Prix : 85,00\s€/u);
+    expect(await emailOf(booking.appointmentId, "appointment_changed")).toEqual(
+      [],
+    );
+    const { rows } = await db.query<{ price_cents_snapshot: number }>(
+      "select price_cents_snapshot from public.appointments where id = $1",
+      [booking.appointmentId],
+    );
+    expect(rows[0]!.price_cents_snapshot).toBe(8500);
+  });
+
+  it("another service identical for the customer (name, duration, price, currency): no email", async () => {
+    const { business, service, identical } = await priced();
+    const booking = await book(
+      business,
+      service,
+      local(business, dateInDays(50), "10:00"),
+    );
+    const transport = new MemoryTransport();
+    await worker(transport, business.id);
+    await changeService(business.id, booking.appointmentId, identical);
+    expect(await emailOf(booking.appointmentId, "appointment_changed")).toEqual(
+      [],
+    );
+    await worker(transport, business.id);
+    expect(transport.sent).toHaveLength(1);
+  });
+});
