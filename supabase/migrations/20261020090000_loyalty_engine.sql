@@ -1078,9 +1078,14 @@ stable
 set search_path = ''
 as $$
 begin
-  -- p_current (an update): a historical value outside today's bounds is
-  -- accepted only unchanged (see private.rewards_bounds).
-  name := private.optional_text(p_name, 120, 'name');
+  -- p_current (an update): a value equal to the stored one is kept byte for
+  -- byte, even outside today's bounds or normal form (see
+  -- private.rewards_bounds); any other value is normalised and bounded.
+  if p_current.id is not null and p_name = p_current.name then
+    name := p_current.name;
+  else
+    name := private.optional_text(p_name, 120, 'name');
+  end if;
   if name is null then
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'name';
   end if;

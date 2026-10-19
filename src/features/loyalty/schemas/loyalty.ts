@@ -152,13 +152,18 @@ export const createRewardSchema = z
 export const updateRewardSchema = z
   .object({
     ...rewardFields,
-    // Bounds of new values checked by PostgreSQL (see above).
+    // Sent raw, not trimmed: PostgreSQL keeps a value equal to the stored
+    // one byte for byte (a historical value may differ from its normalised
+    // form) and normalises and bounds any other value (see above).
+    name: z
+      .string()
+      .max(120)
+      .refine((value) => value.trim().length > 0, "Le nom est obligatoire."),
     description: z
       .string()
-      .trim()
       .max(1_000_000)
       .nullish()
-      .transform((value) => (value ? value : null)),
+      .transform((value) => value ?? null),
     pointsRequired: z.number().int().min(1).max(INT_MAX),
     rewardValue: z.number().int().min(1).max(INT_MAX).nullable(),
     rewardId: z.uuid(),

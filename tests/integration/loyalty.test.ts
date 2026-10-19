@@ -2349,3 +2349,140 @@ describe("Codex audit corrections", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("historical reward values through the whole update chain", () => {
+  const RAW_DESCRIPTION = ` ${"é".repeat(1001)} `;
+  const RAW_NAME = "  Ancienne carte  ";
+
+  /** A reward as the previous schema allowed it (bounds guard bypassed). */
+  async function legacyReward(businessId: string) {
+    const connection = await db.connect();
+    try {
+      await connection.query("begin");
+      await connection.query(
+        "alter table public.rewards disable trigger rewards_bounds",
+      );
+      const { rows } = await connection.query<{ id: string }>(
+        `insert into public.rewards
+           (business_id, name, description, points_required, reward_type, reward_value)
+         values ($1, $2, $3, 10, 'percentage_discount', 10)
+         returning id`,
+        [businessId, RAW_NAME, RAW_DESCRIPTION],
+      );
+      await connection.query(
+        "alter table public.rewards enable trigger rewards_bounds",
+      );
+      await connection.query("commit");
+      return rows[0]!.id;
+    } catch (error) {
+      await connection.query("rollback");
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async function stored(rewardId: string) {
+    const { rows } = await db.query(
+      "select name, description, active from public.rewards where id = $1",
+      [rewardId],
+    );
+    return rows[0] as { name: string; description: string; active: boolean };
+  }
+
+  /** The edit form: every field as read, with `changes` applied. */
+  async function edit(
+    shop: Shop,
+    rewardId: string,
+    changes: Record<string, unknown>,
+  ) {
+    as(shop.owner);
+    const read = ok(await listRewardsAction()).find((r) => r.id === rewardId)!;
+    return updateRewardAction({
+      rewardId,
+      rewardType: read.rewardType,
+      expectedVersion: read.version,
+      name: read.name,
+      description: read.description,
+      pointsRequired: read.pointsRequired,
+      rewardValue: read.rewardValue,
+      serviceId: read.serviceId,
+      active: read.active,
+      ...changes,
+    });
+  }
+
+  it("deactivating keeps a long, space-padded historical description and name byte for byte", async () => {
+    const shop = await newShop("histo");
+    const rewardId = await legacyReward(shop.business.id);
+
+    const updated = ok(await edit(shop, rewardId, { active: false }));
+
+    expect(updated.active).toBe(false);
+    expect(await stored(rewardId)).toEqual({
+      name: RAW_NAME,
+      description: RAW_DESCRIPTION,
+      active: false,
+    });
+    // And back on.
+    ok(await edit(shop, rewardId, { active: true }));
+    expect(await stored(rewardId)).toEqual({
+      name: RAW_NAME,
+      description: RAW_DESCRIPTION,
+      active: true,
+    });
+  });
+
+  it("a really changed description is normalised and bounded; a new invalid one is refused", async () => {
+    const shop = await newShop("histo-edit");
+    const rewardId = await legacyReward(shop.business.id);
+
+    const refused = failure(
+      await edit(shop, rewardId, { description: ` ${"x".repeat(1001)} ` }),
+      "validation_error",
+    );
+    expect(refused?.fieldErrors).toHaveProperty("description");
+    // Trailing spaces alone do not make 1001 characters acceptable.
+    failure(
+      await edit(shop, rewardId, { description: `${"é".repeat(1001)}` }),
+      "validation_error",
+    );
+    expect(await stored(rewardId)).toMatchObject({
+      description: RAW_DESCRIPTION,
+    });
+
+    ok(await edit(shop, rewardId, { description: "  Nouvelle règle  " }));
+    expect(await stored(rewardId)).toEqual({
+      name: RAW_NAME,
+      description: "Nouvelle règle",
+      active: true,
+    });
+
+    ok(await edit(shop, rewardId, { name: "  Carte fidélité  " }));
+    expect((await stored(rewardId)).name).toBe("Carte fidélité");
+  });
+
+  it("ordinary rewards are still normalised on edit", async () => {
+    const shop = await newShop("histo-ordinary");
+    const plain = await reward(shop, { name: "Remise" });
+
+    ok(
+      await edit(shop, plain.id, {
+        name: "  Remise XL  ",
+        description: "  Pour les fidèles  ",
+      }),
+    );
+    expect(await stored(plain.id)).toEqual({
+      name: "Remise XL",
+      description: "Pour les fidèles",
+      active: true,
+    });
+    failure(await edit(shop, plain.id, { name: "   " }), "validation_error");
+    failure(
+      await edit(shop, plain.id, { description: "d".repeat(1001) }),
+      "validation_error",
+    );
+  });
+});
