@@ -2,6 +2,13 @@ import { z } from "zod";
 
 // Inputs of the loyalty Server Actions. They mirror the checks of the SQL
 // functions (20261020090000_loyalty_engine.sql), which remain the authority.
+// Edits (program configuration, reward update) only check shapes and types
+// for bounded values: a value written before the current bounds is kept as
+// is when it is left unchanged, and only PostgreSQL knows the stored value.
+// An out-of-bounds new value is refused there (`validation_error` on the
+// field). Creations check the bounds here too.
+
+const INT_MAX = 2_147_483_647;
 
 const optionalText = (max: number) =>
   z
@@ -23,26 +30,23 @@ export const rewardTypeSchema = z.enum([
 
 /**
  * Points per 100 minor units of the price, as an exact decimal string
- * ("1", "0.5", "2.25"): 0.01 to 100, at most 4 decimals. A string, so the
- * value never goes through a lossy computation before PostgreSQL's NUMERIC.
+ * ("1", "0.5", "2.25"), at most 4 decimals. A string, so the value never
+ * goes through a lossy computation before PostgreSQL's NUMERIC(10, 4). A new
+ * value must be between 0.01 and 100 (checked by PostgreSQL, see above).
  */
 export const pointsPerEuroSchema = z
   .string()
   .trim()
-  .regex(/^\d{1,3}(\.\d{1,4})?$/, "Nombre décimal attendu (ex. 1,5 → 1.5).")
-  .refine((value) => {
-    const [units, decimals = ""] = value.split(".");
-    const tenThousandths =
-      Number(units) * 10_000 + Number(decimals.padEnd(4, "0"));
-    return tenThousandths >= 100 && tenThousandths <= 1_000_000;
-  }, "Entre 0,01 et 100 points.");
+  .regex(/^\d{1,6}(\.\d{1,4})?$/, "Nombre décimal attendu (ex. 1,5 → 1.5).")
+  .refine((value) => /[1-9]/.test(value), "Doit être positif.");
 
 export const configureProgramSchema = z
   .object({
     expectedVersion: versionSchema,
     active: z.boolean(),
     accrualMode: accrualModeSchema,
-    pointsPerCompletedAppointment: z.number().int().min(1).max(10_000),
+    /** 1 to 10 000 for a new value (checked by PostgreSQL, see above). */
+    pointsPerCompletedAppointment: z.number().int().min(1).max(INT_MAX),
     pointsPerEuro: pointsPerEuroSchema.nullish(),
   })
   .superRefine((value, context) => {
@@ -89,6 +93,7 @@ function checkRewardShape(
     serviceId: string | null;
   },
   context: z.RefinementCtx,
+  { bounds }: { bounds: boolean } = { bounds: true },
 ) {
   if (value.rewardType === "free_service") {
     if (value.rewardValue !== null) {
@@ -121,6 +126,7 @@ function checkRewardShape(
       message: "La valeur est obligatoire.",
     });
   } else if (
+    bounds &&
     value.rewardType === "percentage_discount" &&
     value.rewardValue > 100
   ) {
@@ -140,18 +146,29 @@ export const createRewardSchema = z
     /** One per creation form: a retry of the same command creates nothing more. */
     requestId: z.uuid(),
   })
-  .superRefine(checkRewardShape);
+  .superRefine((value, context) => checkRewardShape(value, context));
 
 /** Every editable field (the type is fixed), on the basis of `expectedVersion`. */
 export const updateRewardSchema = z
   .object({
     ...rewardFields,
+    // Bounds of new values checked by PostgreSQL (see above).
+    description: z
+      .string()
+      .trim()
+      .max(1_000_000)
+      .nullish()
+      .transform((value) => (value ? value : null)),
+    pointsRequired: z.number().int().min(1).max(INT_MAX),
+    rewardValue: z.number().int().min(1).max(INT_MAX).nullable(),
     rewardId: z.uuid(),
     /** The reward's type as read; it cannot change. */
     rewardType: rewardTypeSchema,
     expectedVersion: versionSchema.min(1),
   })
-  .superRefine(checkRewardShape);
+  .superRefine((value, context) =>
+    checkRewardShape(value, context, { bounds: false }),
+  );
 
 export const clientLoyaltySchema = z.object({ clientId: z.uuid() });
 

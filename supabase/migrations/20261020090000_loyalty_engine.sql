@@ -61,12 +61,39 @@ where p.active
     select 1 from public.loyalty_events e where e.business_id = p.business_id
   );
 
--- Bounds for new writes (existing rows are kept as they are).
-alter table public.loyalty_programs
-  add constraint loyalty_programs_points_per_appointment_range
-    check (points_per_completed_appointment between 1 and 10000) not valid,
-  add constraint loyalty_programs_points_per_euro_range
-    check (points_per_euro is null or points_per_euro between 0.01 and 100) not valid;
+-- Bounds for new writes. The previous schema accepted wider values (and
+-- members could write this table directly): a CHECK, even NOT VALID, would
+-- apply to every later UPDATE of such a row, so any change to it (an
+-- activation, a foreign-key action, this migration's own backfills) would
+-- fail. The guard therefore bounds every value an INSERT or UPDATE writes,
+-- and lets a historical value that an UPDATE leaves unchanged stay as it
+-- was (grandfathered: readable, kept on edit, never newly written).
+create function private.loyalty_programs_bounds()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if (tg_op = 'INSERT'
+      or new.points_per_completed_appointment is distinct from old.points_per_completed_appointment)
+    and new.points_per_completed_appointment not between 1 and 10000 then
+    raise exception using errcode = '23514', message = 'loyalty_programs_points_per_appointment_range';
+  end if;
+  if (tg_op = 'INSERT' or new.points_per_euro is distinct from old.points_per_euro)
+    and new.points_per_euro is not null
+    and new.points_per_euro not between 0.01 and 100 then
+    raise exception using errcode = '23514', message = 'loyalty_programs_points_per_euro_range';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function private.loyalty_programs_bounds() from public;
+
+create trigger loyalty_programs_bounds
+  before insert or update on public.loyalty_programs
+  for each row execute function private.loyalty_programs_bounds();
 
 -- Businesses created without onboarding get an inactive program.
 insert into public.loyalty_programs (business_id, active)
@@ -315,6 +342,52 @@ revoke all on function private.loyalty_lock_client(uuid, uuid) from public;
 -- 3. Earning on completion
 -- ---------------------------------------------------------------------------
 
+-- Eligibility of an appointment, decided once and for all at its first
+-- completion: whether the business's program was active then. It survives
+-- reopenings (appointments.completed_at does not: it is cleared on reopen),
+-- so an appointment completed while the program was inactive never earns
+-- retroactively by being reopened and completed again after activation; one
+-- completed while active keeps earning through the generation mechanism.
+-- A professional can still credit a historical visit by a manual
+-- adjustment. Internal: no API role reads or writes it.
+create table private.loyalty_appointment_eligibility (
+  appointment_id uuid primary key,
+  business_id uuid not null references public.businesses (id) on delete cascade,
+  eligible boolean not null,
+  decided_at timestamptz not null default now(),
+  foreign key (appointment_id, business_id)
+    references public.appointments (id, business_id) on delete cascade
+);
+
+revoke all on private.loyalty_appointment_eligibility from public, anon, authenticated;
+
+-- Existing appointments, conservatively, from what the database proves:
+--   * an award exists (whatever its status now) → eligible;
+--   * completed without any award → not eligible: whether a program was
+--     active then cannot be proven, and never crediting is the safe side.
+-- An appointment completed then reopened before this migration without an
+-- award leaves no trace (completed_at was cleared): its next completion is
+-- treated as its first (documented limitation).
+insert into private.loyalty_appointment_eligibility (appointment_id, business_id, eligible, decided_at)
+select a.id, a.business_id, true, pg_catalog.now()
+from public.appointments a
+where exists (
+  select 1 from public.loyalty_events e
+  where e.business_id = a.business_id
+    and e.appointment_id = a.id
+    and e.type = 'appointment_completed'
+)
+union all
+select a.id, a.business_id, false, pg_catalog.now()
+from public.appointments a
+where a.status = 'completed'
+  and not exists (
+    select 1 from public.loyalty_events e
+    where e.business_id = a.business_id
+      and e.appointment_id = a.id
+      and e.type = 'appointment_completed'
+  );
+
 -- Points for one completion, from the program as it is now and the
 -- appointment's own snapshots (service, price at booking or last edit).
 -- Integers and NUMERIC only: no floating point. Capped per appointment.
@@ -356,12 +429,23 @@ declare
   v_rule_points integer;
   v_points integer;
   v_generation integer;
+  v_eligible boolean;
 begin
   select p.* into v_program
   from public.loyalty_programs p
   where p.business_id = p_appointment.business_id;
 
-  if not found or not v_program.active then
+  -- First completion: record whether it can ever earn (under the
+  -- appointment's row lock, held by the UPDATE that fired this).
+  insert into private.loyalty_appointment_eligibility (appointment_id, business_id, eligible)
+  values (p_appointment.id, p_appointment.business_id, coalesce(v_program.active, false))
+  on conflict (appointment_id) do nothing;
+
+  select el.eligible into v_eligible
+  from private.loyalty_appointment_eligibility el
+  where el.appointment_id = p_appointment.id;
+
+  if not v_eligible or v_program.business_id is null or not v_program.active then
     return;
   end if;
 
@@ -612,23 +696,64 @@ alter table public.rewards
     references public.services (id, business_id) on delete set null (service_id),
   add constraint rewards_creation_request_fingerprint_present check (
     (creation_request_id is null) = (creation_request_fingerprint is null)
-  ),
-  add constraint rewards_points_required_range
-    check (points_required <= 1000000) not valid,
-  add constraint rewards_percentage_range
-    check (reward_type <> 'percentage_discount' or reward_value between 1 and 100) not valid,
-  add constraint rewards_fixed_value_range
-    check (reward_type <> 'fixed_discount' or (reward_value <= 10000000 and currency is not null)) not valid,
-  add constraint rewards_description_length
-    check (description is null or char_length(description) <= 1000) not valid;
+  );
 
--- Existing fixed discounts were expressed in the business currency.
+-- Existing fixed discounts were expressed in the business currency. Only
+-- the new column is written: every historical value stays as it was.
 update public.rewards w
 set currency = coalesce(st.currency, 'EUR')
 from public.business_settings st
 where st.business_id = w.business_id
   and w.reward_type = 'fixed_discount'
   and w.currency is null;
+
+-- Bounds for new writes, with the same grandfathering as
+-- private.loyalty_programs_bounds: the previous schema accepted longer
+-- descriptions, more points, any positive value. Such a reward stays
+-- readable and redeemable; an update may keep its historical values
+-- unchanged (an activation, a foreign-key action), never write new ones
+-- out of bounds.
+create function private.rewards_bounds()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_insert boolean := tg_op = 'INSERT';
+begin
+  if (v_insert or new.points_required is distinct from old.points_required)
+    and new.points_required > 1000000 then
+    raise exception using errcode = '23514', message = 'rewards_points_required_range';
+  end if;
+  if (v_insert or new.description is distinct from old.description)
+    and pg_catalog.char_length(new.description) > 1000 then
+    raise exception using errcode = '23514', message = 'rewards_description_length';
+  end if;
+  if (v_insert
+      or new.reward_value is distinct from old.reward_value
+      or new.reward_type is distinct from old.reward_type)
+    and new.reward_type = 'percentage_discount'
+    and new.reward_value not between 1 and 100 then
+    raise exception using errcode = '23514', message = 'rewards_percentage_range';
+  end if;
+  if (v_insert
+      or new.reward_value is distinct from old.reward_value
+      or new.reward_type is distinct from old.reward_type
+      or new.currency is distinct from old.currency)
+    and new.reward_type = 'fixed_discount'
+    and (new.reward_value > 10000000 or new.currency is null) then
+    raise exception using errcode = '23514', message = 'rewards_fixed_value_range';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function private.rewards_bounds() from public;
+
+create trigger rewards_bounds
+  before insert or update on public.rewards
+  for each row execute function private.rewards_bounds();
 
 create unique index rewards_creation_request_idx
   on public.rewards (business_id, creation_request_id)
@@ -817,13 +942,22 @@ begin
   if p_accrual_mode is null then
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'accrualMode';
   end if;
+  select p.* into v_current
+  from public.loyalty_programs p
+  where p.business_id = p_business_id
+  for update;
+
+  -- A historical out-of-bounds value is accepted only unchanged (see
+  -- private.loyalty_programs_bounds); any new value must be in bounds.
   if p_points_per_completed_appointment is null
-    or p_points_per_completed_appointment not between 1 and 10000 then
+    or (p_points_per_completed_appointment not between 1 and 10000
+        and p_points_per_completed_appointment is distinct from v_current.points_per_completed_appointment) then
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'pointsPerCompletedAppointment';
   end if;
   if p_accrual_mode = 'spend' then
     if p_points_per_euro is null
-      or p_points_per_euro not between 0.01 and 100
+      or (p_points_per_euro not between 0.01 and 100
+          and p_points_per_euro is distinct from v_current.points_per_euro)
       or p_points_per_euro <> pg_catalog.round(p_points_per_euro, 4) then
       raise exception using errcode = '22023', message = 'invalid_input', hint = 'pointsPerEuro';
     end if;
@@ -832,12 +966,7 @@ begin
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'pointsPerEuro';
   end if;
 
-  select p.* into v_current
-  from public.loyalty_programs p
-  where p.business_id = p_business_id
-  for update;
-
-  if not found then
+  if v_current.business_id is null then
     if p_expected_version <> 0 then
       raise exception using errcode = 'P0001', message = 'stale_loyalty_program';
     end if;
@@ -937,6 +1066,7 @@ create function private.loyalty_reward_fields(
   p_reward_type public.reward_type,
   p_reward_value integer,
   p_service_id uuid,
+  p_current public.rewards,
   out name text,
   out description text,
   out reward_value integer,
@@ -948,13 +1078,22 @@ stable
 set search_path = ''
 as $$
 begin
+  -- p_current (an update): a historical value outside today's bounds is
+  -- accepted only unchanged (see private.rewards_bounds).
   name := private.optional_text(p_name, 120, 'name');
   if name is null then
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'name';
   end if;
-  description := private.optional_text(p_description, 1000, 'description');
+  if p_current.id is not null and p_description = p_current.description then
+    description := p_current.description;
+  else
+    description := private.optional_text(p_description, 1000, 'description');
+  end if;
 
-  if p_points_required is null or p_points_required not between 1 and 1000000 then
+  if p_points_required is null
+    or p_points_required < 1
+    or (p_points_required > 1000000
+        and p_points_required is distinct from p_current.points_required) then
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'pointsRequired';
   end if;
   if p_reward_type is null then
@@ -962,11 +1101,15 @@ begin
   end if;
 
   if p_reward_type = 'percentage_discount' then
-    if p_reward_value is null or p_reward_value not between 1 and 100 then
+    if p_reward_value is null
+      or p_reward_value < 1
+      or (p_reward_value > 100 and p_reward_value is distinct from p_current.reward_value) then
       raise exception using errcode = '22023', message = 'invalid_input', hint = 'rewardValue';
     end if;
   elsif p_reward_type = 'fixed_discount' then
-    if p_reward_value is null or p_reward_value not between 1 and 10000000 then
+    if p_reward_value is null
+      or p_reward_value < 1
+      or (p_reward_value > 10000000 and p_reward_value is distinct from p_current.reward_value) then
       raise exception using errcode = '22023', message = 'invalid_input', hint = 'rewardValue';
     end if;
     select st.currency into currency
@@ -993,7 +1136,7 @@ end;
 $$;
 
 revoke all on function private.loyalty_reward_fields(
-  uuid, text, text, integer, public.reward_type, integer, uuid
+  uuid, text, text, integer, public.reward_type, integer, uuid, public.rewards
 ) from public;
 
 -- Creates a reward, once per request: a retry of the same command answers
@@ -1060,7 +1203,7 @@ begin
 
   v_fields := private.loyalty_reward_fields(
     p_business_id, p_name, p_description, p_points_required, p_reward_type,
-    p_reward_value, p_service_id
+    p_reward_value, p_service_id, null
   );
 
   insert into public.rewards (
@@ -1138,7 +1281,7 @@ begin
 
   v_fields := private.loyalty_reward_fields(
     p_business_id, p_name, p_description, p_points_required, v_current.reward_type,
-    p_reward_value, p_service_id
+    p_reward_value, p_service_id, v_current
   );
 
   if v_current.name = v_fields.name
@@ -1619,7 +1762,7 @@ begin
           'pointsRequired', w.points_required,
           'eligible', v_active and w.active and w.unavailable is null
                       and v_balance >= w.points_required,
-          'missingPoints', greatest(w.points_required - greatest(v_balance, 0), 0),
+          'missingPoints', greatest(w.points_required - v_balance, 0),
           'unavailableReason', case
             when not v_active then 'program_inactive'
             when not w.active then 'inactive'
@@ -1720,7 +1863,9 @@ begin
   from ledger l
   where p_before_seq is null or l.ledger_seq < p_before_seq
   order by l.ledger_seq desc
-  limit least(greatest(coalesce(p_limit, 50), 1), 100);
+  -- 100 entries per page at most, plus one: the caller asks for one more
+  -- than it shows to know whether another page exists.
+  limit least(greatest(coalesce(p_limit, 50), 1), 101);
 end;
 $$;
 

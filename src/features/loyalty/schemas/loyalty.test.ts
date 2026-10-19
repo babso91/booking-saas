@@ -13,26 +13,21 @@ const SERVICE = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
 const REQUEST = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 describe("pointsPerEuroSchema", () => {
-  it.each(["0.01", "1", "1.5", "2.25", "0.1234", "100", "100.0000"])(
-    "accepts %s",
+  // Bounds (0.01 to 100 for a new value) are PostgreSQL's: an unchanged
+  // historical value may lie outside them.
+  it.each(["0.01", "1", "1.5", "2.25", "0.1234", "100", "999999.9999"])(
+    "accepts the shape %s",
     (value) => {
       expect(pointsPerEuroSchema.safeParse(value).success).toBe(true);
     },
   );
 
-  it.each([
-    "0",
-    "0.009",
-    "100.0001",
-    "1000",
-    "1e2",
-    "-1",
-    "1,5",
-    "",
-    "0.12345",
-  ])("refuses %s", (value) => {
-    expect(pointsPerEuroSchema.safeParse(value).success).toBe(false);
-  });
+  it.each(["0", "0.0000", "1e2", "-1", "1,5", "", "0.12345", "1234567"])(
+    "refuses %s",
+    (value) => {
+      expect(pointsPerEuroSchema.safeParse(value).success).toBe(false);
+    },
+  );
 });
 
 describe("configureProgramSchema", () => {
@@ -63,8 +58,8 @@ describe("configureProgramSchema", () => {
     ).toBe(false);
   });
 
-  it("points per appointment are whole numbers between 1 and 10000", () => {
-    for (const points of [0, 1.5, 10_001]) {
+  it("points per appointment are positive whole numbers (bounds: PostgreSQL)", () => {
+    for (const points of [0, 1.5, -3]) {
       expect(
         configureProgramSchema.safeParse({
           ...base,
@@ -129,6 +124,14 @@ describe("reward schemas", () => {
       expectedVersion: 1,
     };
     expect(updateRewardSchema.safeParse(update).success).toBe(true);
+    // A grandfathered value may be sent back unchanged (PostgreSQL decides).
+    expect(
+      updateRewardSchema.safeParse({
+        ...update,
+        description: "d".repeat(1500),
+        pointsRequired: 3_000_000,
+      }).success,
+    ).toBe(true);
     expect(
       updateRewardSchema.safeParse({ ...update, expectedVersion: 0 }).success,
     ).toBe(false);

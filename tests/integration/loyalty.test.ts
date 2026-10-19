@@ -184,6 +184,33 @@ async function program(
   );
 }
 
+/**
+ * A program value written directly before the loyalty engine (members could
+ * write any value then): the bounds guard of new writes is bypassed.
+ */
+async function legacyProgram(businessId: string, set: string) {
+  const connection = await db.connect();
+  try {
+    await connection.query("begin");
+    await connection.query(
+      "alter table public.loyalty_programs disable trigger loyalty_programs_bounds",
+    );
+    await connection.query(
+      `update public.loyalty_programs set ${set} where business_id = $1`,
+      [businessId],
+    );
+    await connection.query(
+      "alter table public.loyalty_programs enable trigger loyalty_programs_bounds",
+    );
+    await connection.query("commit");
+  } catch (error) {
+    await connection.query("rollback");
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 async function newShop(label = "fidelite"): Promise<Shop> {
   const owner = await createProfessional(label);
   const business = await createBusiness(owner.userId);
@@ -658,6 +685,60 @@ describe("earning", () => {
     // A later completion earns; the earlier one is not revisited.
     await complete(await pastAppointment(off, off.coupe));
     expect(await entries(off.client)).toHaveLength(1);
+  });
+
+  it("no retroactive earning: completed while inactive, then reopened and completed after activation, earns nothing", async () => {
+    const off = await newShop("retro");
+    await program(off, { active: false });
+    as(off.owner);
+    const historical = await pastAppointment(off, off.coupe);
+    await complete(historical);
+
+    await program(off, { active: true });
+    as(off.owner);
+    ok(await setStatus(historical, "confirmed"));
+    await complete(historical);
+    // Even after several cycles.
+    ok(await setStatus(historical, "confirmed"));
+    await complete(historical);
+    expect(await entries(off.client)).toEqual([]);
+
+    // A new appointment earns normally.
+    await complete(await pastAppointment(off, off.coupe));
+    expect(await entries(off.client)).toHaveLength(1);
+
+    // The professional can still credit the historical visit on purpose.
+    ok(
+      await adjustPointsAction({
+        clientId: off.client,
+        requestId: randomUUID(),
+        pointsDelta: 10,
+        reason: "Visite avant l’activation",
+      }),
+    );
+    expect(await balance(off.client)).toBe(20);
+  });
+
+  it("eligibility is decided once, at the first completion: earned while active, it stays eligible after a deactivation and reactivation", async () => {
+    const cycle = await newShop("cycle");
+    as(cycle.owner);
+    const appointment = await pastAppointment(cycle, cycle.coupe);
+    await complete(appointment);
+    ok(await setStatus(appointment, "confirmed"));
+    await program(cycle, { active: false });
+    as(cycle.owner);
+    await complete(appointment);
+    ok(await setStatus(appointment, "confirmed"));
+    await program(cycle, { active: true });
+    as(cycle.owner);
+    await complete(appointment);
+
+    expect(await entries(cycle.client)).toMatchObject([
+      { type: "appointment_completed", points_delta: 10, award_generation: 1 },
+      { type: "correction", points_delta: -10 },
+      { type: "appointment_completed", points_delta: 10, award_generation: 2 },
+    ]);
+    expect(await balance(cycle.client)).toBe(10);
   });
 
   it("reopening reverses with a compensating entry; completing again awards a new generation", async () => {
@@ -1942,24 +2023,10 @@ describe("self-audit regressions", () => {
 
   it("an extreme legacy rate cannot break the completion of an appointment", async () => {
     const shop = await newShop("rate");
-    // Legacy data: a direct write allowed before this migration (the range
-    // check is NOT VALID, so such a row can still exist).
-    await db.query(
-      "alter table public.loyalty_programs drop constraint loyalty_programs_points_per_euro_range",
+    await legacyProgram(
+      shop.business.id,
+      "accrual_mode = 'spend', points_per_euro = 999999.9999",
     );
-    try {
-      await db.query(
-        `update public.loyalty_programs
-         set accrual_mode = 'spend', points_per_euro = 999999.9999
-         where business_id = $1`,
-        [shop.business.id],
-      );
-    } finally {
-      await db.query(
-        `alter table public.loyalty_programs add constraint loyalty_programs_points_per_euro_range
-           check (points_per_euro is null or points_per_euro between 0.01 and 100) not valid`,
-      );
-    }
     const expensive = await createService(shop.business.id, {
       priceCents: 50_000_000,
     });
@@ -1968,5 +2035,317 @@ describe("self-audit regressions", () => {
     expect(await entries(shop.client)).toMatchObject([
       { points_delta: 1_000_000 },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("Codex audit corrections", () => {
+  it("missing points use the signed balance; a negative balance never authorizes a redemption", async () => {
+    const shop = await newShop("missing");
+    const ten = await reward(shop, { name: "Dix", pointsRequired: 10 });
+    const huge = await reward(shop, {
+      name: "Million",
+      pointsRequired: 1_000_000,
+    });
+    const missing = async () => {
+      as(shop.owner);
+      const summary = ok(
+        await getClientLoyaltyAction({ clientId: shop.client }),
+      );
+      const byId = Object.fromEntries(
+        summary.rewards.map((r) => [r.rewardId, r]),
+      );
+      return {
+        balance: summary.balance,
+        ten: [byId[ten.id]!.eligible, byId[ten.id]!.missingPoints],
+        huge: [byId[huge.id]!.eligible, byId[huge.id]!.missingPoints],
+      };
+    };
+
+    // Zero.
+    expect(await missing()).toEqual({
+      balance: 0,
+      ten: [false, 10],
+      huge: [false, 1_000_000],
+    });
+
+    // Positive, then exactly sufficient.
+    as(shop.owner);
+    ok(
+      await adjustPointsAction({
+        clientId: shop.client,
+        requestId: randomUUID(),
+        pointsDelta: 4,
+        reason: "x",
+      }),
+    );
+    expect(await missing()).toMatchObject({ balance: 4, ten: [false, 6] });
+    ok(
+      await adjustPointsAction({
+        clientId: shop.client,
+        requestId: randomUUID(),
+        pointsDelta: 6,
+        reason: "x",
+      }),
+    );
+    expect(await missing()).toMatchObject({
+      balance: 10,
+      ten: [true, 0],
+      huge: [false, 999_990],
+    });
+
+    // Negative: an award of 20 reversed after 10 + 10 were spent.
+    await complete(await pastAppointment(shop, shop.coupe));
+    const appointment = await pastAppointment(shop, shop.coupe);
+    await complete(appointment);
+    as(shop.owner);
+    for (let i = 0; i < 3; i += 1) {
+      ok(
+        await redeemRewardAction({
+          clientId: shop.client,
+          rewardId: ten.id,
+          requestId: randomUUID(),
+        }),
+      );
+    }
+    ok(await setStatus(appointment, "confirmed"));
+    expect(await missing()).toEqual({
+      balance: -10,
+      ten: [false, 20],
+      huge: [false, 1_000_010],
+    });
+    failure(
+      await redeemRewardAction({
+        clientId: shop.client,
+        rewardId: ten.id,
+        requestId: randomUUID(),
+      }),
+      "insufficient_points",
+    );
+  });
+
+  describe("ledger pagination at every supported page size", () => {
+    let shop: Shop;
+    let other: Shop;
+
+    beforeAll(async () => {
+      shop = await newShop("pages");
+      other = await newShop("pages-other");
+      // Entries of another business, interleaved: never in these pages.
+      await db.query(
+        `insert into public.loyalty_events
+           (business_id, client_id, type, points_delta, reason, idempotency_key)
+         select $1, $2, 'manual_adjustment', 1, 'autre', 'other-' || g
+         from generate_series(1, 30) g`,
+        [other.business.id, other.client],
+      );
+    });
+
+    /** A customer with exactly `count` entries (1, 2, 3… points). */
+    async function customerWith(count: number) {
+      const client = await createClientRecord(
+        shop.business.id,
+        `p-${count}-${randomUUID()}@x.test`,
+      );
+      await db.query(
+        `insert into public.loyalty_events
+           (business_id, client_id, type, points_delta, reason, idempotency_key)
+         select $1, $2, 'manual_adjustment', g, 'n' || g, $3 || g
+         from generate_series(1, $4::int) g
+         order by g`,
+        [shop.business.id, client, `${client}-`, count],
+      );
+      return client;
+    }
+
+    async function allPages(clientId: string, limit: number) {
+      as(shop.owner);
+      const pages: number[][] = [];
+      let cursor: string | undefined;
+      do {
+        const page = ok(
+          await listClientLoyaltyLedgerAction({ clientId, limit, cursor }),
+        );
+        pages.push(page.entries.map((entry) => entry.pointsDelta));
+        cursor = page.nextCursor ?? undefined;
+        expect(pages.length).toBeLessThan(200);
+      } while (cursor);
+      return pages;
+    }
+
+    it.each([0, 1, 99, 100, 101, 108])(
+      "%i entries, pages of 100: every entry exactly once, newest first",
+      async (count) => {
+        const client = await customerWith(count);
+        const pages = await allPages(client, 100);
+        const all = pages.flat();
+        expect(all).toEqual(Array.from({ length: count }, (_, i) => count - i));
+        expect(pages.map((page) => page.length)).toEqual(
+          count <= 100 ? [count] : [100, count - 100],
+        );
+      },
+    );
+
+    it("several sequential pages (pages of 7 over 108 entries); running balances stay exact", async () => {
+      const client = await customerWith(108);
+      const pages = await allPages(client, 7);
+      expect(pages).toHaveLength(16);
+      expect(pages.flat()).toEqual(
+        Array.from({ length: 108 }, (_, i) => 108 - i),
+      );
+
+      as(shop.owner);
+      const first = ok(
+        await listClientLoyaltyLedgerAction({ clientId: client, limit: 1 }),
+      );
+      expect(first.entries[0]!.balanceAfter).toBe((108 * 109) / 2);
+    });
+
+    it("an entry added between two pages appears on a reload, never on a later page, and nothing is skipped or repeated", async () => {
+      const client = await customerWith(5);
+      as(shop.owner);
+      const first = ok(
+        await listClientLoyaltyLedgerAction({ clientId: client, limit: 2 }),
+      );
+      ok(
+        await adjustPointsAction({
+          clientId: client,
+          requestId: randomUUID(),
+          pointsDelta: 100,
+          reason: "Nouveau",
+        }),
+      );
+      const rest: number[] = [];
+      let cursor = first.nextCursor ?? undefined;
+      while (cursor) {
+        const page = ok(
+          await listClientLoyaltyLedgerAction({
+            clientId: client,
+            limit: 2,
+            cursor,
+          }),
+        );
+        rest.push(...page.entries.map((entry) => entry.pointsDelta));
+        cursor = page.nextCursor ?? undefined;
+      }
+      expect([
+        ...first.entries.map((entry) => entry.pointsDelta),
+        ...rest,
+      ]).toEqual([5, 4, 3, 2, 1]);
+      const reload = ok(
+        await listClientLoyaltyLedgerAction({ clientId: client, limit: 2 }),
+      );
+      expect(reload.entries[0]!.pointsDelta).toBe(100);
+    });
+
+    it("the RPC still caps a page: at most 100 entries plus one look-ahead", async () => {
+      const client = await customerWith(130);
+      const { data, error } = await shop.owner.client.rpc(
+        "loyalty_client_ledger",
+        {
+          p_business_id: shop.business.id,
+          p_client_id: client,
+          p_limit: 1000,
+        },
+      );
+      expect(error).toBeNull();
+      expect(data).toHaveLength(101);
+    });
+
+    it("another business's professional pages nothing", async () => {
+      const client = await customerWith(3);
+      as(other.owner);
+      failure(
+        await listClientLoyaltyLedgerAction({ clientId: client, limit: 100 }),
+        "client_not_found",
+      );
+    });
+  });
+
+  it("a grandfathered out-of-bounds program value can be kept as is, never newly written", async () => {
+    const shop = await newShop("grand");
+    await legacyProgram(
+      shop.business.id,
+      "points_per_completed_appointment = 50000",
+    );
+    as(shop.owner);
+    const read = ok(await getLoyaltyProgramAction());
+    expect(read.pointsPerCompletedAppointment).toBe(50000);
+
+    // Deactivating keeps the historical value.
+    const saved = ok(
+      await configureLoyaltyProgramAction({
+        expectedVersion: read.version,
+        active: false,
+        accrualMode: "appointment",
+        pointsPerCompletedAppointment: 50000,
+      }),
+    );
+    expect(saved).toMatchObject({
+      active: false,
+      pointsPerCompletedAppointment: 50000,
+    });
+
+    // Another out-of-bounds value is refused, by the action and by PostgreSQL.
+    const { error } = await shop.owner.client.rpc("loyalty_configure_program", {
+      p_business_id: shop.business.id,
+      p_expected_version: saved.version,
+      p_active: false,
+      p_accrual_mode: "appointment",
+      p_points_per_completed_appointment: 60000,
+    });
+    expect(error?.message).toBe("invalid_input");
+    await expect(
+      db.query(
+        "update public.loyalty_programs set points_per_completed_appointment = 60000 where business_id = $1",
+        [shop.business.id],
+      ),
+    ).rejects.toThrow("loyalty_programs_points_per_appointment_range");
+
+    // Normalising is always possible.
+    expect(
+      ok(
+        await configureLoyaltyProgramAction({
+          expectedVersion: saved.version,
+          active: true,
+          accrualMode: "appointment",
+          pointsPerCompletedAppointment: 5,
+        }),
+      ).pointsPerCompletedAppointment,
+    ).toBe(5);
+  });
+
+  it("new rewards are bounded by PostgreSQL itself, whatever the write path", async () => {
+    const shop = await newShop("bounded");
+    // description, points_required, reward_type, reward_value, currency
+    for (const [values, constraint] of [
+      [
+        "null, 1000001, 'percentage_discount', 10, null",
+        "rewards_points_required_range",
+      ],
+      [
+        "null, 10, 'percentage_discount', 101, null",
+        "rewards_percentage_range",
+      ],
+      ["null, 10, 'fixed_discount', 500, null", "rewards_fixed_value_range"],
+      [
+        "null, 10, 'fixed_discount', 10000001, 'EUR'",
+        "rewards_fixed_value_range",
+      ],
+      [
+        "repeat('d', 1001), 10, 'percentage_discount', 10, null",
+        "rewards_description_length",
+      ],
+    ] as const) {
+      await expect(
+        db.query(
+          `insert into public.rewards
+             (business_id, name, description, points_required, reward_type, reward_value, currency)
+           values ($1, 'n', ${values})`,
+          [shop.business.id],
+        ),
+      ).rejects.toThrow(constraint);
+    }
   });
 });

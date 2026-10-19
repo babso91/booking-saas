@@ -34,7 +34,7 @@ Le prix utilisé est l'**instantané du rendez-vous** (`price_cents_snapshot`), 
 **Activation :**
 
 - programme inactif : aucune complétion ne rapporte ;
-- l'activation n'est pas rétroactive ;
+- l'activation n'est pas rétroactive, même par réouverture : l'éligibilité d'un rendez-vous est fixée **une fois pour toutes à sa première complétion** (programme actif ou non à cet instant), dans `private.loyalty_appointment_eligibility`. Un rendez-vous terminé programme inactif ne rapportera jamais de points automatiques, même rouvert et terminé à nouveau après l'activation ; seul un ajustement manuel peut le créditer volontairement. Un rendez-vous terminé programme actif reste éligible (réouvertures, générations), y compris après une désactivation puis une réactivation ;
 - désactiver ne retire aucun point ;
 - avec un programme inactif, les récompenses ne peuvent pas être attribuées, mais les soldes et l'historique restent lisibles.
 
@@ -43,10 +43,10 @@ Le prix utilisé est l'**instantané du rendez-vous** (`price_cents_snapshot`), 
 | Transition (agenda)             | Effet fidélité                                                                                |
 | ------------------------------- | --------------------------------------------------------------------------------------------- |
 | réservation publique / manuelle | aucun                                                                                         |
-| `confirmed` → `completed`       | gain (génération 1) si le programme est actif                                                 |
+| `confirmed` → `completed`       | première complétion : fixe l'éligibilité ; gain (génération 1) si le programme est actif      |
 | `no_show` → `completed`         | gain                                                                                          |
 | `completed` → `confirmed`       | **désormais autorisé** : le gain est annulé par une écriture `correction` compensatoire       |
-| re-`completed`                  | nouveau gain (génération n + 1), calculé sur les instantanés et le programme à ce moment      |
+| re-`completed`                  | si éligible et programme actif : nouveau gain (génération n + 1), sur les instantanés actuels |
 | `cancelled`, `no_show`          | aucun point                                                                                   |
 | complétion répétée, concurrente | un seul gain : le verrou du rendez-vous sérialise, et un même statut n'est pas une transition |
 
@@ -105,7 +105,7 @@ Chaque action renvoie `ActionResult<T>` : `{ ok: true, data }` ou `{ ok: false, 
 | `createRewardAction`            | `requestId, name, description?, pointsRequired, rewardType, rewardValue, serviceId, active?` | `RewardDto`                                                                  |
 | `updateRewardAction`            | `rewardId, rewardType, expectedVersion` + tous les champs modifiables                        | `RewardDto`                                                                  |
 | `getClientLoyaltyAction`        | `clientId`                                                                                   | `ClientLoyaltySummaryDto` (solde, totaux, éligibilité de chaque récompense)  |
-| `listClientLoyaltyLedgerAction` | `clientId, cursor?, limit?` (≤ 100)                                                          | `LoyaltyLedgerPageDto` (le plus récent d'abord, solde après chaque écriture) |
+| `listClientLoyaltyLedgerAction` | `clientId, cursor?, limit?` (1 à 100)                                                        | `LoyaltyLedgerPageDto` (le plus récent d'abord, solde après chaque écriture) |
 | `listLoyaltyBalancesAction`     | `clientIds?` (≤ 200)                                                                         | `LoyaltyBalanceDto[]` (clientes ayant au moins une écriture)                 |
 | `listClientRedemptionsAction`   | `clientId`                                                                                   | `RedemptionDto[]`                                                            |
 | `redeemRewardAction`            | `clientId, rewardId, requestId`                                                              | `RedemptionDto`                                                              |
@@ -114,7 +114,7 @@ Chaque action renvoie `ActionResult<T>` : `{ ok: true, data }` ou `{ ok: false, 
 | `adjustPointsAction`            | `clientId, requestId, pointsDelta, reason`                                                   | `{ entryId }`                                                                |
 | `reverseAdjustmentAction`       | `entryId, reason?`                                                                           | `{ entryId }`                                                                |
 
-- **Éligibilité :** `eligible` est vrai si le programme est actif, la récompense active et disponible, et le solde suffisant. Sinon, `unavailableReason` vaut `program_inactive`, `inactive`, `service_missing` ou `currency_missing`, et `missingPoints` indique les points manquants.
+- **Éligibilité :** `eligible` est vrai si le programme est actif, la récompense active et disponible, et le solde suffisant. Sinon, `unavailableReason` vaut `program_inactive`, `inactive`, `service_missing` ou `currency_missing`, et `missingPoints` indique les points manquants, calculés sur le solde signé : `max(0, coût − solde)` (solde −10, coût 10 → 20). Un solde négatif n'autorise jamais un rachat.
 - **Historique :** chaque écriture porte :
   - `reversesEntryId` / `reversedByEntryId` : afficher « annulé » sans recalcul ;
   - `awardGeneration` ;
@@ -161,7 +161,16 @@ Chaque action renvoie `ActionResult<T>` : `{ ok: true, data }` ou `{ ok: false, 
 
 - aucune écriture, récompense ni solde n'est modifié ;
 - les gains historiques reçoivent la génération 1 ;
-- les attributions historiques deviennent `fulfilled`, avec leur instantané.
+- les attributions historiques deviennent `fulfilled`, avec leur instantané ;
+- les remises fixes historiques reçoivent la devise de l'activité (seule la nouvelle colonne est écrite).
+
+**Valeurs historiques hors des nouvelles bornes** (description > 1 000 caractères, plus de 1 000 000 points, pourcentage > 100, remise > 10 000 000, programme hors bornes) : l'ancien schéma les acceptait. Elles sont **conservées intactes** (ni tronquées, ni plafonnées, ni supprimées), lisibles et utilisables. Les bornes s'appliquent par un trigger de garde (`rewards_bounds`, `loyalty_programs_bounds`) à toute valeur **nouvellement écrite** (insertion, ou colonne modifiée) ; une mise à jour qui laisse une valeur historique inchangée (activation, désactivation, action de clé étrangère) passe. Une contrainte `CHECK … NOT VALID` aurait rejeté toute mise à jour de ces lignes, y compris la migration elle-même. Les fonctions de modification suivent la même règle : renvoyer la valeur historique telle quelle est accepté, toute autre valeur hors bornes est refusée (`validation_error` sur le champ) ; normaliser est toujours possible. Les schémas zod de modification ne vérifient donc que la forme de ces valeurs ; PostgreSQL, qui connaît la valeur stockée, applique les bornes.
+
+**Éligibilité des rendez-vous existants** (règle conservatrice, sans invention de faits) :
+
+- un rendez-vous avec un gain historique est éligible ;
+- un rendez-vous terminé sans aucun gain est non éligible (l'état du programme à sa complétion n'est pas prouvable) ;
+- un rendez-vous terminé puis rouvert avant la migration sans gain ne laisse aucune trace (`completed_at` est effacé à la réouverture) : sa prochaine complétion est traitée comme la première.
 
 **Changements de comportement :**
 
@@ -171,8 +180,7 @@ Chaque action renvoie `ActionResult<T>` : `{ ok: true, data }` ou `{ ok: false, 
 
 ## Limites connues
 
-- **Écriture tardive dans l'historique :** l'historique est paginé sur `ledger_seq`, attribué à l'insertion. Une écriture validée pendant qu'on parcourt les pages suivantes peut ne pas y apparaître ; recharger la première page la montre.
-- **Rendez-vous terminé avant l'activation :** s'il est rouvert puis terminé à nouveau après l'activation, il rapporte des points. C'est un geste explicite de la professionnelle.
+- **Pagination et ajouts concurrents :** l'historique est paginé par curseur sur `ledger_seq` (une page = au plus 100 écritures ; la fonction SQL en renvoie au plus 101, la dernière ne servant qu'à savoir s'il existe une page suivante). Sur des données stables, aucune écriture n'est sautée ni répétée. Chaque page est une lecture distincte, pas un instantané commun : une écriture ajoutée pendant le parcours, plus récente, n'apparaît pas dans les pages suivantes mais en tête après rechargement. Une écriture dont le numéro a été attribué avant celui d'une écriture déjà affichée mais validée plus tard (transactions concurrentes) peut ne pas apparaître pendant ce parcours ; elle apparaît au rechargement.
 - **Suppression d'un compte professionnel :** les écritures qu'il a créées sont conservées, sans auteur (`created_by` vidé), comme partout ailleurs dans le produit.
 - **Numérotation des écritures historiques :** à la migration, elles sont numérotées dans l'ordre de leur date (`created_at`).
 
