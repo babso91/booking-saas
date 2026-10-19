@@ -222,12 +222,12 @@ type AppointmentClient =
 
 ## Statuts
 
-| Depuis      | Vers autorisé                       | Remarque                                                        |
-| ----------- | ----------------------------------- | --------------------------------------------------------------- |
-| `confirmed` | `cancelled`, `completed`, `no_show` | `completed` / `no_show` seulement si le rendez-vous a commencé  |
-| `no_show`   | `confirmed`, `completed`            | correction                                                      |
-| `completed` | `confirmed`                         | correction, refusée si des points de fidélité ont été attribués |
-| `cancelled` | —                                   | terminal : créer un nouveau rendez-vous                         |
+| Depuis      | Vers autorisé                       | Remarque                                                                                                        |
+| ----------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `confirmed` | `cancelled`, `completed`, `no_show` | `completed` / `no_show` seulement si le rendez-vous a commencé                                                  |
+| `no_show`   | `confirmed`, `completed`            | correction                                                                                                      |
+| `completed` | `confirmed`                         | correction ; les points attribués sont annulés par une écriture compensatoire ([fidélité](LOYALTY_CONTRACT.md)) |
+| `cancelled` | —                                   | terminal : créer un nouveau rendez-vous                                                                         |
 
 - Toute autre transition donne `invalid_status_transition`.
 - Redemander le statut actuel est un succès sans effet, ce qui absorbe un double clic.

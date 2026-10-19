@@ -2318,28 +2318,53 @@ describe("reminders follow a change of the business's time zone", () => {
   });
 
   it("a reminder whose new moment is already past is delivered by the worker now", async () => {
-    // Find an appointment start whose reminder is ahead in Los Angeles but
-    // already past at UTC+14 (Kiritimati): a day earlier.
-    const { rows: pick } = await db.query<{ starts_at: Date }>(
-      `select s as starts_at
+    // Find an appointment start and two zones such that its reminder is
+    // ahead in the first and already past in the second. A fixed pair (Los
+    // Angeles → Kiritimati) has no such start for half of the day; zones
+    // spread over UTC−11…UTC+14 always offer one, whatever the hour.
+    const { rows: pick } = await db.query<{
+      starts_at: Date;
+      from_zone: string;
+      to_zone: string;
+    }>(
+      `select s as starts_at, f.zone as from_zone, t.zone as to_zone
        from generate_series(
               date_trunc('hour', now()) + interval '20 hours',
               date_trunc('hour', now()) + interval '72 hours',
-              interval '1 hour') s
-       where private.email_reminder_at(s, 'America/Los_Angeles') > now() + interval '1 hour'
-         and private.email_reminder_at(s, 'Pacific/Kiritimati') < now()
+              interval '1 hour') s,
+            unnest($1::text[]) f(zone),
+            unnest($1::text[]) t(zone)
+       where private.email_reminder_at(s, f.zone) > now() + interval '1 hour'
+         and private.email_reminder_at(s, t.zone) < now()
          and s - interval '2 hours' > now()
+       order by s, f.zone, t.zone
        limit 1`,
+      [
+        [
+          "Pacific/Pago_Pago",
+          "Pacific/Honolulu",
+          "America/Los_Angeles",
+          "America/New_York",
+          "UTC",
+          "Europe/Paris",
+          "Asia/Dubai",
+          "Asia/Bangkok",
+          "Asia/Tokyo",
+          "Pacific/Noumea",
+          "Pacific/Tongatapu",
+          "Pacific/Kiritimati",
+        ],
+      ],
     );
     expect(pick).toHaveLength(1);
     const { business, reminder } = await reminderSetup(
-      "America/Los_Angeles",
+      pick[0]!.from_zone,
       pick[0]!.starts_at.toISOString(),
     );
     const transport = new MemoryTransport();
     expect(await worker(transport, business.id)).toMatchObject({ claimed: 0 });
 
-    await setTimezone(business.id, "Pacific/Kiritimati");
+    await setTimezone(business.id, pick[0]!.to_zone);
     expect(await worker(transport, business.id)).toMatchObject({ sent: 1 });
     expect(transport.sent[0]!.idempotencyKey).toBe(reminder.id);
     expect(transport.sent[0]!.subject).toContain("Rappel");

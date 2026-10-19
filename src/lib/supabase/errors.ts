@@ -53,6 +53,16 @@ const domainMessages: Record<string, AppErrorCode> = {
   calendar_reauth_required: "calendar_reauth_required",
   calendar_write_authorization_required:
     "calendar_write_authorization_required",
+  stale_loyalty_program: "stale_loyalty_program",
+  loyalty_program_inactive: "loyalty_program_inactive",
+  reward_not_found: "reward_not_found",
+  reward_unavailable: "reward_unavailable",
+  stale_reward: "stale_reward",
+  insufficient_points: "insufficient_points",
+  redemption_not_found: "redemption_not_found",
+  invalid_redemption_transition: "invalid_redemption_transition",
+  loyalty_entry_not_found: "loyalty_entry_not_found",
+  loyalty_entry_not_reversible: "loyalty_entry_not_reversible",
 };
 
 // SQLSTATE classes produced by constraints and RLS.

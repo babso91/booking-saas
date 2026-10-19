@@ -135,12 +135,13 @@ Les clés étrangères vers cliente et prestation sont composites `(id, business
 
 ### Fidélité
 
-- `loyalty_programs` : configuration 1:1, avec mode `appointment` en V1 et `spend` réservé au futur.
-- `loyalty_events` : ledger immuable, source de vérité des points.
-- `rewards` : catalogue des récompenses actives/inactives.
-- `reward_redemptions` : utilisation historisée d'une récompense.
+- `loyalty_programs` : configuration 1:1 (activation explicite, mode `appointment` ou `spend`, version optimiste).
+- `loyalty_service_rules` : points fixes par prestation, prioritaires sur le calcul du programme.
+- `loyalty_events` : ledger immuable, source de vérité des points ; une correction est une écriture compensatoire qui nomme l'écriture qu'elle annule.
+- `rewards` : catalogue des récompenses (remise fixe, remise en pourcentage, prestation offerte).
+- `reward_redemptions` : récompense attribuée (`issued`), utilisée (`fulfilled`) ou annulée (`cancelled`, points rendus), avec l'instantané de la récompense.
 
-Le passage à `completed`, l'ajout de l'événement de points et le déblocage éventuel d'une récompense seront exécutés dans une seule fonction transactionnelle. Une clé d'idempotence et un index unique partiel sur le rendez-vous empêchent le double crédit.
+Le passage à `completed` (agenda) déclenche, dans la même transaction et sous le verrou du rendez-vous, l'écriture de points. Revenir à `confirmed` l'annule par une écriture compensatoire. Contrat complet : [`docs/LOYALTY_CONTRACT.md`](LOYALTY_CONTRACT.md).
 
 ### Emails
 
@@ -220,7 +221,7 @@ La RPC `create_public_booking` effectue dans une transaction : validation du bus
 ### Fidélité idempotente
 
 - aucun point à la réservation ;
-- un seul événement `appointment_completed` par rendez-vous ;
+- au plus un événement `appointment_completed` non annulé par rendez-vous (génération 1, puis 2 après une réouverture…) ;
 - ledger non modifié rétroactivement ; une correction produit un événement compensatoire ;
 - une utilisation de récompense crée à la fois `reward_redemptions` et un débit du ledger.
 
@@ -352,7 +353,7 @@ L'agenda n'est pas un second moteur de planning : il lit et modifie les mêmes t
 - **Versions optimistes.** `appointments.version` et `availability_exceptions.version` sont incrémentés par trigger à chaque UPDATE, quel que soit le chemin. Une édition faite depuis un écran périmé renvoie `stale_appointment` ou `stale_block` au lieu d'écraser la modification la plus récente. Le choix d'un entier plutôt que `updated_at` évite toute perte de précision (microsecondes) dans les allers-retours JSON et JavaScript.
 - **Double soumission.** À la création, la clé facultative `creation_request_id` est unique par business et liée à `creation_request_fingerprint`, l'empreinte SHA-256 de la commande canonique (prestation, instant UTC, cliente, note ; textes en Unicode NFC, email en minuscules). Un retry identique renvoie le rendez-vous initial. La même clé avec une autre commande donne `idempotency_conflict`, y compris en concurrence, puisque les créations sont sérialisées par le verrou de planning. Pour un changement de statut, redemander le statut courant est sans effet.
 - **Changements d'heure.** Une édition qui ne change pas l'horaire conserve l'instant UTC stocké exactement (`p_starts_at` nul), sans reconversion heure murale → UTC. Une heure répétée à l'automne exige `occurrence` (`first` ou `second`, sinon `ambiguous_local_time`), et une heure sautée au printemps est refusée. La réservation publique n'échange que des instants UTC : les deux règles désignent le même instant. Pour les blocs, chaque borne renvoyée inchangée garde son instant UTC stocké ; seule une borne modifiée est convertie, avec la règle du moteur (seconde occurrence pour une heure répétée nouvellement saisie).
-- **Statuts.** Les transitions V1 sont bornées en SQL (`agenda_set_appointment_status`). Seule l'annulation libère le créneau. `completed` et `no_show` exigent que le rendez-vous ait commencé. Revenir de `completed` est refusé dès que des points de fidélité ont été attribués.
+- **Statuts.** Les transitions V1 sont bornées en SQL (`agenda_set_appointment_status`). Seule l'annulation libère le créneau. `completed` et `no_show` exigent que le rendez-vous ait commencé. Revenir de `completed` annule les points attribués par une écriture compensatoire.
 - **Clientes.** `clients.email` devient facultatif, pour une cliente connue par son nom ou son téléphone. `unique (business_id, email)` continue de dédupliquer les emails, et la réservation publique exige toujours un email. La recherche (`search_clients`) est limitée au business, sous RLS, et échappe les jokers `LIKE`.
 - **Lecture.** Elle passe par les Server Actions, sous RLS. Une plage est limitée à 42 jours, 800 rendez-vous et 500 exceptions ; les plages hebdomadaires et les prestations ont aussi un plafond explicite. Chaque liste est demandée avec son plafond + 1, et un dépassement est refusé plutôt que tronqué, car PostgREST plafonne silencieusement à 1000 lignes.
 - **Plages d'ouverture.** Celles de chaque jour viennent de `private.opening_ranges`, exactement les plages de la disponibilité publique (§8) ; une plage hebdomadaire et une ouverture exceptionnelle contiguës sont fusionnées. La lecture fait trois allers-retours constants (calendrier, éléments en parallèle, heures murales), jamais un par jour ou par élément.

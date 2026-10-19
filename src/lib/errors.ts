@@ -77,6 +77,20 @@ export const appErrorMessages = {
     "Ce compte Google n’est pas celui qui est connecté. Autorisez l’accès avec le même compte Google.",
   oauth_state_invalid:
     "Cette demande de connexion a expiré ou a déjà été utilisée. Recommencez la connexion.",
+  stale_loyalty_program:
+    "Le programme de fidélité a été modifié entre-temps. Rechargez-le avant de réessayer.",
+  loyalty_program_inactive: "Le programme de fidélité n’est pas activé.",
+  reward_not_found: "Cette récompense est introuvable.",
+  reward_unavailable: "Cette récompense n’est pas disponible.",
+  stale_reward:
+    "Cette récompense a été modifiée entre-temps. Rechargez-la avant de réessayer.",
+  insufficient_points: "Le solde de points est insuffisant.",
+  redemption_not_found: "Cette récompense attribuée est introuvable.",
+  invalid_redemption_transition:
+    "Cette récompense a déjà été utilisée ou annulée.",
+  loyalty_entry_not_found: "Ce mouvement de points est introuvable.",
+  loyalty_entry_not_reversible:
+    "Seul un ajustement manuel peut être annulé ici.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -177,6 +191,16 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   calendar_write_authorization_required: 409,
   calendar_account_mismatch: 409,
   oauth_state_invalid: 400,
+  stale_loyalty_program: 409,
+  loyalty_program_inactive: 409,
+  reward_not_found: 404,
+  reward_unavailable: 409,
+  stale_reward: 409,
+  insufficient_points: 409,
+  redemption_not_found: 404,
+  invalid_redemption_transition: 409,
+  loyalty_entry_not_found: 404,
+  loyalty_entry_not_reversible: 409,
   internal: 500,
 };
 

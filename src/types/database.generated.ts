@@ -339,13 +339,13 @@ isOneToOne: false
                   ]
                 },"loyalty_events": {
                   Row: {
-                    "appointment_id": string | null,"business_id": string,"client_id": string,"created_at": string,"created_by": string | null,"id": string,"idempotency_key": string,"points_delta": number,"reason": string,"type": Database["public"]['Enums']["loyalty_event_type"]
+                    "appointment_id": string | null,"award_generation": number | null,"business_id": string,"client_id": string,"created_at": string,"created_by": string | null,"details": NonNullable<Json>,"id": string,"idempotency_key": string,"ledger_seq": number,"points_delta": number,"reason": string,"reverses_event_id": string | null,"type": Database["public"]['Enums']["loyalty_event_type"]
                   }
                   Insert: {
-                    "appointment_id"?: string | null,"business_id": string,"client_id": string,"created_at"?: string,"created_by"?: string | null,"id"?: string,"idempotency_key": string,"points_delta": number,"reason": string,"type": Database["public"]['Enums']["loyalty_event_type"]
+                    "appointment_id"?: string | null,"award_generation"?: number | null,"business_id": string,"client_id": string,"created_at"?: string,"created_by"?: string | null,"details"?: NonNullable<Json>,"id"?: string,"idempotency_key": string,"ledger_seq"?: never,"points_delta": number,"reason": string,"reverses_event_id"?: string | null,"type": Database["public"]['Enums']["loyalty_event_type"]
                   }
                   Update: {
-                    "appointment_id"?: string | null,"business_id"?: string,"client_id"?: string,"created_at"?: string,"created_by"?: string | null,"id"?: string,"idempotency_key"?: string,"points_delta"?: number,"reason"?: string,"type"?: Database["public"]['Enums']["loyalty_event_type"]
+                    "appointment_id"?: string | null,"award_generation"?: number | null,"business_id"?: string,"client_id"?: string,"created_at"?: string,"created_by"?: string | null,"details"?: NonNullable<Json>,"id"?: string,"idempotency_key"?: string,"ledger_seq"?: never,"points_delta"?: number,"reason"?: string,"reverses_event_id"?: string | null,"type"?: Database["public"]['Enums']["loyalty_event_type"]
                   }
                   Relationships: [
                     {
@@ -372,17 +372,23 @@ isOneToOne: false
 isOneToOne: false
       referencedRelation: "profiles"
       referencedColumns: ["id"]
+    },{
+      foreignKeyName: "loyalty_events_reverses_fkey"
+      columns: ["reverses_event_id","business_id"]
+isOneToOne: false
+      referencedRelation: "loyalty_events"
+      referencedColumns: ["id","business_id"]
     }
                   ]
                 },"loyalty_programs": {
                   Row: {
-                    "accrual_mode": Database["public"]['Enums']["loyalty_accrual_mode"],"active": boolean,"business_id": string,"created_at": string,"points_per_completed_appointment": number,"points_per_euro": number | null,"updated_at": string
+                    "accrual_mode": Database["public"]['Enums']["loyalty_accrual_mode"],"active": boolean,"business_id": string,"created_at": string,"points_per_completed_appointment": number,"points_per_euro": number | null,"updated_at": string,"version": number
                   }
                   Insert: {
-                    "accrual_mode"?: Database["public"]['Enums']["loyalty_accrual_mode"],"active"?: boolean,"business_id": string,"created_at"?: string,"points_per_completed_appointment"?: number,"points_per_euro"?: number | null,"updated_at"?: string
+                    "accrual_mode"?: Database["public"]['Enums']["loyalty_accrual_mode"],"active"?: boolean,"business_id": string,"created_at"?: string,"points_per_completed_appointment"?: number,"points_per_euro"?: number | null,"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "accrual_mode"?: Database["public"]['Enums']["loyalty_accrual_mode"],"active"?: boolean,"business_id"?: string,"created_at"?: string,"points_per_completed_appointment"?: number,"points_per_euro"?: number | null,"updated_at"?: string
+                    "accrual_mode"?: Database["public"]['Enums']["loyalty_accrual_mode"],"active"?: boolean,"business_id"?: string,"created_at"?: string,"points_per_completed_appointment"?: number,"points_per_euro"?: number | null,"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -391,6 +397,31 @@ isOneToOne: false
 isOneToOne: true
       referencedRelation: "businesses"
       referencedColumns: ["id"]
+    }
+                  ]
+                },"loyalty_service_rules": {
+                  Row: {
+                    "business_id": string,"created_at": string,"points": number,"service_id": string,"updated_at": string
+                  }
+                  Insert: {
+                    "business_id": string,"created_at"?: string,"points": number,"service_id": string,"updated_at"?: string
+                  }
+                  Update: {
+                    "business_id"?: string,"created_at"?: string,"points"?: number,"service_id"?: string,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "loyalty_service_rules_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "loyalty_service_rules_service_id_business_id_fkey"
+      columns: ["service_id","business_id"]
+isOneToOne: false
+      referencedRelation: "services"
+      referencedColumns: ["id","business_id"]
     }
                   ]
                 },"profiles": {
@@ -408,13 +439,13 @@ isOneToOne: true
                   ]
                 },"reward_redemptions": {
                   Row: {
-                    "appointment_id": string | null,"business_id": string,"client_id": string,"created_by": string | null,"id": string,"loyalty_event_id": string,"points_spent": number,"redeemed_at": string,"reward_id": string
+                    "appointment_id": string | null,"business_id": string,"cancellation_reason": string | null,"cancelled_at": string | null,"cancelled_by": string | null,"client_id": string,"created_by": string | null,"fulfilled_at": string | null,"fulfilled_by": string | null,"id": string,"loyalty_event_id": string,"points_spent": number,"redeemed_at": string,"refund_event_id": string | null,"request_id": string | null,"reward_currency_snapshot": string | null,"reward_id": string,"reward_name_snapshot": string,"reward_service_id_snapshot": string | null,"reward_service_name_snapshot": string | null,"reward_type_snapshot": Database["public"]['Enums']["reward_type"],"reward_value_snapshot": number | null,"status": Database["public"]['Enums']["reward_redemption_status"],"updated_at": string
                   }
                   Insert: {
-                    "appointment_id"?: string | null,"business_id": string,"client_id": string,"created_by"?: string | null,"id"?: string,"loyalty_event_id": string,"points_spent": number,"redeemed_at"?: string,"reward_id": string
+                    "appointment_id"?: string | null,"business_id": string,"cancellation_reason"?: string | null,"cancelled_at"?: string | null,"cancelled_by"?: string | null,"client_id": string,"created_by"?: string | null,"fulfilled_at"?: string | null,"fulfilled_by"?: string | null,"id"?: string,"loyalty_event_id": string,"points_spent": number,"redeemed_at"?: string,"refund_event_id"?: string | null,"request_id"?: string | null,"reward_currency_snapshot"?: string | null,"reward_id": string,"reward_name_snapshot": string,"reward_service_id_snapshot"?: string | null,"reward_service_name_snapshot"?: string | null,"reward_type_snapshot": Database["public"]['Enums']["reward_type"],"reward_value_snapshot"?: number | null,"status"?: Database["public"]['Enums']["reward_redemption_status"],"updated_at"?: string
                   }
                   Update: {
-                    "appointment_id"?: string | null,"business_id"?: string,"client_id"?: string,"created_by"?: string | null,"id"?: string,"loyalty_event_id"?: string,"points_spent"?: number,"redeemed_at"?: string,"reward_id"?: string
+                    "appointment_id"?: string | null,"business_id"?: string,"cancellation_reason"?: string | null,"cancelled_at"?: string | null,"cancelled_by"?: string | null,"client_id"?: string,"created_by"?: string | null,"fulfilled_at"?: string | null,"fulfilled_by"?: string | null,"id"?: string,"loyalty_event_id"?: string,"points_spent"?: number,"redeemed_at"?: string,"refund_event_id"?: string | null,"request_id"?: string | null,"reward_currency_snapshot"?: string | null,"reward_id"?: string,"reward_name_snapshot"?: string,"reward_service_id_snapshot"?: string | null,"reward_service_name_snapshot"?: string | null,"reward_type_snapshot"?: Database["public"]['Enums']["reward_type"],"reward_value_snapshot"?: number | null,"status"?: Database["public"]['Enums']["reward_redemption_status"],"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -430,6 +461,12 @@ isOneToOne: false
       referencedRelation: "businesses"
       referencedColumns: ["id"]
     },{
+      foreignKeyName: "reward_redemptions_cancelled_by_fkey"
+      columns: ["cancelled_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    },{
       foreignKeyName: "reward_redemptions_client_id_business_id_fkey"
       columns: ["client_id","business_id"]
 isOneToOne: false
@@ -442,8 +479,20 @@ isOneToOne: false
       referencedRelation: "profiles"
       referencedColumns: ["id"]
     },{
+      foreignKeyName: "reward_redemptions_fulfilled_by_fkey"
+      columns: ["fulfilled_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    },{
       foreignKeyName: "reward_redemptions_loyalty_event_id_business_id_fkey"
       columns: ["loyalty_event_id","business_id"]
+isOneToOne: false
+      referencedRelation: "loyalty_events"
+      referencedColumns: ["id","business_id"]
+    },{
+      foreignKeyName: "reward_redemptions_refund_fkey"
+      columns: ["refund_event_id","business_id"]
 isOneToOne: false
       referencedRelation: "loyalty_events"
       referencedColumns: ["id","business_id"]
@@ -457,13 +506,13 @@ isOneToOne: false
                   ]
                 },"rewards": {
                   Row: {
-                    "active": boolean,"business_id": string,"created_at": string,"description": string | null,"id": string,"name": string,"points_required": number,"reward_type": Database["public"]['Enums']["reward_type"],"reward_value": number | null,"updated_at": string
+                    "active": boolean,"business_id": string,"created_at": string,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"currency": string | null,"description": string | null,"id": string,"name": string,"points_required": number,"reward_type": Database["public"]['Enums']["reward_type"],"reward_value": number | null,"service_id": string | null,"updated_at": string,"version": number
                   }
                   Insert: {
-                    "active"?: boolean,"business_id": string,"created_at"?: string,"description"?: string | null,"id"?: string,"name": string,"points_required": number,"reward_type": Database["public"]['Enums']["reward_type"],"reward_value"?: number | null,"updated_at"?: string
+                    "active"?: boolean,"business_id": string,"created_at"?: string,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string | null,"description"?: string | null,"id"?: string,"name": string,"points_required": number,"reward_type": Database["public"]['Enums']["reward_type"],"reward_value"?: number | null,"service_id"?: string | null,"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "active"?: boolean,"business_id"?: string,"created_at"?: string,"description"?: string | null,"id"?: string,"name"?: string,"points_required"?: number,"reward_type"?: Database["public"]['Enums']["reward_type"],"reward_value"?: number | null,"updated_at"?: string
+                    "active"?: boolean,"business_id"?: string,"created_at"?: string,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string | null,"description"?: string | null,"id"?: string,"name"?: string,"points_required"?: number,"reward_type"?: Database["public"]['Enums']["reward_type"],"reward_value"?: number | null,"service_id"?: string | null,"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -472,6 +521,12 @@ isOneToOne: false
 isOneToOne: false
       referencedRelation: "businesses"
       referencedColumns: ["id"]
+    },{
+      foreignKeyName: "rewards_service_fkey"
+      columns: ["service_id","business_id"]
+isOneToOne: false
+      referencedRelation: "services"
+      referencedColumns: ["id","business_id"]
     }
                   ]
                 },"services": {
@@ -496,7 +551,26 @@ isOneToOne: false
                 }
           }
           Views: {
-            [_ in never]: never
+            "loyalty_balances": {
+                  Row: {
+                    "balance": number | null,"business_id": string | null,"client_id": string | null,"last_entry_at": string | null,"points_credited": number | null,"points_debited": number | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "loyalty_events_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "loyalty_events_client_id_business_id_fkey"
+      columns: ["client_id","business_id"]
+isOneToOne: false
+      referencedRelation: "clients"
+      referencedColumns: ["id","business_id"]
+    }
+                  ]
+                }
           }
           Functions: {
             "agenda_create_appointment":
@@ -777,6 +851,41 @@ isOneToOne: false
 "is_business_member":
 { Args: { "target_business_id": string }; Returns: boolean
                            },
+"loyalty_adjust_points":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_points_delta": number,"p_reason": string,"p_request_id": string }; Returns: string
+                           },
+"loyalty_cancel_redemption":
+{ Args: { "p_business_id": string,"p_reason"?: string,"p_redemption_id": string }; Returns: undefined
+                           },
+"loyalty_client_ledger":
+{ Args: { "p_before_seq"?: number,"p_business_id": string,"p_client_id": string,"p_limit"?: number }; Returns: {
+              "appointment_id": string,"award_generation": number,"balance_after": number,"created_at": string,"created_by": string,"details": Json,"id": string,"points_delta": number,"reason": string,"redemption": Json,"reversed_by_event_id": string,"reverses_event_id": string,"seq": number,"type": Database["public"]['Enums']["loyalty_event_type"]
+            }[]
+                           },
+"loyalty_client_summary":
+{ Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
+                           },
+"loyalty_configure_program":
+{ Args: { "p_accrual_mode": Database["public"]['Enums']["loyalty_accrual_mode"],"p_active": boolean,"p_business_id": string,"p_expected_version": number,"p_points_per_completed_appointment": number,"p_points_per_euro"?: number }; Returns: number
+                           },
+"loyalty_create_reward":
+{ Args: { "p_active": boolean,"p_business_id": string,"p_description": string,"p_name": string,"p_points_required": number,"p_request_id": string,"p_reward_type": Database["public"]['Enums']["reward_type"],"p_reward_value": number,"p_service_id": string }; Returns: string
+                           },
+"loyalty_fulfil_redemption":
+{ Args: { "p_appointment_id"?: string,"p_business_id": string,"p_redemption_id": string }; Returns: undefined
+                           },
+"loyalty_redeem_reward":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_request_id": string,"p_reward_id": string }; Returns: string
+                           },
+"loyalty_reverse_adjustment":
+{ Args: { "p_business_id": string,"p_entry_id": string,"p_reason"?: string }; Returns: string
+                           },
+"loyalty_set_service_rule":
+{ Args: { "p_business_id": string,"p_points": number,"p_service_id": string }; Returns: undefined
+                           },
+"loyalty_update_reward":
+{ Args: { "p_active": boolean,"p_business_id": string,"p_description": string,"p_expected_version": number,"p_name": string,"p_points_required": number,"p_reward_id": string,"p_reward_value": number,"p_service_id": string }; Returns: number
+                           },
 "reorder_services":
 { Args: { "p_business_id": string,"p_service_ids": (string)[] }; Returns: undefined
                            },
@@ -803,7 +912,7 @@ isOneToOne: false
                            }
           }
           Enums: {
-            "appointment_status": "confirmed"|"completed"|"cancelled"|"no_show","availability_exception_kind": "closed"|"blocked"|"open_override","business_member_role": "owner"|"admin","email_event_status": "pending"|"processing"|"sent"|"failed"|"cancelled","email_event_type": "booking_confirmation"|"appointment_reminder"|"appointment_changed"|"appointment_cancelled"|"points_earned"|"reward_unlocked"|"reactivation","loyalty_accrual_mode": "appointment"|"spend","loyalty_event_type": "appointment_completed"|"manual_adjustment"|"reward_redeemed"|"correction","reward_type": "percentage_discount"|"fixed_discount"|"free_service"
+            "appointment_status": "confirmed"|"completed"|"cancelled"|"no_show","availability_exception_kind": "closed"|"blocked"|"open_override","business_member_role": "owner"|"admin","email_event_status": "pending"|"processing"|"sent"|"failed"|"cancelled","email_event_type": "booking_confirmation"|"appointment_reminder"|"appointment_changed"|"appointment_cancelled"|"points_earned"|"reward_unlocked"|"reactivation","loyalty_accrual_mode": "appointment"|"spend","loyalty_event_type": "appointment_completed"|"manual_adjustment"|"reward_redeemed"|"correction","reward_redemption_status": "issued"|"fulfilled"|"cancelled","reward_type": "percentage_discount"|"fixed_discount"|"free_service"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -919,7 +1028,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "appointment_status": ["confirmed", "completed", "cancelled", "no_show"],"availability_exception_kind": ["closed", "blocked", "open_override"],"business_member_role": ["owner", "admin"],"email_event_status": ["pending", "processing", "sent", "failed", "cancelled"],"email_event_type": ["booking_confirmation", "appointment_reminder", "appointment_changed", "appointment_cancelled", "points_earned", "reward_unlocked", "reactivation"],"loyalty_accrual_mode": ["appointment", "spend"],"loyalty_event_type": ["appointment_completed", "manual_adjustment", "reward_redeemed", "correction"],"reward_type": ["percentage_discount", "fixed_discount", "free_service"]
+            "appointment_status": ["confirmed", "completed", "cancelled", "no_show"],"availability_exception_kind": ["closed", "blocked", "open_override"],"business_member_role": ["owner", "admin"],"email_event_status": ["pending", "processing", "sent", "failed", "cancelled"],"email_event_type": ["booking_confirmation", "appointment_reminder", "appointment_changed", "appointment_cancelled", "points_earned", "reward_unlocked", "reactivation"],"loyalty_accrual_mode": ["appointment", "spend"],"loyalty_event_type": ["appointment_completed", "manual_adjustment", "reward_redeemed", "correction"],"reward_redemption_status": ["issued", "fulfilled", "cancelled"],"reward_type": ["percentage_discount", "fixed_discount", "free_service"]
           }
         }
 } as const

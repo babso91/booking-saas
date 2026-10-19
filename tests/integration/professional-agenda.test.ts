@@ -1280,8 +1280,13 @@ describe("status", () => {
     expect((await row(loaded.id)).status).toBe("confirmed");
   });
 
-  it("does not reopen a completed appointment once loyalty points were granted", async () => {
+  it("reopens a completed appointment and reverses its loyalty points with a compensating entry", async () => {
     const a = await newAgenda();
+    await db.query(
+      `insert into public.loyalty_programs (business_id, active) values ($1, true)
+       on conflict (business_id) do update set active = true`,
+      [a.business.id],
+    );
     const appointment = await createOk(a, "10:00", { date: PAST });
     const completed = ok(
       await setAppointmentStatusAction({
@@ -1290,21 +1295,25 @@ describe("status", () => {
         status: "completed",
       }),
     );
-    await db.query(
-      `insert into public.loyalty_events
-         (business_id, client_id, appointment_id, type, points_delta, reason, idempotency_key)
-       values ($1, $2, $3, 'appointment_completed', 1, 'Rendez-vous', $4)`,
-      [a.business.id, a.client, appointment.id, `completed:${appointment.id}`],
-    );
 
-    failure(
+    const reopened = ok(
       await setAppointmentStatusAction({
         appointmentId: appointment.id,
         expectedVersion: completed.version,
         status: "confirmed",
       }),
-      "invalid_status_transition",
     );
+
+    expect(reopened.status).toBe("confirmed");
+    const { rows } = await db.query(
+      `select type, points_delta, reverses_event_id is not null as reversal
+       from public.loyalty_events where appointment_id = $1 order by ledger_seq`,
+      [appointment.id],
+    );
+    expect(rows).toEqual([
+      { type: "appointment_completed", points_delta: 1, reversal: false },
+      { type: "correction", points_delta: -1, reversal: true },
+    ]);
   });
 
   it("keeps a direct write to appointments impossible for professionals", async () => {
