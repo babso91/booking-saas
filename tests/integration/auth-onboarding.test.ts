@@ -338,7 +338,8 @@ describe("onboarding", () => {
         horizon: 45,
         buffer: 10,
         role: "owner",
-        loyalty_active: true,
+        // Opt-in since the loyalty engine: created, inactive.
+        loyalty_active: false,
         points: 1,
         first_name: "Camille",
         last_name: "Bernard",

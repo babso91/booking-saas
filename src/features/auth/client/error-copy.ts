@@ -218,6 +218,50 @@ export const errorCopy: Record<
     title: "Connexion expirée",
     message: "Cette demande de connexion n’est plus valable. Recommence.",
   },
+  stale_loyalty_program: {
+    title: "Programme modifié entre-temps",
+    message:
+      "Le programme de fidélité a changé depuis ton affichage. Recharge-le avant de réessayer.",
+  },
+  loyalty_program_inactive: {
+    title: "Programme inactif",
+    message: "Active ton programme de fidélité pour utiliser les récompenses.",
+  },
+  reward_not_found: {
+    title: "Récompense introuvable",
+    message: "Cette récompense n’existe plus. Recharge la page.",
+  },
+  reward_unavailable: {
+    title: "Récompense indisponible",
+    message:
+      "Cette récompense est désactivée ou sa prestation n’existe plus. Vérifie-la avant de réessayer.",
+  },
+  stale_reward: {
+    title: "Récompense modifiée entre-temps",
+    message:
+      "Cette récompense a changé depuis ton affichage. Recharge-la avant de réessayer.",
+  },
+  insufficient_points: {
+    title: "Solde insuffisant",
+    message: "Ta cliente n’a pas assez de points pour cette opération.",
+  },
+  redemption_not_found: {
+    title: "Récompense introuvable",
+    message: "Cette récompense attribuée est introuvable. Recharge la page.",
+  },
+  invalid_redemption_transition: {
+    title: "Action impossible",
+    message: "Cette récompense a déjà été utilisée ou annulée.",
+  },
+  loyalty_entry_not_found: {
+    title: "Mouvement introuvable",
+    message: "Ce mouvement de points est introuvable. Recharge la page.",
+  },
+  loyalty_entry_not_reversible: {
+    title: "Action impossible",
+    message:
+      "Seul un ajustement manuel s’annule ici. Pour un rendez-vous, rouvre-le ; pour une récompense, annule-la.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {
