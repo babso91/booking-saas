@@ -27,6 +27,10 @@ const actions = {
   deleteClientNoteAction: vi.fn(),
   getClientRecordAction: vi.fn(),
   updateClientAction: vi.fn(),
+  getClientLoyaltyAction: vi.fn(),
+  listRewardsAction: vi.fn(),
+  listClientRedemptionsAction: vi.fn(),
+  adjustPointsAction: vi.fn(),
 };
 vi.mock("@/features/crm/actions/crm", () => ({
   listClientsAction: vi.fn(),
@@ -51,6 +55,20 @@ vi.mock("@/features/crm/actions/client-management", () => ({
     actions.getClientRecordAction(...args),
   updateClientAction: (...args: unknown[]) =>
     actions.updateClientAction(...args),
+}));
+vi.mock("@/features/loyalty/actions/loyalty", () => ({
+  getClientLoyaltyAction: (...args: unknown[]) =>
+    actions.getClientLoyaltyAction(...args),
+  listRewardsAction: (...args: unknown[]) => actions.listRewardsAction(...args),
+  listClientRedemptionsAction: (...args: unknown[]) =>
+    actions.listClientRedemptionsAction(...args),
+  adjustPointsAction: (...args: unknown[]) =>
+    actions.adjustPointsAction(...args),
+  listClientLoyaltyLedgerAction: vi.fn(),
+  redeemRewardAction: vi.fn(),
+  fulfilRedemptionAction: vi.fn(),
+  cancelRedemptionAction: vi.fn(),
+  reverseAdjustmentAction: vi.fn(),
 }));
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
@@ -108,6 +126,19 @@ beforeEach(() => {
       nextCursor: null,
     }),
   );
+  actions.getClientLoyaltyAction.mockResolvedValue(
+    ok({
+      clientId: CLIENT_ID,
+      programActive: true,
+      balance: 40,
+      pointsCredited: 40,
+      pointsDebited: 0,
+      issuedRedemptions: 0,
+      rewards: [],
+    }),
+  );
+  actions.listRewardsAction.mockResolvedValue(ok([]));
+  actions.listClientRedemptionsAction.mockResolvedValue(ok([]));
   window.sessionStorage.clear();
   useViewport(true);
 });
@@ -308,6 +339,88 @@ describe("dossier", () => {
       screen.queryByRole("button", { name: /Préférences|Nouvelle cliente/ }),
     ).toBeNull();
     expect(document.body.textContent).not.toMatch(/Bientôt|Préférences/);
+  });
+});
+
+describe("loyalty", () => {
+  it("is part of the dossier, and a confirmed adjustment re-reads the history", async () => {
+    await renderProfile();
+    const loyalty = within(screen.getByRole("region", { name: "Fidélité" }));
+    expect(loyalty.getByText("40 points")).toBeTruthy();
+    expect(actions.getClientLoyaltyAction).toHaveBeenCalledWith({
+      clientId: CLIENT_ID,
+    });
+    const timelineReads = actions.listClientTimelineAction.mock.calls.length;
+
+    fireEvent.click(
+      loyalty.getByRole("button", { name: "Ajuster les points" }),
+    );
+    const sheet = within(screen.getByRole("dialog"));
+    fireEvent.change(sheet.getByLabelText("Nombre de points"), {
+      target: { value: "5" },
+    });
+    fireEvent.change(sheet.getByLabelText(/^Motif/), {
+      target: { value: "Geste" },
+    });
+    fireEvent.click(sheet.getByRole("button", { name: "Vérifier" }));
+    actions.adjustPointsAction.mockResolvedValue(ok({ entryId: uuid() }));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    fireEvent.click(sheet.getByRole("button", { name: "Créditer 5 points" }));
+    await flush();
+    expect(actions.listClientTimelineAction.mock.calls.length).toBe(
+      timelineReads + 1,
+    );
+    expect(loyalty.getByText("5 points crédités.")).toBeTruthy();
+  });
+});
+
+describe("loyalty keys", () => {
+  it("phones: leaving the dossier tab after a lost answer keeps the same requestId", async () => {
+    useViewport(false);
+    await renderProfile();
+    const tab = (name: string) => screen.getByRole("tab", { name });
+    fireEvent.click(tab("Dossier"));
+    await flush();
+    const adjust = async () => {
+      const loyalty = within(screen.getByRole("region", { name: "Fidélité" }));
+      fireEvent.click(
+        loyalty.getByRole("button", { name: "Ajuster les points" }),
+      );
+      const sheet = within(screen.getByRole("dialog"));
+      fireEvent.change(sheet.getByLabelText("Nombre de points"), {
+        target: { value: "5" },
+      });
+      fireEvent.change(sheet.getByLabelText(/^Motif/), {
+        target: { value: "Geste" },
+      });
+      fireEvent.click(sheet.getByRole("button", { name: "Vérifier" }));
+      fireEvent.click(sheet.getByRole("button", { name: "Créditer 5 points" }));
+      await flush();
+    };
+    actions.adjustPointsAction.mockRejectedValueOnce(new Error("offline"));
+    await adjust();
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Modifier",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Annuler",
+      }),
+    );
+    // The loyalty card is unmounted with the tab, then mounted again.
+    fireEvent.click(tab("Historique"));
+    fireEvent.click(tab("Dossier"));
+    await flush();
+    actions.adjustPointsAction.mockResolvedValue(ok({ entryId: uuid() }));
+    await adjust();
+    const [first, second] = actions.adjustPointsAction.mock.calls.map(
+      ([command]) => (command as { requestId: string }).requestId,
+    );
+    expect(second).toBe(first);
   });
 });
 

@@ -1,6 +1,6 @@
 # Moteur de fidélité V1 : contrat backend (PR #23)
 
-Backend seulement : aucun écran n'est livré. Ce document décrit ce que l'interface (Claude UI) peut appeler et ce que le backend garantit. Migration : `supabase/migrations/20261020090000_loyalty_engine.sql`. Code : `src/features/loyalty/` (schémas, données, Server Actions, types). Tests PostgreSQL : `tests/integration/loyalty.test.ts`. Montée de version : `tests/upgrade/loyalty-engine.test.ts`.
+Le backend vient de la PR #23 ; l'interface professionnelle de la PR #24 est décrite en fin de document ([Interface professionnelle](#interface-professionnelle-pr-24)). Ce document décrit ce que l'interface (Claude UI) peut appeler et ce que le backend garantit. Migration : `supabase/migrations/20261020090000_loyalty_engine.sql`. Code : `src/features/loyalty/` (schémas, données, Server Actions, types). Tests PostgreSQL : `tests/integration/loyalty.test.ts`. Montée de version : `tests/upgrade/loyalty-engine.test.ts`.
 
 ## Principes
 
@@ -186,7 +186,48 @@ Chaque action renvoie `ActionResult<T>` : `{ ok: true, data }` ou `{ ok: false, 
 
 ## Hors périmètre (V1)
 
-- **Écrans :** aucun écran fidélité, aucun Client Hub, aucune authentification cliente.
+- **Écrans :** aucun Client Hub, aucune authentification cliente. Les écrans professionnels sont décrits ci-dessous.
 - **Emails :** aucun email de fidélité. Les types `points_earned` et `reward_unlocked` de l'outbox restent inutilisés, et l'envoi n'est pas configuré.
 - **Paiement et caisse :** aucune déduction automatique d'une remise au moment de la réservation.
 - **Fonctionnalités de programme :** pas d'expiration des points, pas de niveaux, pas de limite d'utilisation par cliente.
+
+## Interface professionnelle (PR #24)
+
+Frontend seulement : aucune migration, aucune fonction SQL, aucune Server Action n'est modifiée. Code : `src/features/loyalty/client/` (formulaires et formats, sans affichage) et `src/features/loyalty/components/`.
+
+### Écrans
+
+- **`/app/loyalty`** (navigation : barre latérale ; sur téléphone, onglet Compte) :
+  - **Programme :** état (actif, en pause, jamais configuré), activation et mise en pause après confirmation ;
+  - **Comment gagner des points :** mode de calcul (par rendez-vous ou au montant) expliqué avec un exemple, points par rendez-vous, points par euro ;
+  - **Règles par prestation :** ce que rapporte chaque prestation (règle, ou calcul du programme : aperçu au prix actuel en mode montant), définir, modifier ou retirer une règle ;
+  - **Récompenses :** liste, création, modification, activation et désactivation ; une récompense désactivée ou indisponible est signalée.
+- **Fiche cliente** (`/app/clients/[id]`, section Fidélité du dossier) :
+  - solde signé, totaux gagnés et dépensés, état du programme, solde négatif expliqué ;
+  - récompenses attribuées (à utiliser, utilisées, annulées) : marquer comme utilisée (rendez-vous facultatif), annuler (points rendus) ;
+  - attribuer une récompense (choix selon l'éligibilité du backend, puis récapitulatif : coût, solde après) ;
+  - ajuster les points (crédit ou débit, motif obligatoire, récapitulatif avant et après) ;
+  - historique complet des points, paginé par le curseur du backend (25 par page, sans limite), avec l'annulation d'un ajustement manuel.
+
+### Garanties de l'interface
+
+- **Aucun succès avant la réponse.** Chaque écriture n'est montrée qu'après `ok: true` ; une écriture confirmée relit le programme, la fiche fidélité et l'historique CRM. Sans réponse (`network`, `internal`), l'écran dit que l'opération a _peut-être_ été enregistrée, jamais « rien n'a été fait ».
+- **Idempotence.** Création de récompense, attribution et ajustement : une clé par contenu (`requestKeyFor` sur l'empreinte de la commande), la même pour tout nouvel essai de ce contenu, une nouvelle dès que le contenu change. Après `idempotency_conflict`, rien n'est renvoyé automatiquement : une nouvelle clé n'est utilisée que sur le choix explicite « Envoyer comme nouvelle demande ». Les clés d'attribution et d'ajustement appartiennent à la page de la cliente, pas à la carte : elles survivent au démontage de l'onglet Dossier sur téléphone.
+- **Valeurs historiques.** Une modification renvoie chaque champ non touché exactement tel que lu (nom et description bruts, nombres hors des bornes actuelles) ; seuls les champs modifiés sont normalisés et bornés côté client. Désactiver ou activer une récompense renvoie tous ses autres champs tels quels.
+- **Conflits de version.** `stale_loyalty_program` et `stale_reward` : la version actuelle est relue et montrée ; la professionnelle reprend la version actuelle ou garde ses réglages (rebasés sur la nouvelle version, à renvoyer explicitement). Les règles par prestation, sans version, ne remplacent que les règles affichées.
+- **Doubles soumissions.** Chaque écriture est verrouillée pendant l'envoi (garde synchrone et bouton occupé).
+- **Soldes.** Un débit manuel qui ferait passer le solde sous zéro est refusé avant l'envoi ; un solde négatif bloque toute attribution (éligibilité du backend) ; annuler un crédit déjà dépensé est expliqué au lieu d'être envoyé. Le backend reste l'autorité.
+- **Pas de promesse.** Rien ne dit qu'une remise est déduite d'une réservation ni encaissée, ni qu'un email est envoyé.
+
+### Écarts de contrat pour Claude Cloud
+
+1. **Dates des écritures et attributions en UTC seulement.** `LoyaltyLedgerEntryDto.createdAt` et les dates de `RedemptionDto` n'ont pas d'heure murale calculée par PostgreSQL (contrairement aux DTO CRM, `BusinessInstantDto`). L'interface les formate avec `Intl` dans le fuseau de l'activité, pour l'affichage d'instants passés uniquement (`src/features/loyalty/client/format.ts`, `instantLabel`). Correction proposée : ajouter un `BusinessInstantDto` (`local`, `occurrence`) à ces champs.
+2. **Récompense « prestation offerte » historique sans prestation.** `updateRewardAction` exige `serviceId` pour `free_service` : une telle récompense ne peut être ni désactivée ni réactivée sans lui choisir une prestation. L'interface l'explique et ouvre la modification. Correction proposée : accepter `serviceId: null` inchangé, ou une action dédiée `setRewardActiveAction({ rewardId, expectedVersion, active })`.
+3. **Nom de la prestation offerte absent de `RewardDto`.** L'écran Fidélité le joint avec `listServicesAction` ; la fiche cliente affiche « Prestation offerte » sans nom avant l'attribution (l'instantané de l'attribution, lui, porte le nom). Correction proposée : `serviceName` dans `RewardDto`.
+4. **Rendez-vous d'utilisation.** Il n'existe pas de lecture « rendez-vous de cette cliente » dédiée : l'interface propose ceux déjà lus par la fiche (à venir et historique chargé, confirmés ou terminés). Le backend vérifie la cliente (`appointment_not_found`).
+
+### Limites
+
+- Les clés d'idempotence sont en mémoire : après un rechargement complet de la page suivant une réponse perdue, la professionnelle vérifie l'historique avant de recommencer (l'écran le lui dit).
+- Pas de rôle ni de permission fine : toute membre de l'activité a les mêmes actions (contrat actuel). Un refus `forbidden` est affiché.
+- `listLoyaltyBalancesAction` n'est pas encore utilisée (solde dans l'annuaire des clientes).

@@ -29,9 +29,8 @@ describe("AppShell", () => {
       expect(link.getAttribute("href")).toBe("/app/clients");
       expect(link.getAttribute("aria-current")).toBeNull();
     });
-    expect(
-      screen.queryByRole("link", { name: /Fidélité|Paramètres/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("link", { name: /Paramètres/ })).toBeNull();
+    // Only the booking page address is still marked as coming soon.
     expect(screen.getAllByText("Bientôt").length).toBeGreaterThan(0);
     expect(screen.getByText("contenu")).toBeTruthy();
   });
@@ -100,6 +99,33 @@ describe("AppShell", () => {
     screen
       .getAllByRole("link", { name: /Agenda/ })
       .forEach((link) => expect(link.getAttribute("aria-current")).toBeNull());
+  });
+});
+
+describe("loyalty", () => {
+  it("is a real section: sidebar link, and the account panel on phones", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppShell
+        business={{ name: "Studio Mila", slug: "studio-mila" }}
+        current="loyalty"
+      >
+        <p>contenu</p>
+      </AppShell>,
+    );
+    const link = screen.getByRole("link", { name: /Fidélité/ });
+    expect(link.getAttribute("href")).toBe("/app/loyalty");
+    expect(link.getAttribute("aria-current")).toBe("page");
+    expect(screen.queryByText(/fidélité arrive bientôt/i)).toBeNull();
+
+    // The phone tab "Compte" holds it, and is highlighted there.
+    const account = screen.getByRole("button", { name: "Compte" });
+    expect(account.className).toContain("font-semibold");
+    await user.click(account);
+    const dialog = within(screen.getByRole("dialog"));
+    const phoneLink = dialog.getByRole("link", { name: /Fidélité/ });
+    expect(phoneLink.getAttribute("href")).toBe("/app/loyalty");
+    expect(phoneLink.getAttribute("aria-current")).toBe("page");
   });
 });
 
