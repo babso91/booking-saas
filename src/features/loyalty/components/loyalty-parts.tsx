@@ -42,16 +42,20 @@ export function fieldErrorsOf<Field extends string>(
 export function WriteError({
   error,
   children,
+  uncertain,
   action,
 }: {
   error: UiError;
   /** What was not done (replaced when the outcome is unknown). */
   children?: ReactNode;
+  /** What to do when the outcome is unknown, if the screen knows better. */
+  uncertain?: ReactNode;
   action?: ReactNode;
 }) {
   const copy = describeError(error);
   const what = isUncertain(error)
-    ? "Sans réponse, l’opération a peut-être été enregistrée : vérifie avant de recommencer, ou réessaie, elle ne sera jamais appliquée deux fois."
+    ? (uncertain ??
+      "Sans réponse, l’opération a peut-être été enregistrée : vérifie avant de recommencer.")
     : children;
   return (
     <Notice

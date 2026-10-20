@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import type { RequestKey } from "@/features/agenda/client/request-id";
 
 import {
   adjustPointsSchema,
@@ -18,6 +23,7 @@ import type {
   RedemptionDto,
   RewardDto,
 } from "../types";
+import { points } from "../client/format";
 import { ClientLoyalty } from "./client-loyalty";
 
 // Loyalty in a customer's file, from what the professional sees and does.
@@ -164,32 +170,32 @@ const entry = (
   ...overrides,
 });
 
-const keys = () => ({
-  redeemKeyRef: { current: null as RequestKey | null },
-  adjustKeyRef: { current: null as RequestKey | null },
-});
+// The signed-in identity and this customer (pending operations).
+const SCOPE = {
+  userId: "10000000-0000-4000-8000-0000000000aa",
+  businessId: "10000000-0000-4000-8000-0000000000bb",
+  clientId: CLIENT,
+};
 
 async function renderCard({
   loyalty = summary(),
   redemptions = [] as RedemptionDto[],
   onChanged = vi.fn(),
-  refs = keys(),
+  scope = SCOPE,
 } = {}) {
   actions.getClientLoyaltyAction.mockResolvedValue(ok(loyalty));
   actions.listRewardsAction.mockResolvedValue(ok(rewards));
   actions.listClientRedemptionsAction.mockResolvedValue(ok(redemptions));
   const view = render(
     <ClientLoyalty
-      clientId={CLIENT}
+      scope={scope}
       timezone="Europe/Paris"
       visits={[{ id: VISIT, label: "sam. 10 oct. · 10:00 · Remplissage" }]}
-      redeemKeyRef={refs.redeemKeyRef}
-      adjustKeyRef={refs.adjustKeyRef}
       onChanged={onChanged}
     />,
   );
   await flush();
-  return { ...view, onChanged, refs };
+  return { ...view, onChanged };
 }
 
 const card = () => within(screen.getByRole("region", { name: "Fidélité" }));
@@ -200,6 +206,7 @@ const lastCall = (mock: { mock: { calls: unknown[][] } }) =>
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   Object.values(actions).forEach((mock) => mock.mockReset());
+  window.localStorage.clear();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -261,10 +268,9 @@ describe("summary", () => {
     actions.listClientRedemptionsAction.mockResolvedValue(ok([]));
     render(
       <ClientLoyalty
-        clientId={CLIENT}
+        scope={SCOPE}
         timezone="Europe/Paris"
         visits={[]}
-        {...keys()}
         onChanged={vi.fn()}
       />,
     );
@@ -320,18 +326,17 @@ describe("issuing a reward", () => {
   });
 
   it("reuses the requestId after a lost answer, even once the card is remounted", async () => {
-    const refs = keys();
-    const { unmount } = await renderCard({ refs });
+    const { unmount } = await renderCard();
     await review();
     actions.redeemRewardAction.mockRejectedValueOnce(new Error("offline"));
     fireEvent.click(sheet().getByRole("button", { name: /Attribuer \(/ }));
     await flush();
-    expect(sheet().getByText(/a peut-être été enregistrée/)).toBeTruthy();
+    expect(sheet().getByText(/marquée non confirmée/)).toBeTruthy();
     const first = lastCall(actions.redeemRewardAction).requestId;
 
     // The dossier tab is left and opened again (phones).
     unmount();
-    await renderCard({ refs });
+    await renderCard();
     await review();
     actions.redeemRewardAction.mockResolvedValue(ok(redemption()));
     fireEvent.click(sheet().getByRole("button", { name: /Attribuer \(/ }));
@@ -728,5 +733,306 @@ describe("history", () => {
     fireEvent.click(sheet().getByRole("button", { name: "Réessayer" }));
     await flush();
     expect(sheet().getAllByRole("listitem")).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operations whose answer was lost: kept per requestId, across reloads.
+// ---------------------------------------------------------------------------
+
+type Sent = { requestId: string } & Record<string, unknown>;
+/** Applies each requestId once, with the payload it first came with. */
+function idempotentServer(mock: typeof actions.adjustPointsAction) {
+  const applied = new Map<string, Sent>();
+  const behaviours: ("ok" | "lose")[] = [];
+  mock.mockImplementation((command: Sent) => {
+    if (!applied.has(command.requestId))
+      applied.set(command.requestId, command);
+    return behaviours.shift() === "lose"
+      ? Promise.reject(new Error("answer lost"))
+      : Promise.resolve(
+          ok("rewardId" in command ? redemption() : { entryId: entry(9).id }),
+        );
+  });
+  return {
+    next: (...next: ("ok" | "lose")[]) => behaviours.push(...next),
+    applied: () => [...applied.values()],
+  };
+}
+
+async function adjustFromCard(
+  direction: "Créditer" | "Débiter",
+  amount: string,
+  reason: string,
+) {
+  fireEvent.click(card().getByRole("button", { name: "Ajuster les points" }));
+  fireEvent.click(sheet().getByLabelText(new RegExp(direction)));
+  fireEvent.change(sheet().getByLabelText("Nombre de points"), {
+    target: { value: amount },
+  });
+  fireEvent.change(sheet().getByLabelText(/^Motif/), {
+    target: { value: reason },
+  });
+  fireEvent.click(sheet().getByRole("button", { name: "Vérifier" }));
+  fireEvent.click(
+    sheet().getByRole("button", { name: `${direction} ${amount} points` }),
+  );
+  await flush();
+}
+
+/** A full reload: fresh modules (no memory left), same browser storage. */
+async function reloadCard(scope = SCOPE) {
+  cleanupAll();
+  vi.resetModules();
+  const fresh = await import("./client-loyalty");
+  actions.getClientLoyaltyAction.mockResolvedValue(ok(summary()));
+  actions.listRewardsAction.mockResolvedValue(ok(rewards));
+  actions.listClientRedemptionsAction.mockResolvedValue(ok([]));
+  render(
+    <fresh.ClientLoyalty
+      scope={scope}
+      timezone="Europe/Paris"
+      visits={[]}
+      onChanged={vi.fn()}
+    />,
+  );
+  await flush();
+}
+const cleanupAll = () => cleanup();
+
+describe("operations whose answer was lost", () => {
+  it("debit applied, answer lost, full reload, unchanged resend: no second debit", async () => {
+    const server = idempotentServer(actions.adjustPointsAction);
+    await renderCard();
+    server.next("lose");
+    await adjustFromCard("Débiter", "20", "Correction manuelle");
+    expect(sheet().getByText(/marquée non confirmée/)).toBeTruthy();
+    const first = server.applied()[0]!.requestId;
+
+    await reloadCard();
+    expect(card().getByText("Opérations non confirmées")).toBeTruthy();
+    expect(
+      card().getByText(/Débit de 20 points : Correction manuelle/),
+    ).toBeTruthy();
+    // Typed again the same way after the reload: the same request, not a new one.
+    server.next("ok");
+    await adjustFromCard("Débiter", "20", "Correction manuelle");
+    const ids = actions.adjustPointsAction.mock.calls.map(
+      ([command]) => (command as Sent).requestId,
+    );
+    expect(ids).toEqual([first, first]);
+    expect(server.applied()).toHaveLength(1);
+    expect(card().queryByText("Opérations non confirmées")).toBeNull();
+  });
+
+  it("resends a pending operation explicitly, with its own requestId and payload", async () => {
+    const server = idempotentServer(actions.redeemRewardAction);
+    await renderCard();
+    server.next("lose");
+    fireEvent.click(
+      card().getByRole("button", { name: /Attribuer une récompense/ }),
+    );
+    fireEvent.click(sheet().getByLabelText(/Remise 5 €/));
+    fireEvent.click(sheet().getByRole("button", { name: "Continuer" }));
+    fireEvent.click(sheet().getByRole("button", { name: /Attribuer \(/ }));
+    await flush();
+    const [lost] = server.applied();
+
+    await reloadCard();
+    expect(
+      card().getByText(/Attribution : Remise 5 € \(−50 points\)/),
+    ).toBeTruthy();
+    server.next("ok");
+    fireEvent.click(
+      card().getByRole("button", { name: "Renvoyer la même demande" }),
+    );
+    await flush();
+    const resent = lastCall(actions.redeemRewardAction);
+    expect(resent).toEqual({
+      clientId: CLIENT,
+      rewardId: REWARD,
+      requestId: lost!.requestId,
+    });
+    expect(redeemRewardSchema.safeParse(resent).success).toBe(true);
+    expect(server.applied()).toHaveLength(1);
+    expect(card().getByText(/Opération confirmée : Attribution/)).toBeTruthy();
+    expect(card().queryByText("Opérations non confirmées")).toBeNull();
+  });
+
+  it("keeps several uncertain operations apart: resolving one leaves the other", async () => {
+    const server = idempotentServer(actions.adjustPointsAction);
+    await renderCard();
+    server.next("lose", "lose");
+    await adjustFromCard("Créditer", "30", "Geste A");
+    fireEvent.click(sheet().getByRole("button", { name: "Fermer" }));
+    await adjustFromCard("Débiter", "10", "Retrait B");
+    fireEvent.click(sheet().getByRole("button", { name: "Fermer" }));
+    const [a, b] = server.applied();
+    expect(a!.requestId).not.toBe(b!.requestId);
+
+    await reloadCard();
+    const items = card().getAllByRole("button", {
+      name: "Renvoyer la même demande",
+    });
+    expect(items).toHaveLength(2);
+    server.next("ok");
+    // The second one (B).
+    fireEvent.click(items[1]!);
+    await flush();
+    expect(lastCall(actions.adjustPointsAction).requestId).toBe(b!.requestId);
+    expect(card().getByText(/Crédit de 30 points : Geste A/)).toBeTruthy();
+    // Only A is still pending.
+    expect(
+      card().getAllByRole("button", { name: "Renvoyer la même demande" }),
+    ).toHaveLength(1);
+    expect(
+      card().getByText(/Opération confirmée : Débit de 10 points/),
+    ).toBeTruthy();
+    expect(server.applied()).toHaveLength(2);
+  });
+
+  it("forgets an operation once refused for good (nothing was written)", async () => {
+    actions.adjustPointsAction.mockResolvedValue(fail("insufficient_points"));
+    await renderCard();
+    await adjustFromCard("Débiter", "10", "Retrait");
+    await reloadCard();
+    expect(card().queryByText("Opérations non confirmées")).toBeNull();
+  });
+
+  it("dismissing one is explicit and explained", async () => {
+    const server = idempotentServer(actions.adjustPointsAction);
+    await renderCard();
+    server.next("lose");
+    await adjustFromCard("Créditer", "30", "Geste");
+    fireEvent.click(sheet().getByRole("button", { name: "Fermer" }));
+    fireEvent.click(card().getByRole("button", { name: "Ne plus la suivre" }));
+    expect(
+      sheet().getByText(/Si elle figure dans l’historique des\s+points/),
+    ).toBeTruthy();
+    fireEvent.click(sheet().getByRole("button", { name: "Ne plus la suivre" }));
+    expect(card().queryByText("Opérations non confirmées")).toBeNull();
+  });
+
+  it("is isolated per user, business and customer", async () => {
+    const server = idempotentServer(actions.adjustPointsAction);
+    await renderCard();
+    server.next("lose");
+    await adjustFromCard("Créditer", "30", "Geste");
+    for (const other of [
+      { ...SCOPE, userId: "10000000-0000-4000-8000-0000000000cc" },
+      { ...SCOPE, businessId: "10000000-0000-4000-8000-0000000000dd" },
+      { ...SCOPE, clientId: "20000000-0000-4000-8000-000000000099" },
+    ]) {
+      await reloadCard(other);
+      expect(card().queryByText("Opérations non confirmées")).toBeNull();
+    }
+    await reloadCard(SCOPE);
+    expect(card().getByText("Opérations non confirmées")).toBeTruthy();
+  });
+
+  it("shows an operation left uncertain in another tab", async () => {
+    await renderCard();
+    const key = `loyalty-pending:${SCOPE.userId}:${SCOPE.businessId}:${CLIENT}`;
+    const operation = {
+      requestId: "50000000-0000-4000-8000-000000000001",
+      kind: "credit",
+      command: { clientId: CLIENT, pointsDelta: 15, reason: "Autre onglet" },
+      fingerprint: "x",
+      createdAt: "2026-10-20T08:00:00Z",
+    };
+    act(() => {
+      window.localStorage.setItem(key, JSON.stringify([operation]));
+      window.dispatchEvent(new StorageEvent("storage", { key }));
+    });
+    expect(card().getByText(/Crédit de 15 points : Autre onglet/)).toBeTruthy();
+  });
+});
+
+describe("cancelling a manual adjustment", () => {
+  const cases: [string, number, number, boolean][] = [
+    // [what, balance, adjustment, may be cancelled]
+    ["a debit, negative balance (−100 → −90)", -100, -10, true],
+    ["a debit, zero balance", 0, -10, true],
+    ["a debit, positive balance", 50, -10, true],
+    ["a credit, enough balance", 50, 20, true],
+    ["a credit, exactly the balance (→ 0)", 20, 20, true],
+    ["a credit already partly spent", 10, 20, false],
+    ["a credit, zero balance", 0, 20, false],
+    ["a credit, negative balance", -100, 20, false],
+  ];
+  it.each(cases)("%s", async (_, balance, delta, allowed) => {
+    await renderCard({ loyalty: summary({ balance }) });
+    actions.listClientLoyaltyLedgerAction.mockResolvedValue(
+      ok({
+        entries: [
+          entry(1, {
+            type: "manual_adjustment",
+            pointsDelta: delta,
+            reason: "Ajustement",
+          }),
+        ],
+        nextCursor: null,
+      }),
+    );
+    fireEvent.click(
+      card().getByRole("button", { name: "Historique des points" }),
+    );
+    await flush();
+    fireEvent.click(
+      sheet().getByRole("button", { name: "Annuler cet ajustement" }),
+    );
+    if (allowed) {
+      expect(
+        sheet().getByText(
+          new RegExp(
+            `passe de\\s+${points(balance)} à ${points(balance - delta)}`,
+          ),
+        ),
+      ).toBeTruthy();
+      actions.reverseAdjustmentAction.mockResolvedValue(
+        ok({ entryId: entry(2).id }),
+      );
+      fireEvent.click(
+        sheet().getByRole("button", { name: "Annuler l’ajustement" }),
+      );
+      await flush();
+      expect(actions.reverseAdjustmentAction).toHaveBeenCalledTimes(1);
+    } else {
+      expect(sheet().getByText("Solde insuffisant")).toBeTruthy();
+      fireEvent.click(sheet().getByRole("button", { name: "Compris" }));
+      expect(actions.reverseAdjustmentAction).not.toHaveBeenCalled();
+    }
+  });
+
+  it("leaves the backend in charge: its refusal is shown, nothing is claimed", async () => {
+    await renderCard({ loyalty: summary({ balance: -100 }) });
+    actions.listClientLoyaltyLedgerAction.mockResolvedValue(
+      ok({
+        entries: [
+          entry(1, {
+            type: "manual_adjustment",
+            pointsDelta: -10,
+            reason: "Retrait",
+          }),
+        ],
+        nextCursor: null,
+      }),
+    );
+    fireEvent.click(
+      card().getByRole("button", { name: "Historique des points" }),
+    );
+    await flush();
+    fireEvent.click(
+      sheet().getByRole("button", { name: "Annuler cet ajustement" }),
+    );
+    actions.reverseAdjustmentAction.mockResolvedValue(
+      fail("insufficient_points"),
+    );
+    fireEvent.click(
+      sheet().getByRole("button", { name: "Annuler l’ajustement" }),
+    );
+    await flush();
+    expect(sheet().getByText("Solde insuffisant")).toBeTruthy();
+    expect(sheet().getByText(/Rien n’a été changé/)).toBeTruthy();
   });
 });

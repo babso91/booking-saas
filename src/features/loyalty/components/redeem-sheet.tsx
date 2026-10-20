@@ -1,20 +1,19 @@
 "use client";
 
-import { useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { Sheet } from "@/components/ui/sheet";
-import {
-  fingerprintOf,
-  requestKeyFor,
-  type RequestKey,
-} from "@/features/agenda/client/request-id";
-import { callAction, type UiError } from "@/features/auth/client/call-action";
-import { redeemRewardAction } from "@/features/loyalty/actions/loyalty";
+import type { UiError } from "@/features/auth/client/call-action";
 import { cn } from "@/lib/cn";
 
 import { points, rewardValueLabel, unavailableCopy } from "../client/format";
+import {
+  beginOperation,
+  sendOperation,
+  type LoyaltyScope,
+} from "../client/pending-operations";
 import type {
   ClientLoyaltySummaryDto,
   RedemptionDto,
@@ -36,25 +35,29 @@ type Option = { reward: RewardDto; eligibility: RewardEligibilityDto };
 /**
  * Issue a reward to the customer: choose among the rewards (eligibility
  * from the backend), then review the cost and the balance after, then
- * confirm. One `requestId` per (customer, reward): a retry after a lost
- * answer reuses it and never spends twice; after `idempotency_conflict` a
- * new one is used only on the professional's explicit choice.
+ * confirm. Each confirmation is a pending operation of its own
+ * (client/pending-operations.ts): the same content reuses the requestId of
+ * its unresolved operation, from any screen, tab or after a reload; after
+ * `idempotency_conflict` a new one is used only on the professional's
+ * explicit choice. An answer only changes this screen if it belongs to the
+ * operation this screen is showing.
  */
 export function RedeemSheet({
   open,
-  clientId,
+  scope,
   summary,
   rewards,
-  requestKeyRef,
+  pendingCount,
   onClose,
   onRefresh,
   onDone,
 }: {
   open: boolean;
-  clientId: string;
+  scope: LoyaltyScope;
   summary: ClientLoyaltySummaryDto;
   rewards: RewardDto[];
-  requestKeyRef: RefObject<RequestKey | null>;
+  /** Unresolved operations of this customer (shown in her file). */
+  pendingCount: number;
   onClose: () => void;
   /** The eligibility is out of date: read the file again. */
   onRefresh: () => void;
@@ -66,6 +69,16 @@ export function RedeemSheet({
     "idle" | "sending" | "idempotency" | UiError
   >("idle");
   const sending = useRef(false);
+  /** The operation this screen shows (its answer alone may change it). */
+  const currentRef = useRef<string | null>(null);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   const byId = new Map(rewards.map((reward) => [reward.id, reward]));
   const options: Option[] = summary.rewards.flatMap((eligibility) => {
@@ -81,23 +94,29 @@ export function RedeemSheet({
 
   async function confirm({ asNew = false }: { asNew?: boolean } = {}) {
     if (!choice || sending.current) return;
-    const fingerprint = fingerprintOf({ clientId, rewardId: choice.reward.id });
-    requestKeyRef.current = asNew
-      ? { fingerprint, id: crypto.randomUUID() }
-      : requestKeyFor(requestKeyRef.current, fingerprint);
-    const command = {
-      clientId,
-      rewardId: choice.reward.id,
-      requestId: requestKeyRef.current.id,
-    };
+    const operation = beginOperation(
+      scope,
+      {
+        kind: "redeem",
+        command: { clientId: scope.clientId, rewardId: choice.reward.id },
+        label: {
+          rewardName: choice.reward.name,
+          pointsRequired: choice.reward.pointsRequired,
+        },
+      },
+      { asNew },
+    );
+    currentRef.current = operation.requestId;
     sending.current = true;
     setState("sending");
-    const result = await callAction(() => redeemRewardAction(command));
+    const result = await sendOperation(scope, operation);
     sending.current = false;
+    // Another operation since, or this screen is gone: the answer settled
+    // its own operation in the store, nothing here changes.
+    if (!aliveRef.current || currentRef.current !== operation.requestId) return;
     if (result.ok) {
-      requestKeyRef.current = null;
       setState("idle");
-      onDone(result.data);
+      onDone(result.data as RedemptionDto);
       return;
     }
     if (result.error.code === "idempotency_conflict") {
@@ -169,6 +188,12 @@ export function RedeemSheet({
         )
       }
     >
+      {pendingCount > 0 && step === "choose" ? (
+        <Notice tone="warning" className="mb-4">
+          Une opération précédente n’est pas confirmée : vérifie-la dans la
+          fiche avant d’en lancer une autre.
+        </Notice>
+      ) : null}
       {step === "choose" ? (
         options.length === 0 ? (
           <p className="text-[14px] text-ink-muted">
@@ -266,6 +291,7 @@ export function RedeemSheet({
           {error ? (
             <WriteError
               error={error}
+              uncertain="Elle reste dans la fiche, marquée non confirmée. Réessaie ou renvoie-la depuis la fiche : c’est la même demande, le serveur ne l’applique qu’une fois."
               action={
                 REFRESHING.has(error.code) ? (
                   <button

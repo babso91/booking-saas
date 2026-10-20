@@ -212,11 +212,27 @@ Frontend seulement : aucune migration, aucune fonction SQL, aucune Server Action
 ### Garanties de l'interface
 
 - **Aucun succès avant la réponse.** Chaque écriture n'est montrée qu'après `ok: true` ; une écriture confirmée relit le programme, la fiche fidélité et l'historique CRM. Sans réponse (`network`, `internal`), l'écran dit que l'opération a _peut-être_ été enregistrée, jamais « rien n'a été fait ».
-- **Idempotence.** Création de récompense, attribution et ajustement : une clé par contenu (`requestKeyFor` sur l'empreinte de la commande), la même pour tout nouvel essai de ce contenu, une nouvelle dès que le contenu change. Après `idempotency_conflict`, rien n'est renvoyé automatiquement : une nouvelle clé n'est utilisée que sur le choix explicite « Envoyer comme nouvelle demande ». Les clés d'attribution et d'ajustement appartiennent à la page de la cliente, pas à la carte : elles survivent au démontage de l'onglet Dossier sur téléphone.
+- **Opérations en attente (attribution, crédit, débit).** `src/features/loyalty/client/pending-operations.ts` :
+  - chaque envoi est une opération à part, avec son propre `requestId` et son payload, enregistrée dans `localStorage` **avant** l'envoi ;
+  - clé de stockage : `loyalty-pending:<utilisateur>:<activité>:<cliente>`, issue de la session serveur, jamais de la saisie ;
+  - une réponse ne règle que son opération : une réponse tardive n'efface ni ne modifie jamais une autre opération ni l'écran qui en montre une autre ;
+  - le même contenu réutilise le `requestId` de son opération non résolue, depuis n'importe quel écran, onglet, ou après un rechargement complet. Le backend applique un `requestId` une seule fois ;
+  - l'opération n'est retirée que si son issue est connue : succès, ou refus prouvant que rien n'a été écrit (`validation_error`, `insufficient_points`, `reward_unavailable`, `loyalty_program_inactive`, `idempotency_conflict`, introuvable, `forbidden`). Sans réponse (`network`, `internal`, session perdue), elle reste « non confirmée » dans la fiche, avec « Renvoyer la même demande » (même `requestId`, même payload) ou « Ne plus la suivre » (choix explicite, expliqué) ;
+  - les autres onglets la voient (événement `storage`) ;
+  - contenu stocké : identifiants (cliente, récompense), points, motif saisi, nom de la récompense pour l'affichage. Aucun jeton, aucune donnée de contact. Le motif est conservé parce qu'il fait partie du payload : sans lui, la même demande ne pourrait pas être renvoyée ;
+  - à la déconnexion, les opérations non confirmées sont **conservées**. Elles restent invisibles pour un autre compte, et les effacer permettrait une seconde application après reconnexion.
+  - Annuler une récompense et annuler un ajustement n'ont pas de `requestId` dans le contrat. Ils visent une ligne existante, une seule fois : un nouvel essai renvoie la même correction, ou `invalid_redemption_transition`. Ils ne sont donc pas suivis.
+  - Après `idempotency_conflict`, rien n'est renvoyé automatiquement : un nouveau `requestId` n'est utilisé que sur le choix explicite « Envoyer comme nouvelle demande ».
+- **Création de récompense.** Une clé par contenu, gardée en mémoire par l'écran : un nouvel essai réutilise la clé, et une réponse ne libère que sa propre clé.
 - **Valeurs historiques.** Une modification renvoie chaque champ non touché exactement tel que lu (nom et description bruts, nombres hors des bornes actuelles) ; seuls les champs modifiés sont normalisés et bornés côté client. Désactiver ou activer une récompense renvoie tous ses autres champs tels quels.
 - **Conflits de version.** `stale_loyalty_program` et `stale_reward` : la version actuelle est relue et montrée ; la professionnelle reprend la version actuelle ou garde ses réglages (rebasés sur la nouvelle version, à renvoyer explicitement). Les règles par prestation, sans version, ne remplacent que les règles affichées.
 - **Doubles soumissions.** Chaque écriture est verrouillée pendant l'envoi (garde synchrone et bouton occupé).
-- **Soldes.** Un débit manuel qui ferait passer le solde sous zéro est refusé avant l'envoi ; un solde négatif bloque toute attribution (éligibilité du backend) ; annuler un crédit déjà dépensé est expliqué au lieu d'être envoyé. Le backend reste l'autorité.
+- **Soldes.**
+  - Un débit manuel qui ferait passer le solde sous zéro est refusé avant l'envoi.
+  - Un solde négatif bloque toute attribution (éligibilité du backend).
+  - Annuler un **crédit** qui ferait passer le solde sous zéro est expliqué au lieu d'être envoyé. Annuler un **débit** recrédite toujours, même si le solde reste négatif (−100 → −90).
+  - Le backend reste l'autorité.
+- **Plafond.** L'aperçu au montant est limité à 1 000 000 points par rendez-vous, comme le calcul du backend, et le dit (« plafond par rendez-vous »).
 - **Pas de promesse.** Rien ne dit qu'une remise est déduite d'une réservation ni encaissée, ni qu'un email est envoyé.
 
 ### Écarts de contrat pour Claude Cloud
@@ -228,6 +244,8 @@ Frontend seulement : aucune migration, aucune fonction SQL, aucune Server Action
 
 ### Limites
 
-- Les clés d'idempotence sont en mémoire : après un rechargement complet de la page suivant une réponse perdue, la professionnelle vérifie l'historique avant de recommencer (l'écran le lui dit).
+- **Réconciliation.** Il n'existe pas de lecture « statut d'une demande par `requestId` » : une opération non confirmée ne peut pas être déclarée appliquée ou non sans la renvoyer. Correction proposée : `getLoyaltyRequestStatusAction({ requestId })`, qui renverrait `applied` (avec l'écriture), `unknown` ou `conflict`, sans rien écrire.
+- **Création de récompense.** Ses clés ne survivent pas à un rechargement complet. Une récompense créée en double reste visible et désactivable : rien n'est débité.
+- **Autre navigateur.** Une opération non confirmée sur un appareil n'est pas connue des autres appareils : la vérification reste l'historique des points.
 - Pas de rôle ni de permission fine : toute membre de l'activité a les mêmes actions (contrat actuel). Un refus `forbidden` est affiché.
 - `listLoyaltyBalancesAction` n'est pas encore utilisée (solde dans l'annuaire des clientes).

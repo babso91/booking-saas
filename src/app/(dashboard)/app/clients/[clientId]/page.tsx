@@ -13,7 +13,7 @@ export default async function ClientProfilePage({
 }: PageProps<"/app/clients/[clientId]">) {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
-  const { business } = await requireReadyBusiness();
+  const { user, business } = await requireReadyBusiness();
   const { clientId } = await params;
 
   return (
@@ -24,7 +24,11 @@ export default async function ClientProfilePage({
       {/* A malformed id is refused by the action (client_not_found screen).
           One instance per customer: nothing typed or read for one (drafts,
           pending answers) can reach another. */}
-      <ClientProfile key={clientId} clientId={clientId} />
+      <ClientProfile
+        key={clientId}
+        clientId={clientId}
+        scope={{ userId: user.id, businessId: business.id }}
+      />
     </AppShell>
   );
 }

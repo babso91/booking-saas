@@ -31,7 +31,6 @@ import type {
   ClientTimelineEvent,
   UpdateClientResultDto,
 } from "@/features/crm/types";
-import type { RequestKey } from "@/features/agenda/client/request-id";
 import {
   ClientLoyalty,
   type LoyaltyVisit,
@@ -119,7 +118,14 @@ const isCursorError = (error: UiError) =>
  * write, the history and the dossier's notes are read again (the server's
  * order and content decide). The route mounts one instance per customer.
  */
-export function ClientProfile({ clientId }: { clientId: string }) {
+export function ClientProfile({
+  clientId,
+  scope,
+}: {
+  clientId: string;
+  /** The signed-in identity, from the server session (pending loyalty writes). */
+  scope: { userId: string; businessId: string };
+}) {
   const [profile, setProfile] = useState<Load<ClientProfileDto>>({
     status: "loading",
   });
@@ -154,9 +160,6 @@ export function ClientProfile({ clientId }: { clientId: string }) {
   const realignedFor = useRef<string | null>(null);
 
   const notesList = useNotesList(clientId);
-  // Kept here: the loyalty card is unmounted with the dossier tab.
-  const redeemKeyRef = useRef<RequestKey | null>(null);
-  const adjustKeyRef = useRef<RequestKey | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerText, setComposerText] = useState("");
   const [editingNote, setEditingNote] = useState<ClientNoteDto | null>(null);
@@ -430,11 +433,9 @@ export function ClientProfile({ clientId }: { clientId: string }) {
   );
   const loyalty = (
     <ClientLoyalty
-      clientId={clientId}
       timezone={data.timezone}
       visits={loyaltyVisits(data, timeline.events)}
-      redeemKeyRef={redeemKeyRef}
-      adjustKeyRef={adjustKeyRef}
+      scope={{ ...scope, clientId }}
       onChanged={reloadTimeline}
     />
   );

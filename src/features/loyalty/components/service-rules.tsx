@@ -23,9 +23,11 @@ export function defaultEarning(
   service: Pick<ServiceView, "priceCents">,
 ) {
   if (program.accrualMode === "spend") {
-    return program.pointsPerEuro
-      ? `${points(spendPoints(service.priceCents, program.pointsPerEuro))} au prix actuel`
-      : "Selon le prix";
+    if (!program.pointsPerEuro) return "Selon le prix";
+    const earned = spendPoints(service.priceCents, program.pointsPerEuro);
+    return earned.capped
+      ? `${points(earned.points)} au prix actuel (plafond par rendez-vous)`
+      : `${points(earned.points)} au prix actuel`;
   }
   return points(program.pointsPerCompletedAppointment);
 }

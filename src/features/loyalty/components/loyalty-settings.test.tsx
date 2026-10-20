@@ -391,6 +391,35 @@ describe("service rules", () => {
   });
 });
 
+describe("award ceiling", () => {
+  it("previews at most 1 000 000 points per appointment, and says so", async () => {
+    actions.getLoyaltyProgramAction.mockResolvedValue(
+      ok(
+        program({
+          active: true,
+          accrualMode: "spend",
+          pointsPerEuro: "100",
+          version: 2,
+        }),
+      ),
+    );
+    actions.listRewardsAction.mockResolvedValue(ok([]));
+    actions.listServicesAction.mockResolvedValue(
+      ok([{ ...services[0]!, priceCents: 2_000_000 }]),
+    );
+    actions.getBookingSettingsAction.mockResolvedValue(ok({ currency: "EUR" }));
+    render(<LoyaltySettings />);
+    await flush();
+    const rules = section(/Règles par prestation/);
+    expect(
+      rules.getByText(
+        /1 000 000 points au prix actuel \(plafond par rendez-vous\)/,
+      ),
+    ).toBeTruthy();
+    expect(rules.queryByText(/2 000 000/)).toBeNull();
+  });
+});
+
 describe("rewards", () => {
   it("has a useful empty state", async () => {
     await renderScreen();

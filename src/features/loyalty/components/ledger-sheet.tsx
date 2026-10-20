@@ -317,7 +317,10 @@ function ReverseDialog({
   const sending = useRef(false);
 
   const after = entry ? balance - entry.pointsDelta : balance;
-  const impossible = after < 0;
+  // Cancelling a credit debits it: refused below zero (the backend says
+  // `insufficient_points`). Cancelling a debit credits it back, always
+  // possible, even if the balance stays negative.
+  const impossible = entry !== null && entry.pointsDelta > 0 && after < 0;
   const error = typeof state === "string" ? null : state;
   const stale =
     error?.code === "loyalty_entry_not_reversible" ||

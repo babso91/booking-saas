@@ -63,13 +63,31 @@ describe("program form", () => {
   });
 
   it("previews spend points with integer arithmetic, rounded down like PostgreSQL", () => {
-    expect(spendPoints(6500, "1")).toBe(65);
-    expect(spendPoints(6500, "0.5")).toBe(32);
-    expect(spendPoints(6550, "1.5")).toBe(98); // 98.25
-    expect(spendPoints(10, "0.01")).toBe(0);
+    const earned = (cents: number, rate: string) =>
+      spendPoints(cents, rate).points;
+    expect(earned(6500, "1")).toBe(65);
+    expect(earned(6500, "0.5")).toBe(32);
+    expect(earned(6550, "1.5")).toBe(98); // 98.25
+    expect(earned(10, "0.01")).toBe(0);
     // 0.1 + 0.2 style errors cannot happen: 3 × 0.1 × 100 cents.
-    expect(spendPoints(300, "0.1")).toBe(0);
-    expect(spendPoints(3000, "0.1")).toBe(3);
+    expect(earned(300, "0.1")).toBe(0);
+    expect(earned(3000, "0.1")).toBe(3);
+  });
+
+  it("caps the preview at the backend's ceiling of 1 000 000 points per appointment", () => {
+    // 20 000 € × 100 points/€ = 2 000 000 in theory.
+    expect(spendPoints(2_000_000, "100")).toEqual({
+      points: 1_000_000,
+      capped: true,
+    });
+    expect(spendPoints(1_000_000, "100")).toEqual({
+      points: 1_000_000,
+      capped: false,
+    });
+    expect(spendPoints(999_999, "100")).toEqual({
+      points: 999_999,
+      capped: false,
+    });
   });
 
   it("sends a historical out-of-bounds value back unchanged, and refuses a new one", () => {

@@ -18,6 +18,12 @@ import {
 } from "../../../../tests/support/crm-fixtures";
 import { ClientProfile } from "./client-profile";
 
+// The signed-in identity, as the page passes it from the session.
+const SCOPE = {
+  userId: "10000000-0000-4000-8000-0000000000aa",
+  businessId: "10000000-0000-4000-8000-0000000000bb",
+};
+
 const actions = {
   getClientProfileAction: vi.fn(),
   listClientTimelineAction: vi.fn(),
@@ -103,7 +109,7 @@ async function renderProfile(
   actions.listClientTimelineAction.mockResolvedValueOnce(
     ok(timelinePage(events, nextCursor)),
   );
-  const view = render(<ClientProfile clientId={CLIENT_ID} />);
+  const view = render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
   await flush();
   return view;
 }
@@ -140,6 +146,7 @@ beforeEach(() => {
   actions.listRewardsAction.mockResolvedValue(ok([]));
   actions.listClientRedemptionsAction.mockResolvedValue(ok([]));
   window.sessionStorage.clear();
+  window.localStorage.clear();
   useViewport(true);
 });
 afterEach(() => {
@@ -373,6 +380,152 @@ describe("loyalty", () => {
       timelineReads + 1,
     );
     expect(loyalty.getByText("5 points crédités.")).toBeTruthy();
+  });
+});
+
+// A stand-in for the backend's idempotency, from the actions' side: every
+// requestId sent is applied once with the payload it first came with; the
+// same requestId again applies nothing more (docs/LOYALTY_CONTRACT.md).
+type Adjust = { requestId: string; pointsDelta: number; reason: string };
+function idempotentServer() {
+  const applied = new Map<string, Adjust>();
+  const behaviours: ("ok" | "lose" | "hold")[] = [];
+  const held: (() => void)[] = [];
+  actions.adjustPointsAction.mockImplementation((command: Adjust) => {
+    if (!applied.has(command.requestId))
+      applied.set(command.requestId, command);
+    const behaviour = behaviours.shift() ?? "ok";
+    const answer = ok({ entryId: uuid() });
+    if (behaviour === "lose") return Promise.reject(new Error("answer lost"));
+    if (behaviour === "hold")
+      return new Promise((resolve) => held.push(() => resolve(answer)));
+    return Promise.resolve(answer);
+  });
+  return {
+    next: (...next: ("ok" | "lose" | "hold")[]) => behaviours.push(...next),
+    release: () => held.shift()?.(),
+    /** How many times this content was applied (distinct requestIds). */
+    applications: (reason: string) =>
+      [...applied.values()].filter((command) => command.reason === reason)
+        .length,
+  };
+}
+
+/** matchMedia whose answer changes like a real window resize. */
+function resizableViewport(initiallyWide: boolean) {
+  let wide = initiallyWide;
+  const listeners = new Set<() => void>();
+  window.matchMedia = (query: string) =>
+    ({
+      get matches() {
+        return (
+          query.includes("reduced-motion") ||
+          (wide && query.includes("min-width: 1024px"))
+        );
+      },
+      media: query,
+      addEventListener: (_: string, listener: () => void) =>
+        listeners.add(listener),
+      removeEventListener: (_: string, listener: () => void) =>
+        listeners.delete(listener),
+    }) as unknown as MediaQueryList;
+  return (next: boolean) =>
+    act(() => {
+      wide = next;
+      listeners.forEach((listener) => listener());
+    });
+}
+
+const loyaltyCard = () =>
+  within(screen.getByRole("region", { name: "Fidélité" }));
+async function creditFromCard(points: string, reason: string) {
+  fireEvent.click(
+    loyaltyCard().getByRole("button", { name: "Ajuster les points" }),
+  );
+  const sheet = within(screen.getAllByRole("dialog").at(-1)!);
+  fireEvent.change(sheet.getByLabelText("Nombre de points"), {
+    target: { value: points },
+  });
+  fireEvent.change(sheet.getByLabelText(/^Motif/), {
+    target: { value: reason },
+  });
+  fireEvent.click(sheet.getByRole("button", { name: "Vérifier" }));
+  fireEvent.click(
+    sheet.getByRole("button", { name: `Créditer ${points} points` }),
+  );
+  await flush();
+}
+const sentIds = () =>
+  actions.adjustPointsAction.mock.calls.map(
+    ([command]) => (command as Adjust).requestId,
+  );
+
+describe("concurrent loyalty operations (real profile, no artificial remount)", () => {
+  it("A pending, desktop → phone, B lost, A answers late: B's retry is applied once", async () => {
+    const resize = resizableViewport(true);
+    const server = idempotentServer();
+    await renderProfile();
+
+    // A, on desktop: sent, its answer still pending.
+    server.next("hold");
+    await creditFromCard("5", "Opération A");
+    // Desktop → phone: the dossier (and the loyalty card) is unmounted.
+    await resize(false);
+    fireEvent.click(screen.getByRole("tab", { name: "Dossier" }));
+    await flush();
+
+    // B, on the phone: applied by the server, its answer lost.
+    server.next("lose");
+    await creditFromCard("7", "Opération B");
+    // A's late answer arrives.
+    server.release();
+    await flush();
+    // A's answer settled A only: B's screen still shows B, unresolved.
+    expect(
+      within(screen.getAllByRole("dialog").at(-1)!).getByText(
+        /marquée non confirmée/,
+      ),
+    ).toBeTruthy();
+    expect(
+      loyaltyCard().getByText(/Crédit de 7 points : Opération B/),
+    ).toBeTruthy();
+    expect(loyaltyCard().queryByText(/Opération A/)).toBeNull();
+
+    // Retry of B, unchanged.
+    fireEvent.click(
+      within(screen.getAllByRole("dialog").at(-1)!).getByRole("button", {
+        name: "Créditer 7 points",
+      }),
+    );
+    await flush();
+    const [a, b, retry] = sentIds();
+    expect(retry).toBe(b);
+    expect(b).not.toBe(a);
+    expect(server.applications("Opération B")).toBe(1);
+    expect(server.applications("Opération A")).toBe(1);
+  });
+
+  it("X uncertain, then Y, then X again: X keeps its identity", async () => {
+    resizableViewport(true);
+    const server = idempotentServer();
+    await renderProfile();
+
+    server.next("lose");
+    await creditFromCard("5", "Opération X");
+    fireEvent.click(
+      within(screen.getAllByRole("dialog").at(-1)!).getByRole("button", {
+        name: "Fermer",
+      }),
+    );
+    server.next("ok");
+    await creditFromCard("9", "Opération Y");
+    // X again, typed again with the same content.
+    server.next("ok");
+    await creditFromCard("5", "Opération X");
+    const [x, y, xAgain] = sentIds();
+    expect(xAgain).toBe(x);
+    expect(y).not.toBe(x);
+    expect(server.applications("Opération X")).toBe(1);
   });
 });
 
@@ -624,7 +777,7 @@ describe("errors", () => {
   it("profile fine, history failed: only the history zone reports it", async () => {
     actions.getClientProfileAction.mockResolvedValue(ok(profile()));
     actions.listClientTimelineAction.mockResolvedValueOnce(fail("internal"));
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     expect(
       screen.getByRole("heading", { level: 1, name: "Emma Laurent" }),
@@ -646,7 +799,7 @@ describe("errors", () => {
       fail("client_not_found"),
     );
     window.sessionStorage.setItem("crm:directory", "/app/clients?q=Emma");
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     expect(
       screen.getByRole("heading", { name: "Cette fiche n’existe pas ou plus" }),
@@ -661,7 +814,7 @@ describe("errors", () => {
   it("the profile fails: retry", async () => {
     actions.getClientProfileAction.mockResolvedValueOnce(fail("internal"));
     actions.listClientTimelineAction.mockResolvedValue(ok(timelinePage([])));
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     expect(screen.getByRole("alert").textContent).toMatch(
       /La fiche n’a pas pu être chargée/,
@@ -717,7 +870,7 @@ describe("time zones: every hour is labelled with the zone it was read in", () =
     actions.listClientTimelineAction.mockResolvedValueOnce(
       ok(inZone(timelinePage([appointmentEvent()]), VANCOUVER)),
     );
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     await flush();
 
@@ -736,7 +889,7 @@ describe("time zones: every hour is labelled with the zone it was read in", () =
     actions.listClientTimelineAction.mockResolvedValueOnce(
       ok(inZone(timelinePage([appointmentEvent()]), VANCOUVER)),
     );
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     await flush();
     await flush();
@@ -938,7 +1091,7 @@ describe("profile reads: only the newest one is ever shown", () => {
     actions.listClientTimelineAction.mockResolvedValue(
       ok({ ...timelinePage([appointmentEvent()]), timezone: VANCOUVER }),
     );
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     await flush();
     expect(actions.getClientProfileAction).toHaveBeenCalledTimes(2);
@@ -1034,10 +1187,13 @@ describe("profile reads: only the newest one is ever shown", () => {
     actions.listClientTimelineAction.mockResolvedValue(
       ok(timelinePage([appointmentEvent()])),
     );
-    const view = render(<ClientProfile clientId={CLIENT_ID} />);
+    const view = render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     view.rerender(
-      <ClientProfile clientId="30000000-0000-4000-8000-00000000bbbb" />,
+      <ClientProfile
+        scope={SCOPE}
+        clientId="30000000-0000-4000-8000-00000000bbbb"
+      />,
     );
     await flush();
     expect(
@@ -1063,7 +1219,7 @@ describe("profile reads: only the newest one is ever shown", () => {
     useViewport(false);
     render(
       <StrictMode>
-        <ClientProfile clientId={CLIENT_ID} />
+        <ClientProfile scope={SCOPE} clientId={CLIENT_ID} />
       </StrictMode>,
     );
     await flush();

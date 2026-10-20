@@ -55,13 +55,23 @@ export function rateUnits(rate: string): bigint {
   return BigInt(units!) * 10_000n + BigInt(decimals.padEnd(4, "0") || "0");
 }
 
+/** The backend's ceiling for one award (docs/LOYALTY_CONTRACT.md). */
+export const AWARD_CEILING = 1_000_000;
+
 /**
  * Points a price would earn in spend mode: floor(cents × rate / 100), as
- * PostgreSQL computes it in NUMERIC. Only a preview at today's price: the
- * price recorded on the appointment decides.
+ * PostgreSQL computes it in NUMERIC, then capped at the award ceiling.
+ * Only a preview at today's price: the price recorded on the appointment
+ * decides. `capped`: the raw result was above the ceiling.
  */
-export function spendPoints(priceCents: number, rate: string): number {
-  return Number((BigInt(priceCents) * rateUnits(rate)) / 1_000_000n);
+export function spendPoints(
+  priceCents: number,
+  rate: string,
+): { points: number; capped: boolean } {
+  const raw = (BigInt(priceCents) * rateUnits(rate)) / 1_000_000n;
+  return raw > BigInt(AWARD_CEILING)
+    ? { points: AWARD_CEILING, capped: true }
+    : { points: Number(raw), capped: false };
 }
 
 const inRateBounds = (rate: string) =>

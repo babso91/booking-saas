@@ -1,21 +1,20 @@
 "use client";
 
-import { useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { TextAreaField, TextField } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { Sheet } from "@/components/ui/sheet";
-import {
-  fingerprintOf,
-  requestKeyFor,
-  type RequestKey,
-} from "@/features/agenda/client/request-id";
-import { callAction, type UiError } from "@/features/auth/client/call-action";
-import { adjustPointsAction } from "@/features/loyalty/actions/loyalty";
+import type { UiError } from "@/features/auth/client/call-action";
 import { cn } from "@/lib/cn";
 
 import { points } from "../client/format";
+import {
+  beginOperation,
+  sendOperation,
+  type LoyaltyScope,
+} from "../client/pending-operations";
 import { WriteError, fieldErrorsOf, linkAction } from "./loyalty-parts";
 
 export const ADJUST_MAX = 100_000;
@@ -27,20 +26,24 @@ type Field = "points" | "reason";
  * A manual credit or debit, with a mandatory reason, reviewed before it is
  * sent (balance before and after). A debit can never take the balance
  * below zero (refused here from the balance shown, and by the backend).
- * One `requestId` per content, reused by every retry of that content.
+ * Each confirmation is a pending operation of its own
+ * (client/pending-operations.ts): the same content reuses the requestId of
+ * its unresolved operation, from any screen, tab or after a reload. An
+ * answer only changes this screen if it belongs to the operation shown.
  */
 export function AdjustSheet({
   open,
-  clientId,
+  scope,
   balance,
-  requestKeyRef,
+  pendingCount,
   onClose,
   onDone,
 }: {
   open: boolean;
-  clientId: string;
+  scope: LoyaltyScope;
   balance: number;
-  requestKeyRef: RefObject<RequestKey | null>;
+  /** Unresolved operations of this customer (shown in her file). */
+  pendingCount: number;
   onClose: () => void;
   onDone: (delta: number) => void;
 }) {
@@ -53,8 +56,18 @@ export function AdjustSheet({
     "idle" | "sending" | "idempotency" | UiError
   >("idle");
   const sending = useRef(false);
+  /** The operation this screen shows (its answer alone may change it). */
+  const currentRef = useRef<string | null>(null);
+  const aliveRef = useRef(true);
   const amountRef = useRef<HTMLInputElement>(null);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   const typed = /^\d{1,6}$/.test(amount.trim()) ? Number(amount.trim()) : null;
   const delta = typed === null ? 0 : direction === "credit" ? typed : -typed;
@@ -85,19 +98,27 @@ export function AdjustSheet({
 
   async function confirm({ asNew = false }: { asNew?: boolean } = {}) {
     if (sending.current || delta === 0) return;
-    const content = { clientId, pointsDelta: delta, reason: reason.trim() };
-    const fingerprint = fingerprintOf(content);
-    requestKeyRef.current = asNew
-      ? { fingerprint, id: crypto.randomUUID() }
-      : requestKeyFor(requestKeyRef.current, fingerprint);
+    const operation = beginOperation(
+      scope,
+      {
+        kind: delta > 0 ? "credit" : "debit",
+        command: {
+          clientId: scope.clientId,
+          pointsDelta: delta,
+          reason: reason.trim(),
+        },
+      },
+      { asNew },
+    );
+    currentRef.current = operation.requestId;
     sending.current = true;
     setState("sending");
-    const result = await callAction(() =>
-      adjustPointsAction({ ...content, requestId: requestKeyRef.current!.id }),
-    );
+    const result = await sendOperation(scope, operation);
     sending.current = false;
+    // Another operation since, or this screen is gone: the answer settled
+    // its own operation in the store, nothing here changes.
+    if (!aliveRef.current || currentRef.current !== operation.requestId) return;
     if (result.ok) {
-      requestKeyRef.current = null;
       setState("idle");
       onDone(delta);
       return;
@@ -170,6 +191,12 @@ export function AdjustSheet({
             review();
           }}
         >
+          {pendingCount > 0 ? (
+            <Notice tone="warning">
+              Une opération précédente n’est pas confirmée : vérifie-la dans la
+              fiche avant d’en lancer une autre.
+            </Notice>
+          ) : null}
           <fieldset className="flex flex-col gap-2">
             <legend className="mb-2 text-[15px] font-medium text-ink">
               Opération
@@ -235,7 +262,12 @@ export function AdjustSheet({
             placeholder="Ex. Geste commercial, points d’une visite avant le programme…"
           />
           {error ? (
-            <WriteError error={error}>Aucun point n’a été modifié.</WriteError>
+            <WriteError
+              error={error}
+              uncertain="Elle reste dans la fiche, marquée non confirmée. Réessaie ou renvoie-la depuis la fiche : c’est la même demande, le serveur ne l’applique qu’une fois."
+            >
+              Aucun point n’a été modifié.
+            </WriteError>
           ) : null}
         </form>
       ) : (
@@ -279,7 +311,12 @@ export function AdjustSheet({
             </Notice>
           ) : null}
           {error ? (
-            <WriteError error={error}>Aucun point n’a été modifié.</WriteError>
+            <WriteError
+              error={error}
+              uncertain="Elle reste dans la fiche, marquée non confirmée. Réessaie ou renvoie-la depuis la fiche : c’est la même demande, le serveur ne l’applique qu’une fois."
+            >
+              Aucun point n’a été modifié.
+            </WriteError>
           ) : null}
         </div>
       )}

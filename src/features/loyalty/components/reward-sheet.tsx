@@ -163,6 +163,7 @@ export function RewardSheet({
       return;
     }
     let command;
+    let sentKey: string | null = null;
     if (base) {
       // Activation is changed from the list only: as stored.
       command = updateCommand(base, checked.values, base.active);
@@ -172,7 +173,8 @@ export function RewardSheet({
       creationKeyRef.current = asNew
         ? { fingerprint, id: crypto.randomUUID() }
         : requestKeyFor(creationKeyRef.current, fingerprint);
-      command = createCommand(draft, checked.values, creationKeyRef.current.id);
+      sentKey = creationKeyRef.current.id;
+      command = createCommand(draft, checked.values, sentKey);
     }
 
     sending.current = true;
@@ -183,7 +185,10 @@ export function RewardSheet({
     sending.current = false;
 
     if (result.ok) {
-      if (!base) creationKeyRef.current = null;
+      // Only this creation's own key: a newer one is never cleared by an
+      // older answer.
+      if (sentKey && creationKeyRef.current?.id === sentKey)
+        creationKeyRef.current = null;
       setWrite({ status: "idle" });
       onSaved(result.data, !base);
       return;

@@ -1,13 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -15,7 +9,6 @@ import { TextAreaField } from "@/components/ui/field";
 import { GiftIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
 import { SelectField } from "@/components/ui/select-field";
-import type { RequestKey } from "@/features/agenda/client/request-id";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
 import { CrmError } from "@/features/crm/components/crm-error";
 import {
@@ -33,6 +26,14 @@ import {
   redemptionStatusLabels,
   rewardValueLabel,
 } from "../client/format";
+import {
+  forgetOperation,
+  operationLabel,
+  sendOperation,
+  usePendingOperations,
+  type LoyaltyScope,
+  type PendingOperation,
+} from "../client/pending-operations";
 import type {
   ClientLoyaltySummaryDto,
   RedemptionDto,
@@ -45,14 +46,6 @@ import { RedeemSheet } from "./redeem-sheet";
 
 /** A visit of this customer a reward can be attached to. */
 export type LoyaltyVisit = { id: string; label: string };
-
-/**
- * Idempotency keys of the two creating commands (issue a reward, adjust
- * points). Owned by the customer's page, not by this card: the card can be
- * unmounted (phone tabs, layout change) while an answer is unknown, and a
- * retry of the same content must reuse its key (docs/LOYALTY_CONTRACT.md).
- */
-export type LoyaltyKeyRef = RefObject<RequestKey | null>;
 
 type Load =
   | { status: "loading" }
@@ -80,19 +73,16 @@ const SHOWN_PAST = 3;
  * as done before the backend confirmed it.
  */
 export function ClientLoyalty({
-  clientId,
+  scope,
   timezone,
   visits,
-  redeemKeyRef,
-  adjustKeyRef,
   onChanged,
 }: {
-  clientId: string;
+  /** Signed-in user, business and this customer (pending operations). */
+  scope: LoyaltyScope;
   /** Business time zone (dates of the history). */
   timezone: string;
   visits: LoyaltyVisit[];
-  redeemKeyRef: LoyaltyKeyRef;
-  adjustKeyRef: LoyaltyKeyRef;
   /** A confirmed loyalty write (the profile re-reads its history). */
   onChanged: () => void;
 }) {
@@ -106,8 +96,19 @@ export function ClientLoyalty({
   const [action, setAction] = useState<RedemptionAction | null>(null);
   const [message, setMessage] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [forgetting, setForgetting] = useState<PendingOperation | null>(null);
+  const [resent, setResent] = useState<{
+    label: string;
+    error: UiError;
+  } | null>(null);
   const reads = useRef(0);
   const alive = useRef(true);
+  const { clientId } = scope;
+  const pending = usePendingOperations(scope);
+  // Confirmed writes so far: each new one re-reads the file and the
+  // profile's history, whichever screen sent it (and even if this card was
+  // unmounted meanwhile, when it mounts again it reads everything anyway).
+  const seenSettled = useRef(pending.settled);
 
   useEffect(() => {
     alive.current = true;
@@ -142,6 +143,25 @@ export function ClientLoyalty({
       reads.current += 1;
     };
   }, [clientId, run]);
+
+  useEffect(() => {
+    if (pending.settled === seenSettled.current) return;
+    seenSettled.current = pending.settled;
+    setRefreshing(true);
+    setRun((value) => value + 1);
+    onChanged();
+  }, [pending.settled, onChanged]);
+
+  /** Sends a pending operation again: same requestId, same payload. */
+  async function resend(operation: PendingOperation) {
+    setMessage("");
+    setResent(null);
+    const result = await sendOperation(scope, operation);
+    if (!alive.current) return;
+    if (result.ok)
+      setMessage(`Opération confirmée : ${operationLabel(operation)}.`);
+    else setResent({ label: operationLabel(operation), error: result.error });
+  }
 
   /** Everything again; what is shown stays meanwhile. */
   function reload() {
@@ -238,6 +258,19 @@ export function ClientLoyalty({
           attribuée tant que le solde n’est pas repassé au-dessus du coût.
         </Notice>
       ) : null}
+      {pending.operations.length > 0 ? (
+        <PendingOperations
+          operations={pending.operations}
+          inFlight={pending.inFlight}
+          onResend={(operation) => void resend(operation)}
+          onForget={setForgetting}
+        />
+      ) : null}
+      {resent ? (
+        <WriteError error={resent.error}>
+          {resent.label} : non appliquée.
+        </WriteError>
+      ) : null}
       {message ? <Notice tone="success">{message}</Notice> : null}
 
       <div className="flex flex-wrap gap-2">
@@ -306,15 +339,16 @@ export function ClientLoyalty({
       <RedeemSheet
         key={`redeem-${sheetRun}`}
         open={sheet === "redeem"}
-        clientId={clientId}
+        scope={scope}
         summary={summary}
         rewards={rewards}
-        requestKeyRef={redeemKeyRef}
+        pendingCount={pending.operations.length}
         onClose={() => setSheet(null)}
         onRefresh={reload}
         onDone={(redemption) => {
+          // The file is read again through the confirmed-writes counter.
           setSheet(null);
-          changed(
+          setMessage(
             `Récompense attribuée : ${redemption.reward.name} (−${points(redemption.pointsSpent)}). À appliquer lors de la visite.`,
           );
         }}
@@ -322,13 +356,13 @@ export function ClientLoyalty({
       <AdjustSheet
         key={`adjust-${sheetRun}`}
         open={sheet === "adjust"}
-        clientId={clientId}
+        scope={scope}
         balance={summary.balance}
-        requestKeyRef={adjustKeyRef}
+        pendingCount={pending.operations.length}
         onClose={() => setSheet(null)}
         onDone={(delta) => {
           setSheet(null);
-          changed(
+          setMessage(
             delta > 0
               ? `${points(delta)} crédités.`
               : `${points(-delta)} débités.`,
@@ -344,6 +378,23 @@ export function ClientLoyalty({
         onClose={() => setSheet(null)}
         onChanged={() => changed("Ajustement annulé.")}
       />
+      <ConfirmDialog
+        open={forgetting !== null}
+        title="Ne plus suivre cette opération ?"
+        description={forgetting ? operationLabel(forgetting) : undefined}
+        confirmLabel="Ne plus la suivre"
+        onCancel={() => setForgetting(null)}
+        onConfirm={() => {
+          if (forgetting) forgetOperation(scope, forgetting.requestId);
+          setForgetting(null);
+        }}
+      >
+        <p className="text-[14.5px] text-ink-soft">
+          Sa réponse n’est jamais arrivée. Si elle figure dans l’historique des
+          points, elle a été appliquée ; sinon, elle ne l’a pas été. Une fois
+          retirée d’ici, un nouvel envoi identique sera une nouvelle demande.
+        </p>
+      </ConfirmDialog>
       <RedemptionDialog
         key={action ? `${action.kind}-${action.redemption.id}` : "none"}
         action={action}
@@ -360,6 +411,59 @@ export function ClientLoyalty({
         }}
       />
     </Frame>
+  );
+}
+
+function PendingOperations({
+  operations,
+  inFlight,
+  onResend,
+  onForget,
+}: {
+  operations: PendingOperation[];
+  inFlight: string[];
+  onResend: (operation: PendingOperation) => void;
+  onForget: (operation: PendingOperation) => void;
+}) {
+  return (
+    <Notice tone="warning" title="Opérations non confirmées">
+      <p>
+        Leur réponse n’est pas arrivée : elles ont peut-être été appliquées.
+        Renvoie la même demande : le serveur ne l’appliquera qu’une fois.
+      </p>
+      <ul className="mt-2 flex flex-col gap-2">
+        {operations.map((operation) => {
+          const sending = inFlight.includes(operation.requestId);
+          return (
+            <li key={operation.requestId} className="flex flex-col gap-1">
+              <span className="font-medium wrap-anywhere">
+                {operationLabel(operation)}
+              </span>
+              {sending ? (
+                <span role="status">Envoi en cours…</span>
+              ) : (
+                <span className="flex flex-wrap gap-x-4 gap-y-1">
+                  <button
+                    type="button"
+                    className={linkAction}
+                    onClick={() => onResend(operation)}
+                  >
+                    Renvoyer la même demande
+                  </button>
+                  <button
+                    type="button"
+                    className={linkAction}
+                    onClick={() => onForget(operation)}
+                  >
+                    Ne plus la suivre
+                  </button>
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </Notice>
   );
 }
 

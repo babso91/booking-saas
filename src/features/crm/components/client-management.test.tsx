@@ -18,6 +18,12 @@ import {
 } from "../../../../tests/support/crm-fixtures";
 import { ClientProfile } from "./client-profile";
 
+// The signed-in identity, as the page passes it from the session.
+const SCOPE = {
+  userId: "10000000-0000-4000-8000-0000000000aa",
+  businessId: "10000000-0000-4000-8000-0000000000bb",
+};
+
 // The profile as a workplace: editing the record and private notes, from
 // what the professional sees and does. Server Actions are mocked at their
 // module boundary with the real result shapes.
@@ -99,7 +105,7 @@ async function renderProfile({
   actions.listClientNotesAction.mockResolvedValue(
     ok(notesPage(notes, { legacyNotes })),
   );
-  const view = render(<ClientProfile clientId={CLIENT_ID} />);
+  const view = render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
   await flush();
   return view;
 }
@@ -695,7 +701,7 @@ describe("notes in the dossier", () => {
         }),
       ),
     );
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     expect(lastInput("listClientNotesAction")).toEqual({
       clientId: CLIENT_ID,
@@ -739,7 +745,7 @@ describe("notes in the dossier", () => {
     actions.listClientNotesAction.mockResolvedValue(
       ok(notesPage([note()], { timezone: "America/Vancouver" })),
     );
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     expect(
       notesSection().getByText("Heures de America/Vancouver."),
@@ -1010,7 +1016,7 @@ describe("editing the record", () => {
       ok({ ...timelinePage([]), timezone: "America/Vancouver" }),
     );
     actions.listClientNotesAction.mockResolvedValue(ok(notesPage()));
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     await flush();
     actions.getClientRecordAction.mockResolvedValueOnce(ok(record));
@@ -1037,7 +1043,7 @@ describe("races: only the newest answer of each read is shown", () => {
     actions.getClientProfileAction.mockResolvedValue(ok(profile()));
     actions.listClientTimelineAction.mockResolvedValue(ok(timelinePage([])));
     actions.listClientNotesAction.mockReturnValueOnce(first.promise);
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
 
     // A note is written: the dossier's notes are read again, and answer.
@@ -1069,7 +1075,7 @@ describe("races: only the newest answer of each read is shown", () => {
     actions.getClientProfileAction.mockResolvedValue(ok(profile()));
     actions.listClientTimelineAction.mockResolvedValue(ok(timelinePage([])));
     actions.listClientNotesAction.mockReturnValueOnce(first.promise);
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     actions.createClientNoteAction.mockResolvedValueOnce(
       ok({ note: note(), created: true }),
