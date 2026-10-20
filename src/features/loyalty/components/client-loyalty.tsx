@@ -27,7 +27,7 @@ import {
   rewardValueLabel,
 } from "../client/format";
 import {
-  forgetOperation,
+  hidePendingOperation,
   operationLabel,
   sendOperation,
   usePendingOperations,
@@ -96,7 +96,8 @@ export function ClientLoyalty({
   const [action, setAction] = useState<RedemptionAction | null>(null);
   const [message, setMessage] = useState("");
   const [showAll, setShowAll] = useState(false);
-  const [forgetting, setForgetting] = useState<PendingOperation | null>(null);
+  const [hiding, setHiding] = useState<PendingOperation | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
   const [resent, setResent] = useState<{
     label: string;
     error: UiError;
@@ -156,7 +157,7 @@ export function ClientLoyalty({
   async function resend(operation: PendingOperation) {
     setMessage("");
     setResent(null);
-    const result = await sendOperation(scope, operation);
+    const result = await sendOperation(operation);
     if (!alive.current) return;
     if (result.ok)
       setMessage(`Opération confirmée : ${operationLabel(operation)}.`);
@@ -258,14 +259,22 @@ export function ClientLoyalty({
           attribuée tant que le solde n’est pas repassé au-dessus du coût.
         </Notice>
       ) : null}
-      {pending.operations.length > 0 ? (
-        <PendingOperations
-          operations={pending.operations}
-          inFlight={pending.inFlight}
-          onResend={(operation) => void resend(operation)}
-          onForget={setForgetting}
-        />
+      {pending.status === "unavailable" ? (
+        <Notice tone="error" title="Attributions et ajustements indisponibles">
+          Ce navigateur ne permet pas d’enregistrer les opérations avant leur
+          envoi (stockage bloqué, plein ou navigation privée). Sans cela, une
+          réponse perdue pourrait mener à un doublon : attribuer une récompense
+          et ajuster les points sont désactivés ici.
+        </Notice>
       ) : null}
+      <PendingOperations
+        operations={pending.operations}
+        inFlight={pending.inFlight}
+        showHidden={showHidden}
+        onShowHidden={() => setShowHidden((value) => !value)}
+        onResend={(operation) => void resend(operation)}
+        onHide={setHiding}
+      />
       {resent ? (
         <WriteError error={resent.error}>
           {resent.label} : non appliquée.
@@ -278,11 +287,20 @@ export function ClientLoyalty({
           size="md"
           icon={<GiftIcon size={17} />}
           onClick={() => open("redeem")}
-          disabled={!summary.programActive || rewards.length === 0}
+          disabled={
+            !summary.programActive ||
+            rewards.length === 0 ||
+            pending.status !== "ready"
+          }
         >
           Attribuer une récompense
         </Button>
-        <Button size="md" variant="secondary" onClick={() => open("adjust")}>
+        <Button
+          size="md"
+          variant="secondary"
+          onClick={() => open("adjust")}
+          disabled={pending.status !== "ready"}
+        >
           Ajuster les points
         </Button>
         <Button size="md" variant="ghost" onClick={() => open("ledger")}>
@@ -379,21 +397,33 @@ export function ClientLoyalty({
         onChanged={() => changed("Ajustement annulé.")}
       />
       <ConfirmDialog
-        open={forgetting !== null}
-        title="Ne plus suivre cette opération ?"
-        description={forgetting ? operationLabel(forgetting) : undefined}
-        confirmLabel="Ne plus la suivre"
-        onCancel={() => setForgetting(null)}
+        open={hiding !== null}
+        title="Masquer cette alerte ?"
+        description={hiding ? operationLabel(hiding) : undefined}
+        confirmLabel="Masquer l’alerte"
+        onCancel={() => setHiding(null)}
         onConfirm={() => {
-          if (forgetting) forgetOperation(scope, forgetting.requestId);
-          setForgetting(null);
+          if (hiding)
+            void hidePendingOperation(hiding.requestId).catch(() => {});
+          setHiding(null);
         }}
       >
-        <p className="text-[14.5px] text-ink-soft">
-          Sa réponse n’est jamais arrivée. Si elle figure dans l’historique des
-          points, elle a été appliquée ; sinon, elle ne l’a pas été. Une fois
-          retirée d’ici, un nouvel envoi identique sera une nouvelle demande.
-        </p>
+        <ul className="flex list-disc flex-col gap-2 pl-5 text-[14.5px] text-ink-soft">
+          <li>Masquer l’alerte n’annule pas la demande.</li>
+          <li>
+            Elle a peut-être déjà été appliquée, ou peut encore aboutir : son
+            absence de l’historique des points ne prouve rien.
+          </li>
+          <li>
+            Elle reste enregistrée ici avec son identifiant : la renvoyer, ou
+            refaire exactement la même opération, ne l’appliquera jamais une
+            seconde fois.
+          </li>
+          <li>
+            Une opération différente (autre montant, autre motif) serait une
+            nouvelle demande, et pourrait donc s’ajouter à celle-ci.
+          </li>
+        </ul>
       </ConfirmDialog>
       <RedemptionDialog
         key={action ? `${action.kind}-${action.redemption.id}` : "none"}
@@ -417,22 +447,43 @@ export function ClientLoyalty({
 function PendingOperations({
   operations,
   inFlight,
+  showHidden,
+  onShowHidden,
   onResend,
-  onForget,
+  onHide,
 }: {
   operations: PendingOperation[];
   inFlight: string[];
+  showHidden: boolean;
+  onShowHidden: () => void;
   onResend: (operation: PendingOperation) => void;
-  onForget: (operation: PendingOperation) => void;
+  onHide: (operation: PendingOperation) => void;
 }) {
+  const hidden = operations.filter((item) => item.state === "hidden");
+  const shown = operations.filter(
+    (item) => item.state === "open" || showHidden,
+  );
+  if (operations.length === 0) return null;
+  const toggle =
+    hidden.length > 0 ? (
+      <button type="button" className={linkAction} onClick={onShowHidden}>
+        {showHidden
+          ? "Masquer à nouveau"
+          : hidden.length === 1
+            ? "1 opération non confirmée masquée : afficher"
+            : `${hidden.length} opérations non confirmées masquées : afficher`}
+      </button>
+    ) : null;
+  if (shown.length === 0) return <p className="text-[13.5px]">{toggle}</p>;
   return (
-    <Notice tone="warning" title="Opérations non confirmées">
+    <Notice tone="warning" title="Opérations non confirmées" action={toggle}>
       <p>
         Leur réponse n’est pas arrivée : elles ont peut-être été appliquées.
-        Renvoie la même demande : le serveur ne l’appliquera qu’une fois.
+        Renvoie la même demande : son identifiant est conservé, le serveur ne
+        l’applique qu’une fois.
       </p>
       <ul className="mt-2 flex flex-col gap-2">
-        {operations.map((operation) => {
+        {shown.map((operation) => {
           const sending = inFlight.includes(operation.requestId);
           return (
             <li key={operation.requestId} className="flex flex-col gap-1">
@@ -450,13 +501,15 @@ function PendingOperations({
                   >
                     Renvoyer la même demande
                   </button>
-                  <button
-                    type="button"
-                    className={linkAction}
-                    onClick={() => onForget(operation)}
-                  >
-                    Ne plus la suivre
-                  </button>
+                  {operation.state === "open" ? (
+                    <button
+                      type="button"
+                      className={linkAction}
+                      onClick={() => onHide(operation)}
+                    >
+                      Masquer l’alerte
+                    </button>
+                  ) : null}
                 </span>
               )}
             </li>

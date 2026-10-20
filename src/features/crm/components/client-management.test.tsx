@@ -68,10 +68,19 @@ const fail = (code: string, fieldErrors?: Record<string, string[]>) => ({
   ok: false as const,
   error: { code, message: "backend text never shown", fieldErrors },
 });
-const flush = () =>
-  act(async () => {
-    await vi.advanceTimersByTimeAsync(0);
-  });
+// Promises, then IndexedDB's tasks (setImmediate), a few rounds.
+// Several act() rounds: effects committed in one round (a card mounted
+// once its page is read) start their IndexedDB work in the next.
+const flush = async () => {
+  for (let round = 0; round < 6; round += 1) {
+    await act(async () => {
+      for (let tick = 0; tick < 6; tick += 1) {
+        await vi.advanceTimersByTimeAsync(0);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    });
+  }
+};
 const deferred = () => {
   let resolve!: (value: unknown) => void;
   const promise = new Promise((done) => (resolve = done));

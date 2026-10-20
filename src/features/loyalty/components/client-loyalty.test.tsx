@@ -60,10 +60,19 @@ const fail = (code: string, fieldErrors?: Record<string, string[]>) => ({
   ok: false as const,
   error: { code, message: "backend text never shown", fieldErrors },
 });
-const flush = () =>
-  act(async () => {
-    await vi.advanceTimersByTimeAsync(0);
-  });
+// Promises, then IndexedDB's tasks (setImmediate), a few rounds.
+// Several act() rounds: effects committed in one round (a card mounted
+// once its page is read) start their IndexedDB work in the next.
+const flush = async () => {
+  for (let round = 0; round < 6; round += 1) {
+    await act(async () => {
+      for (let tick = 0; tick < 6; tick += 1) {
+        await vi.advanceTimersByTimeAsync(0);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    });
+  }
+};
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => (resolve = done));
@@ -210,6 +219,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("summary", () => {
@@ -306,6 +316,9 @@ describe("issuing a reward", () => {
     });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
+    // Nothing leaves before the operation is durably recorded.
+    expect(actions.redeemRewardAction).not.toHaveBeenCalled();
+    await flush();
     expect(actions.redeemRewardAction).toHaveBeenCalledTimes(1);
     const command = lastCall(actions.redeemRewardAction);
     expect(command).toMatchObject({ clientId: CLIENT, rewardId: REWARD });
@@ -871,13 +884,16 @@ describe("operations whose answer was lost", () => {
     expect(a!.requestId).not.toBe(b!.requestId);
 
     await reloadCard();
-    const items = card().getAllByRole("button", {
-      name: "Renvoyer la même demande",
-    });
+    const items = card().getAllByRole("listitem");
     expect(items).toHaveLength(2);
     server.next("ok");
-    // The second one (B).
-    fireEvent.click(items[1]!);
+    // B, whatever the order.
+    const itemB = items.find((item) =>
+      item.textContent?.includes("Retrait B"),
+    )!;
+    fireEvent.click(
+      within(itemB).getByRole("button", { name: "Renvoyer la même demande" }),
+    );
     await flush();
     expect(lastCall(actions.adjustPointsAction).requestId).toBe(b!.requestId);
     expect(card().getByText(/Crédit de 30 points : Geste A/)).toBeTruthy();
@@ -899,18 +915,35 @@ describe("operations whose answer was lost", () => {
     expect(card().queryByText("Opérations non confirmées")).toBeNull();
   });
 
-  it("dismissing one is explicit and explained", async () => {
+  it("hiding an alert keeps the operation and its requestId", async () => {
     const server = idempotentServer(actions.adjustPointsAction);
     await renderCard();
     server.next("lose");
     await adjustFromCard("Créditer", "30", "Geste");
     fireEvent.click(sheet().getByRole("button", { name: "Fermer" }));
-    fireEvent.click(card().getByRole("button", { name: "Ne plus la suivre" }));
-    expect(
-      sheet().getByText(/Si elle figure dans l’historique des\s+points/),
-    ).toBeTruthy();
-    fireEvent.click(sheet().getByRole("button", { name: "Ne plus la suivre" }));
+    const [lost] = server.applied();
+    fireEvent.click(card().getByRole("button", { name: "Masquer l’alerte" }));
+    // Never presented as proof of anything.
+    expect(sheet().getByText(/n’annule pas la demande/)).toBeTruthy();
+    expect(sheet().getByText(/ne prouve rien/)).toBeTruthy();
+    expect(sheet().getByText(/pourrait donc s’ajouter/)).toBeTruthy();
+    fireEvent.click(sheet().getByRole("button", { name: "Masquer l’alerte" }));
+    await flush();
     expect(card().queryByText("Opérations non confirmées")).toBeNull();
+    expect(
+      card().getByRole("button", {
+        name: /1 opération non confirmée masquée/,
+      }),
+    ).toBeTruthy();
+
+    // Still there after a reload, and the same content reuses its id.
+    await reloadCard();
+    server.next("ok");
+    await adjustFromCard("Créditer", "30", "Geste");
+    expect(lastCall(actions.adjustPointsAction).requestId).toBe(
+      lost!.requestId,
+    );
+    expect(server.applied()).toHaveLength(1);
   });
 
   it("is isolated per user, business and customer", async () => {
@@ -930,20 +963,18 @@ describe("operations whose answer was lost", () => {
     expect(card().getByText("Opérations non confirmées")).toBeTruthy();
   });
 
-  it("shows an operation left uncertain in another tab", async () => {
+  it("shows an operation recorded by another tab", async () => {
     await renderCard();
-    const key = `loyalty-pending:${SCOPE.userId}:${SCOPE.businessId}:${CLIENT}`;
-    const operation = {
-      requestId: "50000000-0000-4000-8000-000000000001",
-      kind: "credit",
-      command: { clientId: CLIENT, pointsDelta: 15, reason: "Autre onglet" },
-      fingerprint: "x",
-      createdAt: "2026-10-20T08:00:00Z",
-    };
-    act(() => {
-      window.localStorage.setItem(key, JSON.stringify([operation]));
-      window.dispatchEvent(new StorageEvent("storage", { key }));
+    // Another tab: its own module instance and its own database connection.
+    vi.resetModules();
+    const otherTab = await import("../client/operation-store");
+    await act(async () => {
+      await otherTab.recordOperation(SCOPE, {
+        kind: "credit",
+        command: { clientId: CLIENT, pointsDelta: 15, reason: "Autre onglet" },
+      });
     });
+    await flush();
     expect(card().getByText(/Crédit de 15 points : Autre onglet/)).toBeTruthy();
   });
 });
@@ -1034,5 +1065,81 @@ describe("cancelling a manual adjustment", () => {
     await flush();
     expect(sheet().getByText("Solde insuffisant")).toBeTruthy();
     expect(sheet().getByText(/Rien n’a été changé/)).toBeTruthy();
+  });
+});
+
+describe("storage that cannot record an operation", () => {
+  it("E: quota exceeded: nothing is sent, the screen says so", async () => {
+    await renderCard();
+    const { IDBObjectStore } = await import("fake-indexeddb");
+    vi.spyOn(IDBObjectStore.prototype, "add").mockImplementation(() => {
+      throw new DOMException("full", "QuotaExceededError");
+    });
+    fireEvent.click(card().getByRole("button", { name: "Ajuster les points" }));
+    fireEvent.click(sheet().getByLabelText(/Débiter/));
+    fireEvent.change(sheet().getByLabelText("Nombre de points"), {
+      target: { value: "20" },
+    });
+    fireEvent.change(sheet().getByLabelText(/^Motif/), {
+      target: { value: "Retrait" },
+    });
+    fireEvent.click(sheet().getByRole("button", { name: "Vérifier" }));
+    fireEvent.click(sheet().getByRole("button", { name: "Débiter 20 points" }));
+    await flush();
+    expect(actions.adjustPointsAction).not.toHaveBeenCalled();
+    expect(sheet().getByText("Opération non envoyée")).toBeTruthy();
+    expect(sheet().getByText(/aucun\s+point n’a bougé/)).toBeTruthy();
+    expect(sheet().queryByText(/qu’une fois/)).toBeNull();
+
+    // Recoverable: once storage works again, the same click goes through.
+    vi.restoreAllMocks();
+    actions.adjustPointsAction.mockResolvedValue(ok({ entryId: entry(9).id }));
+    fireEvent.click(sheet().getByRole("button", { name: "Débiter 20 points" }));
+    await flush();
+    expect(actions.adjustPointsAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("a transaction aborted after the write: the reward is not issued", async () => {
+    await renderCard();
+    const { IDBObjectStore } = await import("fake-indexeddb");
+    const add = IDBObjectStore.prototype.add;
+    vi.spyOn(IDBObjectStore.prototype, "add").mockImplementation(function (
+      this: InstanceType<typeof IDBObjectStore>,
+      ...args: Parameters<typeof add>
+    ) {
+      const request = add.apply(this, args);
+      request.addEventListener("success", () => this.transaction.abort());
+      return request;
+    });
+    fireEvent.click(
+      card().getByRole("button", { name: /Attribuer une récompense/ }),
+    );
+    fireEvent.click(sheet().getByLabelText(/Remise 5 €/));
+    fireEvent.click(sheet().getByRole("button", { name: "Continuer" }));
+    fireEvent.click(sheet().getByRole("button", { name: /Attribuer \(/ }));
+    await flush();
+    expect(actions.redeemRewardAction).not.toHaveBeenCalled();
+    expect(sheet().getByText("Opération non envoyée")).toBeTruthy();
+  });
+
+  it("no IndexedDB at all: issuing and adjusting are refused up front", async () => {
+    Reflect.deleteProperty(globalThis, "indexedDB");
+    await renderCard();
+    expect(
+      card().getByText("Attributions et ajustements indisponibles"),
+    ).toBeTruthy();
+    for (const name of [/Attribuer une récompense/, "Ajuster les points"]) {
+      expect(
+        (card().getByRole("button", { name }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+    }
+    // Reading the history and cancelling stay possible.
+    expect(
+      (
+        card().getByRole("button", {
+          name: "Historique des points",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 });

@@ -1,9 +1,16 @@
-import { afterEach, vi } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 
 // Shared setup for component tests (files marked `@vitest-environment jsdom`).
 // Node-environment tests load it too, hence the guard.
 if (typeof window !== "undefined") {
   const { cleanup } = await import("@testing-library/react");
+  const { IDBFactory } = await import("fake-indexeddb");
+
+  // A fresh, empty IndexedDB for every test (a spec-compliant in-memory
+  // implementation: transactions, unique indexes, cross-connection order).
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory();
+  });
 
   afterEach(() => {
     cleanup();

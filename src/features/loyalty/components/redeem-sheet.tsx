@@ -66,7 +66,7 @@ export function RedeemSheet({
   const [selected, setSelected] = useState<string | null>(null);
   const [step, setStep] = useState<"choose" | "review">("choose");
   const [state, setState] = useState<
-    "idle" | "sending" | "idempotency" | UiError
+    "idle" | "sending" | "idempotency" | "storage" | UiError
   >("idle");
   const sending = useRef(false);
   /** The operation this screen shows (its answer alone may change it). */
@@ -92,24 +92,28 @@ export function RedeemSheet({
   const choice = options.find((option) => option.reward.id === selected);
   const busy = state === "sending";
 
-  async function confirm({ asNew = false }: { asNew?: boolean } = {}) {
+  async function confirm() {
     if (!choice || sending.current) return;
-    const operation = beginOperation(
-      scope,
-      {
+    sending.current = true;
+    setState("sending");
+    let operation;
+    try {
+      operation = await beginOperation(scope, {
         kind: "redeem",
         command: { clientId: scope.clientId, rewardId: choice.reward.id },
         label: {
           rewardName: choice.reward.name,
           pointsRequired: choice.reward.pointsRequired,
         },
-      },
-      { asNew },
-    );
+      });
+    } catch {
+      // Not recorded: nothing is sent (no protection against duplicates).
+      sending.current = false;
+      if (aliveRef.current) setState("storage");
+      return;
+    }
     currentRef.current = operation.requestId;
-    sending.current = true;
-    setState("sending");
-    const result = await sendOperation(scope, operation);
+    const result = await sendOperation(operation);
     sending.current = false;
     // Another operation since, or this screen is gone: the answer settled
     // its own operation in the store, nothing here changes.
@@ -270,6 +274,15 @@ export function RedeemSheet({
             déduit automatiquement. Tant qu’elle n’est pas utilisée, tu peux
             l’annuler et rendre les points.
           </p>
+          {state === "storage" ? (
+            <Notice tone="error" title="Opération non envoyée">
+              Ce navigateur n’a pas pu l’enregistrer avant l’envoi (stockage
+              plein, bloqué ou navigation privée). Rien n’a été envoyé : aucun
+              point n’a bougé. Sans cet enregistrement, une réponse perdue
+              pourrait mener à un doublon : libère de l’espace ou utilise un
+              autre navigateur, puis réessaie.
+            </Notice>
+          ) : null}
           {state === "idempotency" ? (
             <Notice
               tone="warning"
@@ -278,7 +291,7 @@ export function RedeemSheet({
                 <button
                   type="button"
                   className={linkAction}
-                  onClick={() => void confirm({ asNew: true })}
+                  onClick={() => void confirm()}
                 >
                   Envoyer comme nouvelle demande
                 </button>
