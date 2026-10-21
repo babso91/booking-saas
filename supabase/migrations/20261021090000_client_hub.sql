@@ -378,8 +378,16 @@ $$;
 -- exhausted or mismatched challenge alike (no oracle), 'rate_limited' when
 -- the network made too many failed attempts (counted under its advisory
 -- lock), or 'ok' with a new session token (returned once; only its SHA-256
--- is stored). The challenge row is locked: concurrent verifications of one
--- code yield one session.
+-- is stored).
+--
+-- Lock order, the same as client_hub_request_code: network (advisory),
+-- then address (advisory), then the challenge row. A success consumes every
+-- open challenge of the address: two verifications of two codes of one
+-- address would otherwise each lock their own challenge, then wait for the
+-- other's (deadlock). Under the address lock they run one after the other,
+-- and so does the issue of a new code. The address is the one submitted:
+-- a challenge of another address is refused without touching its rows'
+-- siblings (only its own attempt counter, under its row lock).
 create function public.client_hub_verify_code(
   p_challenge_id uuid,
   p_email text,
@@ -401,6 +409,7 @@ as $$
 declare
   v_now timestamptz := pg_catalog.now();
   v_email text;
+  v_email_key text;
   v_network_key text;
   v_challenge private.client_hub_challenges%rowtype;
   v_account uuid;
@@ -415,6 +424,9 @@ begin
 
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended('client_hub_network:' || v_network_key, 0));
+  v_email_key := private.abuse_key('client_hub_email:' || v_email);
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('client_hub_email:' || v_email_key, 0));
 
   if (select pg_catalog.count(*) from private.client_hub_log l
       where l.network_key = v_network_key and l.kind = 'code_failed'
@@ -444,7 +456,7 @@ begin
       where c.id = v_challenge.id;
     end if;
     insert into private.client_hub_log (kind, email_key, network_key, created_at)
-    values ('code_failed', private.abuse_key('client_hub_email:' || v_email), v_network_key, v_now);
+    values ('code_failed', v_email_key, v_network_key, v_now);
     return query select 'invalid'::text, null::text, null::uuid, null::text, null::timestamptz;
     return;
   end if;
@@ -526,7 +538,10 @@ $$;
 revoke all on function private.client_hub_session_account(text, timestamptz) from public;
 
 -- Ends the session (p_all: every session of the account). Idempotent: an
--- unknown or ended session is a success.
+-- unknown, revoked or expired session is a quiet success that changes
+-- nothing. Only a live session has authority over the others: the calling
+-- session's row is locked (FOR UPDATE) and checked under that lock, so a
+-- concurrent revocation of it commits first and then leaves it none.
 create function public.client_hub_end_session(
   p_session_token text,
   p_all boolean default false
@@ -546,9 +561,12 @@ begin
 
   select s.* into v_session
   from private.client_hub_sessions s
-  where s.token_hash = pg_catalog.encode(extensions.digest(p_session_token, 'sha256'), 'hex');
+  where s.token_hash = pg_catalog.encode(extensions.digest(p_session_token, 'sha256'), 'hex')
+  for update;
 
-  if not found then
+  if not found
+    or v_session.revoked_at is not null
+    or v_session.expires_at <= pg_catalog.now() then
     return;
   end if;
 

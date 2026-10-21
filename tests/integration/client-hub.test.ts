@@ -1139,3 +1139,290 @@ describe("appointment pagination", () => {
     ).toBe(400);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Concurrency and session authority (corrections after the Codex audit).
+// Real PostgreSQL connections, interleaved deterministically.
+// ---------------------------------------------------------------------------
+
+const VERIFY_SQL =
+  "select status from public.client_hub_verify_code($1, $2, $3, $4)";
+
+/** The verification's status, or `error:<message>` (never rejects). */
+function settle(query: Promise<{ rows: { status: string }[] }>) {
+  return query.then(
+    (result) => result.rows[0]!.status,
+    (error: { message: string }) => `error:${error.message}`,
+  );
+}
+
+async function sessionCount(address: string) {
+  const { rows } = await db.query(
+    `select count(*)::int as n from private.client_hub_sessions s
+     join private.client_hub_accounts a on a.id = s.account_id
+     where a.email = $1`,
+    [address],
+  );
+  return rows[0].n as number;
+}
+
+async function logout(token: string | null, all = false) {
+  const response = await deleteSession(
+    request("DELETE", `/api/client-hub/session${all ? "?all=true" : ""}`, {
+      cookie: token,
+    }),
+  );
+  return { status: response.status, body: await response.json() };
+}
+
+describe("verification concurrency (lock order: network → address → challenge)", () => {
+  it("two valid codes of one address verified at once from two networks: no deadlock, exactly one session", async () => {
+    const address = email("deadlock");
+    const x = await askCode(address);
+    const codeX = lastCode();
+    const y = await askCode(address);
+    const codeY = lastCode();
+    const ids = [x.body.data.challengeId, y.body.data.challengeId];
+
+    // A third transaction holds both challenges, so that both verifications
+    // are released at the same moment: without the address lock, each then
+    // locks its own challenge and waits for the other's (40P01).
+    const holder = await openTransaction();
+    await holder.connection.query(
+      "select id from private.client_hub_challenges where id = any($1) for update",
+      [ids],
+    );
+    const a = await openTransaction({ role: "service_role" });
+    const b = await openTransaction({ role: "service_role" });
+    const first = settle(
+      a.connection.query(VERIFY_SQL, [ids[0], address, codeX, "198.51.100.21"]),
+    );
+    await waitUntilBlocked(a.pid);
+    const second = settle(
+      b.connection.query(VERIFY_SQL, [ids[1], address, codeY, "198.51.100.22"]),
+    );
+    await waitUntilBlocked(b.pid);
+    await closeTransaction(holder, "commit");
+
+    // The first commits before the second can take the address lock.
+    const firstResult = await first;
+    await closeTransaction(
+      a,
+      firstResult.startsWith("error") ? "rollback" : "commit",
+    );
+    const secondResult = await second;
+    await closeTransaction(
+      b,
+      secondResult.startsWith("error") ? "rollback" : "commit",
+    );
+    const results = [firstResult, secondResult];
+
+    expect(results.sort()).toEqual(["invalid", "ok"]);
+    expect(await sessionCount(address)).toBe(1);
+  });
+
+  it("many valid codes of one address verified at once through the API: one session, no internal error", async () => {
+    const address = email("burst");
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const asked = await askCode(address);
+      pairs.push([asked.body.data.challengeId, lastCode()]);
+    }
+    const results = await Promise.all(
+      pairs.flatMap(([id, code]) => [
+        verify(id, address, code),
+        verify(id, address, code),
+      ]),
+    );
+    expect(results.map((r) => r.status).sort()).toEqual([
+      200, 400, 400, 400, 400, 400,
+    ]);
+    expect(await sessionCount(address)).toBe(1);
+  });
+
+  it("concurrent wrong codes never buy more than 5 attempts, from any number of networks", async () => {
+    const address = email("attempts");
+    const asked = await askCode(address);
+    const id = asked.body.data.challengeId;
+    const code = lastCode();
+    const wrong = code === "00000000" ? "11111111" : "00000000";
+    const failures = await Promise.all(
+      Array.from({ length: 5 }, () => verify(id, address, wrong)),
+    );
+    expect(failures.every((f) => f.status === 400)).toBe(true);
+    const { rows } = await db.query(
+      "select attempts from private.client_hub_challenges where id = $1",
+      [id],
+    );
+    expect(rows[0].attempts).toBe(5);
+    expect((await verify(id, address, code)).status).toBe(400);
+
+    // Four concurrent failures leave the fifth attempt to the right code.
+    const again = await askCode(address);
+    const againCode = lastCode();
+    const againWrong = againCode === "00000000" ? "11111111" : "00000000";
+    await Promise.all(
+      Array.from({ length: 4 }, () =>
+        verify(again.body.data.challengeId, address, againWrong),
+      ),
+    );
+    expect(
+      (await verify(again.body.data.challengeId, address, againCode)).status,
+    ).toBe(200);
+  });
+
+  it("a code requested while another is being verified waits for it, then is valid on its own", async () => {
+    const address = email("issue");
+    const asked = await askCode(address);
+    const code = lastCode();
+    const a = await openTransaction({ role: "service_role" });
+    expect(
+      await settle(
+        a.connection.query(VERIFY_SQL, [
+          asked.body.data.challengeId,
+          address,
+          code,
+          "198.51.100.31",
+        ]),
+      ),
+    ).toBe("ok");
+
+    let settled = false;
+    const requested = askCode(address).then((result) => {
+      settled = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(settled).toBe(false); // serialized on the address
+    await closeTransaction(a, "commit");
+    const issued = await requested;
+    expect(issued.status).toBe(202);
+    // Issued after the login: not invalidated by it.
+    expect(
+      (await verify(issued.body.data.challengeId, address, lastCode())).status,
+    ).toBe(200);
+  });
+
+  it("two different addresses are not serialized against each other", async () => {
+    const first = email("free-a");
+    const second = email("free-b");
+    const askedA = await askCode(first);
+    const codeA = lastCode();
+    const askedB = await askCode(second);
+    const codeB = lastCode();
+    const a = await openTransaction({ role: "service_role" });
+    const b = await openTransaction({ role: "service_role" });
+    expect(
+      await settle(
+        a.connection.query(VERIFY_SQL, [
+          askedA.body.data.challengeId,
+          first,
+          codeA,
+          "198.51.100.41",
+        ]),
+      ),
+    ).toBe("ok");
+    // While the first transaction still holds its locks.
+    const other = await Promise.race([
+      settle(
+        b.connection.query(VERIFY_SQL, [
+          askedB.body.data.challengeId,
+          second,
+          codeB,
+          "198.51.100.42",
+        ]),
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("blocked"), 3000)),
+    ]);
+    expect(other).toBe("ok");
+    await closeTransaction(a, "commit");
+    await closeTransaction(b, "commit");
+  });
+});
+
+describe("logout authority", () => {
+  it("an active session ends every session of its own account, and only of it", async () => {
+    const address = email("all-active");
+    const t1 = await login(address);
+    const t2 = await login(address);
+    const stranger = await login(email("all-other"));
+    expect(await logout(t1, true)).toEqual({
+      status: 200,
+      body: { data: { ended: true } },
+    });
+    expect((await me(t1)).status).toBe(401);
+    expect((await me(t2)).status).toBe(401);
+    expect((await me(stranger)).status).toBe(200);
+  });
+
+  it("a revoked session has no authority left: a global logout with it ends nothing", async () => {
+    const address = email("revoked-authority");
+    const t1 = await login(address);
+    await logout(t1);
+    const t2 = await login(address);
+    expect((await me(t2)).status).toBe(200);
+
+    // Same answer as for any other call: nothing tells the token is stale.
+    expect(await logout(t1, true)).toEqual({
+      status: 200,
+      body: { data: { ended: true } },
+    });
+    expect((await me(t2)).status).toBe(200);
+  });
+
+  it("an expired session has no authority left either", async () => {
+    const address = email("expired-authority");
+    const t1 = await login(address);
+    await db.query(
+      `update private.client_hub_sessions set expires_at = now() - interval '1 second'
+       where token_hash = encode(extensions.digest($1, 'sha256'), 'hex')`,
+      [t1],
+    );
+    const t2 = await login(address);
+    expect((await logout(t1, true)).status).toBe(200);
+    expect((await me(t2)).status).toBe(200);
+  });
+
+  it("an unknown token ends nothing; a repeated single logout is a quiet success", async () => {
+    const address = email("unknown-authority");
+    const t1 = await login(address);
+    const t2 = await login(address);
+    expect((await logout("c".repeat(64), true)).status).toBe(200);
+    expect((await me(t1)).status).toBe(200);
+
+    expect(await logout(t1)).toEqual({
+      status: 200,
+      body: { data: { ended: true } },
+    });
+    expect(await logout(t1)).toEqual({
+      status: 200,
+      body: { data: { ended: true } },
+    });
+    expect((await me(t1)).status).toBe(401);
+    expect((await me(t2)).status).toBe(200);
+  });
+
+  it("a global logout racing the revocation of its own session waits for it, then ends nothing", async () => {
+    const address = email("race-authority");
+    const t1 = await login(address);
+    const t2 = await login(address);
+    const revoke = await openTransaction({ role: "service_role" });
+    const global = await openTransaction({ role: "service_role" });
+    await revoke.connection.query(
+      "select public.client_hub_end_session($1, false)",
+      [t1],
+    );
+    const pending = global.connection
+      .query("select public.client_hub_end_session($1, true)", [t1])
+      .then(
+        () => "ok",
+        (error: { message: string }) => error.message,
+      );
+    await waitUntilBlocked(global.pid);
+    await closeTransaction(revoke, "commit");
+    expect(await pending).toBe("ok");
+    await closeTransaction(global, "commit");
+    expect((await me(t1)).status).toBe(401);
+    expect((await me(t2)).status).toBe(200);
+  });
+});

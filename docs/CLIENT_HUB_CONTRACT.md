@@ -49,7 +49,11 @@ L'outbox est rattachée à une activité et à un rendez-vous, et fige chaque me
 - **Code typé, pas de lien :** un scanner de liens ne peut ni consommer ni rejouer un code.
 - **Durée et usage :** 10 minutes, un seul usage, 5 essais par défi, puis le défi est épuisé.
 - **Une seule réponse pour tous les échecs** : `client_hub_code_invalid` (400), que le code soit faux, expiré, déjà utilisé, épuisé, envoyé avec une autre adresse ou pour un défi inconnu.
-- **Vérifications concurrentes :** la ligne du défi est verrouillée ; plusieurs vérifications simultanées du bon code ouvrent **une seule** session (testé).
+- **Vérifications concurrentes :** les verrous sont toujours pris dans le même ordre, pour la demande de code comme pour la vérification : **réseau → adresse → défi**. Les deux premiers sont des verrous consultatifs de transaction, le troisième le verrou de ligne du défi. Ainsi :
+  - plusieurs vérifications du même code, ou de deux codes valides de la même adresse, s'exécutent l'une après l'autre ; une seule réussit, sans deadlock (testé avec des connexions PostgreSQL réelles) ;
+  - une demande de code arrivant pendant une vérification de la même adresse attend sa fin ; le nouveau code reste valable ;
+  - deux adresses différentes ne se bloquent pas entre elles ; seul un même réseau les sérialise ;
+  - les essais incorrects simultanés ne dépassent jamais 5 par défi, quel que soit le nombre de réseaux.
 - **Anti-énumération :** la demande de code répond pareil pour toute adresse plausible, connue ou non. Aucun compte n'est créé avant une vérification réussie. Aucune réponse ne dit si l'adresse figure dans un CRM.
 - **Limites de débit** (fenêtres glissantes, sous verrous consultatifs ; même réponse `rate_limited` 429 quelle que soit la limite atteinte) :
 
@@ -77,7 +81,7 @@ L'outbox est rattachée à une activité et à un rendez-vous, et fige chaque me
 - **Durée :** 7 jours, absolue, sans prolongation.
 - **Fin de session :**
   - `DELETE /api/client-hub/session` met fin à la session courante ;
-  - `DELETE /api/client-hub/session?all=true` met fin à toutes les sessions du compte ;
+  - `DELETE /api/client-hub/session?all=true` met fin à toutes les sessions du compte, **seulement si la session présentée est encore active**. La ligne de cette session est verrouillée et vérifiée sous ce verrou. Une session révoquée, expirée ou inconnue n'a aucune autorité sur les autres, même si sa révocation est concurrente : la réponse reste `200 { ended: true }`, sans indiquer l'état de l'ancienne session ;
   - le cookie est effacé dans les deux cas.
 - **Session refusée :** une session inconnue, expirée ou terminée donne `client_hub_unauthenticated` (401), et le cookie est effacé.
 - **CSRF :**
@@ -216,3 +220,17 @@ Les professionnelles restent la seule autorité sur ces opérations.
 - **Historique de fidélité :** chaque page recalcule le solde courant sur tout l'historique de la cliente (borné par son volume, pas par celui de l'activité).
 - **Comptes :** une adresse vérifiée reste enregistrée (email et dates seulement) ; les sessions et les défis sont purgés.
 - **Fonctions de la clé de service :** elles ne prennent aucune heure en paramètre : l'heure est toujours celle de la base.
+
+## 10. Sensibilité des tests de concurrence
+
+`node tests/mutation/client-hub.mjs` (pile Supabase locale requise) rejoue les mutations des protections de concurrence et d'autorité de session :
+
+| Mutation                                                                | Résultat                                                         |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| retirer le verrou d'adresse de la vérification (le comportement audité) | détectée : deadlock (`40P01`), et demande de code non sérialisée |
+| prendre le verrou d'adresse après le verrou de ligne                    | détectée                                                         |
+| une session révoquée garde l'autorité de déconnexion globale            | détectée                                                         |
+| une session expirée garde l'autorité de déconnexion globale             | détectée                                                         |
+| ne plus verrouiller la ligne de la session appelante                    | détectée                                                         |
+
+Pour chaque mutation, le script réinitialise la base, lance les tests ciblés et restaure la migration. Il échoue (code de sortie 1) si une mutation n'est pas détectée.
