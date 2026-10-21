@@ -22,10 +22,11 @@ export default async function ClientProfilePage({
       current="clients"
     >
       {/* A malformed id is refused by the action (client_not_found screen).
-          One instance per customer: nothing typed or read for one (drafts,
-          pending answers) can reach another. */}
+          One instance per signed-in user, business and customer, all from
+          the server session: nothing typed, read or open for one (drafts,
+          dialogs, pending answers) can reach another. */}
       <ClientProfile
-        key={clientId}
+        key={`${user.id}:${business.id}:${clientId}`}
         clientId={clientId}
         scope={{ userId: user.id, businessId: business.id }}
       />

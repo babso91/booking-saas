@@ -27,6 +27,7 @@ import {
   rewardValueLabel,
 } from "../client/format";
 import {
+  belongsTo,
   hidePendingOperation,
   operationLabel,
   sendOperation,
@@ -105,6 +106,20 @@ export function ClientLoyalty({
   const reads = useRef(0);
   const alive = useRef(true);
   const { clientId } = scope;
+  // Defence in depth (the parent mounts one card per context): if the
+  // context changes anyway, nothing chosen, typed or open for the previous
+  // one survives this render.
+  const contextKey = `${scope.userId}:${scope.businessId}:${scope.clientId}`;
+  const [shownFor, setShownFor] = useState(contextKey);
+  if (shownFor !== contextKey) {
+    setShownFor(contextKey);
+    setHiding(null);
+    setSheet(null);
+    setAction(null);
+    setMessage("");
+    setResent(null);
+    setShowHidden(false);
+  }
   const pending = usePendingOperations(scope);
   // Confirmed writes so far: each new one re-reads the file and the
   // profile's history, whichever screen sent it (and even if this card was
@@ -155,6 +170,8 @@ export function ClientLoyalty({
 
   /** Sends a pending operation again: same requestId, same payload. */
   async function resend(operation: PendingOperation) {
+    // Only an operation of this exact context (never a stale reference).
+    if (!belongsTo(operation, scope)) return;
     setMessage("");
     setResent(null);
     const result = await sendOperation(operation);
@@ -397,14 +414,15 @@ export function ClientLoyalty({
         onChanged={() => changed("Ajustement annulé.")}
       />
       <ConfirmDialog
-        open={hiding !== null}
+        open={hiding !== null && belongsTo(hiding, scope)}
         title="Masquer cette alerte ?"
         description={hiding ? operationLabel(hiding) : undefined}
         confirmLabel="Masquer l’alerte"
         onCancel={() => setHiding(null)}
         onConfirm={() => {
-          if (hiding)
-            void hidePendingOperation(hiding.requestId).catch(() => {});
+          // Checked again here and, in the store, against the record.
+          if (hiding && belongsTo(hiding, scope))
+            void hidePendingOperation(scope, hiding.requestId).catch(() => {});
           setHiding(null);
         }}
       >

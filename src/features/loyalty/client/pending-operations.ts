@@ -8,6 +8,7 @@ import {
 
 import type { RedemptionDto } from "../types";
 import {
+  belongsTo,
   hideOperation,
   listOperations,
   recordOperation,
@@ -16,6 +17,7 @@ import {
   type LoyaltyScope,
   type NewOperation,
   type PendingOperation,
+  scopeOf,
 } from "./operation-store";
 
 // Loyalty writes identified by a `requestId` (issue a reward, credit or
@@ -56,7 +58,8 @@ const DEFINITE = new Set([
 
 // In this tab only: requests on the wire, and confirmed writes so far.
 const inFlight = new Set<string>();
-let settled = 0;
+/** Confirmed writes per context (user:business:customer). */
+const settled = new Map<string, number>();
 const local = new Set<() => void>();
 const emitLocal = () => local.forEach((listener) => listener());
 const subscribeLocal = (listener: () => void) => {
@@ -96,7 +99,10 @@ export async function sendOperation(
           }),
         );
   inFlight.delete(operation.requestId);
-  if (result.ok) settled += 1;
+  if (result.ok) {
+    const key = scopeOf(operation);
+    settled.set(key, (settled.get(key) ?? 0) + 1);
+  }
   if (result.ok || DEFINITE.has(result.error.code)) {
     try {
       await resolveOperation(operation.requestId);
@@ -110,6 +116,8 @@ export async function sendOperation(
 
 /** Hides the alert; the operation and its requestId are kept. */
 export const hidePendingOperation = hideOperation;
+
+export { belongsTo };
 
 /** What a pending operation is, in words. */
 export function operationLabel(operation: PendingOperation) {
@@ -140,29 +148,38 @@ export type PendingState = {
  */
 export function usePendingOperations(scope: LoyaltyScope): PendingState {
   const { userId, businessId, clientId } = scope;
+  const key = scopeOf(scope);
+  // Every snapshot carries the context it was read for.
   const [stored, setStored] = useState<{
+    key: string;
     status: PendingState["status"];
     operations: PendingOperation[];
-  }>({ status: "loading", operations: [] });
+  }>({ key, status: "loading", operations: [] });
   const reads = useRef(0);
   const live = useSyncExternalStore(
     subscribeLocal,
-    () => `${[...inFlight].join(",")}|${settled}`,
+    () => `${[...inFlight].join(",")}|${settled.get(key) ?? 0}`,
     () => "|0",
   );
 
   useEffect(() => {
     const target = { userId, businessId, clientId };
+    const readKey = scopeOf(target);
     const read = () => {
       const token = (reads.current += 1);
       listOperations(target).then(
         (operations) => {
-          if (token === reads.current)
-            setStored({ status: "ready", operations });
+          // A read of an older context, or superseded: never applied.
+          if (token !== reads.current) return;
+          setStored({
+            key: readKey,
+            status: "ready",
+            operations: operations.filter((item) => belongsTo(item, target)),
+          });
         },
         () => {
           if (token === reads.current)
-            setStored({ status: "unavailable", operations: [] });
+            setStored({ key: readKey, status: "unavailable", operations: [] });
         },
       );
     };
@@ -175,8 +192,15 @@ export function usePendingOperations(scope: LoyaltyScope): PendingState {
   }, [userId, businessId, clientId]);
 
   const [sending = "", count = "0"] = live.split("|");
+  // Another context than the one shown: nothing of it, at once, before any
+  // read for the new context answers.
+  const current =
+    stored.key === key
+      ? stored
+      : { status: "loading" as const, operations: [] as PendingOperation[] };
   return {
-    ...stored,
+    status: current.status,
+    operations: current.operations,
     inFlight: sending ? sending.split(",") : [],
     settled: Number(count),
   };

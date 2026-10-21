@@ -62,6 +62,14 @@ vi.mock("@/features/crm/actions/client-management", () => ({
   updateClientAction: (...args: unknown[]) =>
     actions.updateClientAction(...args),
 }));
+// The real store, with its read observable (reads can be held in a test).
+vi.mock("@/features/loyalty/client/operation-store", async (importOriginal) => {
+  const real =
+    await importOriginal<
+      typeof import("@/features/loyalty/client/operation-store")
+    >();
+  return { ...real, listOperations: vi.fn(real.listOperations) };
+});
 vi.mock("@/features/loyalty/actions/loyalty", () => ({
   getClientLoyaltyAction: (...args: unknown[]) =>
     actions.getClientLoyaltyAction(...args),
@@ -535,6 +543,236 @@ describe("concurrent loyalty operations (real profile, no artificial remount)", 
     expect(xAgain).toBe(x);
     expect(y).not.toBe(x);
     expect(server.applications("Opération X")).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The signed-in identity changes while the profile stays mounted (the page
+// keeps its instance for the same customer). Nothing of the previous
+// account may be shown, kept open or acted upon.
+// ---------------------------------------------------------------------------
+
+const ACCOUNT_A = SCOPE;
+const ACCOUNT_B = {
+  userId: "10000000-0000-4000-8000-0000000000cc",
+  businessId: SCOPE.businessId,
+};
+const OTHER_CLIENT = "30000000-0000-4000-8000-00000000bbbb";
+const creditOf = (clientId: string, reason: string) => ({
+  kind: "credit" as const,
+  command: { clientId, pointsDelta: 10, reason },
+});
+const store = () => import("@/features/loyalty/client/operation-store");
+async function recordFor(
+  account: { userId: string; businessId: string },
+  clientId: string,
+  reason: string,
+) {
+  const { recordOperation } = await store();
+  return act(() =>
+    recordOperation({ ...account, clientId }, creditOf(clientId, reason)),
+  );
+}
+async function stateOf(
+  account: { userId: string; businessId: string },
+  clientId: string,
+) {
+  const { listOperations } = await store();
+  return act(() => listOperations({ ...account, clientId }));
+}
+const loyaltyText = () =>
+  screen.getByRole("region", { name: "Fidélité" }).textContent ?? "";
+
+describe("account change without unmounting", () => {
+  it("1-4: A's hide dialog open, identity becomes B: A's data and dialog are gone, B cannot hide A's operation", async () => {
+    const own = await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    expect(loyaltyText()).toContain("Opération de A");
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "Fidélité" })).getByRole(
+        "button",
+        { name: "Masquer l’alerte" },
+      ),
+    );
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    // Same instance, another account (same business, same customer).
+    view.rerender(<ClientProfile scope={ACCOUNT_B} clientId={CLIENT_ID} />);
+    // At once, before any read of B's context answers.
+    const shownAtOnce = screen.queryAllByText(/Opération de A/).length;
+    const dialogAtOnce = screen.queryByRole("dialog");
+    await flush();
+    // If anything of A's dialog were still there, B confirms it.
+    const leftover = screen.queryByRole("dialog");
+    if (leftover)
+      fireEvent.click(
+        within(leftover).getByRole("button", { name: "Masquer l’alerte" }),
+      );
+    await flush();
+    expect(shownAtOnce).toBe(0);
+    expect(dialogAtOnce).toBeNull();
+    expect(leftover).toBeNull();
+    expect(screen.queryAllByText(/Opération de A/)).toHaveLength(0);
+    // A's operation is untouched, still open, for A.
+    const [kept] = await stateOf(ACCOUNT_A, CLIENT_ID);
+    expect(kept!.requestId).toBe(own.requestId);
+    expect(kept!.state).toBe("open");
+  });
+
+  it("4: even a confirmation captured before the change cannot hide A's operation under B", async () => {
+    const own = await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    const { hideOperation } = await store();
+    // A stale callback holding A's operation, run with B's context.
+    await act(() =>
+      hideOperation({ ...ACCOUNT_B, clientId: CLIENT_ID }, own.requestId).catch(
+        () => {},
+      ),
+    );
+    const [kept] = await stateOf(ACCOUNT_A, CLIENT_ID);
+    expect(kept!.state).toBe("open");
+  });
+
+  it("5: A's IndexedDB read answering after B's never replaces B's state", async () => {
+    await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    await recordFor(ACCOUNT_B, CLIENT_ID, "Opération de B");
+    const operations = await store();
+    const list = vi.mocked(operations.listOperations);
+    const real = list.getMockImplementation()!;
+    // Hold every read of A's context until B's has answered.
+    let releaseA: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (releaseA = resolve));
+    list.mockImplementation(async (scope) => {
+      if (scope.userId === ACCOUNT_A.userId) await gate;
+      return real(scope);
+    });
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    view.rerender(<ClientProfile scope={ACCOUNT_B} clientId={CLIENT_ID} />);
+    await flush();
+    expect(loyaltyText()).toContain("Opération de B");
+    releaseA();
+    await flush();
+    expect(loyaltyText()).toContain("Opération de B");
+    expect(loyaltyText()).not.toContain("Opération de A");
+    list.mockImplementation(real);
+  });
+
+  it("6: a late answer of an action sent by A does not change B's screen", async () => {
+    const server = idempotentServer();
+    server.next("hold");
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    await creditFromCard("5", "Envoyé par A");
+    view.rerender(<ClientProfile scope={ACCOUNT_B} clientId={CLIENT_ID} />);
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const readsOfB = actions.getClientLoyaltyAction.mock.calls.length;
+    server.release();
+    await flush();
+    // Not even a re-read of B's file for A's write.
+    expect(actions.getClientLoyaltyAction.mock.calls.length).toBe(readsOfB);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(loyaltyText()).not.toMatch(/Envoyé par A|5 points crédités/);
+    // The answer settled A's own operation, in A's context.
+    expect(await stateOf(ACCOUNT_A, CLIENT_ID)).toEqual([]);
+  });
+
+  it("7-8: B's own operations work normally; A, back, recovers and resends its own", async () => {
+    const ownA = await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    const ownB = await recordFor(ACCOUNT_B, CLIENT_ID, "Opération de B");
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_B} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    expect(loyaltyText()).toContain("Opération de B");
+    expect(loyaltyText()).not.toContain("Opération de A");
+
+    view.rerender(<ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />);
+    await flush();
+    expect(loyaltyText()).toContain("Opération de A");
+    expect(loyaltyText()).not.toContain("Opération de B");
+    actions.adjustPointsAction.mockResolvedValue(ok({ entryId: uuid() }));
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "Fidélité" })).getByRole(
+        "button",
+        { name: "Renvoyer la même demande" },
+      ),
+    );
+    await flush();
+    expect(
+      (actions.adjustPointsAction.mock.calls.at(-1)![0] as Adjust).requestId,
+    ).toBe(ownA.requestId);
+    const [stillB] = await stateOf(ACCOUNT_B, CLIENT_ID);
+    expect(stillB!.requestId).toBe(ownB.requestId);
+  });
+
+  it("9: another business or another customer stays isolated", async () => {
+    await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    expect(loyaltyText()).toContain("Opération de A");
+    const otherBusiness = {
+      ...ACCOUNT_A,
+      businessId: "10000000-0000-4000-8000-0000000000dd",
+    };
+    view.rerender(<ClientProfile scope={otherBusiness} clientId={CLIENT_ID} />);
+    expect(screen.queryAllByText(/Opération de A/)).toHaveLength(0);
+    await flush();
+    expect(screen.queryAllByText(/Opération de A/)).toHaveLength(0);
+    view.rerender(<ClientProfile scope={ACCOUNT_A} clientId={OTHER_CLIENT} />);
+    expect(screen.queryAllByText(/Opération de A/)).toHaveLength(0);
+    await flush();
+    expect(screen.queryAllByText(/Opération de A/)).toHaveLength(0);
+  });
+
+  it("10: ordinary navigation within the same account keeps pending operations", async () => {
+    await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    // A new render of the same identity (a fresh object, as a page passes).
+    view.rerender(
+      <ClientProfile scope={{ ...ACCOUNT_A }} clientId={CLIENT_ID} />,
+    );
+    expect(loyaltyText()).toContain("Opération de A");
+    await flush();
+    expect(loyaltyText()).toContain("Opération de A");
+    // And a mounted card is not thrown away for it.
+    expect(actions.getClientLoyaltyAction).toHaveBeenCalledTimes(1);
   });
 });
 

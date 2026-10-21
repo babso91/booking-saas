@@ -433,6 +433,9 @@ export function ClientProfile({
   );
   const loyalty = (
     <ClientLoyalty
+      // One card per signed-in user, business and customer: nothing open,
+      // typed or read under one identity is kept for another.
+      key={`${scope.userId}:${scope.businessId}:${clientId}`}
       timezone={data.timezone}
       visits={loyaltyVisits(data, timeline.events)}
       scope={{ ...scope, clientId }}

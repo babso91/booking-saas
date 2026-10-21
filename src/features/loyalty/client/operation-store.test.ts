@@ -155,7 +155,7 @@ describe("concurrent tabs", () => {
   it("hiding keeps the identity; the same content shows it again", async () => {
     const store = await tab();
     const a = await store.recordOperation(scope, credit(10));
-    await store.hideOperation(a.requestId);
+    await store.hideOperation(scope, a.requestId);
     expect((await store.listOperations(scope))[0]!.state).toBe("hidden");
     const again = await store.recordOperation(scope, credit(10));
     expect(again.requestId).toBe(a.requestId);

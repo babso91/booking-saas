@@ -299,15 +299,30 @@ export async function resolveOperation(requestId: string) {
   notify();
 }
 
-/** Hides the alert of this operation; its identity is kept for any retry. */
-export async function hideOperation(requestId: string) {
-  await transaction<true>("readwrite", (store, done) => {
+/** Whether a recorded operation belongs to this exact context. */
+export const belongsTo = (
+  operation: Pick<PendingOperation, "userId" | "businessId" | "clientId">,
+  scope: LoyaltyScope,
+) =>
+  operation.userId === scope.userId &&
+  operation.businessId === scope.businessId &&
+  operation.clientId === scope.clientId;
+
+/**
+ * Hides the alert of this operation; its identity is kept for any retry.
+ * Only within its own context: an operation of another account, business
+ * or customer is left as it is (a stale screen cannot change it).
+ */
+export async function hideOperation(scope: LoyaltyScope, requestId: string) {
+  const hidden = await transaction<boolean>("readwrite", (store, done) => {
     const request = store.get(requestId);
     request.onsuccess = () => {
       const row = request.result as StoredOperation | undefined;
-      if (row && row.state !== "hidden") store.put({ ...row, state: "hidden" });
+      if (!row || row.scope !== scopeOf(scope)) return done(false);
+      if (row.state !== "hidden") store.put({ ...row, state: "hidden" });
       done(true);
     };
   });
-  notify();
+  if (hidden) notify();
+  return hidden;
 }
