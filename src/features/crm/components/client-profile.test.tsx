@@ -18,6 +18,12 @@ import {
 } from "../../../../tests/support/crm-fixtures";
 import { ClientProfile } from "./client-profile";
 
+// The signed-in identity, as the page passes it from the session.
+const SCOPE = {
+  userId: "10000000-0000-4000-8000-0000000000aa",
+  businessId: "10000000-0000-4000-8000-0000000000bb",
+};
+
 const actions = {
   getClientProfileAction: vi.fn(),
   listClientTimelineAction: vi.fn(),
@@ -27,6 +33,10 @@ const actions = {
   deleteClientNoteAction: vi.fn(),
   getClientRecordAction: vi.fn(),
   updateClientAction: vi.fn(),
+  getClientLoyaltyAction: vi.fn(),
+  listRewardsAction: vi.fn(),
+  listClientRedemptionsAction: vi.fn(),
+  adjustPointsAction: vi.fn(),
 };
 vi.mock("@/features/crm/actions/crm", () => ({
   listClientsAction: vi.fn(),
@@ -52,16 +62,47 @@ vi.mock("@/features/crm/actions/client-management", () => ({
   updateClientAction: (...args: unknown[]) =>
     actions.updateClientAction(...args),
 }));
+// The real store, with its read observable (reads can be held in a test).
+vi.mock("@/features/loyalty/client/operation-store", async (importOriginal) => {
+  const real =
+    await importOriginal<
+      typeof import("@/features/loyalty/client/operation-store")
+    >();
+  return { ...real, listOperations: vi.fn(real.listOperations) };
+});
+vi.mock("@/features/loyalty/actions/loyalty", () => ({
+  getClientLoyaltyAction: (...args: unknown[]) =>
+    actions.getClientLoyaltyAction(...args),
+  listRewardsAction: (...args: unknown[]) => actions.listRewardsAction(...args),
+  listClientRedemptionsAction: (...args: unknown[]) =>
+    actions.listClientRedemptionsAction(...args),
+  adjustPointsAction: (...args: unknown[]) =>
+    actions.adjustPointsAction(...args),
+  listClientLoyaltyLedgerAction: vi.fn(),
+  redeemRewardAction: vi.fn(),
+  fulfilRedemptionAction: vi.fn(),
+  cancelRedemptionAction: vi.fn(),
+  reverseAdjustmentAction: vi.fn(),
+}));
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (code: string, fieldErrors?: Record<string, string[]>) => ({
   ok: false as const,
   error: { code, message: "backend text never shown", fieldErrors },
 });
-const flush = () =>
-  act(async () => {
-    await vi.advanceTimersByTimeAsync(0);
-  });
+// Promises, then IndexedDB's tasks (setImmediate), a few rounds.
+// Several act() rounds: effects committed in one round (a card mounted
+// once its page is read) start their IndexedDB work in the next.
+const flush = async () => {
+  for (let round = 0; round < 6; round += 1) {
+    await act(async () => {
+      for (let tick = 0; tick < 6; tick += 1) {
+        await vi.advanceTimersByTimeAsync(0);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    });
+  }
+};
 
 const originalMatchMedia = window.matchMedia;
 function useViewport(wide: boolean) {
@@ -85,7 +126,7 @@ async function renderProfile(
   actions.listClientTimelineAction.mockResolvedValueOnce(
     ok(timelinePage(events, nextCursor)),
   );
-  const view = render(<ClientProfile clientId={CLIENT_ID} />);
+  const view = render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
   await flush();
   return view;
 }
@@ -108,7 +149,21 @@ beforeEach(() => {
       nextCursor: null,
     }),
   );
+  actions.getClientLoyaltyAction.mockResolvedValue(
+    ok({
+      clientId: CLIENT_ID,
+      programActive: true,
+      balance: 40,
+      pointsCredited: 40,
+      pointsDebited: 0,
+      issuedRedemptions: 0,
+      rewards: [],
+    }),
+  );
+  actions.listRewardsAction.mockResolvedValue(ok([]));
+  actions.listClientRedemptionsAction.mockResolvedValue(ok([]));
   window.sessionStorage.clear();
+  window.localStorage.clear();
   useViewport(true);
 });
 afterEach(() => {
@@ -308,6 +363,464 @@ describe("dossier", () => {
       screen.queryByRole("button", { name: /Préférences|Nouvelle cliente/ }),
     ).toBeNull();
     expect(document.body.textContent).not.toMatch(/Bientôt|Préférences/);
+  });
+});
+
+describe("loyalty", () => {
+  it("is part of the dossier, and a confirmed adjustment re-reads the history", async () => {
+    await renderProfile();
+    const loyalty = within(screen.getByRole("region", { name: "Fidélité" }));
+    expect(loyalty.getByText("40 points")).toBeTruthy();
+    expect(actions.getClientLoyaltyAction).toHaveBeenCalledWith({
+      clientId: CLIENT_ID,
+    });
+    const timelineReads = actions.listClientTimelineAction.mock.calls.length;
+
+    fireEvent.click(
+      loyalty.getByRole("button", { name: "Ajuster les points" }),
+    );
+    const sheet = within(screen.getByRole("dialog"));
+    fireEvent.change(sheet.getByLabelText("Nombre de points"), {
+      target: { value: "5" },
+    });
+    fireEvent.change(sheet.getByLabelText(/^Motif/), {
+      target: { value: "Geste" },
+    });
+    fireEvent.click(sheet.getByRole("button", { name: "Vérifier" }));
+    actions.adjustPointsAction.mockResolvedValue(ok({ entryId: uuid() }));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    fireEvent.click(sheet.getByRole("button", { name: "Créditer 5 points" }));
+    await flush();
+    expect(actions.listClientTimelineAction.mock.calls.length).toBe(
+      timelineReads + 1,
+    );
+    expect(loyalty.getByText("5 points crédités.")).toBeTruthy();
+  });
+});
+
+// A stand-in for the backend's idempotency, from the actions' side: every
+// requestId sent is applied once with the payload it first came with; the
+// same requestId again applies nothing more (docs/LOYALTY_CONTRACT.md).
+type Adjust = { requestId: string; pointsDelta: number; reason: string };
+function idempotentServer() {
+  const applied = new Map<string, Adjust>();
+  const behaviours: ("ok" | "lose" | "hold")[] = [];
+  const held: (() => void)[] = [];
+  actions.adjustPointsAction.mockImplementation((command: Adjust) => {
+    if (!applied.has(command.requestId))
+      applied.set(command.requestId, command);
+    const behaviour = behaviours.shift() ?? "ok";
+    const answer = ok({ entryId: uuid() });
+    if (behaviour === "lose") return Promise.reject(new Error("answer lost"));
+    if (behaviour === "hold")
+      return new Promise((resolve) => held.push(() => resolve(answer)));
+    return Promise.resolve(answer);
+  });
+  return {
+    next: (...next: ("ok" | "lose" | "hold")[]) => behaviours.push(...next),
+    release: () => held.shift()?.(),
+    /** How many times this content was applied (distinct requestIds). */
+    applications: (reason: string) =>
+      [...applied.values()].filter((command) => command.reason === reason)
+        .length,
+  };
+}
+
+/** matchMedia whose answer changes like a real window resize. */
+function resizableViewport(initiallyWide: boolean) {
+  let wide = initiallyWide;
+  const listeners = new Set<() => void>();
+  window.matchMedia = (query: string) =>
+    ({
+      get matches() {
+        return (
+          query.includes("reduced-motion") ||
+          (wide && query.includes("min-width: 1024px"))
+        );
+      },
+      media: query,
+      addEventListener: (_: string, listener: () => void) =>
+        listeners.add(listener),
+      removeEventListener: (_: string, listener: () => void) =>
+        listeners.delete(listener),
+    }) as unknown as MediaQueryList;
+  return (next: boolean) =>
+    act(() => {
+      wide = next;
+      listeners.forEach((listener) => listener());
+    });
+}
+
+const loyaltyCard = () =>
+  within(screen.getByRole("region", { name: "Fidélité" }));
+async function creditFromCard(points: string, reason: string) {
+  fireEvent.click(
+    loyaltyCard().getByRole("button", { name: "Ajuster les points" }),
+  );
+  const sheet = within(screen.getAllByRole("dialog").at(-1)!);
+  fireEvent.change(sheet.getByLabelText("Nombre de points"), {
+    target: { value: points },
+  });
+  fireEvent.change(sheet.getByLabelText(/^Motif/), {
+    target: { value: reason },
+  });
+  fireEvent.click(sheet.getByRole("button", { name: "Vérifier" }));
+  fireEvent.click(
+    sheet.getByRole("button", { name: `Créditer ${points} points` }),
+  );
+  await flush();
+}
+const sentIds = () =>
+  actions.adjustPointsAction.mock.calls.map(
+    ([command]) => (command as Adjust).requestId,
+  );
+
+describe("concurrent loyalty operations (real profile, no artificial remount)", () => {
+  it("A pending, desktop → phone, B lost, A answers late: B's retry is applied once", async () => {
+    const resize = resizableViewport(true);
+    const server = idempotentServer();
+    await renderProfile();
+
+    // A, on desktop: sent, its answer still pending.
+    server.next("hold");
+    await creditFromCard("5", "Opération A");
+    // Desktop → phone: the dossier (and the loyalty card) is unmounted.
+    await resize(false);
+    fireEvent.click(screen.getByRole("tab", { name: "Dossier" }));
+    await flush();
+
+    // B, on the phone: applied by the server, its answer lost.
+    server.next("lose");
+    await creditFromCard("7", "Opération B");
+    // A's late answer arrives.
+    server.release();
+    await flush();
+    // A's answer settled A only: B's screen still shows B, unresolved.
+    expect(
+      within(screen.getAllByRole("dialog").at(-1)!).getByText(
+        /marquée non confirmée/,
+      ),
+    ).toBeTruthy();
+    expect(
+      loyaltyCard().getByText(/Crédit de 7 points : Opération B/),
+    ).toBeTruthy();
+    expect(loyaltyCard().queryByText(/Opération A/)).toBeNull();
+
+    // Retry of B, unchanged.
+    fireEvent.click(
+      within(screen.getAllByRole("dialog").at(-1)!).getByRole("button", {
+        name: "Créditer 7 points",
+      }),
+    );
+    await flush();
+    const [a, b, retry] = sentIds();
+    expect(retry).toBe(b);
+    expect(b).not.toBe(a);
+    expect(server.applications("Opération B")).toBe(1);
+    expect(server.applications("Opération A")).toBe(1);
+  });
+
+  it("X uncertain, then Y, then X again: X keeps its identity", async () => {
+    resizableViewport(true);
+    const server = idempotentServer();
+    await renderProfile();
+
+    server.next("lose");
+    await creditFromCard("5", "Opération X");
+    fireEvent.click(
+      within(screen.getAllByRole("dialog").at(-1)!).getByRole("button", {
+        name: "Fermer",
+      }),
+    );
+    server.next("ok");
+    await creditFromCard("9", "Opération Y");
+    // X again, typed again with the same content.
+    server.next("ok");
+    await creditFromCard("5", "Opération X");
+    const [x, y, xAgain] = sentIds();
+    expect(xAgain).toBe(x);
+    expect(y).not.toBe(x);
+    expect(server.applications("Opération X")).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The signed-in identity changes while the profile stays mounted (the page
+// keeps its instance for the same customer). Nothing of the previous
+// account may be shown, kept open or acted upon.
+// ---------------------------------------------------------------------------
+
+const ACCOUNT_A = SCOPE;
+const ACCOUNT_B = {
+  userId: "10000000-0000-4000-8000-0000000000cc",
+  businessId: SCOPE.businessId,
+};
+const OTHER_CLIENT = "30000000-0000-4000-8000-00000000bbbb";
+const creditOf = (clientId: string, reason: string) => ({
+  kind: "credit" as const,
+  command: { clientId, pointsDelta: 10, reason },
+});
+const store = () => import("@/features/loyalty/client/operation-store");
+async function recordFor(
+  account: { userId: string; businessId: string },
+  clientId: string,
+  reason: string,
+) {
+  const { recordOperation } = await store();
+  return act(() =>
+    recordOperation({ ...account, clientId }, creditOf(clientId, reason)),
+  );
+}
+async function stateOf(
+  account: { userId: string; businessId: string },
+  clientId: string,
+) {
+  const { listOperations } = await store();
+  return act(() => listOperations({ ...account, clientId }));
+}
+const loyaltyText = () =>
+  screen.getByRole("region", { name: "Fidélité" }).textContent ?? "";
+
+describe("account change without unmounting", () => {
+  it("1-4: A's hide dialog open, identity becomes B: A's data and dialog are gone, B cannot hide A's operation", async () => {
+    const own = await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    expect(loyaltyText()).toContain("Opération de A");
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "Fidélité" })).getByRole(
+        "button",
+        { name: "Masquer l’alerte" },
+      ),
+    );
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    // Same instance, another account (same business, same customer).
+    view.rerender(<ClientProfile scope={ACCOUNT_B} clientId={CLIENT_ID} />);
+    // At once, before any read of B's context answers.
+    const shownAtOnce = screen.queryAllByText(/Opération de A/).length;
+    const dialogAtOnce = screen.queryByRole("dialog");
+    await flush();
+    // If anything of A's dialog were still there, B confirms it.
+    const leftover = screen.queryByRole("dialog");
+    if (leftover)
+      fireEvent.click(
+        within(leftover).getByRole("button", { name: "Masquer l’alerte" }),
+      );
+    await flush();
+    expect(shownAtOnce).toBe(0);
+    expect(dialogAtOnce).toBeNull();
+    expect(leftover).toBeNull();
+    expect(screen.queryAllByText(/Opération de A/)).toHaveLength(0);
+    // A's operation is untouched, still open, for A.
+    const [kept] = await stateOf(ACCOUNT_A, CLIENT_ID);
+    expect(kept!.requestId).toBe(own.requestId);
+    expect(kept!.state).toBe("open");
+  });
+
+  it("4: even a confirmation captured before the change cannot hide A's operation under B", async () => {
+    const own = await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    const { hideOperation } = await store();
+    // A stale callback holding A's operation, run with B's context.
+    await act(() =>
+      hideOperation({ ...ACCOUNT_B, clientId: CLIENT_ID }, own.requestId).catch(
+        () => {},
+      ),
+    );
+    const [kept] = await stateOf(ACCOUNT_A, CLIENT_ID);
+    expect(kept!.state).toBe("open");
+  });
+
+  it("5: A's IndexedDB read answering after B's never replaces B's state", async () => {
+    await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    await recordFor(ACCOUNT_B, CLIENT_ID, "Opération de B");
+    const operations = await store();
+    const list = vi.mocked(operations.listOperations);
+    const real = list.getMockImplementation()!;
+    // Hold every read of A's context until B's has answered.
+    let releaseA: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (releaseA = resolve));
+    list.mockImplementation(async (scope) => {
+      if (scope.userId === ACCOUNT_A.userId) await gate;
+      return real(scope);
+    });
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    view.rerender(<ClientProfile scope={ACCOUNT_B} clientId={CLIENT_ID} />);
+    await flush();
+    expect(loyaltyText()).toContain("Opération de B");
+    releaseA();
+    await flush();
+    expect(loyaltyText()).toContain("Opération de B");
+    expect(loyaltyText()).not.toContain("Opération de A");
+    list.mockImplementation(real);
+  });
+
+  it("6: a late answer of an action sent by A does not change B's screen", async () => {
+    const server = idempotentServer();
+    server.next("hold");
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    await creditFromCard("5", "Envoyé par A");
+    view.rerender(<ClientProfile scope={ACCOUNT_B} clientId={CLIENT_ID} />);
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const readsOfB = actions.getClientLoyaltyAction.mock.calls.length;
+    server.release();
+    await flush();
+    // Not even a re-read of B's file for A's write.
+    expect(actions.getClientLoyaltyAction.mock.calls.length).toBe(readsOfB);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(loyaltyText()).not.toMatch(/Envoyé par A|5 points crédités/);
+    // The answer settled A's own operation, in A's context.
+    expect(await stateOf(ACCOUNT_A, CLIENT_ID)).toEqual([]);
+  });
+
+  it("7-8: B's own operations work normally; A, back, recovers and resends its own", async () => {
+    const ownA = await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    const ownB = await recordFor(ACCOUNT_B, CLIENT_ID, "Opération de B");
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_B} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    expect(loyaltyText()).toContain("Opération de B");
+    expect(loyaltyText()).not.toContain("Opération de A");
+
+    view.rerender(<ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />);
+    await flush();
+    expect(loyaltyText()).toContain("Opération de A");
+    expect(loyaltyText()).not.toContain("Opération de B");
+    actions.adjustPointsAction.mockResolvedValue(ok({ entryId: uuid() }));
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "Fidélité" })).getByRole(
+        "button",
+        { name: "Renvoyer la même demande" },
+      ),
+    );
+    await flush();
+    expect(
+      (actions.adjustPointsAction.mock.calls.at(-1)![0] as Adjust).requestId,
+    ).toBe(ownA.requestId);
+    const [stillB] = await stateOf(ACCOUNT_B, CLIENT_ID);
+    expect(stillB!.requestId).toBe(ownB.requestId);
+  });
+
+  it("9: another business or another customer stays isolated", async () => {
+    await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    expect(loyaltyText()).toContain("Opération de A");
+    const otherBusiness = {
+      ...ACCOUNT_A,
+      businessId: "10000000-0000-4000-8000-0000000000dd",
+    };
+    view.rerender(<ClientProfile scope={otherBusiness} clientId={CLIENT_ID} />);
+    expect(screen.queryAllByText(/Opération de A/)).toHaveLength(0);
+    await flush();
+    expect(screen.queryAllByText(/Opération de A/)).toHaveLength(0);
+    view.rerender(<ClientProfile scope={ACCOUNT_A} clientId={OTHER_CLIENT} />);
+    expect(screen.queryAllByText(/Opération de A/)).toHaveLength(0);
+    await flush();
+    expect(screen.queryAllByText(/Opération de A/)).toHaveLength(0);
+  });
+
+  it("10: ordinary navigation within the same account keeps pending operations", async () => {
+    await recordFor(ACCOUNT_A, CLIENT_ID, "Opération de A");
+    actions.getClientProfileAction.mockResolvedValue(ok(profile()));
+    actions.listClientTimelineAction.mockResolvedValue(
+      ok(timelinePage([appointmentEvent()], null)),
+    );
+    const view = render(
+      <ClientProfile scope={ACCOUNT_A} clientId={CLIENT_ID} />,
+    );
+    await flush();
+    // A new render of the same identity (a fresh object, as a page passes).
+    view.rerender(
+      <ClientProfile scope={{ ...ACCOUNT_A }} clientId={CLIENT_ID} />,
+    );
+    expect(loyaltyText()).toContain("Opération de A");
+    await flush();
+    expect(loyaltyText()).toContain("Opération de A");
+    // And a mounted card is not thrown away for it.
+    expect(actions.getClientLoyaltyAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("loyalty keys", () => {
+  it("phones: leaving the dossier tab after a lost answer keeps the same requestId", async () => {
+    useViewport(false);
+    await renderProfile();
+    const tab = (name: string) => screen.getByRole("tab", { name });
+    fireEvent.click(tab("Dossier"));
+    await flush();
+    const adjust = async () => {
+      const loyalty = within(screen.getByRole("region", { name: "Fidélité" }));
+      fireEvent.click(
+        loyalty.getByRole("button", { name: "Ajuster les points" }),
+      );
+      const sheet = within(screen.getByRole("dialog"));
+      fireEvent.change(sheet.getByLabelText("Nombre de points"), {
+        target: { value: "5" },
+      });
+      fireEvent.change(sheet.getByLabelText(/^Motif/), {
+        target: { value: "Geste" },
+      });
+      fireEvent.click(sheet.getByRole("button", { name: "Vérifier" }));
+      fireEvent.click(sheet.getByRole("button", { name: "Créditer 5 points" }));
+      await flush();
+    };
+    actions.adjustPointsAction.mockRejectedValueOnce(new Error("offline"));
+    await adjust();
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Modifier",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Annuler",
+      }),
+    );
+    // The loyalty card is unmounted with the tab, then mounted again.
+    fireEvent.click(tab("Historique"));
+    fireEvent.click(tab("Dossier"));
+    await flush();
+    actions.adjustPointsAction.mockResolvedValue(ok({ entryId: uuid() }));
+    await adjust();
+    const [first, second] = actions.adjustPointsAction.mock.calls.map(
+      ([command]) => (command as { requestId: string }).requestId,
+    );
+    expect(second).toBe(first);
   });
 });
 
@@ -511,7 +1024,7 @@ describe("errors", () => {
   it("profile fine, history failed: only the history zone reports it", async () => {
     actions.getClientProfileAction.mockResolvedValue(ok(profile()));
     actions.listClientTimelineAction.mockResolvedValueOnce(fail("internal"));
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     expect(
       screen.getByRole("heading", { level: 1, name: "Emma Laurent" }),
@@ -533,7 +1046,7 @@ describe("errors", () => {
       fail("client_not_found"),
     );
     window.sessionStorage.setItem("crm:directory", "/app/clients?q=Emma");
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     expect(
       screen.getByRole("heading", { name: "Cette fiche n’existe pas ou plus" }),
@@ -548,7 +1061,7 @@ describe("errors", () => {
   it("the profile fails: retry", async () => {
     actions.getClientProfileAction.mockResolvedValueOnce(fail("internal"));
     actions.listClientTimelineAction.mockResolvedValue(ok(timelinePage([])));
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     expect(screen.getByRole("alert").textContent).toMatch(
       /La fiche n’a pas pu être chargée/,
@@ -604,7 +1117,7 @@ describe("time zones: every hour is labelled with the zone it was read in", () =
     actions.listClientTimelineAction.mockResolvedValueOnce(
       ok(inZone(timelinePage([appointmentEvent()]), VANCOUVER)),
     );
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     await flush();
 
@@ -623,7 +1136,7 @@ describe("time zones: every hour is labelled with the zone it was read in", () =
     actions.listClientTimelineAction.mockResolvedValueOnce(
       ok(inZone(timelinePage([appointmentEvent()]), VANCOUVER)),
     );
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     await flush();
     await flush();
@@ -825,7 +1338,7 @@ describe("profile reads: only the newest one is ever shown", () => {
     actions.listClientTimelineAction.mockResolvedValue(
       ok({ ...timelinePage([appointmentEvent()]), timezone: VANCOUVER }),
     );
-    render(<ClientProfile clientId={CLIENT_ID} />);
+    render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     await flush();
     expect(actions.getClientProfileAction).toHaveBeenCalledTimes(2);
@@ -921,10 +1434,13 @@ describe("profile reads: only the newest one is ever shown", () => {
     actions.listClientTimelineAction.mockResolvedValue(
       ok(timelinePage([appointmentEvent()])),
     );
-    const view = render(<ClientProfile clientId={CLIENT_ID} />);
+    const view = render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     view.rerender(
-      <ClientProfile clientId="30000000-0000-4000-8000-00000000bbbb" />,
+      <ClientProfile
+        scope={SCOPE}
+        clientId="30000000-0000-4000-8000-00000000bbbb"
+      />,
     );
     await flush();
     expect(
@@ -950,7 +1466,7 @@ describe("profile reads: only the newest one is ever shown", () => {
     useViewport(false);
     render(
       <StrictMode>
-        <ClientProfile clientId={CLIENT_ID} />
+        <ClientProfile scope={SCOPE} clientId={CLIENT_ID} />
       </StrictMode>,
     );
     await flush();

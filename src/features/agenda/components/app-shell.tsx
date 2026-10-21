@@ -20,16 +20,14 @@ import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 type Business = { name: string; slug: string };
-type Section = "agenda" | "clients" | "services" | "hours" | "calendar";
+type Section =
+  "agenda" | "clients" | "services" | "loyalty" | "hours" | "calendar";
 
 const CALENDAR_SETTINGS = "/app/settings/calendar";
 const CLIENTS = "/app/clients";
 const SERVICES = "/app/services";
 const HOURS = "/app/settings/hours";
-
-// Only destinations that exist are links. Upcoming sections are shown as
-// such, without fake pages.
-const upcoming = [{ label: "Fidélité", icon: GiftIcon }];
+const LOYALTY = "/app/loyalty";
 
 /**
  * Professional area frame. Desktop: compact sidebar. Phones and tablets: a
@@ -85,6 +83,13 @@ export function AppShell({
             <SparkIcon size={18} /> Prestations
           </Link>
           <Link
+            href={LOYALTY}
+            aria-current={current === "loyalty" ? "page" : undefined}
+            className={item("loyalty")}
+          >
+            <GiftIcon size={18} /> Fidélité
+          </Link>
+          <Link
             href={HOURS}
             aria-current={current === "hours" ? "page" : undefined}
             className={item("hours")}
@@ -98,18 +103,6 @@ export function AppShell({
           >
             <CalendarSyncIcon size={18} /> Google Calendar
           </Link>
-          {upcoming.map(({ label, icon: Icon }) => (
-            <span
-              key={label}
-              aria-disabled="true"
-              className="flex h-11 items-center gap-3 rounded-xl px-3 text-[15px] text-ink-muted"
-            >
-              <Icon size={18} /> {label}
-              <span className="ml-auto rounded-full bg-sand px-2 py-0.5 text-[11px] font-medium text-ink-soft">
-                Bientôt
-              </span>
-            </span>
-          ))}
         </nav>
         <div className="mt-auto flex flex-col gap-3 rounded-2xl border border-line bg-paper p-4">
           <p className="truncate font-display text-[20px] leading-tight text-ink">
@@ -168,7 +161,9 @@ export function AppShell({
           onClick={() => setAccountOpen(true)}
           className={cn(
             "flex h-16 cursor-pointer flex-col items-center justify-center gap-1 text-[11.5px]",
-            current === "calendar" || current === "hours"
+            current === "calendar" ||
+              current === "hours" ||
+              current === "loyalty"
               ? "font-semibold text-ink"
               : "text-ink-soft",
           )}
@@ -184,6 +179,16 @@ export function AppShell({
         description="Ton espace professionnel"
       >
         <div className="flex flex-col gap-4">
+          <Link
+            href={LOYALTY}
+            onClick={() => setAccountOpen(false)}
+            aria-current={current === "loyalty" ? "page" : undefined}
+            className="flex min-h-14 items-center gap-3 rounded-2xl border border-line bg-paper px-4 text-[15px] font-medium text-ink transition-colors hover:border-line-strong"
+          >
+            <GiftIcon size={20} className="text-ink-soft" />
+            <span className="flex-1">Fidélité</span>
+            <ChevronRightIcon size={18} className="text-ink-muted" />
+          </Link>
           <Link
             href={HOURS}
             onClick={() => setAccountOpen(false)}
@@ -205,9 +210,6 @@ export function AppShell({
             <ChevronRightIcon size={18} className="text-ink-muted" />
           </Link>
           <PublicLink slug={business.slug} />
-          <p className="text-[14px] text-ink-muted">
-            La fidélité arrive bientôt dans ton espace.
-          </p>
           <SignOutButton />
         </div>
       </Sheet>

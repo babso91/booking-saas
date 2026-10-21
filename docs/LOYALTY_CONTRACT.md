@@ -1,6 +1,6 @@
 # Moteur de fidélité V1 : contrat backend (PR #23)
 
-Backend seulement : aucun écran n'est livré. Ce document décrit ce que l'interface (Claude UI) peut appeler et ce que le backend garantit. Migration : `supabase/migrations/20261020090000_loyalty_engine.sql`. Code : `src/features/loyalty/` (schémas, données, Server Actions, types). Tests PostgreSQL : `tests/integration/loyalty.test.ts`. Montée de version : `tests/upgrade/loyalty-engine.test.ts`.
+Le backend vient de la PR #23 ; l'interface professionnelle de la PR #24 est décrite en fin de document ([Interface professionnelle](#interface-professionnelle-pr-24)). Ce document décrit ce que l'interface (Claude UI) peut appeler et ce que le backend garantit. Migration : `supabase/migrations/20261020090000_loyalty_engine.sql`. Code : `src/features/loyalty/` (schémas, données, Server Actions, types). Tests PostgreSQL : `tests/integration/loyalty.test.ts`. Montée de version : `tests/upgrade/loyalty-engine.test.ts`.
 
 ## Principes
 
@@ -186,7 +186,72 @@ Chaque action renvoie `ActionResult<T>` : `{ ok: true, data }` ou `{ ok: false, 
 
 ## Hors périmètre (V1)
 
-- **Écrans :** aucun écran fidélité, aucun Client Hub, aucune authentification cliente.
+- **Écrans :** aucun Client Hub, aucune authentification cliente. Les écrans professionnels sont décrits ci-dessous.
 - **Emails :** aucun email de fidélité. Les types `points_earned` et `reward_unlocked` de l'outbox restent inutilisés, et l'envoi n'est pas configuré.
 - **Paiement et caisse :** aucune déduction automatique d'une remise au moment de la réservation.
 - **Fonctionnalités de programme :** pas d'expiration des points, pas de niveaux, pas de limite d'utilisation par cliente.
+
+## Interface professionnelle (PR #24)
+
+Frontend seulement : aucune migration, aucune fonction SQL, aucune Server Action n'est modifiée. Code : `src/features/loyalty/client/` (formulaires et formats, sans affichage) et `src/features/loyalty/components/`.
+
+### Écrans
+
+- **`/app/loyalty`** (navigation : barre latérale ; sur téléphone, onglet Compte) :
+  - **Programme :** état (actif, en pause, jamais configuré), activation et mise en pause après confirmation ;
+  - **Comment gagner des points :** mode de calcul (par rendez-vous ou au montant) expliqué avec un exemple, points par rendez-vous, points par euro ;
+  - **Règles par prestation :** ce que rapporte chaque prestation (règle, ou calcul du programme : aperçu au prix actuel en mode montant), définir, modifier ou retirer une règle ;
+  - **Récompenses :** liste, création, modification, activation et désactivation ; une récompense désactivée ou indisponible est signalée.
+- **Fiche cliente** (`/app/clients/[id]`, section Fidélité du dossier) :
+  - solde signé, totaux gagnés et dépensés, état du programme, solde négatif expliqué ;
+  - récompenses attribuées (à utiliser, utilisées, annulées) : marquer comme utilisée (rendez-vous facultatif), annuler (points rendus) ;
+  - attribuer une récompense (choix selon l'éligibilité du backend, puis récapitulatif : coût, solde après) ;
+  - ajuster les points (crédit ou débit, motif obligatoire, récapitulatif avant et après) ;
+  - historique complet des points, paginé par le curseur du backend (25 par page, sans limite), avec l'annulation d'un ajustement manuel.
+
+### Garanties de l'interface
+
+- **Aucun succès avant la réponse.** Chaque écriture n'est montrée qu'après `ok: true` ; une écriture confirmée relit le programme, la fiche fidélité et l'historique CRM. Sans réponse (`network`, `internal`), l'écran dit que l'opération a _peut-être_ été enregistrée, jamais « rien n'a été fait ».
+- **Opérations en attente (attribution, crédit, débit).** Stockage `src/features/loyalty/client/operation-store.ts`, envoi `pending-operations.ts` :
+  - **Stockage.** IndexedDB, base `booking-loyalty`, magasin `pending-operations`. Une ligne par opération, de clé `requestId`. Elle contient : l'empreinte du payload, le contexte (utilisateur, établissement, cliente), le payload, l'état (`open`, ou `hidden` si l'alerte est masquée) et la date. Un index unique `openKey` (contexte + empreinte) interdit deux opérations non résolues pour le même contenu.
+  - **Atomicité entre onglets.** « Trouver l'opération non résolue de ce contenu, ou la créer » est **une seule transaction readwrite**. IndexedDB exécute les transactions readwrite d'un même magasin les unes après les autres, pour toutes les connexions de l'origine, donc pour tous les onglets. Deux onglets qui créent la même opération obtiennent le même `requestId`. Aucune réécriture de tableau : chaque ligne est ajoutée (`add`, jamais `put` à la création), masquée ou supprimée par sa propre clé. Résoudre une opération ne peut pas en effacer une autre.
+  - **Persistance avant l'envoi.** Une écriture n'est considérée faite qu'à l'événement `complete` de sa transaction (`durability: "strict"` quand le navigateur le gère). Tout échec rejette : quota, IndexedDB absente ou bloquée, ouverture refusée, transaction avortée. **Rien n'est alors envoyé.** Le panneau affiche « Opération non envoyée : aucun point n'a bougé ». Si le stockage est illisible, la fiche désactive l'attribution et l'ajustement. Il n'existe aucun secours en mémoire.
+  - **Résolution.** Une opération est supprimée par sa clé, seulement en cas de succès ou de refus prouvant que rien n'a été écrit : `validation_error`, `insufficient_points`, `reward_unavailable`, `loyalty_program_inactive`, `idempotency_conflict`, `forbidden`, élément introuvable. Sans réponse (`network`, `internal`, session perdue), elle reste.
+  - **Reprise.** Le même contenu réutilise le `requestId` de son opération non résolue : depuis n'importe quel écran ou onglet, après un rechargement, ou après une reconnexion du même compte. « Renvoyer la même demande » renvoie le payload enregistré. Les onglets sont prévenus des changements par BroadcastChannel, et au retour de visibilité. Ce sont des signaux de relecture, jamais des verrous ni des données.
+  - **Isolation par contexte dans l'interface.** Le contexte complet est `{ userId, businessId, clientId }`, tiré de la session serveur par la page.
+    - La fiche cliente et sa carte Fidélité sont montées une fois par contexte (clé React). Un changement de compte ferme les panneaux et les dialogues et vide les formulaires de l'ancien contexte ; la carte remet aussi son état à zéro si son contexte change sans remontage.
+    - Chaque lecture IndexedDB est étiquetée par son contexte : si le contexte affiché change, rien de l'ancien n'est rendu, dès le même rendu, et une lecture tardive d'un ancien contexte n'est jamais appliquée.
+    - Les confirmations (masquer, renvoyer) revérifient que l'opération appartient au contexte courant ; le stockage ne masque une opération que dans son propre contexte.
+    - Les écritures confirmées sont comptées par contexte : la réponse tardive d'une opération de A ne relit ni ne modifie l'écran de B.
+    - Les opérations de A restent intactes et récupérables quand A revient.
+  - **« Masquer l'alerte ».** Remplace l'ancienne suppression : l'opération et son `requestId` sont conservés, et l'alerte reste consultable (« opérations masquées : afficher »). Le dialogue dit que masquer n'annule rien, que la demande a pu être appliquée ou peut encore aboutir, que l'absence dans l'historique ne prouve rien, et qu'une opération _différente_ serait une nouvelle demande. Aucune action ne supprime une opération non résolue.
+  - **Confidentialité.** Aucun jeton, aucun secret, aucune coordonnée de cliente : seulement des identifiants internes, des points, le nom de la récompense et le **motif saisi**. Le motif fait partie du payload dont le backend vérifie l'égalité : sans lui, la même demande ne pourrait pas être renvoyée. Il disparaît avec l'opération. Ce stockage n'est pas chiffré : quiconque contrôle physiquement le navigateur peut le lire. Les opérations sont conservées après une déconnexion (isolées par compte et établissement) : les effacer permettrait une seconde application après reconnexion.
+- **Annulations.** Annuler une récompense et annuler un ajustement n'ont pas de `requestId` dans le contrat. Ils visent une ligne existante, une seule fois : un nouvel essai renvoie la même correction, ou `invalid_redemption_transition`. Ils ne sont donc pas enregistrés ici.
+- **Après `idempotency_conflict`.** Rien n'est renvoyé automatiquement. Une nouvelle demande n'est envoyée que sur le choix explicite « Envoyer comme nouvelle demande ».
+- **Création de récompense.** Une clé par contenu, gardée en mémoire par l'écran : un nouvel essai réutilise la clé, et une réponse ne libère que sa propre clé.
+- **Valeurs historiques.** Une modification renvoie chaque champ non touché exactement tel que lu (nom et description bruts, nombres hors des bornes actuelles) ; seuls les champs modifiés sont normalisés et bornés côté client. Désactiver ou activer une récompense renvoie tous ses autres champs tels quels.
+- **Conflits de version.** `stale_loyalty_program` et `stale_reward` : la version actuelle est relue et montrée ; la professionnelle reprend la version actuelle ou garde ses réglages (rebasés sur la nouvelle version, à renvoyer explicitement). Les règles par prestation, sans version, ne remplacent que les règles affichées.
+- **Doubles soumissions.** Chaque écriture est verrouillée pendant l'envoi (garde synchrone et bouton occupé).
+- **Soldes.**
+  - Un débit manuel qui ferait passer le solde sous zéro est refusé avant l'envoi.
+  - Un solde négatif bloque toute attribution (éligibilité du backend).
+  - Annuler un **crédit** qui ferait passer le solde sous zéro est expliqué au lieu d'être envoyé. Annuler un **débit** recrédite toujours, même si le solde reste négatif (−100 → −90).
+  - Le backend reste l'autorité.
+- **Plafond.** L'aperçu au montant est limité à 1 000 000 points par rendez-vous, comme le calcul du backend, et le dit (« plafond par rendez-vous »).
+- **Pas de promesse.** Rien ne dit qu'une remise est déduite d'une réservation ni encaissée, ni qu'un email est envoyé.
+
+### Écarts de contrat pour Claude Cloud
+
+1. **Dates des écritures et attributions en UTC seulement.** `LoyaltyLedgerEntryDto.createdAt` et les dates de `RedemptionDto` n'ont pas d'heure murale calculée par PostgreSQL (contrairement aux DTO CRM, `BusinessInstantDto`). L'interface les formate avec `Intl` dans le fuseau de l'activité, pour l'affichage d'instants passés uniquement (`src/features/loyalty/client/format.ts`, `instantLabel`). Correction proposée : ajouter un `BusinessInstantDto` (`local`, `occurrence`) à ces champs.
+2. **Récompense « prestation offerte » historique sans prestation.** `updateRewardAction` exige `serviceId` pour `free_service` : une telle récompense ne peut être ni désactivée ni réactivée sans lui choisir une prestation. L'interface l'explique et ouvre la modification. Correction proposée : accepter `serviceId: null` inchangé, ou une action dédiée `setRewardActiveAction({ rewardId, expectedVersion, active })`.
+3. **Nom de la prestation offerte absent de `RewardDto`.** L'écran Fidélité le joint avec `listServicesAction` ; la fiche cliente affiche « Prestation offerte » sans nom avant l'attribution (l'instantané de l'attribution, lui, porte le nom). Correction proposée : `serviceName` dans `RewardDto`.
+4. **Rendez-vous d'utilisation.** Il n'existe pas de lecture « rendez-vous de cette cliente » dédiée : l'interface propose ceux déjà lus par la fiche (à venir et historique chargé, confirmés ou terminés). Le backend vérifie la cliente (`appointment_not_found`).
+
+### Limites
+
+- **Réconciliation.** Il n'existe pas de lecture « statut d'une demande par `requestId` » : une opération non confirmée ne peut pas être déclarée appliquée ou non sans la renvoyer. Correction proposée : `getLoyaltyRequestStatusAction({ requestId })`, qui renverrait `applied` (avec l'écriture), `unknown` ou `conflict`, sans rien écrire.
+- **Création de récompense.** Ses clés ne survivent pas à un rechargement complet. Une récompense créée en double reste visible et désactivable : rien n'est débité.
+- **Stockage effacé volontairement** (données du site supprimées), **navigation privée** (IndexedDB effacée à la fermeture), **autre appareil ou autre navigateur** : l'opération non confirmée y est inconnue. Une nouvelle saisie identique y reçoit un autre `requestId` et peut s'appliquer une seconde fois. Il n'y a **pas** d'exactly-once entre appareils : seul le backend pourrait l'offrir (voir Réconciliation).
+- **Stockage bloqué ou plein** : attribution et ajustement refusés (rien n'est envoyé). Libérer de l'espace ou changer de navigateur.
+- Pas de rôle ni de permission fine : toute membre de l'activité a les mêmes actions (contrat actuel). Un refus `forbidden` est affiché.
+- `listLoyaltyBalancesAction` n'est pas encore utilisée (solde dans l'annuaire des clientes).

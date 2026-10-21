@@ -31,6 +31,10 @@ import type {
   ClientTimelineEvent,
   UpdateClientResultDto,
 } from "@/features/crm/types";
+import {
+  ClientLoyalty,
+  type LoyaltyVisit,
+} from "@/features/loyalty/components/client-loyalty";
 import { cn } from "@/lib/cn";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
 
@@ -114,7 +118,14 @@ const isCursorError = (error: UiError) =>
  * write, the history and the dossier's notes are read again (the server's
  * order and content decide). The route mounts one instance per customer.
  */
-export function ClientProfile({ clientId }: { clientId: string }) {
+export function ClientProfile({
+  clientId,
+  scope,
+}: {
+  clientId: string;
+  /** The signed-in identity, from the server session (pending loyalty writes). */
+  scope: { userId: string; businessId: string };
+}) {
   const [profile, setProfile] = useState<Load<ClientProfileDto>>({
     status: "loading",
   });
@@ -420,9 +431,21 @@ export function ClientProfile({ clientId }: { clientId: string }) {
       onRetry={reloadTimeline}
     />
   );
+  const loyalty = (
+    <ClientLoyalty
+      // One card per signed-in user, business and customer: nothing open,
+      // typed or read under one identity is kept for another.
+      key={`${scope.userId}:${scope.businessId}:${clientId}`}
+      timezone={data.timezone}
+      visits={loyaltyVisits(data, timeline.events)}
+      scope={{ ...scope, clientId }}
+      onChanged={reloadTimeline}
+    />
+  );
   const dossier = (
     <Dossier
       profile={data}
+      loyalty={loyalty}
       notes={notesList.state}
       noteHandlers={noteHandlers}
       onNotesRetry={notesList.reload}
@@ -795,6 +818,7 @@ function Tabs({
 
 function Dossier({
   profile,
+  loyalty,
   notes,
   noteHandlers,
   onNotesRetry,
@@ -804,6 +828,8 @@ function Dossier({
   saved,
 }: {
   profile: ClientProfileDto;
+  /** The customer's loyalty (its own reads and writes). */
+  loyalty: ReactNode;
   notes: NotesListState;
   noteHandlers: NoteHandlers;
   onNotesRetry: () => void;
@@ -876,6 +902,8 @@ function Dossier({
           Fiche créée le {dayMonthYear(client.createdAt)}
         </p>
       </DossierSection>
+
+      {loyalty}
 
       <DossierNotes
         list={notes}
@@ -966,6 +994,36 @@ function Dossier({
       </p>
     </div>
   );
+}
+
+/**
+ * Visits a reward can be attached to when it is used: her upcoming and
+ * shown past appointments that took or will take place (not cancelled or
+ * missed), newest first, as already read for this file.
+ */
+function loyaltyVisits(
+  profile: ClientProfileDto,
+  events: ClientTimelineEvent[],
+): LoyaltyVisit[] {
+  const seen = new Set<string>();
+  const visits: LoyaltyVisit[] = [];
+  const add = (appointment: AppointmentSummaryDto) => {
+    if (seen.has(appointment.id)) return;
+    if (
+      appointment.status !== "completed" &&
+      appointment.status !== "confirmed"
+    )
+      return;
+    seen.add(appointment.id);
+    visits.push({
+      id: appointment.id,
+      label: `${dayAndTime(appointment.startsAt)} · ${appointment.service.name}`,
+    });
+  };
+  [...profile.upcoming].reverse().forEach(add);
+  for (const event of events)
+    if (event.kind === "appointment") add(event.appointment);
+  return visits;
 }
 
 function DossierSection({
