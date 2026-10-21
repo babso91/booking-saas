@@ -187,6 +187,43 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"client_hub_access": {
+                  Row: {
+                    "business_id": string,"client_id": string,"email": string,"granted_at": string,"granted_by": string | null,"revoked_at": string | null,"revoked_by": string | null
+                  }
+                  Insert: {
+                    "business_id": string,"client_id": string,"email": string,"granted_at"?: string,"granted_by"?: string | null,"revoked_at"?: string | null,"revoked_by"?: string | null
+                  }
+                  Update: {
+                    "business_id"?: string,"client_id"?: string,"email"?: string,"granted_at"?: string,"granted_by"?: string | null,"revoked_at"?: string | null,"revoked_by"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "client_hub_access_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "client_hub_access_client_id_business_id_fkey"
+      columns: ["client_id","business_id"]
+isOneToOne: false
+      referencedRelation: "clients"
+      referencedColumns: ["id","business_id"]
+    },{
+      foreignKeyName: "client_hub_access_granted_by_fkey"
+      columns: ["granted_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "client_hub_access_revoked_by_fkey"
+      columns: ["revoked_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"client_notes": {
                   Row: {
                     "business_id": string,"client_id": string,"content": string,"created_at": string,"created_by": string | null,"creation_request_id": string | null,"id": string,"updated_at": string,"updated_by": string | null,"version": number
@@ -745,6 +782,39 @@ isOneToOne: false
 "check_slug_availability":
 { Args: { "p_slug": string }; Returns: {
               "available": boolean,"reason": string,"slug": string
+            }[]
+                           },
+"client_hub_appointment":
+{ Args: { "p_appointment_id": string,"p_business_id": string,"p_session_token": string }; Returns: Json
+                           },
+"client_hub_appointments":
+{ Args: { "p_after_id"?: string,"p_after_starts_at"?: string,"p_business_id": string,"p_limit"?: number,"p_scope": string,"p_session_token": string }; Returns: Json
+                           },
+"client_hub_end_session":
+{ Args: { "p_all"?: boolean,"p_session_token": string }; Returns: undefined
+                           },
+"client_hub_loyalty":
+{ Args: { "p_business_id": string,"p_session_token": string }; Returns: Json
+                           },
+"client_hub_loyalty_ledger":
+{ Args: { "p_before_position"?: number,"p_business_id": string,"p_limit"?: number,"p_session_token": string }; Returns: Json
+                           },
+"client_hub_profile":
+{ Args: { "p_session_token": string }; Returns: Json
+                           },
+"client_hub_request_code":
+{ Args: { "p_client_ip": unknown,"p_email": string }; Returns: {
+              "challenge_id": string,"code": string,"email": string,"expires_at": string
+            }[]
+                           },
+"client_hub_set_access":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_expected_email"?: string,"p_granted": boolean }; Returns: {
+              "email": string,"granted": boolean,"granted_at": string
+            }[]
+                           },
+"client_hub_verify_code":
+{ Args: { "p_challenge_id": string,"p_client_ip": unknown,"p_code": string,"p_email": string }; Returns: {
+              "account_id": string,"email": string,"expires_at": string,"session_token": string,"status": string
             }[]
                            },
 "complete_onboarding":

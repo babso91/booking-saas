@@ -227,6 +227,8 @@ La RPC `create_public_booking` effectue dans une transaction : validation du bus
 
 ### Accès fidélité sans compte
 
+> **Remplacé en V1 par le Client Hub** (connexion par code email, accès autorisé par la professionnelle) : voir [`docs/CLIENT_HUB_CONTRACT.md`](CLIENT_HUB_CONTRACT.md). Le jeton décrit ci-dessous (`clients.loyalty_token_hash`) n'est lu par aucune fonction.
+
 Le lien contient au moins 32 octets aléatoires encodés en base64url. Seul un hash SHA-256 est stocké. Le token est révocable/rotatif, comparé côté serveur et ne donne accès qu'à un DTO limité de la cliente concernée.
 
 ## 7. Authentification et autorisation
