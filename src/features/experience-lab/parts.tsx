@@ -1,53 +1,54 @@
 "use client";
 
-import { motion, type Transition } from "motion/react";
+import { motion } from "motion/react";
 import type { CSSProperties } from "react";
 
 import { photo, srcSet, type Universe } from "./universes";
 
 /**
- * The brand's cover photo, shared between the hub card and the brand's
- * opening scene (same layoutId): entering a brand is this photo growing.
+ * The brand's opening photo, entering in the universe's own way: a sharp
+ * wipe ("cut") or a slow settle out of the dark ("bloom").
  */
 export function Cover({
   universe,
   className,
-  style,
   imageStyle,
-  transition,
-  priority,
 }: {
   universe: Universe;
   className?: string;
-  style?: CSSProperties;
   imageStyle?: CSSProperties;
-  transition?: Transition;
-  priority?: boolean;
 }) {
+  const { ease, entrance } = universe.motion;
   return (
     <motion.div
-      layoutId={`cover-${universe.id}`}
       className={`relative overflow-hidden ${className ?? ""}`}
-      style={style}
-      transition={
-        transition ?? {
-          duration: universe.motion.scene,
-          ease: universe.motion.ease,
-        }
+      initial={
+        entrance === "cut" ? { clipPath: "inset(0 0 100% 0)" } : { opacity: 0 }
       }
+      animate={
+        entrance === "cut" ? { clipPath: "inset(0 0 0% 0)" } : { opacity: 1 }
+      }
+      transition={{ duration: entrance === "cut" ? 1 : 2.2, ease }}
     >
-      {/* Prototype: remote CDN photos, plain img with responsive sources. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={photo(universe.cover, 1200)}
-        srcSet={srcSet(universe.cover)}
-        sizes="100vw"
-        alt=""
-        draggable={false}
-        fetchPriority={priority ? "high" : "auto"}
-        className="absolute inset-0 h-full w-full object-cover"
-        style={imageStyle}
-      />
+      <motion.div
+        className="absolute inset-0"
+        initial={{ scale: entrance === "cut" ? 1.25 : 1.12 }}
+        animate={{ scale: 1 }}
+        transition={{ duration: entrance === "cut" ? 1.4 : 6, ease }}
+      >
+        {/* Prototype: remote CDN photos, plain img with responsive sources. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={photo(universe.cover, 1200)}
+          srcSet={srcSet(universe.cover)}
+          sizes="100vw"
+          alt=""
+          draggable={false}
+          fetchPriority="high"
+          className="absolute inset-0 h-full w-full object-cover"
+          style={imageStyle}
+        />
+      </motion.div>
     </motion.div>
   );
 }

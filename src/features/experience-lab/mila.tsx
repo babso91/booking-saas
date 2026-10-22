@@ -3,10 +3,9 @@
 import { AnimatePresence, motion, useScroll, useTransform } from "motion/react";
 import { useRef, useState } from "react";
 
-import { Booking, type Booked } from "./booking";
-import type { BrandProps } from "./lab";
+import { Booking } from "./booking";
+import type { BrandProps } from "./site";
 import { Cover, Photo, euros, minutes } from "./parts";
-import { ClientSpace } from "./space";
 import type { Service, Work } from "./universes";
 
 // Studio Mila — experimental fashion. Black and white photography, a
@@ -17,13 +16,11 @@ const mono = { fontFamily: "var(--font-mila-mono)" } as const;
 const didone = { fontFamily: "var(--font-mila-display)" } as const;
 const CUT = [0.76, 0, 0.24, 1] as const;
 
-export function MilaBrand({ universe, onLeave }: BrandProps) {
+export function MilaBrand({ universe }: BrandProps) {
   const [work, setWork] = useState<Work | null>(null);
   const [booking, setBooking] = useState<{ service: Service | null } | null>(
     null,
   );
-  const [space, setSpace] = useState(false);
-  const [booked, setBooked] = useState<Booked | null>(null);
   const opening = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({
     target: opening,
@@ -44,25 +41,19 @@ export function MilaBrand({ universe, onLeave }: BrandProps) {
           className="mx-auto flex max-w-[1100px] items-center justify-between px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3 text-[12px] tracking-[0.08em] text-white uppercase"
           style={mono}
         >
-          <button
-            type="button"
-            onClick={onLeave}
-            className="pointer-events-auto cursor-pointer py-2"
-          >
-            ← Mon espace
-          </button>
           <span>Studio Mila</span>
+          <span>{universe.location}</span>
           <button
             type="button"
-            onClick={() => setSpace(true)}
+            onClick={() => setBooking({ service: null })}
             className="pointer-events-auto cursor-pointer py-2"
           >
-            Ma carte
+            Réserver
           </button>
         </div>
       </header>
 
-      {/* (00) Opening: the cover arrives from the hub, the name cuts in. */}
+      {/* (00) Opening: the photo is cut in, then the name. */}
       <section ref={opening} className="relative h-[115svh]">
         <motion.div
           className="sticky top-0 h-svh overflow-hidden"
@@ -70,9 +61,7 @@ export function MilaBrand({ universe, onLeave }: BrandProps) {
         >
           <Cover
             universe={universe}
-            priority
             className="h-svh w-full"
-            style={{ borderRadius: 0 }}
             imageStyle={{
               filter: "grayscale(1) contrast(1.15) brightness(.82)",
             }}
@@ -238,21 +227,6 @@ export function MilaBrand({ universe, onLeave }: BrandProps) {
             universe={universe}
             initialService={booking.service}
             onClose={() => setBooking(null)}
-            onBooked={(value) => setBooked(value)}
-            onOpenSpace={() => {
-              setBooking(null);
-              setSpace(true);
-            }}
-          />
-        ) : null}
-      </AnimatePresence>
-      <AnimatePresence>
-        {space ? (
-          <ClientSpace
-            key="space"
-            universe={universe}
-            booked={booked}
-            onClose={() => setSpace(false)}
           />
         ) : null}
       </AnimatePresence>

@@ -1,73 +1,47 @@
-import type { Metadata } from "next";
-import {
-  Bodoni_Moda,
-  Figtree,
-  Geist,
-  Inter_Tight,
-  Newsreader,
-  Space_Mono,
-} from "next/font/google";
-import { notFound } from "next/navigation";
+import Link from "next/link";
 
-import { ExperienceLab } from "@/features/experience-lab/lab";
+import { universes } from "@/features/experience-lab/universes";
 
-// Experience lab: a prototype of brand universes on fictional data. Never
-// served by a production build (branch proto/experience-engine only).
-
-const milaDisplay = Bodoni_Moda({
-  subsets: ["latin"],
-  variable: "--font-mila-display",
-  display: "swap",
-});
-const milaBody = Inter_Tight({
-  subsets: ["latin"],
-  variable: "--font-mila-body",
-  display: "swap",
-});
-const milaMono = Space_Mono({
-  subsets: ["latin"],
-  weight: ["400", "700"],
-  variable: "--font-mila-mono",
-  display: "swap",
-});
-const almaDisplay = Newsreader({
-  subsets: ["latin"],
-  weight: ["300", "400"],
-  variable: "--font-alma-display",
-  display: "swap",
-});
-const almaBody = Figtree({
-  subsets: ["latin"],
-  variable: "--font-alma-body",
-  display: "swap",
-});
-const labSans = Geist({
-  subsets: ["latin"],
-  variable: "--font-lab-sans",
-  display: "swap",
-});
-
-export const metadata: Metadata = {
-  title: "Labo",
-  robots: { index: false, follow: false },
-};
-
-export default function LabPage() {
-  if (process.env.NODE_ENV === "production") notFound();
+// Internal index of the lab (for us, not part of any product path): in
+// real life a customer arrives directly on one professional's link.
+export default function LabIndex() {
   return (
-    <div
-      className={[
-        milaDisplay,
-        milaBody,
-        milaMono,
-        almaDisplay,
-        almaBody,
-        labSans,
-      ]
-        .map((font) => font.variable)
-        .join(" ")}
+    <main
+      className="mx-auto max-w-xl px-6 py-16"
+      style={{ fontFamily: "var(--font-lab-sans)" }}
     >
-      <ExperienceLab />
-    </div>
+      <p className="text-[13px] text-neutral-500">
+        Laboratoire interne · données fictives
+      </p>
+      <h1 className="mt-2 text-[32px] font-semibold tracking-[-0.03em]">
+        Liens de professionnelles
+      </h1>
+      <p className="mt-3 text-[15px] leading-relaxed text-neutral-600">
+        Chaque lien est ce qu’une cliente ouvre depuis Instagram ou un SMS : le
+        mini-site de la professionnelle, puis la réservation sans compte.
+      </p>
+      <ul className="mt-8 flex flex-col gap-3">
+        {Object.values(universes).map((universe) => (
+          <li key={universe.id}>
+            <Link
+              href={`/labo/${universe.id}`}
+              className="flex items-center justify-between rounded-2xl border border-neutral-200 px-5 py-4 hover:border-neutral-400"
+            >
+              <span>
+                <span className="block text-[17px] font-medium">
+                  {universe.name}
+                </span>
+                <span className="text-[14px] text-neutral-500">
+                  {universe.kind} · {universe.location}
+                </span>
+              </span>
+              <span className="text-[13px] text-neutral-500">
+                /labo/{universe.id} →
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </main>
   );
 }

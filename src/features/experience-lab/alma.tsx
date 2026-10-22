@@ -3,10 +3,9 @@
 import { AnimatePresence, motion, useScroll, useTransform } from "motion/react";
 import { useRef, useState } from "react";
 
-import { Booking, type Booked } from "./booking";
-import type { BrandProps } from "./lab";
+import { Booking } from "./booking";
+import type { BrandProps } from "./site";
 import { Cover, Photo, euros, minutes } from "./parts";
-import { ClientSpace } from "./space";
 import type { Service, Work } from "./universes";
 
 // Maison Alma — sensory. Macro textures, arch-shaped frames, images that
@@ -18,12 +17,10 @@ const SETTLE = [0.22, 1, 0.36, 1] as const;
 /** The universe's photo grade: soft, warm, a little dim. */
 const ALMA_GRADE = "saturate(.55) sepia(.28) contrast(.92) brightness(.88)";
 
-export function AlmaBrand({ universe, onLeave }: BrandProps) {
+export function AlmaBrand({ universe }: BrandProps) {
   const [booking, setBooking] = useState<{ service: Service | null } | null>(
     null,
   );
-  const [space, setSpace] = useState(false);
-  const [booked, setBooked] = useState<Booked | null>(null);
   const opening = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({
     target: opening,
@@ -41,19 +38,18 @@ export function AlmaBrand({ universe, onLeave }: BrandProps) {
     >
       <header className="fixed inset-x-0 top-0 z-40">
         <div className="mx-auto flex max-w-[1100px] items-center justify-between px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3 text-[14px] text-[var(--u-ink)]">
+          <span
+            className="rounded-full bg-[var(--u-bg)]/40 px-3 py-2 backdrop-blur-md"
+            style={serif}
+          >
+            {universe.name}
+          </span>
           <button
             type="button"
-            onClick={onLeave}
+            onClick={() => setBooking({ service: null })}
             className="cursor-pointer rounded-full bg-[var(--u-bg)]/40 px-3 py-2 backdrop-blur-md"
           >
-            ← Mon espace
-          </button>
-          <button
-            type="button"
-            onClick={() => setSpace(true)}
-            className="cursor-pointer rounded-full bg-[var(--u-bg)]/40 px-3 py-2 backdrop-blur-md"
-          >
-            Ma carte
+            Réserver
           </button>
         </div>
       </header>
@@ -63,9 +59,7 @@ export function AlmaBrand({ universe, onLeave }: BrandProps) {
         <div className="sticky top-0 h-svh overflow-hidden">
           <Cover
             universe={universe}
-            priority
             className="h-svh w-full"
-            style={{ borderRadius: 0 }}
             imageStyle={{ filter: "saturate(.8) sepia(.12)" }}
           />
           <motion.div
@@ -238,21 +232,6 @@ export function AlmaBrand({ universe, onLeave }: BrandProps) {
             universe={universe}
             initialService={booking.service}
             onClose={() => setBooking(null)}
-            onBooked={(value) => setBooked(value)}
-            onOpenSpace={() => {
-              setBooking(null);
-              setSpace(true);
-            }}
-          />
-        ) : null}
-      </AnimatePresence>
-      <AnimatePresence>
-        {space ? (
-          <ClientSpace
-            key="space"
-            universe={universe}
-            booked={booked}
-            onClose={() => setSpace(false)}
           />
         ) : null}
       </AnimatePresence>
