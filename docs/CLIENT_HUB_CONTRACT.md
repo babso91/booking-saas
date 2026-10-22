@@ -82,6 +82,7 @@ L'outbox est rattachée à une activité et à un rendez-vous, et fige chaque me
 - **Fin de session :**
   - `DELETE /api/client-hub/session` met fin à la session courante ;
   - `DELETE /api/client-hub/session?all=true` met fin à toutes les sessions du compte, **seulement si la session présentée est encore active**. La ligne de cette session est verrouillée et vérifiée sous ce verrou. Une session révoquée, expirée ou inconnue n'a aucune autorité sur les autres, même si sa révocation est concurrente : la réponse reste `200 { ended: true }`, sans indiquer l'état de l'ancienne session ;
+  - **ordre des verrous de la déconnexion :** le compte (verrou consultatif de transaction), puis la ligne de la session appelante. Deux déconnexions globales simultanées du même compte s'exécutent donc l'une après l'autre, sans deadlock : la première révoque toutes les sessions actives, la seconde trouve la sienne révoquée et ne change plus rien (les deux répondent 200). Les comptes différents ne s'attendent jamais. Seules les sessions actives sont révoquées ; les sessions expirées relèvent de la purge, sur des lignes disjointes. Une connexion n'insère qu'une nouvelle session, sans verrou de session : elle ne bloque pas une déconnexion et n'est pas bloquée par elle ;
   - le cookie est effacé dans les deux cas.
 - **Session refusée :** une session inconnue, expirée ou terminée donne `client_hub_unauthenticated` (401), et le cookie est effacé.
 - **CSRF :**
@@ -231,6 +232,9 @@ Les professionnelles restent la seule autorité sur ces opérations.
 | prendre le verrou d'adresse après le verrou de ligne                    | détectée                                                         |
 | une session révoquée garde l'autorité de déconnexion globale            | détectée                                                         |
 | une session expirée garde l'autorité de déconnexion globale             | détectée                                                         |
-| ne plus verrouiller la ligne de la session appelante                    | détectée                                                         |
+| retirer le verrou de compte de la déconnexion (le comportement audité)  | détectée : deadlock (`40P01`) entre deux déconnexions globales   |
+| retirer à la fois le verrou de compte et le verrou de ligne             | détectée                                                         |
+
+Retirer **seulement** le verrou de ligne n'est pas détecté : le verrou de compte ordonne à lui seul toute révocation d'une session, et le verrou de ligne n'est plus qu'une seconde garde, redondante.
 
 Pour chaque mutation, le script réinitialise la base, lance les tests ciblés et restaure la migration. Il échoue (code de sortie 1) si une mutation n'est pas détectée.

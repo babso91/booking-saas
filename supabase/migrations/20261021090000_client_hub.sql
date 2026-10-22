@@ -537,11 +537,18 @@ $$;
 
 revoke all on function private.client_hub_session_account(text, timestamptz) from public;
 
--- Ends the session (p_all: every session of the account). Idempotent: an
--- unknown, revoked or expired session is a quiet success that changes
--- nothing. Only a live session has authority over the others: the calling
--- session's row is locked (FOR UPDATE) and checked under that lock, so a
--- concurrent revocation of it commits first and then leaves it none.
+-- Ends the session (p_all: every live session of the account). Idempotent:
+-- an unknown, revoked or expired session is a quiet success that changes
+-- nothing. Only a live session has authority over the others.
+--
+-- Lock order: the account (transaction advisory lock), then the calling
+-- session's row (FOR UPDATE), checked under both. Logouts of one account
+-- run one after the other: two global logouts can no longer each hold
+-- their own row and wait for the other's (deadlock). Logouts of different
+-- accounts never wait for each other. Only live sessions are revoked: the
+-- expired ones belong to the purge of client_hub_request_code, whose rows
+-- never overlap these. A login (client_hub_verify_code) only inserts a new
+-- session and takes no session lock.
 create function public.client_hub_end_session(
   p_session_token text,
   p_all boolean default false
@@ -553,15 +560,31 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_hash text;
+  v_account uuid;
   v_session private.client_hub_sessions%rowtype;
 begin
   if p_session_token is null or p_session_token !~ '^[0-9a-f]{64}$' then
     return;
   end if;
+  v_hash := pg_catalog.encode(extensions.digest(p_session_token, 'sha256'), 'hex');
+
+  -- The account, read without any row lock; a session never changes
+  -- account.
+  select s.account_id into v_account
+  from private.client_hub_sessions s
+  where s.token_hash = v_hash;
+
+  if not found then
+    return;
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('client_hub_account:' || v_account::text, 0));
 
   select s.* into v_session
   from private.client_hub_sessions s
-  where s.token_hash = pg_catalog.encode(extensions.digest(p_session_token, 'sha256'), 'hex')
+  where s.token_hash = v_hash
   for update;
 
   if not found
@@ -573,6 +596,7 @@ begin
   update private.client_hub_sessions s
   set revoked_at = pg_catalog.now()
   where s.revoked_at is null
+    and s.expires_at > pg_catalog.now()
     and (s.id = v_session.id or (coalesce(p_all, false) and s.account_id = v_session.account_id));
 end;
 $$;

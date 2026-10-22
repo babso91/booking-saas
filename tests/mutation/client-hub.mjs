@@ -14,7 +14,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const MIGRATION = "supabase/migrations/20261021090000_client_hub.sql";
 const TESTS = "tests/integration/client-hub.test.ts";
-const FILTER = "verification concurrency|logout authority";
+const FILTER =
+  "verification concurrency|logout authority|concurrent global logouts";
 
 const mutations = {
   // The audited behaviour: no address lock before the challenge row.
@@ -63,10 +64,24 @@ const mutations = {
     `  if not found
     or v_session.revoked_at is not null then`,
   ],
-  end_session_without_row_lock: [
-    `  where s.token_hash = pg_catalog.encode(extensions.digest(p_session_token, 'sha256'), 'hex')
+  // Neither lock: the revocation race is no longer ordered. (Removing only
+  // the row lock is not detected: the account lock alone orders every
+  // revocation of a session; the row lock is a redundant second guard.)
+  end_session_without_any_lock: [
+    `  where s.token_hash = v_hash
   for update;`,
-    `  where s.token_hash = pg_catalog.encode(extensions.digest(p_session_token, 'sha256'), 'hex');`,
+    `  where s.token_hash = v_hash;`,
+    `  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('client_hub_account:' || v_account::text, 0));
+`,
+    ``,
+  ],
+  // The audited behaviour: no account lock before the session row.
+  end_session_without_account_lock: [
+    `  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('client_hub_account:' || v_account::text, 0));
+`,
+    ``,
   ],
 };
 

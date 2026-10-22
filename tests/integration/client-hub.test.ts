@@ -1426,3 +1426,158 @@ describe("logout authority", () => {
     expect((await me(t2)).status).toBe(200);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Global logouts racing each other (correction after the second Codex
+// audit). Lock order of client_hub_end_session: account (advisory), then
+// the calling session's row; only live sessions are revoked.
+// ---------------------------------------------------------------------------
+
+const END_SQL = "select public.client_hub_end_session($1, $2)";
+
+function settleEnd(query: Promise<unknown>) {
+  return query.then(
+    () => "ok",
+    (error: { message: string }) => `error:${error.message}`,
+  );
+}
+
+async function activeSessions(address: string) {
+  const { rows } = await db.query(
+    `select count(*)::int as n from private.client_hub_sessions s
+     join private.client_hub_accounts a on a.id = s.account_id
+     where a.email = $1 and s.revoked_at is null and s.expires_at > now()`,
+    [address],
+  );
+  return rows[0].n as number;
+}
+
+const hashOf = (token: string) =>
+  db
+    .query<{ id: string }>(
+      `select id from private.client_hub_sessions
+       where token_hash = encode(extensions.digest($1, 'sha256'), 'hex')`,
+      [token],
+    )
+    .then((result) => result.rows[0]!.id);
+
+describe("concurrent global logouts", () => {
+  it("two sessions of one account log out everywhere at the same moment: no deadlock, every session ended", async () => {
+    const address = email("double-global");
+    const t1 = await login(address);
+    const t2 = await login(address);
+    const t3 = await login(address);
+
+    // A third transaction holds both callers' rows, so that both calls are
+    // released at the same moment: without the account lock each then
+    // holds its own row and waits for the other's (40P01).
+    const holder = await openTransaction();
+    await holder.connection.query(
+      "select id from private.client_hub_sessions where id = any($1) for update",
+      [[await hashOf(t1), await hashOf(t2)]],
+    );
+    const a = await openTransaction({ role: "service_role" });
+    const b = await openTransaction({ role: "service_role" });
+    const first = settleEnd(a.connection.query(END_SQL, [t1, true]));
+    await waitUntilBlocked(a.pid);
+    const second = settleEnd(b.connection.query(END_SQL, [t2, true]));
+    await waitUntilBlocked(b.pid);
+    await closeTransaction(holder, "commit");
+
+    const firstResult = await first;
+    await closeTransaction(a, firstResult === "ok" ? "commit" : "rollback");
+    const secondResult = await second;
+    await closeTransaction(b, secondResult === "ok" ? "commit" : "rollback");
+
+    expect([firstResult, secondResult]).toEqual(["ok", "ok"]);
+    expect(await activeSessions(address)).toBe(0);
+    expect((await me(t3)).status).toBe(401);
+  });
+
+  it("ordinary concurrent global logouts through the API: all answer 200, all sessions ended", async () => {
+    const address = email("burst-global");
+    const tokens: string[] = [];
+    for (let i = 0; i < 5; i += 1) tokens.push(await login(address));
+    const results = await Promise.all(
+      tokens.map((token) => logout(token, true)),
+    );
+    expect(results.map((r) => r.status)).toEqual([200, 200, 200, 200, 200]);
+    expect(await activeSessions(address)).toBe(0);
+  });
+
+  it("a single logout and a global logout racing: both end cleanly, nothing stays active", async () => {
+    const address = email("single-global");
+    const t1 = await login(address);
+    const t2 = await login(address);
+    const single = await openTransaction({ role: "service_role" });
+    const global = await openTransaction({ role: "service_role" });
+    expect(await settleEnd(single.connection.query(END_SQL, [t1, false]))).toBe(
+      "ok",
+    );
+    const pending = settleEnd(global.connection.query(END_SQL, [t2, true]));
+    await waitUntilBlocked(global.pid); // the account lock
+    await closeTransaction(single, "commit");
+    expect(await pending).toBe("ok");
+    await closeTransaction(global, "commit");
+    expect(await activeSessions(address)).toBe(0);
+  });
+
+  it("a global logout racing a new login: neither blocks the other; the new session survives", async () => {
+    const address = email("login-global");
+    const t1 = await login(address);
+    const asked = await askCode(address);
+    const code = lastCode();
+    const verifying = await openTransaction({ role: "service_role" });
+    const { rows } = await verifying.connection.query(
+      "select status, session_token from public.client_hub_verify_code($1, $2, $3, '198.51.100.51')",
+      [asked.body.data.challengeId, address, code],
+    );
+    expect(rows[0].status).toBe("ok");
+
+    const global = await openTransaction({ role: "service_role" });
+    const ended = await Promise.race([
+      settleEnd(global.connection.query(END_SQL, [t1, true])),
+      new Promise((resolve) => setTimeout(() => resolve("blocked"), 3000)),
+    ]);
+    expect(ended).toBe("ok");
+    await closeTransaction(global, "commit");
+    await closeTransaction(verifying, "commit");
+
+    expect((await me(t1)).status).toBe(401);
+    expect((await me(rows[0].session_token)).status).toBe(200);
+  });
+
+  it("global logouts of two accounts do not wait for each other", async () => {
+    const first = await login(email("acct-a"));
+    const second = await login(email("acct-b"));
+    const a = await openTransaction({ role: "service_role" });
+    const b = await openTransaction({ role: "service_role" });
+    expect(await settleEnd(a.connection.query(END_SQL, [first, true]))).toBe(
+      "ok",
+    );
+    const other = await Promise.race([
+      settleEnd(b.connection.query(END_SQL, [second, true])),
+      new Promise((resolve) => setTimeout(() => resolve("blocked"), 3000)),
+    ]);
+    expect(other).toBe("ok");
+    await closeTransaction(a, "commit");
+    await closeTransaction(b, "commit");
+  });
+
+  it("a revoked or expired token waits for nothing and changes nothing, even while another global logout runs", async () => {
+    const address = email("stale-global");
+    const stale = await login(address);
+    await logout(stale);
+    const expired = await login(address);
+    await db.query(
+      `update private.client_hub_sessions set expires_at = now() - interval '1 second'
+       where token_hash = encode(extensions.digest($1, 'sha256'), 'hex')`,
+      [expired],
+    );
+    const live = await login(address);
+    for (const token of [stale, expired]) {
+      expect(await settleEnd(db.query(END_SQL, [token, true]))).toBe("ok");
+    }
+    expect((await me(live)).status).toBe(200);
+  });
+});
