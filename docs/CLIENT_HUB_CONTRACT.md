@@ -1,6 +1,6 @@
 # Client Hub V1 : contrat backend (PR #25)
 
-Backend seulement : aucun écran n'est livré. Ce document décrit l'architecture retenue, les règles d'identité et d'autorisation, et les contrats que l'interface (Claude UI) peut utiliser **sans rien supposer d'autre**. Migration : `supabase/migrations/20261021090000_client_hub.sql`. Code : `src/features/client-hub/`, `src/app/api/client-hub/`. Tests : `tests/integration/client-hub.test.ts`, `tests/upgrade/client-hub.test.ts`.
+Backend livré par la PR #25, interface par la PR #26 (§ 11). Ce document décrit l'architecture retenue, les règles d'identité et d'autorisation, et les contrats que l'interface (Claude UI) peut utiliser **sans rien supposer d'autre**. Migration : `supabase/migrations/20261021090000_client_hub.sql`. Code : `src/features/client-hub/`, `src/app/api/client-hub/`. Tests : `tests/integration/client-hub.test.ts`, `tests/upgrade/client-hub.test.ts`.
 
 > **Pas encore utilisable en production.** La connexion envoie un code par email via le transport configuré (`EMAIL_TRANSPORT`). Tant que l'envoi réel (Resend) n'est pas configuré, `POST /api/client-hub/session/code` répond `client_hub_unavailable` (503) et n'émet aucun code. Il n'existe aucun contournement de développement dans le code de production. Seul le transport Mailpit local, ou le transport en mémoire des tests, permet de se connecter aujourd'hui.
 
@@ -212,7 +212,7 @@ Les professionnelles restent la seule autorité sur ces opérations.
 ## 9. Limites connues
 
 - **Envoi réel non configuré :** voir l'encadré en tête de document.
-- **Accès par autorisation seulement :** une cliente sans autorisation de sa professionnelle voit un espace vide. Il n'y a pas encore d'invitation par email ; la professionnelle ouvre l'accès depuis l'action, et l'écran viendra plus tard.
+- **Accès par autorisation seulement :** une cliente sans autorisation de sa professionnelle voit un espace vide. Il n'y a pas encore d'invitation par email : la professionnelle ouvre l'accès depuis la fiche cliente (§ 11) et transmet elle-même le lien de l'espace.
 - **Réservation depuis l'espace :** une réservation faite pendant une session n'est pas rattachée automatiquement ; elle suit la règle d'autorisation.
 - **Durée de session fixe :** 7 jours, sans « appareils connectés » détaillés. La déconnexion de toutes les sessions existe.
 - **Pas de captcha :** les limites de débit sont la seule défense contre l'envoi massif de codes vers des adresses arbitraires.
@@ -238,3 +238,70 @@ Les professionnelles restent la seule autorité sur ces opérations.
 Retirer **seulement** le verrou de ligne n'est pas détecté : le verrou de compte ordonne à lui seul toute révocation d'une session, et le verrou de ligne n'est plus qu'une seconde garde, redondante.
 
 Pour chaque mutation, le script réinitialise la base, lance les tests ciblés et restaure la migration. Il échoue (code de sortie 1) si une mutation n'est pas détectée.
+
+## 11. Interface (PR #26)
+
+### Espace cliente (`/espace`)
+
+| Page                                             | Contenu                                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `/espace/connexion`                              | email, puis code à 8 chiffres                                                               |
+| `/espace`                                        | une carte par établissement : prochain rendez-vous et carte fidélité (jamais additionnées)  |
+| `/espace/:businessId/rendez-vous`                | à venir / passés, groupés par mois, paginés par curseur                                     |
+| `/espace/:businessId/rendez-vous/:appointmentId` | détail, établissement, conditions d'annulation ; rien de modifiable                         |
+| `/espace/:businessId/fidelite`                   | solde, récompenses (progression, « Disponible »), récompenses attribuées, historique paginé |
+
+**Session côté navigateur** (`src/features/client-hub/client/session.tsx`) :
+
+- **Pages sans données côté serveur :** le cookie est limité à `/api/client-hub`, donc aucune page ne peut lire la session. Les pages sont des coquilles `noindex`, et toutes les données viennent d'appels `fetch` same-origin vers les routes, en `no-store` et `credentials: same-origin`. Aucun jeton n'est lisible par JavaScript.
+- **Qui est connectée :** l'interface le demande à `GET /me`, au chargement, au retour sur l'onglet et à la restauration depuis le cache avant/arrière (l'écran est alors masqué tant que la réponse n'est pas arrivée).
+- **Génération :** chaque identité affichée (connexion, déconnexion, expiration, autre cliente connectée ailleurs) en reçoit une nouvelle.
+  - Tous les écrans sont remontés sous cette génération : rien de ce qui a été saisi, ouvert ou lu n'est conservé.
+  - Toute réponse à une requête partie sous une génération antérieure est ignorée. Cela vaut aussi pour un 401 tardif, qui ne peut jamais déconnecter la session suivante.
+  - Chaque lecture et chaque page de liste vérifient aussi leur clé (établissement, période) : une page tardive n'est jamais ajoutée à une autre liste.
+- **Réponses des routes :**
+  - **401** sur n'importe quelle lecture : la session est terminée et l'écran revient à la connexion (« Votre session a expiré »).
+  - **404 :** l'interface redemande `GET /me`. Une autorisation retirée fait disparaître l'établissement de l'espace.
+  - **Établissement absent du profil :** aucune requête n'est faite pour lui. La sécurité reste celle de l'API.
+- **Fin de session :**
+  - **Déconnexion :** `DELETE /api/client-hub/session` (ou `?all=true`). Seule une réponse confirmée vide l'écran ; sans réponse, l'écran dit que la déconnexion n'est pas confirmée.
+  - **Autres onglets :** prévenus par `BroadcastChannel` (`client-hub-session`).
+  - **Expiration :** l'instant de fin de la session (7 jours) ferme l'écran à l'heure dite.
+
+**Connexion :**
+
+- **Code :**
+  - un seul champ réel (`autocomplete="one-time-code"`, pavé numérique, collage de « 1234 5678 »), affiché en 8 cases ;
+  - envoi automatique dès 8 chiffres ;
+  - le code n'est conservé qu'en mémoire, et vidé après chaque essai.
+- **Limites affichées** (le backend reste l'autorité) :
+  - compte à rebours de validité ;
+  - 5 essais par code ;
+  - 30 s entre deux envois.
+- **Anti-énumération :** le même écran s'affiche pour toute adresse, connue ou non.
+- **Réponses d'erreur :**
+  - `client_hub_unavailable` affiche « Accès temporairement indisponible », sans aucun contournement ;
+  - `rate_limited` invite à patienter, et rien n'est renvoyé automatiquement.
+
+**Lecture seule :** aucun bouton d'échange, de crédit, d'annulation ou de modification. Le motif saisi par la professionnelle n'est jamais affiché : l'historique est libellé d'après `type`, `serviceName` et `rewardName`.
+
+### Fiche cliente CRM : carte « Espace client »
+
+Actions existantes : `getClientHubAccessAction`, `setClientHubAccessAction`. Aucune action ni règle n'a été ajoutée.
+
+- **Lecture :** l'accès est lu à l'ouverture et relu à chaque changement d'email de la fiche. Si l'accès était ouvert et que l'email a changé, la carte dit qu'il a été retiré automatiquement.
+- **Autoriser :**
+  - après confirmation, qui liste ce que la cliente verra et ne verra pas ;
+  - envoie toujours `expectedEmail` = l'adresse affichée ;
+  - l'adresse ensuite montrée est celle renvoyée par le backend.
+- **Retirer :** après confirmation.
+- **Erreurs :**
+  - `stale_client` / `client_hub_email_required` : rien n'est autorisé, et la fiche comme l'accès sont relus ;
+  - sans réponse : la carte dit que le changement a peut-être été enregistré, et relit l'accès.
+- **Garanties :** jamais d'autorisation automatique, ni d'« invitation envoyée ». La carte propose le lien de l'espace à copier.
+
+### Contrats manquants (pour une prochaine PR backend)
+
+- **Envoi d'invitation par email :** la professionnelle transmet le lien à la main.
+- **Fin de session :** `GET /me` ne renvoie pas `expiresAt`. Après un rechargement, l'interface ne connaît la fin de session qu'au premier 401.
+- **Identité des réponses :** les routes de lecture ne renvoient pas l'identité de la session qui a répondu. Deux onglets dont l'un connecte une autre cliente sont donc resynchronisés par `BroadcastChannel` et au retour sur l'onglet, pas réponse par réponse.

@@ -246,3 +246,15 @@ export const SearchIcon = (props: IconProps) => (
     <path d="M16 16l4.5 4.5" />
   </Icon>
 );
+
+export const HomeIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M4 10.5L12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5h-3.5v-6h-6v6H5.5A1.5 1.5 0 0 1 4 19z" />
+  </Icon>
+);
+
+export const LogOutIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M14 4.5h4a1.5 1.5 0 0 1 1.5 1.5v12a1.5 1.5 0 0 1-1.5 1.5h-4M10 16l-4-4 4-4M6 12h10" />
+  </Icon>
+);
