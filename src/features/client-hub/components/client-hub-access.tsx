@@ -226,16 +226,22 @@ export function ClientHubAccess({
 
       {done ? <Notice tone="success">{done}</Notice> : null}
       {typeof write === "object" && confirm === null ? (
-        <WriteError
-          error={write}
-          uncertain="Sans réponse, le changement a peut-être été enregistré : l’état affiché vient d’être relu."
-        >
-          {write.code === "stale_client"
-            ? "L’email de la fiche a changé entre-temps : rien n’a été autorisé. Vérifie la nouvelle adresse avant de recommencer."
-            : write.code === "client_hub_email_required"
-              ? "La fiche n’a plus d’adresse email : rien n’a été autorisé."
-              : "Le changement n’a pas été enregistré."}
-        </WriteError>
+        write.code === "stale_client" ||
+        write.code === "client_hub_email_required" ? (
+          // Its own words: the record is already being read again.
+          <Notice tone="warning" title="Rien n’a été autorisé">
+            {write.code === "stale_client"
+              ? "L’email de la fiche a changé entre-temps. La fiche vient d’être relue : vérifie la nouvelle adresse avant de recommencer."
+              : "La fiche n’a plus d’adresse email. Ajoute-la avant d’ouvrir son espace client."}
+          </Notice>
+        ) : (
+          <WriteError
+            error={write}
+            uncertain="Sans réponse, le changement a peut-être été enregistré : l’état affiché vient d’être relu."
+          >
+            Le changement n’a pas été enregistré.
+          </WriteError>
+        )
       ) : null}
 
       <ConfirmDialog

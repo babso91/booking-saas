@@ -150,9 +150,11 @@ describe("Client Hub access on the CRM record", () => {
     await grant();
     expect(
       await screen.findByText(
-        /L’email de la fiche a changé entre-temps : rien n’a été autorisé/,
+        /L’email de la fiche a changé entre-temps\. La fiche vient d’être relue/,
       ),
     ).toBeTruthy();
+    // Said once, and never "reload it": it is already being read again.
+    expect(document.body.textContent).not.toMatch(/Recharge-la/);
     expect(onStale).toHaveBeenCalledTimes(1);
     await waitFor(() =>
       expect(actions.getClientHubAccessAction).toHaveBeenCalledTimes(2),
