@@ -262,6 +262,27 @@ export const errorCopy: Record<
     message:
       "Seul un ajustement manuel s’annule ici. Pour un rendez-vous, rouvre-le ; pour une récompense, annule-la.",
   },
+  client_hub_unauthenticated: {
+    title: "Session expirée",
+    message: "Reconnecte-toi avec un nouveau code.",
+  },
+  client_hub_code_invalid: {
+    title: "Code non valable",
+    message: "Vérifie le code ou demandes-en un nouveau.",
+  },
+  client_hub_unavailable: {
+    title: "Espace client indisponible",
+    message: "Réessaie dans quelques minutes.",
+  },
+  client_hub_not_found: {
+    title: "Introuvable",
+    message: "Cet élément n’est pas disponible dans l’espace client.",
+  },
+  client_hub_email_required: {
+    title: "Email manquant",
+    message:
+      "Ajoute l’adresse email de ta cliente avant de lui ouvrir l’espace client.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {

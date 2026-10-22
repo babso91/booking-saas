@@ -91,6 +91,15 @@ export const appErrorMessages = {
   loyalty_entry_not_found: "Ce mouvement de points est introuvable.",
   loyalty_entry_not_reversible:
     "Seul un ajustement manuel peut être annulé ici.",
+  client_hub_unauthenticated:
+    "Votre session a expiré. Reconnectez-vous avec un nouveau code.",
+  client_hub_code_invalid:
+    "Ce code n’est pas valable. Vérifiez-le ou demandez-en un nouveau.",
+  client_hub_unavailable:
+    "L’espace client est momentanément indisponible. Merci de réessayer plus tard.",
+  client_hub_not_found: "Élément introuvable dans votre espace client.",
+  client_hub_email_required:
+    "Cette fiche cliente n’a pas d’adresse email : ajoutez-la avant d’ouvrir l’espace client.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -201,6 +210,11 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   invalid_redemption_transition: 409,
   loyalty_entry_not_found: 404,
   loyalty_entry_not_reversible: 409,
+  client_hub_unauthenticated: 401,
+  client_hub_code_invalid: 400,
+  client_hub_unavailable: 503,
+  client_hub_not_found: 404,
+  client_hub_email_required: 409,
   internal: 500,
 };
 

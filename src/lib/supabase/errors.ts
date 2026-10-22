@@ -63,6 +63,9 @@ const domainMessages: Record<string, AppErrorCode> = {
   invalid_redemption_transition: "invalid_redemption_transition",
   loyalty_entry_not_found: "loyalty_entry_not_found",
   loyalty_entry_not_reversible: "loyalty_entry_not_reversible",
+  client_hub_unauthenticated: "client_hub_unauthenticated",
+  client_hub_not_found: "client_hub_not_found",
+  client_hub_email_required: "client_hub_email_required",
 };
 
 // SQLSTATE classes produced by constraints and RLS.
