@@ -78,6 +78,8 @@ export function MilaBrand({ universe, onLeave }: BrandProps) {
             }}
           />
           <div className="grain pointer-events-none absolute inset-0" />
+          {/* Keeps the name legible on light photos. */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[55%] bg-[linear-gradient(0deg,rgba(0,0,0,.85),transparent)]" />
           <motion.div
             style={{ y: titleY }}
             className="absolute inset-x-0 bottom-0 px-4 pb-[calc(max(env(safe-area-inset-bottom),14px)+76px)] mix-blend-difference"

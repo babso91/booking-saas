@@ -98,37 +98,37 @@ export const mila: Universe = {
   location: "Paris 9e",
   intro:
     "Un regard se dessine comme une silhouette. Extensions, rehaussement et sourcils, pensés comme une ligne de collection.",
-  cover: "1633381521050-26bb467d9d5a",
+  cover: "1548902378-2ec44c906391",
   works: [
     {
       id: "w1",
       photo: "1639629509821-c54cdd984227",
       title: "Volume russe",
-      note: "Effet œil de biche, 2 h",
+      note: "Effet œil de biche, 2 h 30",
     },
     {
       id: "w2",
-      photo: "1548902378-2ec44c906391",
+      photo: "1589710751893-f9a6770ad71b",
+      title: "La pose",
+      note: "Cil à cil, au studio",
+    },
+    {
+      id: "w3",
+      photo: "1567629307995-b9f33097bd30",
       title: "Cil à cil",
       note: "Naturel, courbure C",
     },
     {
-      id: "w3",
-      photo: "1533392151650-269f96231f65",
-      title: "Regard nu",
-      note: "Rehaussement + teinture",
-    },
-    {
       id: "w4",
-      photo: "1567629307995-b9f33097bd30",
-      title: "Mascara permanent",
-      note: "Tenue 6 semaines",
+      photo: "1674049406467-824ea37c7184",
+      title: "Rehaussement",
+      note: "Courbe et teinture, 1 h",
     },
     {
       id: "w5",
-      photo: "1606143412458-acc5f86de897",
-      title: "Ligne graphique",
-      note: "Sourcils restructurés",
+      photo: "1674049406179-d7bf2c263e71",
+      title: "Sourcils",
+      note: "Restructuration, 45 min",
     },
   ],
   services: [
@@ -187,31 +187,31 @@ export const alma: Universe = {
   location: "Lyon 2e",
   intro:
     "Un lieu pour ralentir. Chaque soin commence par quelques minutes de silence, et se termine quand vous êtes prête.",
-  cover: "1789454715591-dc406c8f6ede",
+  cover: "1777262080995-da4a45f51af8",
   works: [
     {
       id: "w1",
-      photo: "1777262080995-da4a45f51af8",
-      title: "Cils au naturel",
-      note: "Rehaussement doux",
-    },
-    {
-      id: "w2",
-      photo: "1710580889701-9fa8f2cd5927",
-      title: "Matière",
-      note: "La peau, avant tout",
-    },
-    {
-      id: "w3",
       photo: "1772236617396-2f8460293c07",
       title: "Le geste",
       note: "Pose lente, cil après cil",
     },
     {
+      id: "w2",
+      photo: "1639629509821-c54cdd984227",
+      title: "Cils au naturel",
+      note: "Une pose qui ne se voit pas",
+    },
+    {
+      id: "w3",
+      photo: "1770999086860-143f54adf01b",
+      title: "Matière",
+      note: "Nos cils, un par un",
+    },
+    {
       id: "w4",
-      photo: "1773062974528-f78d2cc8e695",
-      title: "Lumière",
-      note: "La cabine du matin",
+      photo: "1772235616130-b80e12f0ab7a",
+      title: "Rituel regard",
+      note: "Rehaussement et soin",
     },
     {
       id: "w5",
