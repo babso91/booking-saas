@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion, type MotionProps } from "motion/react";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import type { Service } from "./engine/config";
 import { Detail, Display, euros, minutes, useEngine } from "./engine/engine";
@@ -40,6 +40,15 @@ export function Booking({
   const firstId = useId();
   const emailId = useId();
   const phoneId = useId();
+
+  const dialog = useRef<HTMLDivElement>(null);
+
+  // Focus moves into the booking, and back to what opened it on close.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    dialog.current?.focus();
+    return () => opener?.focus?.();
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
@@ -111,13 +120,15 @@ export function Booking({
         />
       ) : null}
       <motion.div
+        ref={dialog}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={`Réserver chez ${config.brand.name}`}
         className={
           sheet
-            ? "fixed inset-x-0 bottom-0 z-50 flex max-h-[92dvh] flex-col bg-[var(--u-paper)] text-[var(--u-ink-on-paper)] shadow-[0_-30px_80px_-20px_rgba(0,0,0,.5)]"
-            : "fixed inset-0 z-50 flex flex-col bg-[var(--u-paper)] text-[var(--u-ink-on-paper)]"
+            ? "fixed inset-x-0 bottom-0 z-50 flex max-h-[92dvh] flex-col outline-none bg-[var(--u-paper)] text-[var(--u-ink-on-paper)] shadow-[0_-30px_80px_-20px_rgba(0,0,0,.5)]"
+            : "fixed inset-0 z-50 flex flex-col bg-[var(--u-paper)] outline-none text-[var(--u-ink-on-paper)]"
         }
         style={{
           fontFamily: "var(--t-body)",

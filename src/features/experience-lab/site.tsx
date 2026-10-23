@@ -1,12 +1,12 @@
 "use client";
 
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Booking } from "./booking";
 import type { Service, SiteConfig } from "./engine/config";
 import { Detail, Display, EngineProvider, useEngine } from "./engine/engine";
-import { cssVariables } from "./engine/tokens";
+import { cssVariables, readableOn } from "./engine/tokens";
 import type { Plan } from "./plans";
 import { Intro } from "./scenes/intro";
 import { Opening } from "./scenes/opening";
@@ -139,11 +139,38 @@ function Footer() {
 function QuickBook() {
   const { config, book, motion: language } = useEngine();
   const count = config.content.services.length;
+  const palette = config.tokens.palette;
+  const [hidden, setHidden] = useState(false);
+
+  // Where every service is already a way into booking, the floating
+  // button steps aside instead of covering a price or a description.
+  useEffect(() => {
+    const scenes = document.querySelectorAll("[data-booking-scene]");
+    const visible = new Set<Element>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) visible.add(entry.target);
+          else visible.delete(entry.target);
+        }
+        setHidden(visible.size > 0);
+      },
+      { rootMargin: "-20% 0px -20% 0px" },
+    );
+    scenes.forEach((scene) => observer.observe(scene));
+    return () => observer.disconnect();
+  }, [config.sections]);
   return (
     <motion.div
       initial={{ y: 120 }}
-      animate={{ y: 0 }}
-      transition={{ duration: 0.6, delay: 0.9, ease: language.ease }}
+      animate={{ y: hidden ? 120 : 0 }}
+      aria-hidden={hidden || undefined}
+      inert={hidden}
+      transition={{
+        duration: 0.45,
+        delay: hidden ? 0 : 0.2,
+        ease: language.ease,
+      }}
       className={
         config.quickBook === "bar"
           ? "fixed inset-x-0 bottom-0 z-30 px-4 pb-[max(env(safe-area-inset-bottom),14px)]"
@@ -164,12 +191,16 @@ function QuickBook() {
         <button
           type="button"
           onClick={() => book(null)}
-          className="pointer-events-auto flex h-14 cursor-pointer items-center gap-3 rounded-full bg-[var(--u-ink)] px-7 text-[16px] text-[var(--u-bg)] shadow-[0_18px_40px_-14px_rgba(0,0,0,.55)]"
+          className="pointer-events-auto flex h-14 cursor-pointer items-center gap-3 rounded-full bg-white px-7 text-[16px] font-semibold shadow-[0_18px_40px_-14px_rgba(0,0,0,.55)]"
+          // The brand's accent on white, unless it would not be readable.
+          style={{
+            color: readableOn("#FFFFFF", [
+              palette.accent,
+              palette.bg,
+              "#111111",
+            ]),
+          }}
         >
-          <span
-            className="size-2.5 rounded-full bg-[var(--u-accent)]"
-            aria-hidden="true"
-          />
           Réserver
           <span aria-hidden="true">→</span>
         </button>

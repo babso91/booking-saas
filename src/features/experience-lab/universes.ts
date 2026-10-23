@@ -130,7 +130,7 @@ export const mila: Universe = {
         ink: "#0B0B0B",
         paper: "#0B0B0B",
         inkOnPaper: "#ECEAE4",
-        muted: "#6E6B66",
+        muted: "#5F5C57",
         line: "#CFCBC2",
       },
     },
@@ -185,7 +185,7 @@ const almaOlive: Palette = {
   muted: "#97A08F",
   line: "#34403A",
   accent: "#D2795A",
-  onAccent: "#FFFFFF",
+  onAccent: "#1E2620",
 };
 
 export const alma: Universe = {

@@ -168,3 +168,31 @@ export function cssVariables(tokens: {
     "--s-control": `${shape.control}px`,
   } as CSSProperties;
 }
+
+/** WCAG relative luminance of a #rrggbb colour. */
+function luminance(hex: string) {
+  const value = hex.replace("#", "");
+  const channels = [0, 2, 4].map((start) => {
+    const channel = parseInt(value.slice(start, start + 2), 16) / 255;
+    return channel <= 0.03928
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+}
+
+/** WCAG contrast ratio between two #rrggbb colours (1 to 21). */
+export function contrast(a: string, b: string) {
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (light! + 0.05) / (dark! + 0.05);
+}
+
+/** The first colour readable on `background` (4.5:1), else the best one. */
+export function readableOn(background: string, candidates: string[]) {
+  return (
+    candidates.find((color) => contrast(color, background) >= 4.5) ??
+    [...candidates].sort(
+      (a, b) => contrast(b, background) - contrast(a, background),
+    )[0]!
+  );
+}

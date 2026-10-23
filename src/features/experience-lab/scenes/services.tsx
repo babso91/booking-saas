@@ -32,7 +32,10 @@ function PriceIndex({ index }: { index: number }) {
   const { config, book, motion: language } = useEngine();
   const [open, setOpen] = useState<string | null>(null);
   return (
-    <section className="bg-[var(--u-paper)] text-[var(--u-ink-on-paper)]">
+    <section
+      data-booking-scene
+      className="bg-[var(--u-paper)] text-[var(--u-ink-on-paper)]"
+    >
       <div className="mx-auto max-w-[1100px] px-5 pt-16 pb-40">
         <div className="flex items-baseline justify-between border-t border-current pt-4">
           <Detail>({String(index).padStart(2, "0")}) Prestations</Detail>
@@ -101,7 +104,10 @@ function Shelf() {
   const { config, book } = useEngine();
   const reveal = useReveal();
   return (
-    <section className="bg-[var(--u-paper)] pt-20 pb-36 text-[var(--u-ink-on-paper)]">
+    <section
+      data-booking-scene
+      className="bg-[var(--u-paper)] pt-20 pb-36 text-[var(--u-ink-on-paper)]"
+    >
       <div className="mx-auto max-w-[1100px] px-6">
         <motion.h2
           className="text-[44px] leading-none md:text-[64px]"
@@ -169,7 +175,10 @@ function Tiles() {
     "bg-[var(--u-ink)] text-[var(--u-bg)]",
   ];
   return (
-    <section className="bg-[var(--u-bg)] px-3 pt-16 pb-36 text-[var(--u-ink)]">
+    <section
+      data-booking-scene
+      className="bg-[var(--u-bg)] px-3 pt-16 pb-36 text-[var(--u-ink)]"
+    >
       <motion.h2
         className="mx-auto max-w-[1100px] px-2 text-[clamp(48px,15vw,140px)] leading-[0.85]"
         {...reveal()}
