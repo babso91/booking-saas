@@ -76,6 +76,11 @@ export default async function setup(project: TestProject) {
       NEXT_PUBLIC_APP_URL: APP_URL,
       NEXT_PUBLIC_SUPABASE_URL: env.apiUrl,
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: env.anonKey,
+      // The server-side key the production deployment has: without it the
+      // routes that need it (Client Hub reads, public booking) fail with 500
+      // instead of answering for real. No trusted ingress and no email
+      // delivery: those stay at their production defaults (unconfigured).
+      SUPABASE_SERVICE_ROLE_KEY: env.serviceRoleKey,
     },
   });
 
