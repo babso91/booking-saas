@@ -259,8 +259,9 @@ Pour chaque mutation, le script réinitialise la base, lance les tests ciblés e
 - **Pages sans données côté serveur :** le cookie est limité à `/api/client-hub`, donc aucune page ne peut lire la session. Les pages sont des coquilles `noindex`, et toutes les données viennent d'appels `fetch` same-origin vers les routes, en `no-store` et `credentials: same-origin`. Aucun jeton n'est lisible par JavaScript.
 - **Qui est connectée :** l'interface le demande à `GET /me`, au chargement, au retour sur l'onglet et à la restauration depuis le cache avant/arrière.
   - Dès que l'onglet est quitté, ses données sont **voilées** : masquées et inertes, sans être détruites.
+  - Ce que ses écrans affichent hors de leur conteneur (le panneau « Mon compte », un portail sur `<body>`) est **suspendu** avec eux : fermé, son piège de focus et ses attributs `inert` retirés. Le focus va sur l'écran de vérification, puis sur « Réessayer », accessible au clavier et au toucher.
   - Elles ne réapparaissent qu'une fois l'identité confirmée.
-  - **Même cliente :** son écran revient tel qu'elle l'avait laissé, pagination comprise.
+  - **Même cliente :** son écran revient tel qu'elle l'avait laissé, pagination et panneau ouvert compris.
   - **Autre cliente :** les écrans repartent de zéro.
   - **Pas de réponse :** le voile reste, avec « Réessayer ». Ce n'est pas une expiration, et l'ancien écran n'est jamais réexposé.
 - **Génération :** chaque identité affichée (connexion, déconnexion, expiration, autre cliente connectée ailleurs) en reçoit une nouvelle.

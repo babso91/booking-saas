@@ -61,6 +61,7 @@ export function Sheet({
   placement = "side",
   initialFocus,
   closeLabel = "Fermer",
+  returnFocus,
 }: {
   open: boolean;
   onClose: () => void;
@@ -71,6 +72,8 @@ export function Sheet({
   placement?: "side" | "center";
   initialFocus?: RefObject<HTMLElement | null>;
   closeLabel?: string;
+  /** Where focus goes back when the element that opened it is gone. */
+  returnFocus?: RefObject<HTMLElement | null>;
 }) {
   const titleId = useId();
   const descriptionId = useId();
@@ -85,6 +88,9 @@ export function Sheet({
   useEffect(() => {
     if (!open) return;
     const opener = document.activeElement as HTMLElement | null;
+    // Read when closing on purpose: the node it points to then (the opener
+    // may have been replaced since opening).
+    const fallback = returnFocus;
     const panel = panelRef.current;
     const target =
       initialFocus?.current ??
@@ -165,9 +171,14 @@ export function Sheet({
       document.removeEventListener("keydown", onKeyDown);
       madeInert.forEach((element) => element.removeAttribute("inert"));
       document.body.style.overflow = previousOverflow;
-      opener?.focus?.({ preventScroll: true });
+      // The opener may be gone (or was nothing: the page itself had focus).
+      const back =
+        opener && opener !== document.body && opener.isConnected
+          ? opener
+          : fallback?.current;
+      back?.focus?.({ preventScroll: true });
     };
-  }, [open, initialFocus]);
+  }, [open, initialFocus, returnFocus]);
 
   if (!open || typeof document === "undefined") return null;
 

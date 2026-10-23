@@ -613,6 +613,99 @@ describe("sessions and isolation", () => {
     expect(shown("Points retirés")).toBe(true);
   });
 
+  it("her account panel (a portal, outside the veiled screens) is suspended with them: no email, nothing inert, the retry reachable; it comes back with her pages", async () => {
+    api.on("GET", new RegExp(`${B1}/loyalty/ledger$`), (call) =>
+      ok({
+        items: [
+          {
+            id: call.search.get("cursor") ? "l9" : "l1",
+            type: call.search.get("cursor")
+              ? "manual_adjustment"
+              : "appointment_completed",
+            pointsDelta: call.search.get("cursor") ? -20 : 85,
+            balanceAfter: 340,
+            createdAt: inDays(-12),
+            appointmentId: null,
+            serviceName: null,
+            rewardName: null,
+            isReversal: false,
+            reversed: false,
+          },
+        ],
+        nextCursor: call.search.get("cursor") ? null : "2",
+      }),
+    );
+    inHub(<HubLoyalty businessId={B1} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Afficher les plus anciens" }),
+    );
+    await screen.findByText("Points retirés");
+    fireEvent.click(screen.getByRole("button", { name: "Mon compte" }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("camille@exemple.fr")).toBeTruthy();
+
+    // An identity check starts while the panel is open, then fails.
+    const held = deferred<ReturnType<typeof ok> | "network">();
+    api.on("GET", /\/me$/, () => held.promise);
+    act(() => setVisibility("hidden"));
+    act(() => setVisibility("visible"));
+    const visibleEmail = () =>
+      screen
+        .queryAllByText("camille@exemple.fr")
+        .some((element) => !element.closest("[hidden]"));
+    expect(visibleEmail()).toBe(false);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(async () => {
+      held.resolve("network");
+    });
+    expect(visibleEmail()).toBe(false);
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // Nothing left inert or locked by the panel: the retry is reachable,
+    // and focus is on it (what had focus is hidden now).
+    expect(document.body.querySelector(":scope > [inert]")).toBeNull();
+    expect(document.body.style.overflow).toBe("");
+    const retry = screen.getByRole("button", { name: "Réessayer" });
+    expect(retry.closest("[inert], [hidden]")).toBeNull();
+    expect(document.activeElement).toBe(retry);
+
+    // Confirmed as the same customer: her page, its appended history and
+    // her open panel come back as she left them.
+    api.on("GET", /\/me$/, () => ok(me));
+    fireEvent.click(retry);
+    await waitFor(() => expect(visibleEmail()).toBe(true));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(shown("Points retirés")).toBe(true);
+
+    // Closed: focus goes back to her account button (the retry that was
+    // focused when it reopened is gone).
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Mon compte" }),
+    );
+    expect(document.body.querySelector(":scope > [inert]")).toBeNull();
+  });
+
+  it("another customer confirmed while the first one's account panel was open: nothing of hers, no panel", async () => {
+    inHub(<HubHome />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mon compte" }));
+    await screen.findByText("camille@exemple.fr");
+    const held = deferred<ReturnType<typeof ok>>();
+    api.on("GET", /\/me$/, () => held.promise);
+    act(() => setVisibility("hidden"));
+    act(() => setVisibility("visible"));
+    await act(async () => {
+      held.resolve(ok(profile("ines@exemple.fr", [MILA])));
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Mon compte" })).toBeTruthy(),
+    );
+    expect(screen.queryByText("camille@exemple.fr")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.body.querySelector(":scope > [inert]")).toBeNull();
+  });
+
   it("back on the tab with another customer confirmed: only hers is shown, nothing of the first", async () => {
     inHub(<HubLoyalty businessId={B1} />);
     await screen.findByText("Solde : 340 points");

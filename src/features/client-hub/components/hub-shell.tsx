@@ -3,7 +3,14 @@
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -104,7 +111,9 @@ export function HubPage({
       ) : null;
     // While her identity is being confirmed (back on the tab), nothing of
     // hers is visible: her screens stay mounted but hidden and inert, so
-    // they come back as she left them once she is confirmed.
+    // they come back as she left them once she is confirmed. What they
+    // render outside this subtree (the account panel, a portal on <body>)
+    // is suspended with them: closed, its inert and focus trap released.
     const veiled = session.check !== "ok";
     return (
       <>
@@ -116,7 +125,12 @@ export function HubPage({
           inert={veiled}
           className={veiled ? undefined : "contents"}
         >
-          <Chrome section={section} profile={profile} navBusiness={navBusiness}>
+          <Chrome
+            section={section}
+            profile={profile}
+            navBusiness={navBusiness}
+            suspended={veiled}
+          >
             {businessId && !business ? (
               <UnknownBusiness />
             ) : (
@@ -149,7 +163,21 @@ export function HubPage({
   );
 }
 
-/** The neutral screen of a check: no name, no data, no navigation. */
+/** Whether focus is nowhere usable: on the page itself or on hidden content. */
+const focusLost = () => {
+  const active = document.activeElement;
+  return (
+    !active ||
+    active === document.body ||
+    Boolean(active.closest("[hidden], [inert]"))
+  );
+};
+
+/**
+ * The neutral screen of a check: no name, no data, no navigation. What had
+ * focus is hidden now: focus comes here, and on the retry when it appears,
+ * so a keyboard never ends up on nothing.
+ */
 function Verifying({
   failed,
   onRetry,
@@ -157,33 +185,46 @@ function Verifying({
   failed: boolean;
   onRetry: () => void;
 }) {
+  const region = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const target = failed
+      ? region.current?.querySelector<HTMLElement>("[data-retry]")
+      : region.current;
+    if (focusLost() || document.activeElement === region.current) {
+      target?.focus({ preventScroll: true });
+    }
+  }, [failed]);
+
   return (
     <Chrome section="home" profile={null} navBusiness={null}>
-      {failed ? (
-        <div
-          role="alert"
-          className="flex flex-col items-start gap-4 rounded-[28px] border border-line bg-paper-raised px-6 py-8"
-        >
-          <h1 className="font-display text-[30px] leading-tight text-ink">
-            Impossible de vérifier votre session
-          </h1>
-          <p className="max-w-prose text-[15px] leading-relaxed text-ink-soft">
-            Par sécurité, votre espace reste masqué tant que nous ne pouvons pas
-            confirmer qu’il s’agit bien de vous. Vérifiez votre connexion puis
-            réessayez.
-          </p>
-          <Button size="md" onClick={onRetry}>
-            Réessayer
-          </Button>
-        </div>
-      ) : (
-        <div role="status" aria-live="polite" className="flex flex-col gap-4">
-          <span className="sr-only">Vérification de votre session…</span>
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-11 w-64 rounded-2xl" />
-          <Skeleton className="mt-4 h-44 w-full rounded-[28px]" />
-        </div>
-      )}
+      <div ref={region} tabIndex={-1} className="outline-none">
+        {failed ? (
+          <div
+            role="alert"
+            className="flex flex-col items-start gap-4 rounded-[28px] border border-line bg-paper-raised px-6 py-8"
+          >
+            <h1 className="font-display text-[30px] leading-tight text-ink">
+              Impossible de vérifier votre session
+            </h1>
+            <p className="max-w-prose text-[15px] leading-relaxed text-ink-soft">
+              Par sécurité, votre espace reste masqué tant que nous ne pouvons
+              pas confirmer qu’il s’agit bien de vous. Vérifiez votre connexion
+              puis réessayez.
+            </p>
+            <Button data-retry="" size="md" onClick={onRetry}>
+              Réessayer
+            </Button>
+          </div>
+        ) : (
+          <div role="status" aria-live="polite" className="flex flex-col gap-4">
+            <span className="sr-only">Vérification de votre session…</span>
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-11 w-64 rounded-2xl" />
+            <Skeleton className="mt-4 h-44 w-full rounded-[28px]" />
+          </div>
+        )}
+      </div>
     </Chrome>
   );
 }
@@ -237,14 +278,19 @@ function Chrome({
   section,
   profile,
   navBusiness,
+  suspended = false,
   children,
 }: {
   section: Section;
   profile: ClientHubProfileDto | null;
   navBusiness: ClientHubBusinessDto | null;
+  /** Her identity is being confirmed: nothing of hers may show, no panel. */
+  suspended?: boolean;
   children: ReactNode;
 }) {
+  // Kept while suspended: the panel she had open comes back with her.
   const [account, setAccount] = useState(false);
+  const accountButton = useRef<HTMLButtonElement>(null);
   const items = navItems(navBusiness);
 
   return (
@@ -314,6 +360,7 @@ function Chrome({
 
           {profile ? (
             <button
+              ref={accountButton}
               type="button"
               onClick={() => setAccount(true)}
               aria-label="Mon compte"
@@ -379,7 +426,8 @@ function Chrome({
 
       {profile ? (
         <AccountSheet
-          open={account}
+          open={account && !suspended}
+          returnFocus={accountButton}
           email={profile.email}
           onClose={() => setAccount(false)}
         />
@@ -464,10 +512,12 @@ function BusinessSwitcher({
 
 function AccountSheet({
   open,
+  returnFocus,
   email,
   onClose,
 }: {
   open: boolean;
+  returnFocus: RefObject<HTMLElement | null>;
   email: string;
   onClose: () => void;
 }) {
@@ -491,6 +541,7 @@ function AccountSheet({
     <Sheet
       open={open}
       onClose={() => (pending ? undefined : onClose())}
+      returnFocus={returnFocus}
       title="Mon compte"
       description="Connectée avec un code envoyé par email."
     >
