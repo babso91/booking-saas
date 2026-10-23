@@ -29,10 +29,11 @@ export default function LabIndex() {
             >
               <span>
                 <span className="block text-[17px] font-medium">
-                  {universe.name}
+                  {universe.config.brand.name}
                 </span>
                 <span className="text-[14px] text-neutral-500">
-                  {universe.kind} · {universe.location}
+                  {universe.config.brand.kind} ·{" "}
+                  {universe.config.brand.location}
                 </span>
               </span>
               <span className="text-[13px] text-neutral-500">

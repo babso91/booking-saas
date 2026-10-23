@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
 import {
+  Big_Shoulders,
   Bodoni_Moda,
+  DM_Mono,
   Figtree,
   Geist,
   Inter_Tight,
+  Manrope,
   Newsreader,
   Space_Mono,
 } from "next/font/google";
@@ -40,6 +43,23 @@ const almaBody = Figtree({
   variable: "--font-alma-body",
   display: "swap",
 });
+const nailDisplay = Big_Shoulders({
+  subsets: ["latin"],
+  weight: ["700", "800", "900"],
+  variable: "--font-nail-display",
+  display: "swap",
+});
+const nailBody = Manrope({
+  subsets: ["latin"],
+  variable: "--font-nail-body",
+  display: "swap",
+});
+const nailMono = DM_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-nail-mono",
+  display: "swap",
+});
 const labSans = Geist({
   subsets: ["latin"],
   variable: "--font-lab-sans",
@@ -61,6 +81,9 @@ export default function LabLayout({ children }: LayoutProps<"/labo">) {
         milaMono,
         almaDisplay,
         almaBody,
+        nailDisplay,
+        nailBody,
+        nailMono,
         labSans,
       ]
         .map((font) => font.variable)

@@ -11,7 +11,7 @@ export async function generateMetadata({
   params,
 }: PageProps<"/labo/[univers]">): Promise<Metadata> {
   const universe = find((await params).univers);
-  return { title: universe ? universe.name : "Labo" };
+  return { title: universe ? universe.config.brand.name : "Labo" };
 }
 
 // A professional's direct link: her mini-site is the whole experience.
