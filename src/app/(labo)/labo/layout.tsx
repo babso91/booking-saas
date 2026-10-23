@@ -13,8 +13,7 @@ import {
 import { notFound } from "next/navigation";
 
 // Experience lab: prototypes of a professional's public mini-site on
-// fictional data. Never served by a production build (branch
-// proto/experience-engine only).
+// fictional data (branch proto/experience-engine only).
 
 const milaDisplay = Bodoni_Moda({
   subsets: ["latin"],
@@ -72,7 +71,10 @@ export const metadata: Metadata = {
 };
 
 export default function LabLayout({ children }: LayoutProps<"/labo">) {
-  if (process.env.NODE_ENV === "production") notFound();
+  // Production builds 404 the lab, except an isolated, explicitly enabled
+  // lab instance (LAB_PUBLIC=1) used for remote tests behind a gatekeeper.
+  if (process.env.NODE_ENV === "production" && process.env.LAB_PUBLIC !== "1")
+    notFound();
   return (
     <div
       className={[
