@@ -7,6 +7,7 @@ import type { Work as WorkItem, WorkVariant } from "../engine/config";
 import {
   Detail,
   Display,
+  EditTarget,
   GradedPhoto,
   useEngine,
   useReveal,
@@ -23,16 +24,20 @@ export function Work({
   variant: WorkVariant;
   index: number;
 }) {
+  const { edit } = useEngine();
   const [open, setOpen] = useState<WorkItem | null>(null);
+  // In the studio a photo opens in the photo editor, not full screen.
+  const show = (work: WorkItem, position: number) =>
+    edit ? edit.photo(position) : setOpen(work);
   const label = `(${String(index).padStart(2, "0")}) Réalisations`;
   return (
     <>
       {variant === "arches" ? (
-        <Arches onOpen={setOpen} />
+        <Arches onOpen={show} />
       ) : variant === "filmstrip" ? (
-        <Filmstrip onOpen={setOpen} />
+        <Filmstrip onOpen={show} />
       ) : (
-        <Lookbook label={label} onOpen={setOpen} />
+        <Lookbook label={label} onOpen={show} />
       )}
       <AnimatePresence>
         {open ? (
@@ -56,7 +61,7 @@ function Lookbook({
   onOpen,
 }: {
   label: string;
-  onOpen: (work: WorkItem) => void;
+  onOpen: (work: WorkItem, position: number) => void;
 }) {
   const { config } = useEngine();
   const reveal = useReveal();
@@ -77,7 +82,7 @@ function Lookbook({
             >
               <button
                 type="button"
-                onClick={() => onOpen(work)}
+                onClick={() => onOpen(work, position)}
                 className="block w-full cursor-zoom-in text-left"
               >
                 <motion.div
@@ -90,6 +95,7 @@ function Lookbook({
                     alt={work.title}
                     sizes="(min-width: 768px) 50vw, 90vw"
                   />
+                  <EditTarget slot={position} inButton />
                 </motion.div>
                 <span className="mt-3 flex items-baseline justify-between gap-3">
                   <Display className="text-[22px] leading-none">
@@ -108,7 +114,11 @@ function Lookbook({
   );
 }
 
-function Arches({ onOpen }: { onOpen: (work: WorkItem) => void }) {
+function Arches({
+  onOpen,
+}: {
+  onOpen: (work: WorkItem, position: number) => void;
+}) {
   const { config } = useEngine();
   return (
     <section className="bg-[var(--u-bg)] text-[var(--u-ink)]">
@@ -124,6 +134,7 @@ function Arches({ onOpen }: { onOpen: (work: WorkItem) => void }) {
               arch={position % 2 === 0}
               offset={position % 2 === 1}
               onOpen={onOpen}
+              slot={position}
             />
           ))}
         </ul>
@@ -137,11 +148,13 @@ function DriftFrame({
   arch,
   offset,
   onOpen,
+  slot,
 }: {
   work: WorkItem;
   arch: boolean;
   offset: boolean;
-  onOpen: (work: WorkItem) => void;
+  onOpen: (work: WorkItem, position: number) => void;
+  slot: number;
 }) {
   const reveal = useReveal();
   const frame = useRef<HTMLLIElement>(null);
@@ -154,7 +167,7 @@ function DriftFrame({
     <motion.li ref={frame} className={offset ? "md:mt-40" : ""} {...reveal()}>
       <button
         type="button"
-        onClick={() => onOpen(work)}
+        onClick={() => onOpen(work, slot)}
         className="block w-full cursor-zoom-in"
       >
         <motion.div
@@ -173,6 +186,7 @@ function DriftFrame({
               sizes="(min-width: 768px) 45vw, 86vw"
             />
           </motion.div>
+          <EditTarget slot={slot} inButton />
         </motion.div>
         <span className="mx-auto mt-5 block w-[86%] text-center">
           <Display className="block text-[24px]">{work.title}</Display>
@@ -185,7 +199,11 @@ function DriftFrame({
   );
 }
 
-function Filmstrip({ onOpen }: { onOpen: (work: WorkItem) => void }) {
+function Filmstrip({
+  onOpen,
+}: {
+  onOpen: (work: WorkItem, position: number) => void;
+}) {
   const { config } = useEngine();
   const reveal = useReveal();
   const works = config.content.works;
@@ -211,7 +229,7 @@ function Filmstrip({ onOpen }: { onOpen: (work: WorkItem) => void }) {
           >
             <button
               type="button"
-              onClick={() => onOpen(work)}
+              onClick={() => onOpen(work, position)}
               className="relative block w-full cursor-zoom-in text-left"
             >
               <motion.div
@@ -220,6 +238,7 @@ function Filmstrip({ onOpen }: { onOpen: (work: WorkItem) => void }) {
                 style={{ borderRadius: "var(--s-radius)" }}
               >
                 <GradedPhoto id={work.photo} alt={work.title} sizes="72vw" />
+                <EditTarget slot={position} inButton />
               </motion.div>
               <span
                 aria-hidden="true"

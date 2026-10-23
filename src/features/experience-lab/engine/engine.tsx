@@ -10,15 +10,18 @@ import {
 } from "react";
 
 import { photo, srcSet } from "../photos";
-import type { Service, SiteConfig } from "./config";
+import type { PhotoSlot, Service, SiteConfig } from "./config";
 import { grades, motions, typePairs } from "./tokens";
 
 // What every scene variant receives: the site's config, its resolved
-// tokens, and the actions of the shared functional engine (booking).
+// tokens, and the actions of the shared functional engine (booking). In
+// the studio, `edit` makes the preview itself the editor: touching a
+// photo opens it instead of its public behaviour.
 
 type Engine = {
   config: SiteConfig;
   book: (service: Service | null) => void;
+  edit?: { photo: (slot: PhotoSlot) => void; selected: PhotoSlot | null };
 };
 
 const Context = createContext<Engine | null>(null);
@@ -107,7 +110,8 @@ export function GradedPhoto({
   className?: string;
   eager?: boolean;
 }) {
-  const { grade } = useEngine();
+  const { grade, config } = useEngine();
+  const focal = config.content.focals[id] ?? { x: 50, y: 50 };
   return (
     <span className={`absolute inset-0 block ${className ?? ""}`}>
       {/* Prototype: CDN photos, plain img with responsive sources. */}
@@ -122,7 +126,10 @@ export function GradedPhoto({
         decoding="async"
         draggable={false}
         className="h-full w-full object-cover"
-        style={{ filter: grade.filter }}
+        style={{
+          filter: grade.filter,
+          objectPosition: `${focal.x}% ${focal.y}%`,
+        }}
       />
       {grade.wash ? (
         <span
@@ -135,6 +142,53 @@ export function GradedPhoto({
         />
       ) : null}
     </span>
+  );
+}
+
+/**
+ * In the studio: a photo of the preview becomes a touch target that opens
+ * it in the photo editor (outlined when it is the one being edited).
+ */
+export function EditTarget({
+  slot,
+  inButton,
+}: {
+  slot: PhotoSlot;
+  /** Inside a button already wired to edit: a visual mark only. */
+  inButton?: boolean;
+}) {
+  const { edit } = useEngine();
+  if (!edit) return null;
+  const selected = edit.selected === slot;
+  const className = `absolute inset-0 z-10 -outline-offset-4 ${selected ? "outline-4 outline-white" : "outline-2 outline-white/70 outline-dashed"}`;
+  const badge = (
+    <span
+      className="absolute top-3 left-3 rounded-full bg-black/70 px-3 py-1.5 text-[12.5px] font-medium text-white backdrop-blur"
+      style={{ fontFamily: "var(--font-lab-sans)" }}
+    >
+      ✎ Photo
+    </span>
+  );
+  if (inButton) {
+    return (
+      <span aria-hidden="true" className={className}>
+        {badge}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => edit.photo(slot)}
+      aria-label={
+        slot === "cover"
+          ? "Modifier la photo de couverture"
+          : `Modifier la réalisation ${slot + 1}`
+      }
+      className={`${className} cursor-pointer`}
+    >
+      {badge}
+    </button>
   );
 }
 

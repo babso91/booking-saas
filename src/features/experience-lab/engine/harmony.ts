@@ -113,3 +113,19 @@ export function advise(config: SiteConfig): Advice[] {
 
   return advice;
 }
+
+/**
+ * The public safety net: whatever was experimented in the studio, the
+ * published site never ships unreadable text or controls. Applies every
+ * readability fix (artistic advice is left to her).
+ */
+export function ensureReadable(config: SiteConfig): SiteConfig {
+  let safe = config;
+  for (let round = 0; round < 3; round += 1) {
+    const problems = advise(safe).filter((item) => item.level === "problem");
+    if (!problems.length) break;
+    for (const problem of problems)
+      safe = problem.fix ? problem.fix(safe) : safe;
+  }
+  return safe;
+}

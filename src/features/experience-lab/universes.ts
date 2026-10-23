@@ -103,6 +103,7 @@ export const mila: Universe = {
           blurb: "Ligne, épaisseur, teinte : un dessin à votre visage.",
         },
       ],
+      focals: {},
     },
     tokens: {
       palette: milaInk,
@@ -256,6 +257,7 @@ export const alma: Universe = {
           blurb: "Une ligne nette, sans rougeur, à la main.",
         },
       ],
+      focals: {},
     },
     tokens: {
       palette: almaOlive,
@@ -392,6 +394,7 @@ export const nailLab: Universe = {
           blurb: "Dépose douce et soin des cuticules.",
         },
       ],
+      focals: {},
     },
     tokens: {
       palette: nailCobalt,

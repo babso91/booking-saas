@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { can, toCore } from "../plans";
+import { can, dormant, effective } from "../plans";
 import { universes } from "../universes";
-import { advise } from "./harmony";
+import { advise, ensureReadable } from "./harmony";
 import { contrast, readableOn } from "./tokens";
 
 const designed = Object.values(universes).flatMap((universe) => [
@@ -85,15 +85,57 @@ describe("experience engine", () => {
     }
   });
 
-  it("back to Core keeps her content and restores the universe's composition", () => {
-    const origin = universes.mila.config;
-    const signature = universes.mila.signature!.apply({
-      ...origin,
-      brand: { ...origin.brand, name: "Atelier Inès" },
+  it("Signature → Core never destroys her settings: Core is a lens on the render, Signature brings them back", () => {
+    const universe = universes.mila;
+    const saved = universe.signature!.apply({
+      ...universe.config,
+      brand: { ...universe.config.brand, name: "Atelier Inès" },
     });
-    const core = toCore(signature, origin);
+    const snapshot = JSON.stringify(saved);
+    const core = effective(saved, "core", universe);
     expect(core.brand.name).toBe("Atelier Inès");
-    expect(core.sections).toEqual(origin.sections);
-    expect(core.tokens.motion).toBe(origin.tokens.motion);
+    expect(core.sections).toEqual(universe.config.sections);
+    expect(core.tokens.motion).toBe(universe.config.tokens.motion);
+    expect(JSON.stringify(saved)).toBe(snapshot);
+    expect(dormant(saved, universe)).toBe(true);
+    expect(effective(saved, "signature", universe)).toBe(saved);
+  });
+
+  it("Core keeps her accent on a designed palette, and her own palette only in Signature", () => {
+    const universe = universes["nail-lab"];
+    const saved = {
+      ...universe.config,
+      tokens: {
+        ...universe.config.tokens,
+        palette: {
+          ...universe.config.tokens.palette,
+          bg: "#FF00FF",
+          accent: "#00AA55",
+        },
+      },
+    };
+    const core = effective(saved, "core", universe);
+    expect(core.tokens.palette.bg).toBe(universe.config.tokens.palette.bg);
+    expect(core.tokens.palette.accent).toBe("#00AA55");
+  });
+
+  it("the public safety net never ships unreadable text, and leaves art alone", () => {
+    const base = universes.alma.config;
+    const unreadable = {
+      ...base,
+      sections: [{ kind: "opening" as const, variant: "kinetic" as const }],
+      tokens: {
+        ...base.tokens,
+        palette: {
+          ...base.tokens.palette,
+          ink: "#232B25",
+          onAccent: "#D8836A",
+        },
+      },
+    };
+    const safe = ensureReadable(unreadable);
+    expect(advise(safe).filter((item) => item.level === "problem")).toEqual([]);
+    expect(safe.sections).toEqual(unreadable.sections);
+    expect(safe.tokens.type).toBe(unreadable.tokens.type);
   });
 });

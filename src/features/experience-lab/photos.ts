@@ -1,11 +1,23 @@
 // Prototype photos: Unsplash CDN, cropped and compressed by their service.
 // In the product, every photo is the professional's own upload.
 
+// A photo id is either an Unsplash id, or a local object URL ("blob:…")
+// for a photo the professional picked from her own phone in the lab: it
+// stays in this tab's memory, nothing is uploaded.
+
+export const isLocal = (id: string) => id.startsWith("blob:");
+
 export const photo = (id: string, width: number) =>
-  `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=${width}&q=72`;
+  isLocal(id)
+    ? id
+    : `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=${width}&q=72`;
 
 export const srcSet = (id: string) =>
-  [480, 828, 1200].map((width) => `${photo(id, width)} ${width}w`).join(", ");
+  isLocal(id)
+    ? undefined
+    : [480, 828, 1200]
+        .map((width) => `${photo(id, width)} ${width}w`)
+        .join(", ");
 
 /** What a professional could pick from in the lab (stands in for uploads). */
 export const photoPool = [

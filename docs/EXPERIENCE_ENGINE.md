@@ -53,35 +53,87 @@ Le moteur s'adapte à l'ambition artistique, pas l'inverse. Ajouter un univers, 
 - **Mila et Alma** sont des configurations.
 - **Nail Lab n'a aucun code propre.** Ses variantes nouvelles (Cinétique, Pellicule, Tuiles) enrichissent la bibliothèque commune.
 
-## 3. Core et Signature
+## 3. Core (« Simple ») et Signature (« Créatif ») : un seul éditeur
 
-Même moteur, mêmes univers, mêmes animations. La différence porte sur ce que le studio peut modifier (`plans.ts`).
+Même moteur, mêmes univers, mêmes animations, et le même studio en deux modes. Ce qui change, c'est ce que le studio peut modifier (`plans.ts`).
 
-| Possibilité                                     | Core | Signature |
-| ----------------------------------------------- | ---- | --------- |
-| Univers complets (Mila, Alma, Nail Lab…)        | oui  | oui       |
-| Identité, textes, photos, prestations           | oui  | oui       |
-| Palettes de l'univers et couleur d'accent       | oui  | oui       |
-| Palette complète                                | non  | oui       |
-| Variante de chaque scène, ordre des scènes      | non  | oui       |
-| Typographie, traitement photo, mouvement, forme | non  | oui       |
+| Possibilité                                       | Simple (Core) | Créatif (Signature) |
+| ------------------------------------------------- | ------------- | ------------------- |
+| Univers complets, changer d'univers               | oui           | oui                 |
+| Photos (point focal compris), textes, prestations | oui           | oui                 |
+| Palettes de l'univers et couleur d'accent         | oui           | oui                 |
+| Palette complète                                  | non           | oui                 |
+| Variante de chaque scène, ordre des scènes        | non           | oui                 |
+| Typographie, traitement photo, mouvement, forme   | non           | oui                 |
 
-Repasser en Core garde le contenu et les couleurs, et rend la composition d'origine de l'univers.
+### Trois couches à ne jamais confondre
 
-## 4. Garde-fous (`engine/harmony.ts`)
+1. **La configuration sauvegardée** : tout ce que la professionnelle a réglé. Elle n'est jamais détruite par un changement de forfait.
+2. **Les droits du forfait** : une lentille appliquée au rendu (`effective(config, plan, univers)`).
+   - En Core, la lentille garde le contenu, une palette de l'univers (avec son accent) et la composition de l'univers.
+   - En Signature, la lentille est transparente.
+3. **Le rendu public** : la dernière version **publiée**, vue à travers la lentille du forfait **actuel**, puis à travers le filet de lisibilité (`ensureReadable`).
 
-**Ils conseillent, sans jamais verrouiller.**
+### Conséquences
 
-- **Harmonie artistique :** chaque variante déclare les tokens pour lesquels elle a été conçue. Exemple : la Cinétique est pensée pour une grotesque. Hors de cet accord, le studio explique pourquoi et propose « Appliquer », mais la professionnelle reste libre.
-- **Lisibilité :** les contrastes sous 4,5:1 sont signalés comme un problème, avec un correctif en un tap. Ils concernent le texte sur fond nuit, le texte sur fond jour et le texte des boutons.
+- **Signature → Core :** les réglages Créatif restent en sommeil dans la configuration sauvegardée. Le studio le dit (« tes réglages Créatif sont conservés »).
+  - Le **site public** passe immédiatement à une présentation Core : la lentille s'applique au rendu de la version publiée, sans la réécrire. Une formule résiliée n'est donc jamais rendue.
+- **Core → Signature :** les réglages reviennent à l'identique, sans republier.
+- **Ce qui reste figé :** une version publiée ne change jamais de contenu. Seuls les droits appliqués au rendu suivent le forfait en cours.
+
+Testé :
+
+- la lentille ne modifie jamais la configuration sauvegardée ;
+- le retour en Signature restitue tout ;
+- l'accent est conservé en Core, mais pas une palette libre.
+
+## 4. Garde-fous : l'art est libre, la lisibilité ne l'est pas
+
+Deux familles, traitées différemment (`engine/harmony.ts`).
+
+### Conseils d'harmonie (non bloquants)
+
+Chaque variante déclare les tokens pour lesquels elle a été conçue. Exemple : la Cinétique est pensée pour une grotesque.
+
+Hors de cet accord, le studio explique et propose « Appliquer ». La professionnelle peut garder une composition expérimentale, y compris en ligne.
+
+### Exigences de lisibilité (jamais publiées en défaut)
+
+Elles portent sur le texte sur fond nuit, sur fond jour, et sur les boutons : 4,5:1 minimum.
+
+- **Dans le brouillon :** le studio les signale en rouge, avec « Corriger ». L'expérimentation reste possible.
+- **À la publication :** elles sont corrigées automatiquement. Le studio indique combien de corrections ont été appliquées.
+- **Au rendu public :** le filet `ensureReadable` s'applique de toute façon. Une configuration enregistrée autrement ne peut pas produire un site illisible.
+- **Ce que le filet laisse tranquille :** compositions, typographies, mouvement. Il ne touche que des couleurs.
+
+### Autres garanties
+
 - **Bouton de réservation rapide :** il garde l'accent de la marque sur blanc, sauf s'il devient illisible.
-- **Tests :**
-  - toutes nos palettes passent 4,5:1 ;
-  - nos univers d'origine ne déclenchent aucun conseil.
+- **Nos palettes :** testées à 4,5:1 (le garde-fou a corrigé deux palettes d'Alma, à 3,2:1 et 2,9:1).
 
-Le garde-fou a corrigé deux palettes d'Alma (boutons à 3,2:1 et 2,9:1).
+### Dans le produit
 
-## 5. Persistance proposée (pour une PR backend future)
+Le serveur appliquera la même règle à la publication. Le navigateur n'est pas une garantie.
+
+## 5. Studio : pensé pour une professionnelle sur son téléphone
+
+- **L'aperçu est l'éditeur :** en mode édition, toucher une photo du site l'ouvre dans l'éditeur de photo.
+- **Point focal au doigt :**
+  - la photo entière s'affiche, avec une cible à glisser et une grille des tiers ;
+  - trois vignettes en direct (Portrait, Arche, Bandeau) montrent le recadrage dans les compositions ;
+  - le réglage fonctionne aussi aux flèches du clavier.
+- **Ses propres photos :** « Depuis mon téléphone ». Dans le labo, la photo reste en mémoire et rien n'est envoyé.
+- **Annuler / rétablir :** un geste (glisser, taper un nom) compte comme un seul pas. Au clavier : ⌘Z et ⇧⌘Z.
+- **Brouillon / En ligne :**
+  - l'aperçu bascule entre ce qu'elle prépare et ce que voient ses clientes ;
+  - un point signale les modifications non publiées ;
+  - « Publier » fige une nouvelle version.
+- **Mode Simple :** Univers, Photos, Textes, Couleurs.
+  - Changer d'univers garde son nom, ses textes, ses photos et ses prestations.
+  - Un onglet « Créatif ✦ » présente ce que Signature ouvre, sans l'imposer.
+- **Ergonomie :** feuille basse de 64 % de l'écran sur téléphone, cibles de 44 px. Un bandeau « mode édition » est toujours visible, et le studio ne recouvre jamais la réservation.
+
+## 6. Persistance proposée (pour une PR backend future)
 
 ### Modèle
 
@@ -107,14 +159,12 @@ Le garde-fou a corrigé deux palettes d'Alma (boutons à 3,2:1 et 2,9:1).
 
 ### Changement de formule
 
-- **La configuration complète est toujours conservée.**
-- **Le forfait agit au rendu**, comme une lentille : `effective = plan === "core" ? toCore(config, univers) : config`.
-- **Passer en Core :**
-  - ne détruit rien ;
-  - les réglages Signature restent en sommeil dans le brouillon ;
-  - le studio l'indique (« conservés, ils reviendront si tu repasses en Signature ») ;
-  - le site publié affiche la composition Core.
-- **Repasser en Signature** les fait revenir à l'identique.
+Voir § 3 :
+
+- **En base :** la configuration complète est conservée dans `site_versions`.
+- **Les droits** du forfait courant s'appliquent au rendu, côté serveur, sur la version publiée.
+- **Rien n'est réécrit** lors d'un changement de formule.
+- **Le studio** montre les réglages en sommeil.
 
 ### Mises à jour de nos univers
 
@@ -140,7 +190,7 @@ Le garde-fou a corrigé deux palettes d'Alma (boutons à 3,2:1 et 2,9:1).
 - **Déclinaisons :** générées en AVIF et WebP (480, 828, 1200 px).
 - **Point focal :** un point d'intérêt par photo, pour que chaque variante (portrait, arche, carte inclinée) recadre correctement des photos que la professionnelle n'a pas composées pour elle.
 
-## 6. Performance (téléphone moyen, 4G)
+## 7. Performance (téléphone moyen, 4G)
 
 - **Typographie :** ne charger que la paire de la professionnelle. Le labo charge les neuf familles, le produit non.
 - **Photo d'ouverture :** chargée immédiatement. Les autres en différé, responsives.
@@ -148,7 +198,7 @@ Le garde-fou a corrigé deux palettes d'Alma (boutons à 3,2:1 et 2,9:1).
 - **Préférence d'accessibilité :** « réduire les animations » est respecté partout (`MotionConfig reducedMotion="user"`).
 - **Budget :** LCP sous 2,5 s en 4G. Pas de bibliothèque 3D.
 
-## 7. Prochaines étapes du laboratoire
+## 8. Prochaines étapes du laboratoire
 
 - **Variantes à ajouter, une par une, soignées :** portrait de la professionnelle, témoignages, avant/après.
 - **Point focal des photos** dans le studio.

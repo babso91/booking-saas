@@ -4,10 +4,12 @@ import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useEffect, useState } from "react";
 
 import { Booking } from "./booking";
-import type { Service, SiteConfig } from "./engine/config";
+import type { PhotoSlot, Service, SiteConfig } from "./engine/config";
 import { Detail, Display, EngineProvider, useEngine } from "./engine/engine";
 import { cssVariables, readableOn } from "./engine/tokens";
-import type { Plan } from "./plans";
+import { ensureReadable } from "./engine/harmony";
+import { useHistory } from "./history";
+import { effective, type Plan } from "./plans";
 import { Intro } from "./scenes/intro";
 import { Opening } from "./scenes/opening";
 import { Services } from "./scenes/services";
@@ -15,32 +17,99 @@ import { Work } from "./scenes/work";
 import { Studio } from "./studio";
 import { universes, type UniverseId } from "./universes";
 
-// A professional's public mini-site, rendered from her SiteConfig: tokens
-// as CSS variables, scenes composed in her order, booking always one tap
-// away. The studio edits the same config live.
+// A professional's public mini-site, rendered from a SiteConfig: tokens as
+// CSS variables, scenes composed in her order, booking always one tap
+// away. In the lab, the studio edits the saved draft live; "En ligne"
+// shows what her customers see: the published version, through her
+// plan's rights and the readability safety net.
+
+export type Published = {
+  config: SiteConfig;
+  design: UniverseId;
+  plan: Plan;
+  version: number;
+  at: Date;
+};
 
 export function BrandSite({ id }: { id: UniverseId }) {
-  const universe = universes[id];
-  const [config, setConfig] = useState<SiteConfig>(universe.config);
+  const [design, setDesign] = useState<UniverseId>(id);
+  const draft = useHistory<SiteConfig>(universes[id].config);
   const [plan, setPlan] = useState<Plan>("core");
+  const [published, setPublished] = useState<Published>({
+    config: universes[id].config,
+    design: id,
+    plan: "core",
+    version: 1,
+    at: new Date(),
+  });
+  const [view, setView] = useState<"draft" | "live">("draft");
+  const [studio, setStudio] = useState(false);
+  const [photoSlot, setPhotoSlot] = useState<PhotoSlot | null>(null);
   const [replay, setReplay] = useState(0);
+
+  const universe = universes[design];
+  const live = ensureReadable(
+    effective(published.config, published.plan, universes[published.design]),
+  );
+  const preview =
+    view === "live" ? live : effective(draft.value, plan, universe);
+  const editing = studio && view === "draft";
 
   return (
     <MotionConfig reducedMotion="user">
-      <SiteView key={replay} config={config} />
+      <SiteView
+        key={`${replay}-${view}`}
+        config={preview}
+        edit={
+          editing ? { photo: setPhotoSlot, selected: photoSlot } : undefined
+        }
+      />
       <Studio
+        open={studio}
+        onOpen={setStudio}
         universe={universe}
-        config={config}
+        design={design}
+        draft={draft}
         plan={plan}
         onPlan={setPlan}
-        onChange={setConfig}
+        onDesign={(next) => {
+          // Another universe, with her own name, texts, photos and services.
+          const base = universes[next].config;
+          draft.set({
+            ...base,
+            brand: draft.value.brand,
+            content: draft.value.content,
+          });
+          setDesign(next);
+          setReplay((value) => value + 1);
+        }}
+        published={published}
+        onPublish={(config) => {
+          setPublished((value) => ({
+            config,
+            design,
+            plan,
+            version: value.version + 1,
+            at: new Date(),
+          }));
+        }}
+        view={view}
+        onView={setView}
+        photoSlot={photoSlot}
+        onPhotoSlot={setPhotoSlot}
         onReplay={() => setReplay((value) => value + 1)}
       />
     </MotionConfig>
   );
 }
 
-export function SiteView({ config }: { config: SiteConfig }) {
+export function SiteView({
+  config,
+  edit,
+}: {
+  config: SiteConfig;
+  edit?: { photo: (slot: PhotoSlot) => void; selected: PhotoSlot | null };
+}) {
   const [booking, setBooking] = useState<{ service: Service | null } | null>(
     null,
   );
@@ -58,7 +127,7 @@ export function SiteView({ config }: { config: SiteConfig }) {
       style={{ ...cssVariables(config.tokens), fontFamily: "var(--t-body)" }}
     >
       <EngineProvider
-        value={{ config, book: (service) => setBooking({ service }) }}
+        value={{ config, book: (service) => setBooking({ service }), edit }}
       >
         <Header />
         {config.sections.map((section, position) => {

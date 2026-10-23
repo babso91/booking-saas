@@ -8,6 +8,16 @@
 
 export type Work = { id: string; photo: string; title: string; note: string };
 
+/**
+ * Where the subject of a photo is (percent from the left and the top).
+ * It belongs to the photo, not to a scene: every composition (portrait,
+ * arch, band, tilted card) crops around it.
+ */
+export type Focal = { x: number; y: number };
+
+/** A photo spot of the site: the cover, or a work by its position. */
+export type PhotoSlot = "cover" | number;
+
 export type Service = {
   id: string;
   name: string;
@@ -52,7 +62,13 @@ export type SiteConfig = {
   /** The universe this site was started from (its designed defaults). */
   universe: string;
   brand: { name: string; kind: string; location: string; intro: string };
-  content: { cover: string; works: Work[]; services: Service[] };
+  content: {
+    cover: string;
+    works: Work[];
+    services: Service[];
+    /** Focal point of each photo, by photo id (centre when absent). */
+    focals: Record<string, Focal>;
+  };
   tokens: {
     palette: Palette;
     type: TypePairId;

@@ -3,7 +3,13 @@
 import { motion, useScroll, useTransform } from "motion/react";
 import { useRef } from "react";
 
-import { Detail, Display, GradedPhoto, useEngine } from "../engine/engine";
+import {
+  Detail,
+  Display,
+  EditTarget,
+  GradedPhoto,
+  useEngine,
+} from "../engine/engine";
 import type { OpeningVariant } from "../engine/config";
 
 // Opening scenes: the first frame of a professional's site. Each is its
@@ -88,6 +94,7 @@ function DidoneCutOpening() {
           <motion.div className="absolute inset-0" {...entrance.image}>
             <GradedPhoto id={config.content.cover} alt="" eager />
           </motion.div>
+          <EditTarget slot="cover" />
         </motion.div>
         <div className="grain pointer-events-none absolute inset-0" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[55%] bg-[linear-gradient(0deg,rgba(0,0,0,.85),transparent)]" />
@@ -153,6 +160,7 @@ function BloomOpening() {
           <motion.div className="absolute inset-0" {...entrance.image}>
             <GradedPhoto id={config.content.cover} alt="" eager />
           </motion.div>
+          <EditTarget slot="cover" />
         </motion.div>
         <motion.div
           className="absolute inset-0 bg-[var(--u-bg)]"
@@ -259,6 +267,7 @@ function KineticOpening() {
         <motion.div className="absolute inset-0" {...entrance.image}>
           <GradedPhoto id={config.content.cover} alt="" eager sizes="64vw" />
         </motion.div>
+        <EditTarget slot="cover" />
       </motion.div>
       <motion.p
         className="relative mt-8 px-6 text-center"
