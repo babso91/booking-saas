@@ -531,6 +531,106 @@ describe("loyalty", () => {
 });
 
 describe("sessions and isolation", () => {
+  /** Rendered and visible (not inside a hidden, veiled subtree). */
+  const shown = (text: string) => {
+    const element = screen.queryByText(text);
+    return Boolean(element) && !element!.closest("[hidden]");
+  };
+  const setVisibility = (state: "visible" | "hidden") => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => state,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+
+  it("back on the tab, her data is hidden at once while her identity is checked, and stays hidden when the check fails", async () => {
+    api.on("GET", new RegExp(`${B1}/loyalty/ledger$`), (call) =>
+      call.search.get("cursor")
+        ? ok({
+            items: [
+              {
+                id: "l9",
+                type: "manual_adjustment",
+                pointsDelta: -20,
+                balanceAfter: 320,
+                createdAt: inDays(-30),
+                appointmentId: null,
+                serviceName: null,
+                rewardName: null,
+                isReversal: false,
+                reversed: false,
+              },
+            ],
+            nextCursor: null,
+          })
+        : ok({
+            items: [
+              {
+                id: "l1",
+                type: "appointment_completed",
+                pointsDelta: 85,
+                balanceAfter: 340,
+                createdAt: inDays(-12),
+                appointmentId: null,
+                serviceName: "Pose",
+                rewardName: null,
+                isReversal: false,
+                reversed: false,
+              },
+            ],
+            nextCursor: "2",
+          }),
+    );
+    inHub(<HubLoyalty businessId={B1} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Afficher les plus anciens" }),
+    );
+    await screen.findByText("Points retirés");
+    expect(shown("Solde : 340 points")).toBe(true);
+
+    // The session changed elsewhere (no message received); the check hangs.
+    const held = deferred<ReturnType<typeof ok> | "network">();
+    api.on("GET", /\/me$/, () => held.promise);
+    act(() => setVisibility("hidden"));
+    act(() => setVisibility("visible"));
+    expect(shown("Solde : 340 points")).toBe(false);
+    expect(shown("Points retirés")).toBe(false);
+
+    // The check fails: nothing of hers comes back, a retry is offered.
+    await act(async () => {
+      held.resolve("network");
+    });
+    expect(shown("Solde : 340 points")).toBe(false);
+    expect(
+      screen.getByText(/Impossible de vérifier votre session/),
+    ).toBeTruthy();
+
+    // Confirmed as the same customer: her screen returns as she left it.
+    api.on("GET", /\/me$/, () => ok(me));
+    fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+    await waitFor(() => expect(shown("Solde : 340 points")).toBe(true));
+    expect(shown("Points retirés")).toBe(true);
+  });
+
+  it("back on the tab with another customer confirmed: only hers is shown, nothing of the first", async () => {
+    inHub(<HubLoyalty businessId={B1} />);
+    await screen.findByText("Solde : 340 points");
+    const held = deferred<ReturnType<typeof ok>>();
+    api.on("GET", /\/me$/, () => held.promise);
+    act(() => setVisibility("hidden"));
+    act(() => setVisibility("visible"));
+    expect(shown("Solde : 340 points")).toBe(false);
+    api.on("GET", new RegExp(`${B1}/loyalty$`), ok(loyalty(12)));
+    await act(async () => {
+      held.resolve(
+        ok(profile("ines@exemple.fr", [business(B1, "Studio Mila", "Inès")])),
+      );
+    });
+    expect(await screen.findByText("Solde : 12 points")).toBeTruthy();
+    expect(screen.queryByText("Solde : 340 points")).toBeNull();
+  });
+
   it("a 401 on any read: the session is over, the sign-in page says it expired", async () => {
     api.on(
       "GET",
@@ -569,7 +669,7 @@ describe("sessions and isolation", () => {
     expect(screen.queryByText("Solde : 340 points")).toBeNull();
   });
 
-  it("signed out, then another customer signed in: a late answer of the first is never shown, nor its late 401 obeyed", async () => {
+  it("signed out, then another customer signed in: a late answer of the first is never shown on screen (React only: what a late 401 does to the cookie is tested on the real routes, data/route.test.ts and the database tests)", async () => {
     const lateLoyalty = deferred<ReturnType<typeof ok>>();
     api.on("GET", new RegExp(`${B1}/loyalty$`), () => lateLoyalty.promise);
     render(

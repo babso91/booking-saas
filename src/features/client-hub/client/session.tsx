@@ -24,6 +24,12 @@ import { endSession, fetchProfile, type HubError, type HubResult } from "./api";
 // are remounted under it (nothing typed, opened or read is kept), and every
 // answer to a request started under an older generation is dropped,
 // including a late 401, which can never sign out the newer session.
+//
+// Verification: the cookie may change in another tab without any message
+// reaching this one. So when the tab is left, her data is veiled at once
+// (`check: "pending"`), and shown again only once GET /me confirms who is
+// signed in: the same customer gets her screens back as she left them;
+// another one gets fresh screens; no answer keeps the veil, with a retry.
 
 export type SignedOutReason = "expired" | "signed-out" | "elsewhere" | null;
 
@@ -34,6 +40,12 @@ export type HubSession =
       status: "signed-in";
       generation: number;
       profile: ClientHubProfileDto;
+      /**
+       * `ok`: her identity is confirmed, her data may be shown. `pending`:
+       * being checked again (data veiled). `failed`: it could not be checked
+       * (data stays veiled, a retry is offered); not an expiry.
+       */
+      check: "ok" | "pending" | "failed";
     }
   | { status: "error"; generation: number; error: HubError };
 
@@ -41,6 +53,8 @@ type HubContext = {
   session: HubSession;
   /** Reads who is signed in again (keeps the screens if nothing changed). */
   recheck: () => void;
+  /** Veils her data and confirms who is signed in before showing it again. */
+  verify: () => void;
   /** A code was just verified: a new identity. */
   signedIn: (session: { email: string; expiresAt: string }) => void;
   /** A read of `generation` answered 401: that session is over. */
@@ -85,7 +99,7 @@ export function ClientHubSessionProvider({
       next:
         | { status: "checking" }
         | { status: "signed-out"; reason: SignedOutReason }
-        | { status: "signed-in"; profile: ClientHubProfileDto }
+        | { status: "signed-in"; profile: ClientHubProfileDto; check: "ok" }
         | { status: "error"; error: HubError },
     ) => {
       apply({ ...next, generation: generation.current + 1 } as HubSession);
@@ -93,10 +107,19 @@ export function ClientHubSessionProvider({
     [apply],
   );
 
+  /** Hides her data until the next check confirms who is signed in. */
+  const veil = useCallback(() => {
+    const now = current.current;
+    if (now.status === "signed-in" && now.check === "ok") {
+      apply({ ...now, check: "pending" });
+    }
+  }, [apply]);
+
   const check = useCallback(
-    (options: { fresh: boolean }) => {
+    (options: { fresh: boolean; veil?: boolean }) => {
       const token = (checks.current += 1);
       if (options.fresh) advance({ status: "checking" });
+      else if (options.veil) veil();
       void fetchProfile().then((result) => {
         if (token !== checks.current) return; // a newer check runs
         const now = current.current;
@@ -105,11 +128,11 @@ export function ClientHubSessionProvider({
             now.status === "signed-in" &&
             now.profile.email === result.data.email
           ) {
-            // Same customer: her businesses may have changed (an access
-            // granted or revoked). The screens stay; their reads check.
-            apply({ ...now, profile: result.data });
+            // Same customer: her screens come back as she left them (her
+            // businesses may have changed; their reads check).
+            apply({ ...now, profile: result.data, check: "ok" });
           } else {
-            advance({ status: "signed-in", profile: result.data });
+            advance({ status: "signed-in", profile: result.data, check: "ok" });
           }
           return;
         }
@@ -128,21 +151,28 @@ export function ClientHubSessionProvider({
           }
           return;
         }
-        // No answer: a signed-in screen stays as is (its own reads say
-        // so); otherwise the failure is shown, still without remounting.
-        if (now.status !== "signed-in") {
-          apply({
-            status: "error",
-            error: result.error,
-            generation: now.generation,
-          });
+        // No answer. Veiled data stays veiled: who is signed in is unknown
+        // (not an expiry: a retry is offered). Data shown and not in doubt
+        // stays (its own reads say so). Otherwise the failure is shown.
+        if (now.status === "signed-in") {
+          if (now.check !== "ok") apply({ ...now, check: "failed" });
+          return;
         }
+        apply({
+          status: "error",
+          error: result.error,
+          generation: now.generation,
+        });
       });
     },
-    [advance, apply],
+    [advance, apply, veil],
   );
 
   const recheck = useCallback(() => check({ fresh: false }), [check]);
+  const verify = useCallback(
+    () => check({ fresh: false, veil: true }),
+    [check],
+  );
 
   const post = useCallback((message: Message) => {
     try {
@@ -170,8 +200,11 @@ export function ClientHubSessionProvider({
         }
       };
     }
+    // Leaving the tab veils her data at once (another tab may sign someone
+    // else in); coming back confirms who is signed in before showing it.
     const onVisible = () => {
-      if (document.visibilityState === "visible") check({ fresh: false });
+      if (document.visibilityState === "hidden") veil();
+      else check({ fresh: false, veil: true });
     };
     // Restored from the back-forward cache: what it shows may belong to a
     // session that ended since. Hidden at once, then checked.
@@ -187,7 +220,7 @@ export function ClientHubSessionProvider({
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("pageshow", onPageShow);
     };
-  }, [advance, check]);
+  }, [advance, check, veil]);
 
   // The session ends at a known instant (7 days, never extended): the
   // screens stop showing it then, before any read is refused.
@@ -249,8 +282,8 @@ export function ClientHubSessionProvider({
   );
 
   const value = useMemo<HubContext>(
-    () => ({ session, recheck, signedIn, expire, isCurrent, signOut }),
-    [expire, isCurrent, recheck, session, signOut, signedIn],
+    () => ({ session, recheck, verify, signedIn, expire, isCurrent, signOut }),
+    [expire, isCurrent, recheck, session, signOut, signedIn, verify],
   );
 
   return <Context.Provider value={value}>{children}</Context.Provider>;

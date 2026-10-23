@@ -20,6 +20,7 @@ import { GET as getAppointments } from "@/app/api/client-hub/businesses/[busines
 import { GET as getAppointment } from "@/app/api/client-hub/businesses/[businessId]/appointments/[appointmentId]/route";
 import { GET as getLoyalty } from "@/app/api/client-hub/businesses/[businessId]/loyalty/route";
 import { GET as getLedger } from "@/app/api/client-hub/businesses/[businessId]/loyalty/ledger/route";
+import { CookieJar } from "../support/cookie-jar";
 import { NextRequest } from "next/server";
 
 import {
@@ -600,7 +601,7 @@ describe("sessions", () => {
     expect((await me(null)).body.error.code).toBe("client_hub_unauthenticated");
   });
 
-  it("expire: an expired session is refused and its cookie removed", async () => {
+  it("expire: an expired session is refused, and the refusal never deletes a cookie", async () => {
     const token = await login(email("expiry"));
     expect((await me(token)).status).toBe(200);
     await db.query(
@@ -612,7 +613,70 @@ describe("sessions", () => {
       request("GET", "/api/client-hub/me", { cookie: token }),
     );
     expect(expired.status).toBe(401);
-    expect(expired.headers.get("set-cookie")).toMatch(/Max-Age=0/);
+    expect(expired.headers.get("cache-control")).toBe("no-store");
+    // A deletion names the cookie, not its value: sent with a refused read,
+    // it would erase a newer session of the same browser (see below).
+    expect(expired.headers.getSetCookie()).toEqual([]);
+  });
+
+  it("a late 401 of A's read, after B signed in on the same browser, leaves B's cookie and session working", async () => {
+    const jar = new CookieJar();
+    const tokenA = await login(email("late-a"));
+    jar.set(
+      `client_hub_session=${tokenA}; Path=/api/client-hub; HttpOnly; SameSite=Lax; Max-Age=600`,
+    );
+
+    // A's session ends (signed out elsewhere); a read of A is refused, and
+    // its answer is held until after B signed in.
+    await deleteSession(
+      request("DELETE", "/api/client-hub/session", { cookie: tokenA }),
+    );
+    const lateA = await getMe(
+      request("GET", "/api/client-hub/me", { cookie: tokenA }),
+    );
+    expect(lateA.status).toBe(401);
+
+    // B signs in on the same browser: the verify route's real Set-Cookie.
+    const address = email("late-b");
+    const asked = await askCode(address);
+    const verified = await postVerify(
+      request("POST", "/api/client-hub/session/verify", {
+        body: {
+          challengeId: asked.body.data.challengeId,
+          email: address,
+          code: lastCode(),
+        },
+      }),
+    );
+    expect(verified.status).toBe(200);
+    jar.apply(verified);
+    const tokenB = jar.get("client_hub_session")!.value;
+    expect(tokenB).not.toBe(tokenA);
+
+    // A's late 401 reaches the browser now.
+    jar.apply(lateA);
+    expect(jar.get("client_hub_session")?.value).toBe(tokenB);
+    const meB = await me(tokenB);
+    expect(meB.status).toBe(200);
+    expect(meB.body.data.email).toBe(address);
+    // A's session stays refused by the backend.
+    expect((await me(tokenA)).status).toBe(401);
+  });
+
+  it("a revoked session (signed out everywhere) stays refused, without any cookie deletion on reads", async () => {
+    const address = email("revoked");
+    const one = await login(address);
+    const two = await login(address);
+    await deleteSession(
+      request("DELETE", "/api/client-hub/session?all=true", { cookie: one }),
+    );
+    for (const token of [one, two]) {
+      const refused = await getMe(
+        request("GET", "/api/client-hub/me", { cookie: token }),
+      );
+      expect(refused.status).toBe(401);
+      expect(refused.headers.getSetCookie()).toEqual([]);
+    }
   });
 
   it("sessions ended more than a day ago are purged", async () => {

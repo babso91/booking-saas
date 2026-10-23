@@ -161,6 +161,105 @@ describe("asking for a code", () => {
 });
 
 describe("the code", () => {
+  it("an old resend for A that answers late never takes the form back from B", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderSignIn();
+    await askCode(user, "a@exemple.fr");
+    await act(async () => {
+      vi.advanceTimersByTime(31_000);
+    });
+
+    // A's resend leaves and hangs.
+    const lateA = deferred<ReturnType<typeof ok>>();
+    api.on("POST", /\/session\/code$/, (call) =>
+      (call.body as { email: string }).email === "a@exemple.fr"
+        ? lateA.promise
+        : ok({ challengeId: SECOND, expiresAt: inTen() }, 202),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Recevoir un nouveau code" }),
+    );
+
+    // She changes the address and gets a code for B.
+    await user.click(
+      screen.getByRole("button", { name: /Modifier l’adresse/ }),
+    );
+    const field = await screen.findByLabelText("Adresse email");
+    await user.clear(field);
+    await askCode(user, "b@exemple.fr");
+    expect(screen.getByText("b@exemple.fr")).toBeTruthy();
+
+    // A's answer arrives (a new challenge for A): B's form is untouched.
+    await act(async () => {
+      lateA.resolve(
+        ok(
+          {
+            challengeId: "c0ffee00-0000-4000-8000-00000000000a",
+            expiresAt: inTen(),
+          },
+          202,
+        ),
+      );
+    });
+    expect(screen.getByText("b@exemple.fr")).toBeTruthy();
+    expect(screen.queryByText("a@exemple.fr")).toBeNull();
+    await user.type(screen.getByLabelText("Code à 8 chiffres"), "12345678");
+    await waitFor(() =>
+      expect(api.to(/\/session\/verify$/, "POST")).toHaveLength(1),
+    );
+    expect(api.to(/\/session\/verify$/, "POST")[0]!.body).toMatchObject({
+      challengeId: SECOND,
+      email: "b@exemple.fr",
+    });
+  });
+
+  it("an old resend for A failing late (unavailable) never changes B's screen", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderSignIn();
+    await askCode(user, "a@exemple.fr");
+    await act(async () => {
+      vi.advanceTimersByTime(31_000);
+    });
+    const lateA = deferred<ReturnType<typeof fail>>();
+    api.on("POST", /\/session\/code$/, (call) =>
+      (call.body as { email: string }).email === "a@exemple.fr"
+        ? lateA.promise
+        : ok({ challengeId: SECOND, expiresAt: inTen() }, 202),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Recevoir un nouveau code" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /Modifier l’adresse/ }),
+    );
+    await user.clear(await screen.findByLabelText("Adresse email"));
+    await askCode(user, "b@exemple.fr");
+    await act(async () => {
+      lateA.resolve(fail("client_hub_unavailable", 503));
+    });
+    expect(screen.queryByText("Accès temporairement indisponible")).toBeNull();
+    expect(screen.getByText("b@exemple.fr")).toBeTruthy();
+  });
+
+  it("while a code is being checked (it may open a session), the address cannot be changed", async () => {
+    const held = deferred<ReturnType<typeof ok>>();
+    api.on("POST", /\/session\/verify$/, () => held.promise);
+    const user = userEvent.setup();
+    renderSignIn();
+    const input = await askCode(user);
+    await user.type(input, "12345678");
+    const back = screen.getByRole("button", {
+      name: /Modifier l’adresse/,
+    }) as HTMLButtonElement;
+    expect(back.disabled).toBe(true);
+    await act(async () => {
+      held.resolve(fail("client_hub_code_invalid", 400));
+    });
+    expect(back.disabled).toBe(false);
+  });
+
   it("a pasted code with a space is sent once, complete, with its challenge and address", async () => {
     const user = userEvent.setup();
     renderSignIn();

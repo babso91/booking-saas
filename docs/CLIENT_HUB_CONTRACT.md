@@ -84,7 +84,10 @@ L'outbox est rattachée à une activité et à un rendez-vous, et fige chaque me
   - `DELETE /api/client-hub/session?all=true` met fin à toutes les sessions du compte, **seulement si la session présentée est encore active**. La ligne de cette session est verrouillée et vérifiée sous ce verrou. Une session révoquée, expirée ou inconnue n'a aucune autorité sur les autres, même si sa révocation est concurrente : la réponse reste `200 { ended: true }`, sans indiquer l'état de l'ancienne session ;
   - **ordre des verrous de la déconnexion :** le compte (verrou consultatif de transaction), puis la ligne de la session appelante. Deux déconnexions globales simultanées du même compte s'exécutent donc l'une après l'autre, sans deadlock : la première révoque toutes les sessions actives, la seconde trouve la sienne révoquée et ne change plus rien (les deux répondent 200). Les comptes différents ne s'attendent jamais. Seules les sessions actives sont révoquées ; les sessions expirées relèvent de la purge, sur des lignes disjointes. Une connexion n'insère qu'une nouvelle session, sans verrou de session : elle ne bloque pas une déconnexion et n'est pas bloquée par elle ;
   - le cookie est effacé dans les deux cas.
-- **Session refusée :** une session inconnue, expirée ou terminée donne `client_hub_unauthenticated` (401), et le cookie est effacé.
+- **Session refusée :** une session inconnue, expirée ou terminée donne `client_hub_unauthenticated` (401), **sans toucher au cookie**.
+  - Un `Set-Cookie` de suppression désigne le cookie par son nom, pas par sa valeur. Envoyé avec une lecture refusée et lente, il effacerait une session plus récente ouverte entre-temps dans le même navigateur.
+  - Un cookie mort reste inoffensif : toutes les routes le refusent.
+  - Seule une déconnexion explicite (`DELETE /api/client-hub/session`) l'efface.
 - **CSRF :**
   - `SameSite=Lax` empêche l'envoi du cookie lors d'un POST ou DELETE inter-sites ;
   - contre la « connexion forcée » (un formulaire d'un autre site qui ouvrirait une session dans le navigateur de la visiteuse), les POST et DELETE exigent `Content-Type: application/json`, et refusent un `Sec-Fetch-Site` autre que `same-origin`/`none` ou un `Origin` autre que celui de l'application (403 `forbidden`) ;
@@ -254,13 +257,18 @@ Pour chaque mutation, le script réinitialise la base, lance les tests ciblés e
 **Session côté navigateur** (`src/features/client-hub/client/session.tsx`) :
 
 - **Pages sans données côté serveur :** le cookie est limité à `/api/client-hub`, donc aucune page ne peut lire la session. Les pages sont des coquilles `noindex`, et toutes les données viennent d'appels `fetch` same-origin vers les routes, en `no-store` et `credentials: same-origin`. Aucun jeton n'est lisible par JavaScript.
-- **Qui est connectée :** l'interface le demande à `GET /me`, au chargement, au retour sur l'onglet et à la restauration depuis le cache avant/arrière (l'écran est alors masqué tant que la réponse n'est pas arrivée).
+- **Qui est connectée :** l'interface le demande à `GET /me`, au chargement, au retour sur l'onglet et à la restauration depuis le cache avant/arrière.
+  - Dès que l'onglet est quitté, ses données sont **voilées** : masquées et inertes, sans être détruites.
+  - Elles ne réapparaissent qu'une fois l'identité confirmée.
+  - **Même cliente :** son écran revient tel qu'elle l'avait laissé, pagination comprise.
+  - **Autre cliente :** les écrans repartent de zéro.
+  - **Pas de réponse :** le voile reste, avec « Réessayer ». Ce n'est pas une expiration, et l'ancien écran n'est jamais réexposé.
 - **Génération :** chaque identité affichée (connexion, déconnexion, expiration, autre cliente connectée ailleurs) en reçoit une nouvelle.
   - Tous les écrans sont remontés sous cette génération : rien de ce qui a été saisi, ouvert ou lu n'est conservé.
   - Toute réponse à une requête partie sous une génération antérieure est ignorée. Cela vaut aussi pour un 401 tardif, qui ne peut jamais déconnecter la session suivante.
   - Chaque lecture et chaque page de liste vérifient aussi leur clé (établissement, période) : une page tardive n'est jamais ajoutée à une autre liste.
 - **Réponses des routes :**
-  - **401** sur n'importe quelle lecture : la session est terminée et l'écran revient à la connexion (« Votre session a expiré »).
+  - **401** sur n'importe quelle lecture : la session est terminée et l'écran revient à la connexion (« Votre session a expiré »). Le cookie n'est pas effacé par cette réponse (§ 3).
   - **404 :** l'interface redemande `GET /me`. Une autorisation retirée fait disparaître l'établissement de l'espace.
   - **Établissement absent du profil :** aucune requête n'est faite pour lui. La sécurité reste celle de l'API.
 - **Fin de session :**
@@ -279,6 +287,10 @@ Pour chaque mutation, le script réinitialise la base, lance les tests ciblés e
   - 5 essais par code ;
   - 30 s entre deux envois.
 - **Anti-énumération :** le même écran s'affiche pour toute adresse, connue ou non.
+- **Une tentative par adresse :**
+  - chaque parcours de connexion porte un numéro, renouvelé à chaque nouvelle adresse ou retour en arrière ;
+  - une réponse d'un ancien parcours (renvoi de code, erreur, vérification) n'agit plus, et le renvoi ne remplace que le défi pour lequel il a été demandé ;
+  - pendant une vérification, qui peut ouvrir une session, l'adresse ne peut pas être changée.
 - **Réponses d'erreur :**
   - `client_hub_unavailable` affiche « Accès temporairement indisponible », sans aucun contournement ;
   - `rate_limited` invite à patienter, et rien n'est renvoyé automatiquement.

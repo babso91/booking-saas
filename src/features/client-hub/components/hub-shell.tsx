@@ -79,7 +79,7 @@ export function HubPage({
     switcher: ReactNode;
   }) => ReactNode;
 }) {
-  const { session, recheck } = useClientHub();
+  const { session, recheck, verify } = useClientHub();
   const router = useRouter();
   const signedOut = session.status === "signed-out";
 
@@ -102,14 +102,29 @@ export function HubPage({
           section={section}
         />
       ) : null;
+    // While her identity is being confirmed (back on the tab), nothing of
+    // hers is visible: her screens stay mounted but hidden and inert, so
+    // they come back as she left them once she is confirmed.
+    const veiled = session.check !== "ok";
     return (
-      <Chrome section={section} profile={profile} navBusiness={navBusiness}>
-        {businessId && !business ? (
-          <UnknownBusiness />
-        ) : (
-          children({ profile, business, switcher })
-        )}
-      </Chrome>
+      <>
+        {veiled ? (
+          <Verifying failed={session.check === "failed"} onRetry={verify} />
+        ) : null}
+        <div
+          hidden={veiled}
+          inert={veiled}
+          className={veiled ? undefined : "contents"}
+        >
+          <Chrome section={section} profile={profile} navBusiness={navBusiness}>
+            {businessId && !business ? (
+              <UnknownBusiness />
+            ) : (
+              children({ profile, business, switcher })
+            )}
+          </Chrome>
+        </div>
+      </>
     );
   }
 
@@ -128,6 +143,45 @@ export function HubPage({
           <Skeleton className="h-11 w-64 rounded-2xl" />
           <Skeleton className="mt-4 h-44 w-full rounded-[28px]" />
           <Skeleton className="h-28 w-full rounded-[28px]" />
+        </div>
+      )}
+    </Chrome>
+  );
+}
+
+/** The neutral screen of a check: no name, no data, no navigation. */
+function Verifying({
+  failed,
+  onRetry,
+}: {
+  failed: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <Chrome section="home" profile={null} navBusiness={null}>
+      {failed ? (
+        <div
+          role="alert"
+          className="flex flex-col items-start gap-4 rounded-[28px] border border-line bg-paper-raised px-6 py-8"
+        >
+          <h1 className="font-display text-[30px] leading-tight text-ink">
+            Impossible de vérifier votre session
+          </h1>
+          <p className="max-w-prose text-[15px] leading-relaxed text-ink-soft">
+            Par sécurité, votre espace reste masqué tant que nous ne pouvons pas
+            confirmer qu’il s’agit bien de vous. Vérifiez votre connexion puis
+            réessayez.
+          </p>
+          <Button size="md" onClick={onRetry}>
+            Réessayer
+          </Button>
+        </div>
+      ) : (
+        <div role="status" aria-live="polite" className="flex flex-col gap-4">
+          <span className="sr-only">Vérification de votre session…</span>
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-11 w-64 rounded-2xl" />
+          <Skeleton className="mt-4 h-44 w-full rounded-[28px]" />
         </div>
       )}
     </Chrome>

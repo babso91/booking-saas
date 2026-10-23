@@ -50,6 +50,12 @@ const CODE_TTL_MS = 10 * 60_000;
 export const RESEND_DELAY_MS = 30_000;
 
 type CodeStep = {
+  /**
+   * The sign-in attempt this step belongs to. A new address (or a step
+   * back) starts a new attempt; any answer to a request of an older one
+   * is dropped, whatever it says.
+   */
+  flow: number;
   email: string;
   challengeId: string;
   /** performance.now() deadlines: a device clock change moves nothing. */
@@ -97,6 +103,13 @@ export function SignIn() {
   const [email, setEmail] = useState("");
   const [step, setStep] = useState<CodeStep | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const attempt = useRef(0);
+  /** Leaves the current attempt: its pending answers will be ignored. */
+  const restart = () => {
+    attempt.current += 1;
+    setStep(null);
+  };
+  const isCurrent = (flow: number) => flow === attempt.current;
   const signedInNow = session.status === "signed-in";
 
   useEffect(() => {
@@ -119,7 +132,7 @@ export function SignIn() {
         <Unavailable
           onRetry={() => {
             setUnavailable(false);
-            setStep(null);
+            restart();
           }}
         />
       ) : step ? (
@@ -127,7 +140,8 @@ export function SignIn() {
           key={step.challengeId}
           step={step}
           onChange={setStep}
-          onBack={() => setStep(null)}
+          onBack={restart}
+          isCurrent={isCurrent}
           onUnavailable={() => setUnavailable(true)}
           onSignedIn={signedIn}
           onUncertain={recheck}
@@ -141,6 +155,7 @@ export function SignIn() {
           onRetrySession={recheck}
           onSent={(challenge) =>
             setStep({
+              flow: (attempt.current += 1),
               email: email.trim(),
               challengeId: challenge.challengeId,
               expiresAt: deadline(challenge),
@@ -329,6 +344,7 @@ function CodeForm({
   step,
   onChange,
   onBack,
+  isCurrent,
   onUnavailable,
   onSignedIn,
   onUncertain,
@@ -336,6 +352,8 @@ function CodeForm({
   step: CodeStep;
   onChange: Dispatch<SetStateAction<CodeStep | null>>;
   onBack: () => void;
+  /** Whether answers of this attempt may still act. */
+  isCurrent: (flow: number) => boolean;
   onUnavailable: () => void;
   onSignedIn: (session: { email: string; expiresAt: string }) => void;
   onUncertain: () => void;
@@ -371,12 +389,19 @@ function CodeForm({
     setVerifying(true);
     setError(null);
     setResent(null);
+    const flow = step.flow;
     const result = await verifyCode({
       challengeId: step.challengeId,
       email: step.email,
       code: value,
     });
     busy.current = false;
+    if (!isCurrent(flow)) {
+      // Another attempt by now. A session may have been opened by this
+      // answer: only ask who is signed in, never act on this old attempt.
+      if (result.ok || result.error.code === "network") onUncertain();
+      return;
+    }
     if (result.ok) {
       setCode(""); // nothing of the code is kept
       onSignedIn(result.data);
@@ -410,21 +435,30 @@ function CodeForm({
     if (resending || verifying || wait > 0) return;
     setResending(true);
     setResent(null);
+    const flow = step.flow;
+    const challenge = step.challengeId;
     const result = await requestCode(step.email);
+    // Another address or attempt by now: this answer changes nothing.
+    if (!isCurrent(flow)) return;
     setResending(false);
     if (result.ok) {
       setCode("");
       setError(null);
       // A new challenge: its own deadline and attempts (a new key remounts
-      // this form, the "sent" message is carried by the step).
-      onChange({
-        ...step,
-        challengeId: result.data.challengeId,
-        expiresAt: deadline(result.data),
-        resendAt: now() + RESEND_DELAY_MS,
-        failures: 0,
-        resent: true,
-      });
+      // this form, the "sent" message is carried by the step). Applied only
+      // to the step it was asked for.
+      onChange((current) =>
+        current?.flow === flow && current.challengeId === challenge
+          ? {
+              ...current,
+              challengeId: result.data.challengeId,
+              expiresAt: deadline(result.data),
+              resendAt: now() + RESEND_DELAY_MS,
+              failures: 0,
+              resent: true,
+            }
+          : current,
+      );
       return;
     }
     if (result.error.code === "client_hub_unavailable") return onUnavailable();
@@ -472,7 +506,9 @@ function CodeForm({
       <button
         type="button"
         onClick={onBack}
-        className="-ml-1 flex w-fit cursor-pointer items-center gap-1.5 rounded-lg px-1 py-1 text-[14px] text-ink-soft hover:text-ink"
+        // A code being checked may open a session for this address.
+        disabled={verifying}
+        className="-ml-1 flex w-fit cursor-pointer items-center gap-1.5 rounded-lg px-1 py-1 text-[14px] text-ink-soft hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
       >
         <ArrowLeftIcon size={16} /> Modifier l’adresse
       </button>

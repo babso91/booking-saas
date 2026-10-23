@@ -1,11 +1,8 @@
 import "server-only";
 
-import {
-  sessionTokenOf,
-  clearedSessionCookie,
-} from "@/features/client-hub/data/session";
+import { sessionTokenOf } from "@/features/client-hub/data/session";
 import { getPublicEnv } from "@/lib/env/public";
-import { AppException, toAppError } from "@/lib/errors";
+import { AppException } from "@/lib/errors";
 import { jsonError, jsonOk } from "@/lib/http";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
@@ -38,7 +35,11 @@ export function assertSameOrigin(request: Request, body: boolean) {
 // Skeleton of the authenticated Client Hub routes: the session token comes
 // from the cookie only (never from a parameter), PostgreSQL authenticates it
 // and authorizes every read. An unknown, expired or revoked session answers
-// 401 client_hub_unauthenticated and removes the cookie.
+// 401 client_hub_unauthenticated, WITHOUT touching the cookie: a Set-Cookie
+// deletion names the cookie, not its value, so a slow refused read of an
+// older session would erase a newer session signed in meanwhile in the same
+// browser. A dead cookie is harmless (every route refuses it); only an
+// explicit sign-out (DELETE /api/client-hub/session) removes it.
 export async function withClientHubSession<T>(
   request: Request,
   handler: (admin: AppSupabaseClient, token: string) => Promise<T>,
@@ -50,10 +51,6 @@ export async function withClientHubSession<T>(
       await handler(createAdminSupabaseClient() as AppSupabaseClient, token),
     );
   } catch (error) {
-    const response = jsonError(error);
-    if (toAppError(error).code === "client_hub_unauthenticated") {
-      response.headers.append("Set-Cookie", clearedSessionCookie());
-    }
-    return response;
+    return jsonError(error);
   }
 }

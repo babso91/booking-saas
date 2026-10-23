@@ -41,6 +41,20 @@ describe("Client Hub pages (production build)", () => {
     expect(html).not.toMatch(/Solde :|Bonjour [A-Z]/);
   });
 
+  it("a read with an unknown session is refused without deleting any cookie (a late refusal must never erase a newer session)", async () => {
+    for (const path of [
+      "/api/client-hub/me",
+      `/api/client-hub/businesses/${BUSINESS}/loyalty`,
+    ]) {
+      const response = await fetch(new URL(path, APP), {
+        headers: { cookie: `client_hub_session=${"c".repeat(64)}` },
+      });
+      expect(response.status).toBe(401);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.getSetCookie()).toEqual([]);
+    }
+  });
+
   it("the reads the pages make require the session cookie: 401, uncached", async () => {
     const response = await fetch(new URL("/api/client-hub/me", APP));
     expect(response.status).toBe(401);
