@@ -41,7 +41,12 @@ describe("Client Hub pages (production build)", () => {
     expect(html).not.toMatch(/Solde :|Bonjour [A-Z]/);
   });
 
-  it("a read with an unknown session is refused without deleting any cookie (a late refusal must never erase a newer session)", async () => {
+  // This server runs with the production defaults, without the service key
+  // the reads need: a read carrying a cookie fails (500), it is not refused
+  // (the 401 of an unknown session is covered against the database in
+  // tests/integration/client-hub.test.ts). Either way, no answer may touch
+  // the cookie: a late refusal must never erase a newer session.
+  it("a read carrying a session cookie never answers with a Set-Cookie, and is not cached", async () => {
     for (const path of [
       "/api/client-hub/me",
       `/api/client-hub/businesses/${BUSINESS}/loyalty`,
@@ -49,7 +54,7 @@ describe("Client Hub pages (production build)", () => {
       const response = await fetch(new URL(path, APP), {
         headers: { cookie: `client_hub_session=${"c".repeat(64)}` },
       });
-      expect(response.status).toBe(401);
+      expect(response.ok).toBe(false);
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(response.headers.getSetCookie()).toEqual([]);
     }
