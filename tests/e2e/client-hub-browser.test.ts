@@ -613,6 +613,59 @@ describe("the pages never show one customer's data under another's identity", ()
     });
   }
 
+  for (const broadcastChannel of [true, false]) {
+    it(`the pages: A signs out (answer held), B signs in from another tab, then A's answer arrives (BroadcastChannel ${broadcastChannel ? "available" : "unavailable"}): B is shown in both tabs, never signed out`, async () => {
+      const alice = await customerWithAppointment("out-ui-a", "Alice");
+      const berenice = await customerWithAppointment("out-ui-b", "Bérénice");
+      const { context, tabs } = await profileWithTabs(2, { broadcastChannel });
+      await record(context);
+      const [hubTab, otherTab] = tabs as [Page, Page];
+      await signIn(hubTab, mailpitUrl, alice.email);
+      await hubTab.goto("/espace");
+      await hubTab.getByText("Soin de Alice").waitFor();
+
+      // Alice signs out from the page; the server processes it, the answer
+      // is held.
+      const held = await holdNext(hubTab, "DELETE", SESSION);
+      await hubTab.getByRole("button", { name: "Mon compte" }).click();
+      await hubTab
+        .getByRole("button", { name: "Se déconnecter", exact: true })
+        .click();
+      await held.processed;
+
+      // Bérénice signs in from the other tab and uses her space.
+      await signIn(otherTab, mailpitUrl, berenice.email);
+      await otherTab.goto("/espace");
+      await otherTab.getByText("Soin de Bérénice").waitFor();
+      if (broadcastChannel) {
+        await otherTab.evaluate(() =>
+          new BroadcastChannel("client-hub-session").postMessage({
+            type: "check",
+          }),
+        );
+      }
+
+      // Alice's sign-out answer arrives now.
+      held.release();
+      await hubTab.getByText("Soin de Bérénice").waitFor({ timeout: 15_000 });
+      await hubTab.waitForTimeout(1_000);
+
+      for (const page of [hubTab, otherTab]) {
+        expect(new URL(page.url()).pathname).toBe("/espace");
+        expect(await page.getByText("Soin de Bérénice").count()).toBe(1);
+        expect(await page.getByText("Soin de Alice").count()).toBe(0);
+      }
+      const now = await call(otherTab, "GET", ME);
+      expect(now.status).toBe(200);
+      expect(now.body?.data?.email).toBe(berenice.email);
+      for (const state of await statesOf(hubTab)) {
+        expect(/Alice/.test(state) && /Bérénice/.test(state), state).toBe(
+          false,
+        );
+      }
+    });
+  }
+
   it("a read of a business both customers use, served for the other one (the cookie changed under this tab): her data stays invisible until she is confirmed", async () => {
     // One business, two authorized customers, each with an appointment.
     const owner = await createProfessional("hub-ui-shared");

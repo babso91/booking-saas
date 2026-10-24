@@ -340,8 +340,10 @@ Retirer **seulement** le verrou de ligne de la déconnexion n'est pas détecté 
   - **404 :** l'interface redemande `GET /me`. Une autorisation retirée fait disparaître l'établissement de l'espace.
   - **Établissement absent du profil :** aucune requête n'est faite pour lui. La sécurité reste celle de l'API.
 - **Fin de session :**
-  - **Déconnexion :** `DELETE /api/client-hub/session` (ou `?all=true`). Seule une réponse confirmée vide l'écran ; sans réponse, l'écran dit que la déconnexion n'est pas confirmée.
-  - **Autres onglets :** prévenus par `BroadcastChannel` (`client-hub-session`), quand il existe. Sans lui, un onglet apprend le changement au retour sur l'onglet ou à sa lecture suivante (identité de la réponse).
+  - **Déconnexion :** `DELETE /api/client-hub/session` (ou `?all=true`). Sans réponse, l'écran dit que la déconnexion n'est pas confirmée et garde la session. Une réponse confirmée dit seulement que **ses** sessions sont terminées. Elle ne dit pas que personne n'est connecté : un autre onglet peut avoir connecté une autre cliente pendant le trajet de la réponse, avec son propre cookie, intact. Elle est donc réconciliée avec `GET /me` :
+    - si l'onglet montre encore la cliente qui s'est déconnectée, ses écrans disparaissent aussitôt (nouvelle génération, rien de privé ni de panneau ouvert), puis `/me` décide : une cliente confirmée (`X-Client-Hub-Account`) obtient ses écrans sans se reconnecter ; personne, et c'est la page de connexion (« Vous êtes déconnectée ») ;
+    - si l'onglet est déjà passé à une autre identité (réponse tardive), celle-ci est seulement revérifiée sous voile : jamais déconnectée par cette réponse, ses écrans reviennent tels quels si `/me` la confirme.
+  - **Autres onglets :** un message `BroadcastChannel` (`client-hub-session`) est une **demande de vérification**, jamais un ordre. L'onglet voile ses données et demande `/me` : la même cliente garde ses écrans, une autre en obtient de nouveaux, personne mène à la connexion (« depuis un autre onglet »). Les anciens messages (`signed-in`, `signed-out`) sont lus de la même façon. Sans `BroadcastChannel`, un onglet apprend le changement au retour sur l'onglet, à sa lecture suivante (identité de la réponse) ou à la réponse de sa propre déconnexion.
   - **Expiration :** l'instant de fin de la session (7 jours) ferme l'écran à l'heure dite.
 
 **Connexion :**

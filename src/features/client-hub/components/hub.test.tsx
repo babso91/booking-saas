@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { useEffect } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ClientHubProfileDto } from "@/features/client-hub/types";
 
@@ -801,7 +801,24 @@ describe("sessions and isolation", () => {
     expect(probe.current!.session.status).toBe("signed-in");
   });
 
-  it("another tab signs out: this tab drops everything at once", async () => {
+  it("another tab signs out: this tab hides everything at once, and /me confirms nobody is left", async () => {
+    inHub(<HubLoyalty businessId={B1} />);
+    await screen.findByText("Solde : 340 points");
+    // The other tab's sign-out ended the session on the server.
+    me = null;
+    const other = new BroadcastChannel("client-hub-session");
+    await act(async () => {
+      other.postMessage({ type: "signed-out" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    other.close();
+    expect(shown("Solde : 340 points")).toBe(false);
+    await waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/espace/connexion"),
+    );
+  });
+
+  it("a message from another tab is a request to check, never an order: /me still confirms her, her screens stay", async () => {
     inHub(<HubLoyalty businessId={B1} />);
     await screen.findByText("Solde : 340 points");
     const other = new BroadcastChannel("client-hub-session");
@@ -810,10 +827,8 @@ describe("sessions and isolation", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
     other.close();
-    expect(screen.queryByText("Solde : 340 points")).toBeNull();
-    await waitFor(() =>
-      expect(router.replace).toHaveBeenCalledWith("/espace/connexion"),
-    );
+    await waitFor(() => expect(shown("Solde : 340 points")).toBe(true));
+    expect(router.replace).not.toHaveBeenCalled();
   });
 
   it("back on the tab with another customer signed in elsewhere: the screens start over for her", async () => {
@@ -901,6 +916,191 @@ describe("sessions and isolation", () => {
     expect(
       await screen.findByText(/La déconnexion n’a pas été confirmée/),
     ).toBeTruthy();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("a late sign-out, with several tabs (the same browser)", () => {
+  const CAMILLE = "camille@exemple.fr";
+  const INES = "ines@exemple.fr";
+  const ines = () => profile(INES, [business(B1, "Studio Mila", "Inès")]);
+  type Hub = ReturnType<typeof useClientHub>;
+  const tab = () => {
+    const probe: { current: Hub | null } = { current: null };
+    function TabProbe() {
+      const hub = useClientHub();
+      useEffect(() => {
+        probe.current = hub;
+      });
+      return null;
+    }
+    const view = render(
+      <HubRoot>
+        <TabProbe />
+        <HubLoyalty businessId={B1} />
+      </HubRoot>,
+    );
+    const shows = (text: string) =>
+      within(view.container)
+        .queryAllByText(text)
+        .some((element) => !element.closest("[hidden]"));
+    return { probe, view, shows };
+  };
+  const later = () =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+  const inesSignsIn = async (hub: Hub) => {
+    await act(async () => {
+      hub.signedIn({
+        email: INES,
+        expiresAt: new Date(Date.now() + 864e5).toISOString(),
+      });
+    });
+  };
+
+  beforeEach(() => {
+    // Each customer's own balance, for whoever the browser's session is.
+    api.on("GET", new RegExp(`${B1}/loyalty$`), () =>
+      ok(loyalty(me?.email === INES ? 12 : 340)),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Camille's sign-out is processed by the server; its answer is held. */
+  const heldSignOut = () => {
+    const held = deferred<ReturnType<typeof ok>>();
+    api.on("DELETE", /\/session$/, () => {
+      me = null;
+      return held.promise;
+    });
+    return held;
+  };
+
+  it("Camille signs out, Inès signs in in another tab, then Camille's answer arrives: Inès stays signed in, in both tabs", async () => {
+    const first = tab();
+    await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+    const held = heldSignOut();
+    let out!: Promise<unknown>;
+    act(() => {
+      out = first.probe.current!.signOut(false);
+    });
+
+    me = ines();
+    const second = tab();
+    await waitFor(() => expect(second.shows("Solde : 12 points")).toBe(true));
+    await inesSignsIn(second.probe.current!);
+    await waitFor(() => expect(first.shows("Solde : 12 points")).toBe(true));
+
+    await act(async () => {
+      held.resolve(ok({ ended: true }));
+      await out;
+    });
+    await later();
+
+    for (const each of [first, second]) {
+      await waitFor(() => expect(each.shows("Solde : 12 points")).toBe(true));
+      expect(each.shows("Solde : 340 points")).toBe(false);
+      const session = each.probe.current!.session;
+      expect(session.status).toBe("signed-in");
+      if (session.status === "signed-in") {
+        expect(session.account).toBe(accountOf(INES));
+      }
+    }
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("the same, without BroadcastChannel: the late answer is reconciled with /me, Inès's screens come up in Camille's tab", async () => {
+    vi.stubGlobal("BroadcastChannel", undefined);
+    const first = tab();
+    await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+    const held = heldSignOut();
+    let out!: Promise<unknown>;
+    act(() => {
+      out = first.probe.current!.signOut(false);
+    });
+    me = ines();
+    const second = tab();
+    await waitFor(() => expect(second.shows("Solde : 12 points")).toBe(true));
+    await inesSignsIn(second.probe.current!);
+    // No message: Camille's tab still shows her, until her answer arrives.
+    await act(async () => {
+      held.resolve(ok({ ended: true }));
+      await out;
+    });
+    await waitFor(() => expect(first.shows("Solde : 12 points")).toBe(true));
+    expect(first.shows("Solde : 340 points")).toBe(false);
+    expect(second.shows("Solde : 12 points")).toBe(true);
+    expect(second.probe.current!.session.status).toBe("signed-in");
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("while her sign-out is reconciled, nothing of Camille is shown; nobody left: the sign-in page says she is signed out", async () => {
+    const first = tab();
+    await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+    const check = deferred<ReturnType<typeof ok>>();
+    api.on("GET", /\/me$/, () => check.promise);
+    await act(async () => {
+      await first.probe.current!.signOut(false);
+    });
+    expect(first.shows("Solde : 340 points")).toBe(false);
+    expect(within(first.view.container).queryByText(CAMILLE)).toBeNull();
+    expect(router.replace).not.toHaveBeenCalled();
+    await act(async () => {
+      check.resolve(fail("client_hub_unauthenticated", 401));
+    });
+    await waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/espace/connexion"),
+    );
+    const session = first.probe.current!.session;
+    expect(session.status).toBe("signed-out");
+    if (session.status === "signed-out")
+      expect(session.reason).toBe("signed-out");
+  });
+
+  it("a sign-out answer that arrives after the tab moved on never signs the newer customer out, even if /me answered late", async () => {
+    const first = tab();
+    await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+    const held = heldSignOut();
+    let out!: Promise<unknown>;
+    act(() => {
+      out = first.probe.current!.signOut(false);
+    });
+    me = ines();
+    // The tab moved on to Inès (a check confirmed her).
+    await act(async () => {
+      first.probe.current!.recheck();
+    });
+    await waitFor(() => expect(first.shows("Solde : 12 points")).toBe(true));
+    const before = first.probe.current!.session.generation;
+    await act(async () => {
+      held.resolve(ok({ ended: true }));
+      await out;
+    });
+    await later();
+    await waitFor(() => expect(first.shows("Solde : 12 points")).toBe(true));
+    // Confirmed again, not replaced: her screens were never dropped.
+    expect(first.probe.current!.session.generation).toBe(before);
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("signing out everywhere: the same reconciliation (another account's session is not hers to end)", async () => {
+    const first = tab();
+    await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+    const held = heldSignOut();
+    let out!: Promise<unknown>;
+    act(() => {
+      out = first.probe.current!.signOut(true);
+    });
+    me = ines();
+    await act(async () => {
+      held.resolve(ok({ ended: true }));
+      await out;
+    });
+    await waitFor(() => expect(first.shows("Solde : 12 points")).toBe(true));
+    expect(api.to(/\/session$/, "DELETE")[0]!.search.get("all")).toBe("true");
     expect(router.replace).not.toHaveBeenCalled();
   });
 });

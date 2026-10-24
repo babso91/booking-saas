@@ -33,6 +33,16 @@ import { endSession, fetchProfile, type HubError, type HubResult } from "./api";
 // with another session's cookie (another tab signed someone else in
 // meanwhile) cannot put that person's data on this customer's screens.
 //
+// Signing out ends the sessions this browser presented, on the server; it
+// does NOT tell who is signed in afterwards: another tab may have signed
+// someone else in while the answer was on its way (its cookie is intact).
+// So a sign-out is reconciled with GET /me, like any other doubt: this
+// tab's screens are dropped at once if they still show the customer who
+// signed out, then /me says who, if anyone, is signed in. An answer that
+// arrives after the tab moved on to someone else only re-checks her, veiled.
+// Messages between tabs are requests to check, never orders: a tab acts on
+// what /me confirms, not on what another tab believed.
+//
 // Verification: the cookie may change in another tab without any message
 // reaching this one. So when the tab is left, her data is veiled at once
 // (`check: "pending"`), and shown again only once GET /me confirms who is
@@ -85,7 +95,11 @@ type HubContext = {
 const Context = createContext<HubContext | null>(null);
 
 const CHANNEL = "client-hub-session";
-type Message = { type: "signed-in" | "signed-out" };
+/**
+ * "Who is signed in changed here: check". Older tabs may still send
+ * "signed-in" / "signed-out": any message is read as that request.
+ */
+type Message = { type: "check" };
 
 /** Longest timer the browser keeps (about 24 days). */
 const MAX_TIMER = 2_147_483_647;
@@ -140,7 +154,12 @@ export function ClientHubSessionProvider({
   }, [apply]);
 
   const check = useCallback(
-    (options: { fresh: boolean; veil?: boolean }) => {
+    (options: {
+      fresh: boolean;
+      veil?: boolean;
+      /** Why, if /me finds nobody signed in (shown on the sign-in page). */
+      out?: SignedOutReason;
+    }) => {
       const token = (checks.current += 1);
       if (options.fresh) advance({ status: "checking" });
       else if (options.veil) veil();
@@ -180,13 +199,13 @@ export function ClientHubSessionProvider({
         if (result.error.code === "client_hub_unauthenticated") {
           expiresAt.current = null;
           if (now.status === "signed-in") {
-            advance({ status: "signed-out", reason: "expired" });
+            advance({ status: "signed-out", reason: options.out ?? "expired" });
           } else if (now.status !== "signed-out") {
             // Nobody was shown: no new identity, the screens (a code being
             // typed on the sign-in page) stay as they are.
             apply({
               status: "signed-out",
-              reason: null,
+              reason: options.out ?? null,
               generation: now.generation,
             });
           }
@@ -228,17 +247,10 @@ export function ClientHubSessionProvider({
 
     if (typeof BroadcastChannel === "function") {
       channel.current = new BroadcastChannel(CHANNEL);
-      channel.current.onmessage = (event: MessageEvent<Message>) => {
-        if (event.data?.type === "signed-out") {
-          // Ended in another tab: nothing of it stays on screen here.
-          checks.current += 1;
-          expiresAt.current = null;
-          if (current.current.status !== "signed-out") {
-            advance({ status: "signed-out", reason: "elsewhere" });
-          }
-        } else if (event.data?.type === "signed-in") {
-          check({ fresh: true });
-        }
+      // Another tab signed in or out: her data is hidden at once, and /me
+      // says who is signed in now (the same customer keeps her screens).
+      channel.current.onmessage = () => {
+        check({ fresh: false, veil: true, out: "elsewhere" });
       };
     }
     // Leaving the tab veils her data at once (another tab may sign someone
@@ -288,7 +300,7 @@ export function ClientHubSessionProvider({
       const at = Date.parse(until);
       expiresAt.current = Number.isFinite(at) ? at : null;
       check({ fresh: true });
-      post({ type: "signed-in" });
+      post({ type: "check" });
     },
     [check, post],
   );
@@ -314,19 +326,26 @@ export function ClientHubSessionProvider({
   }, []);
   const signOut = useCallback(
     async (all: boolean) => {
+      const owner = generation.current;
       const result = await endSession(all);
       // Without a confirmed answer the cookie may still be there: the
       // screen says so and keeps the session (never a false sign-out).
       if (result.ok) {
-        // The cookie is gone: whatever this tab showed, nobody is signed in.
-        checks.current += 1;
-        expiresAt.current = null;
-        advance({ status: "signed-out", reason: "signed-out" });
-        post({ type: "signed-out" });
+        // Her sessions are over; whether someone else is signed in on this
+        // browser now is for /me to say. Still showing her: her screens go
+        // at once. Already showing someone else (her answer was late):
+        // that customer is only checked again, veiled, never signed out.
+        if (owner === generation.current) {
+          expiresAt.current = null;
+          check({ fresh: true, out: "signed-out" });
+        } else {
+          check({ fresh: false, veil: true, out: "elsewhere" });
+        }
+        post({ type: "check" });
       }
       return result;
     },
-    [advance, post],
+    [check, post],
   );
 
   const value = useMemo<HubContext>(
