@@ -394,43 +394,96 @@ describe("revocation, expiry, signing out everywhere", () => {
 });
 
 describe("the cookies as Chromium stores and sends them", () => {
-  it("one HttpOnly, Secure, SameSite=Lax cookie per session, host-only, scoped to the hub API, unreadable by scripts and not sent to pages", async () => {
+  it("one __Host- cookie per session (HttpOnly, Secure, SameSite=Lax, Path=/, host-only), unreadable by scripts; pages receive it but render nothing from it", async () => {
     const { context, tabs } = await profileWithTabs(1);
     const [tab] = tabs as [Page];
     const before = (await sessionCookies(context)).map((c) => c.session);
-    await signIn(tab, mailpitUrl, address("attributes"));
+    const who = address("attributes");
+    await signIn(tab, mailpitUrl, who);
     const [added] = await newestSession(context, before);
     expect(await sessionCookies(context)).toEqual([
       {
         session: added,
         domain: HUB_HOST,
-        path: "/api/client-hub",
+        path: "/",
         httpOnly: true,
         secure: true,
         sameSite: "Lax",
       },
     ]);
+    expect((await context.cookies()).map((c) => c.name)).toEqual([
+      `__Host-client_hub_s_${added}`,
+    ]);
     expect(await tab.evaluate(() => document.cookie)).not.toContain(
       "client_hub",
     );
+    // Path=/ sends it to the pages too: their server render shows nothing
+    // of her (the pages are shells; every read goes through the API).
     let sentToPage: string | undefined;
     tab.on("request", (request) => {
       if (request.url().endsWith("/espace"))
         void request.allHeaders().then((h) => (sentToPage = h.cookie));
     });
-    await tab.goto("/espace");
-    expect(sentToPage ?? "").not.toContain("client_hub_s_");
+    const page = await tab.goto("/espace");
+    expect(sentToPage ?? "").toContain(`__Host-client_hub_s_${added}=`);
+    const html = await page!.text();
+    expect(html).not.toContain(who);
+    expect(html).not.toMatch(/Bonjour [A-Z]|Solde :/);
   });
 });
 
-describe("cookie tossing from a sibling subdomain (real Domain=hub.test cookies)", () => {
-  /** Plants a cookie from https://evil.hub.test, for every *.hub.test. */
-  async function plant(context: BrowserContext, cookie: string) {
+describe("a hostile sibling subdomain (real Domain=hub.test cookies from https://evil.hub.test)", () => {
+  /**
+   * Plants `name=value` from https://evil.hub.test for every *.hub.test,
+   * in every form a sibling can try: on the whole host and on the hub's
+   * API path. Returns what Chromium accepted.
+   */
+  async function plant(context: BrowserContext, name: string, value: string) {
     const evil = await context.newPage();
     await evil.goto(`${EVIL_URL}/api/health`);
-    await evil.evaluate((value) => {
-      document.cookie = `${value}; Domain=hub.test; Path=/api/client-hub; Secure; SameSite=Lax`;
-    }, cookie);
+    await evil.evaluate(
+      ([name, value]) => {
+        for (const path of ["/", "/api/client-hub"]) {
+          document.cookie = `${name}=${value}; Domain=hub.test; Path=${path}; Secure; SameSite=Lax`;
+        }
+      },
+      [name, value] as const,
+    );
+    await evil.close();
+  }
+
+  /**
+   * Plants a session cookie (its id and value) under every name a sibling
+   * could hope the hub reads: the session's bare name, its prefixed name
+   * (refused by the browser with Domain=), a lowercase prefix, and a
+   * nameless cookie whose value spells the prefixed name.
+   */
+  async function plantSession(
+    context: BrowserContext,
+    session: string,
+    value: string,
+  ) {
+    const evil = await context.newPage();
+    await evil.goto(`${EVIL_URL}/api/health`);
+    await evil.evaluate(
+      ([session, value]) => {
+        const forms = [
+          `client_hub_s_${session}=${value}`,
+          `__Host-client_hub_s_${session}=${value}`,
+          `__host-client_hub_s_${session}=${value}`,
+          `__Secure-client_hub_s_${session}=${value}`,
+          `=__Host-client_hub_s_${session}=${value}`,
+        ];
+        for (const form of forms) {
+          for (const path of ["/", "/api/client-hub"]) {
+            document.cookie = `${form}; Domain=hub.test; Path=${path}; Secure; SameSite=Lax`;
+          }
+        }
+        // Without Domain, from the sibling: its own host only.
+        document.cookie = `__Host-client_hub_s_${session}=${value}; Path=/; Secure; SameSite=Lax`;
+      },
+      [session, value] as const,
+    );
     await evil.close();
   }
 
@@ -439,69 +492,104 @@ describe("cookie tossing from a sibling subdomain (real Domain=hub.test cookies)
     const who = address("attacker");
     await signIn(tabs[0]!, mailpitUrl, who);
     const [cookie] = await context.cookies();
-    return { who, name: cookie!.name, value: cookie!.value };
+    return {
+      who,
+      session: cookie!.name.replace(/^(__Host-)?client_hub_s_/, ""),
+      value: cookie!.value,
+    };
   }
 
-  it("another account's live session planted next to the victim's: never chosen; both end", async () => {
+  it("the browser never lets a sibling set a __Host- cookie for the hub: neither with Domain=, nor nameless, nor on its own host", async () => {
+    const attacker = await attackerSession();
+    const { context } = await profileWithTabs(1);
+    await plantSession(context, attacker.session, attacker.value);
+    const planted = await context.cookies();
+    // The bare names are accepted (Domain=hub.test): the hub must ignore them.
+    expect(
+      planted.some((c) => c.name === `client_hub_s_${attacker.session}`),
+    ).toBe(true);
+    // Nothing that reaches app.hub.test carries the __Host- prefix, in any
+    // spelling, as a name or as a nameless cookie's value. (__Secure- does
+    // allow Domain=: the hub does not read that prefix.)
+    const reachingHub = planted.filter(
+      (c) => c.domain === ".hub.test" || c.domain === HUB_HOST,
+    );
+    expect(reachingHub.length).toBeGreaterThan(0);
+    for (const cookie of reachingHub) {
+      expect(cookie.name, cookie.name).not.toMatch(/^__host-/i);
+      expect(cookie.value, cookie.name).not.toMatch(/^__host-/i);
+    }
+  });
+
+  it("IMPORTANT 1 (forced sign-in): a browser without a session of its own never accepts the attacker's planted live session", async () => {
+    const attacker = await attackerSession();
+    const { context, tabs } = await profileWithTabs(1);
+    await plantSession(context, attacker.session, attacker.value);
+    const now = await call(tabs[0]!, "GET", ME);
+    expect(JSON.stringify(now.body)).not.toContain(attacker.who);
+    expect(now.status).toBe(401);
+    // The pages show the sign-in, never the attacker.
+    await tabs[0]!.goto("/espace");
+    await tabs[0]!.waitForURL(/\/espace\/connexion/);
+    expect(await tabs[0]!.getByText(attacker.who).count()).toBe(0);
+  });
+
+  it("the attacker's session planted next to the victim's: ignored; the victim stays herself and neither session is touched", async () => {
     const attacker = await attackerSession();
     const { context, tabs } = await profileWithTabs(1);
     const victim = address("victim");
     await signIn(tabs[0]!, mailpitUrl, victim);
-    await plant(context, `${attacker.name}=${attacker.value}`);
-    expect(
-      (await context.cookies()).some((c) => c.domain === ".hub.test"),
-    ).toBe(true);
+    await plantSession(context, attacker.session, attacker.value);
     const now = await call(tabs[0]!, "GET", ME);
-    expect(now.status).toBe(401);
-    expect(JSON.stringify(now.body)).not.toContain(attacker.who);
-    expect(await accountSessions(attacker.who)).toBe(0);
-    expect(await accountSessions(victim)).toBe(0);
-    // The planted cookie cannot be deleted from this host, but it is dead:
-    // the victim signs in again and is herself.
-    await signIn(tabs[0]!, mailpitUrl, victim);
-    expect((await call(tabs[0]!, "GET", ME)).body?.data?.email).toBe(victim);
+    expect(now.status).toBe(200);
+    expect(now.body?.data?.email).toBe(victim);
+    expect(await accountSessions(victim)).toBe(1);
+    expect(await accountSessions(attacker.who)).toBe(1);
   });
 
-  it("a planted value under the victim's own session name, and malformed cookies: ignored, the victim stays herself", async () => {
+  it("IMPORTANT 2 (persistent lockout): seventeen planted session cookies never block the victim, before or after she signs in again", async () => {
+    const { context, tabs } = await profileWithTabs(1);
+    const victim = address("lockout");
+    await signIn(tabs[0]!, mailpitUrl, victim);
+    for (let i = 0; i < 17; i += 1) {
+      await plantSession(context, randomUUID(), "d".repeat(64));
+    }
+    const now = await call(tabs[0]!, "GET", ME);
+    expect(now.status).toBe(200);
+    expect(now.body?.data?.email).toBe(victim);
+    // Signing in again (what a blocked customer would try) works too.
+    await signIn(tabs[0]!, mailpitUrl, victim);
+    const again = await call(tabs[0]!, "GET", ME);
+    expect(again.status).toBe(200);
+    expect(again.body?.data?.email).toBe(victim);
+  });
+
+  it("planted values under the victim's own session name, and malformed cookies: ignored, the victim stays herself", async () => {
     const { context, tabs } = await profileWithTabs(1);
     const victim = address("victim-name");
     await signIn(tabs[0]!, mailpitUrl, victim);
     const [mine] = await sessionCookies(context);
-    for (const planted of [
-      `client_hub_s_${mine!.session}=${"e".repeat(64)}`,
-      `client_hub_s_${mine!.session}=not-a-token`,
-      `client_hub_s_NOT-A-UUID=${"a".repeat(64)}`,
-      `client_hub_session=${"a".repeat(64)}`,
-    ]) {
-      await plant(context, planted);
-    }
+    await plantSession(context, mine!.session, "e".repeat(64));
+    await plantSession(context, mine!.session, "not-a-token");
+    await plant(context, "client_hub_s_NOT-A-UUID", "a".repeat(64));
+    await plant(context, "client_hub_session", "a".repeat(64));
     const now = await call(tabs[0]!, "GET", ME);
     expect(now.status).toBe(200);
     expect(now.body?.data?.email).toBe(victim);
     expect(await accountSessions(victim)).toBe(1);
   });
 
-  it("LIMIT (documented): a browser without any session of its own accepts a planted live session, as before; only a __Host- cookie (deferred) would prevent it", async () => {
-    const attacker = await attackerSession();
+  it("LIMIT (documented): cookies of any name planted beyond the server's header limit refuse every request to the host (431), the hub's as any other page", async () => {
     const { context, tabs } = await profileWithTabs(1);
-    await plant(context, `${attacker.name}=${attacker.value}`);
-    const now = await call(tabs[0]!, "GET", ME);
-    expect(now.status).toBe(200);
-    expect(now.body?.data?.email).toBe(attacker.who);
-  });
-
-  it("more session cookies than allowed: refused, no session chosen or ended; the browser's own cookies are deleted", async () => {
-    const { context, tabs } = await profileWithTabs(1);
-    const who = address("too-many");
+    const who = address("bomb");
     await signIn(tabs[0]!, mailpitUrl, who);
-    for (let i = 0; i < 16; i += 1) {
-      await plant(context, `client_hub_s_${randomUUID()}=${"d".repeat(64)}`);
+    for (let i = 0; i < 6; i += 1) {
+      await plant(context, `bomb${i}`, "x".repeat(3500));
     }
-    expect((await call(tabs[0]!, "GET", ME)).status).toBe(401);
-    expect(
-      (await sessionCookies(context)).filter((c) => c.domain === HUB_HOST),
-    ).toEqual([]);
-    expect(await accountSessions(who)).toBe(1);
+    expect((await call(tabs[0]!, "GET", ME)).status).toBe(431);
+    // Nothing of the hub was ended: once those cookies are gone, she is in.
+    await context.clearCookies({ domain: ".hub.test" });
+    expect((await call(tabs[0]!, "GET", ME)).body?.data?.email).toBe(who);
   });
 });
 

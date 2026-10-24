@@ -24,11 +24,11 @@ describe("presented session cookies", () => {
     expect(
       presentedSessions(
         withCookie(
-          `a=b; client_hub_s_${S1}=${T1}; theme=dark; client_hub_s_${S2}=${T2}`,
+          `a=b; __Host-client_hub_s_${S1}=${T1}; theme=dark; __Host-client_hub_s_${S2}=${T2}`,
         ),
       ),
     ).toEqual({
-      names: [`client_hub_s_${S1}`, `client_hub_s_${S2}`],
+      names: [`__Host-client_hub_s_${S1}`, `__Host-client_hub_s_${S2}`],
       sessions: [S1, S2],
       tokens: [T1, T2],
       excessive: false,
@@ -41,25 +41,47 @@ describe("presented session cookies", () => {
     });
   });
 
-  it("names that are not exactly ours are ignored (never deleted either)", () => {
+  it("names that are not exactly ours are ignored: never examined, deleted or counted", () => {
     for (const cookie of [
       `client_hub_session=${T1}`, // the former single cookie
-      `client_hub_s_ABCDEF00-1111-4111-8111-111111111111=${T1}`,
-      `client_hub_s_${S1}x=${T1}`,
-      `x_client_hub_s_${S1}=${T1}`,
-      `client_hub_s_${S1.replaceAll("-", "")}=${T1}`,
-      `client_hub_s_=${T1}`,
+      `client_hub_s_${S1}=${T1}`, // the former per-session name (no prefix)
+      `__host-client_hub_s_${S1}=${T1}`, // prefix in another case
+      `__Secure-client_hub_s_${S1}=${T1}`, // a prefix that allows Domain=
+      `%5F%5FHost-client_hub_s_${S1}=${T1}`, // encoded, never decoded
+      `__Host-client_hub_s_ABCDEF00-1111-4111-8111-111111111111=${T1}`,
+      `__Host-client_hub_s_${S1}x=${T1}`,
+      `x__Host-client_hub_s_${S1}=${T1}`,
+      `__Host-client_hub_s_${S1.replaceAll("-", "")}=${T1}`,
+      `__Host-client_hub_s_=${T1}`,
     ]) {
       expect(presentedSessions(withCookie(cookie)).names, cookie).toEqual([]);
     }
   });
 
+  it("any number of foreign session cookies is not counted: the browser's own session stays usable", () => {
+    const planted = Array.from(
+      { length: 40 },
+      (_, i) =>
+        `client_hub_s_${String(i).padStart(8, "0")}-1111-4111-8111-111111111111=${T2}`,
+    );
+    expect(
+      presentedSessions(
+        withCookie([...planted, `__Host-client_hub_s_${S1}=${T1}`].join("; ")),
+      ),
+    ).toEqual({
+      names: [`__Host-client_hub_s_${S1}`],
+      sessions: [S1],
+      tokens: [T1],
+      excessive: false,
+    });
+  });
+
   it("a malformed value is no token, but its name is kept (to delete it)", () => {
     for (const value of [`${T1}x`, "../etc", "", T1.toUpperCase()]) {
       expect(
-        presentedSessions(withCookie(`client_hub_s_${S1}=${value}`)),
+        presentedSessions(withCookie(`__Host-client_hub_s_${S1}=${value}`)),
       ).toEqual({
-        names: [`client_hub_s_${S1}`],
+        names: [`__Host-client_hub_s_${S1}`],
         sessions: [],
         tokens: [],
         excessive: false,
@@ -71,11 +93,11 @@ describe("presented session cookies", () => {
     expect(
       presentedSessions(
         withCookie(
-          `client_hub_s_${S1}=${T2}; client_hub_s_${S1}=${T1}; client_hub_s_${S1}=${T1}`,
+          `__Host-client_hub_s_${S1}=${T2}; __Host-client_hub_s_${S1}=${T1}; __Host-client_hub_s_${S1}=${T1}`,
         ),
       ),
     ).toEqual({
-      names: [`client_hub_s_${S1}`],
+      names: [`__Host-client_hub_s_${S1}`],
       sessions: [S1, S1],
       tokens: [T2, T1],
       excessive: false,
@@ -88,7 +110,7 @@ describe("presented session cookies", () => {
       (_, i) => `${String(i).padStart(8, "0")}-1111-4111-8111-111111111111`,
     );
     const many = presentedSessions(
-      withCookie(ids.map((id) => `client_hub_s_${id}=${T1}`).join("; ")),
+      withCookie(ids.map((id) => `__Host-client_hub_s_${id}=${T1}`).join("; ")),
     );
     expect(many.excessive).toBe(true);
     expect(many.sessions).toEqual([]);
@@ -98,7 +120,7 @@ describe("presented session cookies", () => {
       withCookie(
         ids
           .slice(0, MAX_PRESENTED_SESSIONS)
-          .map((id) => `client_hub_s_${id}=${T1}`)
+          .map((id) => `__Host-client_hub_s_${id}=${T1}`)
           .join("; "),
       ),
     );
@@ -110,7 +132,8 @@ describe("presented session cookies", () => {
       withCookie(
         Array.from(
           { length: MAX_PRESENTED_SESSIONS + 1 },
-          (_, i) => `client_hub_s_${S1}=${i.toString(16).padStart(64, "0")}`,
+          (_, i) =>
+            `__Host-client_hub_s_${S1}=${i.toString(16).padStart(64, "0")}`,
         ).join("; "),
       ),
     );
@@ -122,25 +145,33 @@ describe("presented session cookies", () => {
 describe("session cookie attributes", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("HttpOnly, SameSite=Lax, scoped to the hub API, no Domain, expiring with the session", () => {
+  it("what the __Host- prefix requires: Secure, Path=/, no Domain; plus HttpOnly, SameSite=Lax, expiring with the session", () => {
     const expiresAt = new Date(Date.now() + 3600_000).toISOString();
     const cookie = sessionCookie(S1, T1, expiresAt);
-    expect(cookie).toMatch(new RegExp(`^client_hub_s_${S1}=${T1}; `));
-    expect(cookie).toContain("HttpOnly");
-    expect(cookie).toContain("SameSite=Lax");
-    expect(cookie).toContain("Path=/api/client-hub");
+    expect(cookie).toMatch(new RegExp(`^__Host-client_hub_s_${S1}=${T1}; `));
+    expect(cookie.split("; ").slice(1, 5)).toEqual([
+      "Path=/",
+      "HttpOnly",
+      "SameSite=Lax",
+      "Secure",
+    ]);
     expect(cookie).not.toMatch(/Domain/i);
     expect(Number(cookie.match(/Max-Age=(\d+)/)![1])).toBeGreaterThan(3590);
-    expect(cookie).not.toContain("Secure");
     expect(clearedSessionCookie(sessionCookieName(S1))).toBe(
-      `client_hub_s_${S1}=; Path=/api/client-hub; HttpOnly; SameSite=Lax; Max-Age=0`,
+      `__Host-client_hub_s_${S1}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`,
     );
   });
 
-  it("is Secure in production", () => {
-    vi.stubEnv("NODE_ENV", "production");
-    expect(sessionCookie(S1, T1, new Date().toISOString())).toContain("Secure");
-    expect(clearedSessionCookie(sessionCookieName(S1))).toContain("Secure");
+  it("Secure in every environment (a __Host- cookie without it is refused by the browser)", () => {
+    for (const environment of ["development", "test", "production"]) {
+      vi.stubEnv("NODE_ENV", environment);
+      expect(sessionCookie(S1, T1, new Date().toISOString())).toContain(
+        "; Secure;",
+      );
+      expect(clearedSessionCookie(sessionCookieName(S1))).toContain(
+        "; Secure;",
+      );
+    }
   });
 
   it("never issues a malformed cookie", () => {

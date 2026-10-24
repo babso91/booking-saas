@@ -16,8 +16,8 @@ import type { ClientHubProfileDto } from "@/features/client-hub/types";
 import { endSession, fetchProfile, type HubError, type HubResult } from "./api";
 
 // The customer's session as the hub's screens see it. The cookie itself is
-// HttpOnly and scoped to /api/client-hub: the only way to know who is signed
-// in is to ask GET /api/client-hub/me, which this provider does.
+// HttpOnly and read by the hub's API routes only: the only way to know who
+// is signed in is to ask GET /api/client-hub/me, which this provider does.
 //
 // Isolation: every identity shown (a sign-in, a sign-out, an expiry, another
 // customer signed in from another tab) gets a new `generation`. The screens

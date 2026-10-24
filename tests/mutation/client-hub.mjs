@@ -215,6 +215,33 @@ const mutations = {
       ``,
     ],
   },
+  // __Host- namespace: what a sibling subdomain can plant must not count.
+  unprefixed_names_accepted: {
+    file: COOKIES,
+    tests: [...ROUTE_TESTS, ...DB_TESTS, ...SESSION_FILTER],
+    pairs: [
+      "const NAME = new RegExp(`^${SESSION_COOKIE_PREFIX}(${UUID})$`);",
+      "const NAME = new RegExp(`^(?:__Host-)?client_hub_s_(${UUID})$`);",
+    ],
+  },
+  prefix_case_insensitive: {
+    file: COOKIES,
+    tests: ROUTE_TESTS,
+    pairs: [
+      "const NAME = new RegExp(`^${SESSION_COOKIE_PREFIX}(${UUID})$`);",
+      'const NAME = new RegExp(`^${SESSION_COOKIE_PREFIX}(${UUID})$`, "i");',
+    ],
+  },
+  cookie_not_secure: {
+    file: COOKIES,
+    tests: ROUTE_TESTS,
+    pairs: [`    "Secure",\n`, ``],
+  },
+  cookie_path_narrowed: {
+    file: COOKIES,
+    tests: ROUTE_TESTS,
+    pairs: [`    "Path=/",`, `    "Path=/api/client-hub",`],
+  },
   too_many_cookies_examined: {
     file: COOKIES,
     tests: ROUTE_TESTS,

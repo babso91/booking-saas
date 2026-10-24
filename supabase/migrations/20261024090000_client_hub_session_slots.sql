@@ -8,7 +8,8 @@
 -- tab. No server can know in which order its responses will arrive.
 --
 -- Now every session has its own cookie, named after its id
--- (client_hub_s_<session id>), and a response only ever adds the cookie of
+-- (__Host-client_hub_s_<session id>: only this host can set it), and a
+-- response only ever adds the cookie of
 -- the session it created or deletes cookies of sessions that are over. Those
 -- writes commute: whatever order they arrive in, the browser ends up with
 -- the same cookies. The browser may then present several sessions; the
@@ -21,8 +22,8 @@
 --   * Live sessions of SEVERAL accounts: no identity is chosen. They are all
 --     revoked and the request is refused (fail closed). This only happens
 --     when two sign-ins of different accounts cross in one browser, or when
---     a cookie was planted from a sibling subdomain (cookie tossing): in
---     neither case may the server pick who the visitor is.
+--     a session cookie was copied into another browser: in neither case may
+--     the server pick who the visitor is.
 --   * A request can only revoke sessions whose token it presents (plus, for
 --     a global sign-out, every session of the account of a live presented
 --     session).

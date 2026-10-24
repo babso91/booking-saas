@@ -40,7 +40,12 @@ export class CookieJar {
   header(path: string) {
     return [...this.cookies.values()]
       .filter(
-        (cookie) => path === cookie.path || path.startsWith(`${cookie.path}/`),
+        // RFC 6265 path-match: the same path, or below it ("/" covers all).
+        (cookie) =>
+          path === cookie.path ||
+          path.startsWith(
+            cookie.path.endsWith("/") ? cookie.path : `${cookie.path}/`,
+          ),
       )
       .map((cookie) => `${cookie.name}=${cookie.value}`)
       .join("; ");

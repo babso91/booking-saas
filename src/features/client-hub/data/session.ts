@@ -2,12 +2,18 @@ import "server-only";
 
 // The customer session cookies (docs/CLIENT_HUB_CONTRACT.md, "Sessions in
 // the browser"). Every session has its own cookie, named after the
-// session's id: `client_hub_s_<session id>=<token>`. The token is an opaque
-// 256-bit value issued by public.client_hub_sign_in; PostgreSQL keeps only
-// its SHA-256. The cookies are HttpOnly (never readable by scripts),
-// SameSite=Lax (not sent with cross-site POST/DELETE), Secure outside local
-// development, without Domain (this host only) and scoped to the Client Hub
-// API. They are unrelated to the professionals' Supabase session.
+// session's id: `__Host-client_hub_s_<session id>=<token>`. The token is an
+// opaque 256-bit value issued by public.client_hub_sign_in; PostgreSQL keeps
+// only its SHA-256. The cookies are HttpOnly (never readable by scripts),
+// SameSite=Lax (not sent with cross-site POST/DELETE), and carry the
+// `__Host-` prefix: the browser accepts such a cookie only with Secure,
+// Path=/ and no Domain, set by this very host. A sibling subdomain can plant
+// `Domain=` cookies for this host, but never one with that prefix: only
+// cookies this host set are read (no forced sign-in into someone else's
+// session, no lockout by planted cookies). Cookies without the prefix,
+// whatever they look like, are ignored and never counted. They are
+// unrelated to the professionals' Supabase session (no page or route of the
+// professionals reads them, although Path=/ sends them along).
 //
 // Why one cookie per session: a browser applies a response's Set-Cookie
 // when it arrives, and the last one wins. With one name shared by every tab,
@@ -17,8 +23,7 @@ import "server-only";
 // browser ends up with the same cookies. Which presented session a request
 // acts as is decided by PostgreSQL (public.client_hub_resolve_session).
 
-export const SESSION_COOKIE_PREFIX = "client_hub_s_";
-const PATH = "/api/client-hub";
+export const SESSION_COOKIE_PREFIX = "__Host-client_hub_s_";
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const NAME = new RegExp(`^${SESSION_COOKIE_PREFIX}(${UUID})$`);
 const TOKEN = /^[0-9a-f]{64}$/;
@@ -41,10 +46,10 @@ export type PresentedSessions = {
 
 /**
  * The session cookies the request carries. A cookie whose name is not
- * exactly `client_hub_s_<lowercase uuid>` is not one of ours and is ignored
- * (never deleted: it cannot be told apart from someone else's cookie). A
- * well-formed name with a malformed value, or a name present twice (one
- * planted by a sibling subdomain, say), is kept as is: each value is
+ * exactly `__Host-client_hub_s_<lowercase uuid>` (case included) is not one
+ * of ours: it is ignored, never counted and never deleted. A
+ * well-formed name with a malformed value, or a name present twice (which
+ * the prefix makes impossible from another host), is kept as is: each value is
  * examined on its own, and a value only counts if PostgreSQL finds it is the
  * token of the very session its name designates. Nothing is ever guessed.
  */
@@ -75,13 +80,15 @@ export function presentedSessions(request: Request): PresentedSessions {
 export const sessionCookieName = (sessionId: string) =>
   `${SESSION_COOKIE_PREFIX}${sessionId}`;
 
+// What the __Host- prefix requires: Secure (also in local development:
+// browsers accept Secure cookies on http://localhost), Path=/, no Domain.
 function attributes(maxAge: number) {
   return [
-    `Path=${PATH}`,
+    "Path=/",
     "HttpOnly",
     "SameSite=Lax",
+    "Secure",
     `Max-Age=${maxAge}`,
-    ...(process.env.NODE_ENV === "production" ? ["Secure"] : []),
   ].join("; ");
 }
 

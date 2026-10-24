@@ -117,11 +117,11 @@ function request(method: string, path: string, call: Call = {}) {
 // Each issued token's session (its cookie's name), from the verify answers.
 const sessionOfToken = new Map<string, string>();
 const UNKNOWN_SESSION = "00000000-0000-4000-8000-000000000000";
-const SESSION_COOKIE = /^client_hub_s_([0-9a-f-]{36})=([0-9a-f]{64});/;
+const SESSION_COOKIE = /^__Host-client_hub_s_([0-9a-f-]{36})=([0-9a-f]{64});/;
 
 /** The Cookie pair a browser holding `token` sends. */
 function cookieOf(token: string) {
-  return `client_hub_s_${sessionOfToken.get(token) ?? UNKNOWN_SESSION}=${token}`;
+  return `__Host-client_hub_s_${sessionOfToken.get(token) ?? UNKNOWN_SESSION}=${token}`;
 }
 
 /** The session cookie a response adds, if any. */
@@ -320,7 +320,7 @@ const email = (label: string) =>
 // ---------------------------------------------------------------------------
 
 describe("passwordless login", () => {
-  it("sends an 8-digit code, verifies it once, and opens an HttpOnly session scoped to the hub", async () => {
+  it("sends an 8-digit code, verifies it once, and opens an HttpOnly __Host- session", async () => {
     const address = email("lea");
     const asked = await askCode(`  ${address.toUpperCase()} `);
     expect(asked).toMatchObject({
@@ -343,7 +343,10 @@ describe("passwordless login", () => {
     expect(verified.body.data.email).toBe(address);
     expect(verified.cookie).toMatch(/HttpOnly/);
     expect(verified.cookie).toMatch(/SameSite=Lax/);
-    expect(verified.cookie).toMatch(/Path=\/api\/client-hub/);
+    expect(verified.cookie).toMatch(/^__Host-client_hub_s_/);
+    expect(verified.cookie).toMatch(/Path=\/;/);
+    expect(verified.cookie).toMatch(/Secure/);
+    expect(verified.cookie).not.toMatch(/Domain/i);
 
     expect(await me(verified.token)).toEqual({
       status: 200,
@@ -618,7 +621,7 @@ describe("sessions", () => {
     );
     expect(out.status).toBe(200);
     expect(deletedNames(out)).toEqual([
-      `client_hub_s_${sessionOfToken.get(first)}`,
+      `__Host-client_hub_s_${sessionOfToken.get(first)}`,
     ]);
     expect((await me(first)).status).toBe(401);
     expect((await me(second)).status).toBe(200);
@@ -637,16 +640,22 @@ describe("sessions", () => {
   it("a cookie counts only under its own session's name: another session's token, or a planted value, authenticates nothing", async () => {
     const mine = await login(email("own-name"));
     const other = await login(email("other-name"));
-    const own = `client_hub_s_${sessionOfToken.get(mine)}`;
-    const otherName = `client_hub_s_${sessionOfToken.get(other)}`;
+    const own = `__Host-client_hub_s_${sessionOfToken.get(mine)}`;
+    const otherName = `__Host-client_hub_s_${sessionOfToken.get(other)}`;
 
     // Another session's token under my session's name, my token under
     // another name, my token under a name that is no session: nothing.
     for (const rawCookie of [
       `${own}=${other}`,
       `${otherName}=${mine}`,
-      `client_hub_s_${UNKNOWN_SESSION}=${mine}`,
+      `__Host-client_hub_s_${UNKNOWN_SESSION}=${mine}`,
       `client_hub_session=${mine}`,
+      // My own valid cookie, but without the __Host- prefix (or with a
+      // misspelt one): what a sibling subdomain could plant. Nothing.
+      `client_hub_s_${sessionOfToken.get(mine)}=${mine}`,
+      `__host-client_hub_s_${sessionOfToken.get(mine)}=${mine}`,
+      `__Secure-client_hub_s_${sessionOfToken.get(mine)}=${mine}`,
+      ` __Host-client_hub_s_${sessionOfToken.get(mine)}x=${mine}`,
     ]) {
       const response = await getMe(
         request("GET", "/api/client-hub/me", { rawCookie }),
@@ -685,7 +694,7 @@ describe("sessions", () => {
     expect(expired.headers.get("cache-control")).toBe("no-store");
     expect(expired.headers.get("x-client-hub-account")).toBeNull();
     expect(deletedNames(expired)).toEqual([
-      `client_hub_s_${sessionOfToken.get(token)}`,
+      `__Host-client_hub_s_${sessionOfToken.get(token)}`,
     ]);
     expect((await me(live)).status).toBe(200);
   });
@@ -703,7 +712,7 @@ describe("sessions", () => {
       );
       expect(refused.status).toBe(401);
       expect(deletedNames(refused)).toEqual([
-        `client_hub_s_${sessionOfToken.get(token)}`,
+        `__Host-client_hub_s_${sessionOfToken.get(token)}`,
       ]);
     }
   });
@@ -814,8 +823,8 @@ const jarSessions = (jar: CookieJar) =>
   jar
     .header("/api/client-hub/me")
     .split("; ")
-    .filter((pair) => pair.startsWith("client_hub_s_"))
-    .map((pair) => pair.slice("client_hub_s_".length, pair.indexOf("=")))
+    .filter((pair) => pair.startsWith("__Host-client_hub_s_"))
+    .map((pair) => pair.slice("__Host-client_hub_s_".length, pair.indexOf("=")))
     .sort();
 
 describe("one browser, several session cookies", () => {
@@ -986,43 +995,75 @@ describe("one browser, several session cookies", () => {
     }
   });
 
-  it("cookie tossing: another account's live session planted next to the browser's is never chosen; both end", async () => {
-    const jar = new CookieJar();
-    const victimAddress = email("toss-victim");
-    const victim = await signInJar(jar, victimAddress);
-    const attackerAddress = email("toss-attacker");
-    const attacker = await login(attackerAddress);
-    const attackerSession = sessionOfToken.get(attacker)!;
-    // What a sibling subdomain can do: set a cookie (Domain=parent) the
-    // browser sends along with this host's own cookies.
-    jar.set(
-      `client_hub_s_${attackerSession}=${attacker}; Path=/api/client-hub/me; Max-Age=600`,
-    );
-    const now = await meOf(jar);
-    expect(now.status).toBe(401);
-    expect(JSON.stringify(now.body)).not.toContain(attackerAddress);
-    expect(await liveSessions([victim.session, attackerSession])).toEqual([]);
-  });
+  // What a sibling subdomain can plant (Domain=parent): any cookie, but
+  // never one with the __Host- prefix (the browser refuses it; tested in
+  // Chromium, tests/e2e/client-hub-browser.test.ts). The hub reads only
+  // that prefix: everything planted is ignored, and never counted.
+  const plantedForms = (session: string, value: string) => [
+    `client_hub_s_${session}=${value}; Path=/; Max-Age=600`,
+    `client_hub_s_${session}=${value}; Path=/api/client-hub/me; Max-Age=600`,
+    `__host-client_hub_s_${session}=${value}; Path=/; Max-Age=600`,
+    `__Secure-client_hub_s_${session}=${value}; Path=/; Max-Age=600`,
+  ];
 
-  it("LIMIT (documented): a browser with no session of its own accepts a planted live session (as before; needs a hostile sibling subdomain, prevented only by a __Host- cookie)", async () => {
+  it("IMPORTANT 1 fixed: a browser without a session of its own never accepts a planted live session (forced sign-in)", async () => {
     const attackerAddress = email("toss-empty");
     const attacker = await login(attackerAddress);
     const jar = new CookieJar();
-    jar.set(
-      `client_hub_s_${sessionOfToken.get(attacker)}=${attacker}; Path=/api/client-hub; Max-Age=600`,
-    );
+    for (const line of plantedForms(sessionOfToken.get(attacker)!, attacker)) {
+      jar.set(line);
+    }
     const now = await meOf(jar);
-    expect(now.status).toBe(200);
-    expect(now.body.data.email).toBe(attackerAddress);
+    expect(now.status).toBe(401);
+    expect(JSON.stringify(now.body)).not.toContain(attackerAddress);
+    // Ignored, not even deleted (they are not the hub's) nor ended.
+    expect(now.response.headers.getSetCookie()).toEqual([]);
+    expect(await liveSessions([sessionOfToken.get(attacker)!])).toHaveLength(1);
   });
 
-  it("more session cookies than allowed: refused, none chosen and none ended (fail closed), every one deleted", async () => {
+  it("another account's live session planted next to the browser's: ignored; the victim stays herself, nothing is ended", async () => {
+    const jar = new CookieJar();
+    const victimAddress = email("toss-victim");
+    const victim = await signInJar(jar, victimAddress);
+    const attacker = await login(email("toss-attacker"));
+    const attackerSession = sessionOfToken.get(attacker)!;
+    for (const line of plantedForms(attackerSession, attacker)) {
+      jar.set(line);
+    }
+    const now = await meOf(jar);
+    expect(now.status).toBe(200);
+    expect(now.body.data.email).toBe(victimAddress);
+    expect(deletedNames(now.response)).toEqual([]);
+    expect(await liveSessions([victim.session, attackerSession])).toEqual(
+      [victim.session, attackerSession].sort(),
+    );
+  });
+
+  it("IMPORTANT 2 fixed: planted session cookies, however many, never block the victim (they are not counted)", async () => {
+    const jar = new CookieJar();
+    const address = email("lockout");
+    await signInJar(jar, address);
+    for (let i = 0; i < 40; i += 1) {
+      for (const line of plantedForms(randomUUID(), "d".repeat(64))) {
+        jar.set(line);
+      }
+    }
+    const now = await meOf(jar);
+    expect(now.status).toBe(200);
+    expect(now.body.data.email).toBe(address);
+    // Signing in again works as well, and keeps her a single session.
+    await signInJar(jar, address);
+    expect((await meOf(jar)).body.data.email).toBe(address);
+    expect(jarSessions(jar)).toHaveLength(1);
+  });
+
+  it("more __Host- session cookies than allowed (only this host could have set them): refused, none chosen and none ended (fail closed), every one deleted", async () => {
     const jar = new CookieJar();
     const address = email("too-many");
     const real = await signInJar(jar, address);
     for (let i = 0; i < 16; i += 1) {
       jar.set(
-        `client_hub_s_${randomUUID()}=${"d".repeat(64)}; Path=/api/client-hub; Max-Age=600`,
+        `__Host-client_hub_s_${randomUUID()}=${"d".repeat(64)}; Path=/; Max-Age=600`,
       );
     }
     const now = await meOf(jar);
@@ -1042,7 +1083,7 @@ describe("one browser, several session cookies", () => {
     // given one anyway, still refuses without asking the database.
     const rawCookie = Array.from(
       { length: 200 },
-      () => `client_hub_s_${randomUUID()}=${"a".repeat(64)}`,
+      () => `__Host-client_hub_s_${randomUUID()}=${"a".repeat(64)}`,
     ).join("; ");
     const response = await getMe(
       request("GET", "/api/client-hub/me", { rawCookie }),

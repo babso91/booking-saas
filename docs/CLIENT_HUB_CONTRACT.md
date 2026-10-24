@@ -75,10 +75,14 @@ L'outbox est rattachée à une activité et à un rendez-vous, et fige chaque me
 ## 3. Session cliente
 
 - **Durée :** 7 jours, absolue, sans prolongation. Jeton opaque de 256 bits ; seul son SHA-256 est stocké.
-- **Un cookie par session** (migration `20261024090000_client_hub_session_slots`) : `client_hub_s_<id de la session>=<jeton>`.
-  - `HttpOnly`, `SameSite=Lax`, `Path=/api/client-hub`, sans `Domain` (cet hôte seulement) ;
-  - `Secure` en production ;
+- **Un cookie par session** (migration `20261024090000_client_hub_session_slots`) : `__Host-client_hub_s_<id de la session>=<jeton>`.
+  - `HttpOnly`, `SameSite=Lax`, `Secure` (dans tous les environnements), `Path=/`, sans `Domain` : ce que le préfixe `__Host-` exige ;
   - `Max-Age` égal à la durée de la session.
+- **Pourquoi `__Host-` :** un navigateur n'accepte un cookie de ce préfixe que posé par cet hôte même, en HTTPS, sans `Domain` et sur `Path=/`. Un sous-domaine voisin peut planter des cookies `Domain=` pour l'hôte du Hub, mais jamais un cookie `__Host-`, ni sous ce nom, ni par un cookie sans nom dont la valeur l'imiterait (refusés par Chromium, testé). Le Hub ne lit **que** ce préfixe, à la casse près ; tout autre cookie est ignoré, jamais compté ni supprimé. D'où :
+  - plus de connexion forcée : une session plantée par un sous-domaine n'est jamais lue ;
+  - plus de blocage par cookies plantés : ils ne comptent pas dans la limite de 16.
+- **Conséquence de `Path=/` :** le cookie accompagne toutes les requêtes vers l'hôte, pages comprises. Aucune page ni route professionnelle ne le lit ; les pages du Hub restent des coquilles (testé : le rendu serveur de `/espace` ne contient rien de la cliente).
+- **Développement local :** `Secure` est accepté par les navigateurs sur `http://localhost` ; sur une autre origine HTTP, le Hub ne peut pas ouvrir de session.
 - **CSRF :**
   - `SameSite=Lax` empêche l'envoi du cookie lors d'un POST ou DELETE inter-sites ;
   - contre la « connexion forcée » (un formulaire d'un autre site qui ouvrirait une session dans le navigateur de la visiteuse), les POST et DELETE exigent `Content-Type: application/json`, et refusent un `Sec-Fetch-Site` autre que `same-origin`/`none` ou un `Origin` autre que celui de l'application (403 `forbidden`) ;
@@ -103,16 +107,16 @@ Aucun serveur ne peut connaître l'ordre d'arrivée de ses réponses, et aucune 
 | aucune session vivante (inconnue, expirée, révoquée, jeton d'une autre session) | 401 `client_hub_unauthenticated` ; les cookies présentés sont supprimés                                                        |
 | des sessions vivantes d'**un seul compte**                                      | la plus récente (`created_at`, puis `id`) est utilisée ; les autres présentées sont révoquées et leurs cookies supprimés       |
 | des sessions vivantes de **plusieurs comptes**                                  | **échec fermé** : toutes sont révoquées, aucune n'est choisie, 401 et tous les cookies présentés supprimés                     |
-| plus de 16 cookies de session                                                   | **échec fermé** sans interroger la base : aucune session n'est utilisée ni révoquée, 401, tous les cookies présentés supprimés |
+| plus de 16 cookies `__Host-` de session (que seul cet hôte peut avoir posés)    | **échec fermé** sans interroger la base : aucune session n'est utilisée ni révoquée, 401, tous les cookies présentés supprimés |
 | un en-tête `Cookie` au-delà de la limite du serveur (16 Kio pour Node)          | 431, avant toute route, sans `Set-Cookie`                                                                                      |
 | la base n'a pas pu répondre                                                     | 500, **aucun cookie touché**                                                                                                   |
 
 - **Un cookie ne compte que sous le nom de sa propre session :** le jeton d'une session sous le nom d'une autre, ou sous un nom qui n'est pas une session, n'authentifie rien.
-- **Noms invalides :** un cookie dont le nom n'est pas exactement `client_hub_s_<uuid en minuscules>` (y compris l'ancien `client_hub_session`) est ignoré, et jamais supprimé.
+- **Noms invalides :** un cookie dont le nom n'est pas exactement `__Host-client_hub_s_<uuid en minuscules>` (préfixe à la casse près) est ignoré, jamais compté ni supprimé : les anciens `client_hub_session` et `client_hub_s_<id>`, un `__host-` ou `__Secure-`, un nom encodé.
 - **Valeurs invalides :** un nom valide avec une valeur qui n'est pas un jeton n'authentifie rien ; son cookie est supprimé.
-- **Doublons :** un même nom présent deux fois (un cookie posé par un sous-domaine, par exemple) : chaque valeur est examinée seule ; seule celle qui est le jeton de cette session compte. Une valeur plantée n'empêche pas la vraie de fonctionner.
+- **Doublons :** un même nom présent deux fois (impossible depuis un autre hôte avec le préfixe `__Host-`) : chaque valeur est examinée seule ; seule celle qui est le jeton de cette session compte.
 - **« Plus récente » :** l'instant d'ouverture de la session en base (début de la transaction de vérification du code), puis l'id en cas d'égalité. Ce n'est ni l'ordre des clics, ni l'ordre d'arrivée des réponses. Elle ne départage que des sessions **d'un même compte** : la cliente reste la même, quelle que soit la session gagnante.
-- **Pourquoi l'échec fermé entre comptes :** deux comptes vivants dans un même navigateur n'arrivent que si deux connexions de comptes différents se croisent, ou si un sous-domaine a planté un cookie (cookie tossing). Dans les deux cas, le serveur ne peut pas savoir qui est la visiteuse ; il ne choisit pas. La règle « la plus récente gagne » entre comptes laisserait un sous-domaine hostile imposer son identité à la place de celle de la victime.
+- **Pourquoi l'échec fermé entre comptes :** deux comptes vivants dans un même navigateur n'arrivent que si deux connexions de comptes différents se croisent, ou si un cookie de session a été copié d'un navigateur à l'autre. Le serveur ne peut pas savoir qui est la visiteuse ; il ne choisit pas. (Avant le préfixe `__Host-`, c'était aussi la défense contre un sous-domaine qui plantait sa session à côté de celle de la victime ; ces cookies ne sont plus lus du tout.)
 - **Ce que les utilisatrices voient :** après deux connexions croisées de comptes différents, tous les onglets reviennent à la connexion ; il suffit de se reconnecter. Deux connexions croisées du même compte restent connectées.
 - **Identité des réponses :** toute réponse privée porte `X-Client-Hub-Account: <id du compte>` (le compte de la session résolue ; absent sur un 401). L'interface ne montre aucune réponse servie pour un autre compte que celui que `GET /me` a confirmé (§ 11).
 - **Révocations :** une requête ne révoque que des sessions dont elle présente le jeton, et, pour une déconnexion globale, les sessions du compte d'une session vivante présentée.
@@ -269,12 +273,12 @@ Chacune est couverte par un test qui l'énonce (`tests/integration/client-hub.te
 
 - **Connexions croisées de deux comptes :** le navigateur est déconnecté (échec fermé) ; il faut se reconnecter. Jamais l'identité de l'une dans l'onglet de l'autre.
 - **Connexion validée avant une déconnexion, arrivée après :** une connexion dont le serveur a validé le code avant une déconnexion simple, mais dont la réponse arrive après, reste ouverte. La déconnexion ne termine que les sessions que le navigateur présentait. La déconnexion de tous les appareils la termine.
-- **Cookie tossing sur un navigateur sans session :** un sous-domaine hostile (`Domain=` le domaine parent) peut faire accepter **sa** session à un navigateur qui n'en a aucune, comme avec l'ancien cookie unique. À côté d'une session de la victime, la tentative échoue fermée (les deux sessions sont révoquées). Seul un cookie `__Host-` (avec `Path=/`, reporté à une réflexion séparée) l'empêcherait. Le cookie planté ne peut pas être supprimé par l'application (il appartient au domaine parent), mais une fois sa session terminée il n'authentifie plus rien.
-- **Déni de service par un sous-domaine hostile :** il peut déconnecter la victime (sessions croisées ou plus de 16 cookies), comme il pouvait déjà l'empêcher de se connecter avec l'ancien cookie unique.
+- **Sous-domaine hostile :** ses cookies `Domain=` ne sont plus lus (connexion forcée et blocage par 16 cookies corrigés, testés dans Chromium avec de vrais cookies `Domain=hub.test`). Il garde un seul moyen d'action, commun à tout site : planter assez de cookies (de n'importe quel nom) pour dépasser la limite d'en-tête du serveur (16 Kio), et faire refuser **toutes** les requêtes vers l'hôte (431) tant qu'ils restent. Aucune session n'en est affectée ; l'application ne peut pas supprimer ces cookies (ils appartiennent au domaine parent). La parade est hors de l'application : ne pas confier de sous-domaine du domaine du Hub à un tiers.
+- **Dépend du navigateur :** la garantie du préfixe `__Host-` est celle du navigateur (Chromium testé ; tous les navigateurs actuels l'appliquent, y compris aux cookies sans nom qui l'imitent). Un navigateur trop ancien pour connaître le préfixe se comporterait comme avant (cookies plantés lus).
 - **Sessions orphelines :** une connexion validée dont la réponse n'arrive jamais (onglet fermé, connexion coupée, attente abandonnée) laisse une session que nul navigateur ne détient. Elle expire au bout de 7 jours ; la déconnexion de tous les appareils la termine.
 - **Onglet fermé pendant une réponse :** Chromium peut appliquer ou non le `Set-Cookie` d'une réponse arrivée après la fermeture de l'onglet. Les deux issues sont sûres (testées).
 - **Requête rejouée par le navigateur :** Chromium renvoie une requête dont la connexion réutilisée est coupée avant toute réponse. Une vérification rejouée est refusée (code à usage unique) : pas de seconde session.
-- **Plus de 16 cookies :** aucune session n'est utilisée ni révoquée, toutes sont supprimées du navigateur (sessions orphelines, comme ci-dessus).
+- **Plus de 16 cookies `__Host-` :** seul cet hôte peut les avoir posés (16 connexions simultanées dans un même navigateur). Aucune session n'est utilisée ni révoquée, toutes sont supprimées du navigateur (sessions orphelines, comme ci-dessus).
 - **« Plus récente » suppose des durées fixes :** l'ordre est celui de l'ouverture en base, pour un même compte. Il ne dépend ni des horloges des navigateurs ni de l'ordre d'arrivée.
 
 ## 10. Sensibilité des tests (mutations)
@@ -298,11 +302,17 @@ Chacune est couverte par un test qui l'énonce (`tests/integration/client-hub.te
 | supprimer les cookies quand la base n'a pas répondu                 | `data/route.ts`       | détectée                                                                        |
 | ne plus nommer le compte des réponses                               | `data/route.ts`       | détectée                                                                        |
 | examiner plus de 16 cookies                                         | `data/session.ts`     | détectée                                                                        |
+| lire aussi les noms sans préfixe `__Host-`                          | `data/session.ts`     | détectée : connexion forcée et blocage (aussi dans Chromium, voir ci-dessous)   |
+| lire le préfixe sans tenir compte de la casse                       | `data/session.ts`     | détectée                                                                        |
+| poser le cookie sans `Secure`                                       | `data/session.ts`     | détectée                                                                        |
+| poser le cookie sur `Path=/api/client-hub`                          | `data/session.ts`     | détectée                                                                        |
 | la connexion ne supprime pas les cookies présentés                  | route de vérification | détectée                                                                        |
 | l'interface accepte une réponse de n'importe quel compte            | `client/session.tsx`  | détectée (composants ; et dans Chromium, voir ci-dessous)                       |
 | un 401 de lecture déconnecte sans revérifier                        | `client/session.tsx`  | détectée                                                                        |
 | revérifier sans limite                                              | `client/session.tsx`  | détectée                                                                        |
 | un profil sans compte nommé confirme une identité                   | `client/session.tsx`  | détectée                                                                        |
+
+La mutation « lire aussi les noms sans préfixe `__Host-` » a aussi été rejouée à la main sur le build de production, dans Chromium : la connexion forcée (l'identité de l'attaquant s'affiche) et le blocage par 17 cookies plantés reviennent.
 
 La mutation « l'interface accepte une réponse de n'importe quel compte » a aussi été rejouée à la main sur le build de production, dans Chromium : le test « a read of a business both customers use… » échoue (les données de la seconde cliente s'affichent sous l'écran de la première).
 
@@ -322,7 +332,7 @@ Retirer **seulement** le verrou de ligne de la déconnexion n'est pas détecté 
 
 **Session côté navigateur** (`src/features/client-hub/client/session.tsx`) :
 
-- **Pages sans données côté serveur :** le cookie est limité à `/api/client-hub`, donc aucune page ne peut lire la session. Les pages sont des coquilles `noindex`, et toutes les données viennent d'appels `fetch` same-origin vers les routes, en `no-store` et `credentials: same-origin`. Aucun jeton n'est lisible par JavaScript.
+- **Pages sans données côté serveur :** aucune page ne lit le cookie de session (`Path=/` le leur envoie, comme l'exige le préfixe `__Host-`). Les pages sont des coquilles `noindex`, et toutes les données viennent d'appels `fetch` same-origin vers les routes, en `no-store` et `credentials: same-origin`. Aucun jeton n'est lisible par JavaScript.
 - **Qui est connectée :** l'interface le demande à `GET /me`, au chargement, au retour sur l'onglet et à la restauration depuis le cache avant/arrière.
   - Dès que l'onglet est quitté, ses données sont **voilées** : masquées et inertes, sans être détruites.
   - Ce que ses écrans affichent hors de leur conteneur (le panneau « Mon compte », un portail sur `<body>`) est **suspendu** avec eux : fermé, son piège de focus et ses attributs `inert` retirés. Le focus va sur l'écran de vérification, puis sur « Réessayer », accessible au clavier et au toucher.

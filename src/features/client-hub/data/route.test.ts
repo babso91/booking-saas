@@ -34,7 +34,7 @@ const B = "b".repeat(64);
 const ACCOUNT_B = "0000000b-0000-4000-8000-000000000000";
 const BUSINESS = "11111111-1111-4111-8111-111111111111";
 const inAWeek = () => new Date(Date.now() + 7 * 86_400_000).toISOString();
-const nameOf = (session: string) => `client_hub_s_${session}`;
+const nameOf = (session: string) => `__Host-client_hub_s_${session}`;
 
 function from(jar: CookieJar, method: string, path: string) {
   const headers = new Headers();
@@ -72,7 +72,7 @@ describe("answers only ever add or delete their own sessions' cookies", () => {
     const lateRead = getMe(from(jar, "GET", "/api/client-hub/me"));
 
     // Meanwhile B signs in: the verify answer deletes A's, adds B's.
-    jar.set(`${nameOf(SA)}=; Path=/api/client-hub; Max-Age=0`);
+    jar.set(`${nameOf(SA)}=; Path=/; Max-Age=0`);
     jar.set(sessionCookie(SB, B, inAWeek()));
 
     answer({ status: "none" });
@@ -240,14 +240,11 @@ describe("answers only ever add or delete their own sessions' cookies", () => {
     expect(data.signOut).not.toHaveBeenCalled();
   });
 
-  it("the session cookies stay out of reach of scripts and of every other path", () => {
+  it("the session cookies stay out of reach of scripts, and carry what __Host- requires", () => {
     const cookie = sessionCookie(SB, B, inAWeek());
     expect(cookie).toMatch(/HttpOnly/);
     expect(cookie).toMatch(/SameSite=Lax/);
-    expect(cookie).toMatch(/Path=\/api\/client-hub/);
-    const jar = new CookieJar();
-    jar.set(cookie);
-    expect(jar.header("/espace")).toBe("");
-    expect(jar.header("/api/client-hub/me")).toBe(`${nameOf(SB)}=${B}`);
+    expect(cookie).toMatch(/Path=\/;/);
+    expect(cookie).toMatch(/Secure/);
   });
 });

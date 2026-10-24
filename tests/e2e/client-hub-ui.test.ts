@@ -2,7 +2,7 @@ import { describe, expect, inject, it } from "vitest";
 
 // The customer's hub pages, served by `next start` (the production build)
 // with the production defaults: no trusted ingress, no email delivery. The
-// pages are shells (the session cookie is scoped to /api/client-hub), and
+// pages are shells (no page reads the session cookie), and
 // the sign-in honestly reports that codes cannot be sent: no bypass.
 
 const APP = inject("e2e").appUrl;
@@ -37,7 +37,7 @@ describe("Client Hub pages (production build)", () => {
   it("a page does not accept a session cookie as a way to render data server-side", async () => {
     const response = await fetch(new URL("/espace", APP), {
       headers: {
-        cookie: `client_hub_s_${UNKNOWN_SESSION}=${"a".repeat(64)}`,
+        cookie: `__Host-client_hub_s_${UNKNOWN_SESSION}=${"a".repeat(64)}`,
       },
     });
     const html = await response.text();
@@ -50,7 +50,7 @@ describe("Client Hub pages (production build)", () => {
   // cookie (a session cookie is named after its session: deleting it can
   // never erase another session).
   it("a read carrying an unknown session cookie: 401, uncached, deleting only that cookie", async () => {
-    const name = `client_hub_s_${UNKNOWN_SESSION}`;
+    const name = `__Host-client_hub_s_${UNKNOWN_SESSION}`;
     for (const path of [
       "/api/client-hub/me",
       `/api/client-hub/businesses/${BUSINESS}/loyalty`,
@@ -65,7 +65,7 @@ describe("Client Hub pages (production build)", () => {
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(response.headers.get("x-client-hub-account")).toBeNull();
       expect(response.headers.getSetCookie()).toEqual([
-        `${name}=; Path=/api/client-hub; HttpOnly; SameSite=Lax; Max-Age=0; Secure`,
+        `${name}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`,
       ]);
     }
   });

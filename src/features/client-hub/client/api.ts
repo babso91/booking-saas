@@ -8,9 +8,10 @@ import type {
 import type { AppErrorCode } from "@/lib/errors";
 
 // The Client Hub routes (docs/CLIENT_HUB_CONTRACT.md), called from the
-// browser. The session is an HttpOnly cookie scoped to /api/client-hub: the
-// browser attaches it to these same-origin requests, no script ever sees it,
-// and no page can read it server-side. Never throws: every outcome is a
+// browser. The session is an HttpOnly __Host- cookie: the browser attaches
+// it to these same-origin requests, no script ever sees it, and only these
+// routes read it (no page renders anything from it). Never throws: every
+// outcome is a
 // result. `network` means no readable answer (offline, timeout, cut
 // connection, a page that is not our JSON).
 

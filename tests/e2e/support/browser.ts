@@ -128,12 +128,15 @@ export async function signIn(page: Page, mailpitUrl: string, address: string) {
   return verified;
 }
 
+/** A session cookie's name, before the session id (any prefix generation). */
+const SESSION_NAME = /^(__Host-)?client_hub_s_/;
+
 /** The session cookies Chromium holds, as it stores them. */
 export async function sessionCookies(context: BrowserContext) {
   return (await context.cookies())
-    .filter((cookie) => cookie.name.startsWith("client_hub_s_"))
+    .filter((cookie) => SESSION_NAME.test(cookie.name))
     .map((cookie) => ({
-      session: cookie.name.slice("client_hub_s_".length),
+      session: cookie.name.replace(SESSION_NAME, ""),
       domain: cookie.domain,
       path: cookie.path,
       httpOnly: cookie.httpOnly,
