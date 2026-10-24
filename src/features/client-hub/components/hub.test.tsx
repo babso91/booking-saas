@@ -48,6 +48,8 @@ beforeEach(() => {
     .on("GET", /\/me$/, () =>
       me ? ok(me) : fail("client_hub_unauthenticated", 401),
     )
+    // Answers are served for whoever is signed in when they leave.
+    .servedFor(() => (me ? accountOf(me.email) : null))
     .on("GET", new RegExp(`${B1}/appointments$`), (call) =>
       ok({
         items:
@@ -82,6 +84,9 @@ beforeEach(() => {
     })
     .install();
 });
+
+/** Each customer's account (what the server names on its answers). */
+const accountOf = (email: string) => `account:${email}`;
 
 const inHub = (page: React.ReactNode) => render(<HubRoot>{page}</HubRoot>);
 
@@ -696,7 +701,8 @@ describe("sessions and isolation", () => {
     act(() => setVisibility("hidden"));
     act(() => setVisibility("visible"));
     await act(async () => {
-      held.resolve(ok(profile("ines@exemple.fr", [MILA])));
+      me = profile("ines@exemple.fr", [MILA]);
+      held.resolve({ ...ok(me), account: accountOf(me.email) });
     });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Mon compte" })).toBeTruthy(),
@@ -716,9 +722,8 @@ describe("sessions and isolation", () => {
     expect(shown("Solde : 340 points")).toBe(false);
     api.on("GET", new RegExp(`${B1}/loyalty$`), ok(loyalty(12)));
     await act(async () => {
-      held.resolve(
-        ok(profile("ines@exemple.fr", [business(B1, "Studio Mila", "Inès")])),
-      );
+      me = profile("ines@exemple.fr", [business(B1, "Studio Mila", "Inès")]);
+      held.resolve({ ...ok(me), account: accountOf(me.email) });
     });
     expect(await screen.findByText("Solde : 12 points")).toBeTruthy();
     expect(screen.queryByText("Solde : 340 points")).toBeNull();
@@ -897,5 +902,196 @@ describe("sessions and isolation", () => {
       await screen.findByText(/La déconnexion n’a pas été confirmée/),
     ).toBeTruthy();
     expect(router.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("identity of every answer (X-Client-Hub-Account)", () => {
+  const CAMILLE = "camille@exemple.fr";
+  const INES = "ines@exemple.fr";
+  const ines = () => profile(INES, [business(B1, "Studio Mila", "Inès")]);
+  const back = async () => {
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+  };
+
+  it("a read served for another account is never shown: who is signed in is checked, then her read starts again", async () => {
+    // The first answer was served for Inès (the browser's cookie changed
+    // under this tab, then changed back); the next ones for Camille.
+    let reads = 0;
+    api.on("GET", new RegExp(`${B1}/loyalty$`), () =>
+      (reads += 1) === 1
+        ? { ...ok(loyalty(12)), account: accountOf(INES) }
+        : ok(loyalty(340)),
+    );
+    inHub(<HubLoyalty businessId={B1} />);
+    expect(await screen.findByText("Solde : 340 points")).toBeTruthy();
+    expect(screen.queryByText("Solde : 12 points")).toBeNull();
+    // One check of who is signed in after the first one, one read again.
+    expect(api.to(/\/me$/)).toHaveLength(2);
+    expect(reads).toBe(2);
+  });
+
+  it("a read served for another account, and /me confirms her: new screens for her, nothing of the first", async () => {
+    const entry = (id: string) => ({
+      id,
+      type: "appointment_completed",
+      pointsDelta: 85,
+      balanceAfter: 340,
+      createdAt: inDays(-12),
+      appointmentId: null,
+      serviceName: "Pose",
+      rewardName: null,
+      isReversal: false,
+      reversed: false,
+    });
+    api.on("GET", new RegExp(`${B1}/loyalty/ledger$`), (call) =>
+      call.search.get("cursor")
+        ? ok({ items: [entry("l9")], nextCursor: null })
+        : ok({ items: [entry("l1")], nextCursor: "2" }),
+    );
+    inHub(<HubLoyalty businessId={B1} />);
+    await screen.findByText("Solde : 340 points");
+    // Another tab signed Inès in (no message reached this one): the next
+    // page this tab asks for is served for her.
+    me = ines();
+    api.on("GET", new RegExp(`${B1}/loyalty$`), ok(loyalty(12)));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Afficher les plus anciens" }),
+    );
+    expect(await screen.findByText("Solde : 12 points")).toBeTruthy();
+    expect(screen.queryByText("Solde : 340 points")).toBeNull();
+    expect(screen.queryByText(CAMILLE)).toBeNull();
+  });
+
+  it("the server keeps naming another account than the confirmed one: an error, never the data, and one check only", async () => {
+    api.on("GET", new RegExp(`${B1}/loyalty$`), {
+      ...ok(loyalty(12)),
+      account: accountOf(INES),
+    });
+    inHub(<HubLoyalty businessId={B1} />);
+    await waitFor(() =>
+      expect(api.to(new RegExp(`${B1}/loyalty$`)).length).toBe(2),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.queryByText("Solde : 12 points")).toBeNull();
+    expect(api.to(/\/me$/)).toHaveLength(2);
+    expect(api.to(new RegExp(`${B1}/loyalty$`))).toHaveLength(2);
+  });
+
+  it("an answer naming no account is never shown as data", async () => {
+    api.on("GET", new RegExp(`${B1}/loyalty$`), {
+      ...ok(loyalty(12)),
+      account: null,
+    });
+    inHub(<HubLoyalty businessId={B1} />);
+    await screen.findByRole("heading", { name: "Ma fidélité" });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.queryByText("Solde : 12 points")).toBeNull();
+  });
+
+  it("a profile naming no account confirms nobody: nothing private is shown", async () => {
+    api.on("GET", /\/me$/, { ...ok(me), account: null });
+    inHub(<HubHome />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.queryByText(/Bonjour/)).toBeNull();
+    expect(screen.queryByText(CAMILLE)).toBeNull();
+  });
+
+  it("A → B → A with answers in flight: each one shown only under its own confirmed identity", async () => {
+    const heldA = deferred<ReturnType<typeof ok>>();
+    api.on("GET", new RegExp(`${B1}/loyalty$`), () => heldA.promise);
+    inHub(<HubLoyalty businessId={B1} />);
+    await screen.findByRole("heading", { name: "Ma fidélité" });
+
+    // B (Inès) signs in elsewhere; her read is held too.
+    me = ines();
+    const heldB = deferred<ReturnType<typeof ok>>();
+    api.on("GET", new RegExp(`${B1}/loyalty$`), () => heldB.promise);
+    await back();
+    await waitFor(() =>
+      expect(api.to(new RegExp(`${B1}/loyalty$`)).length).toBe(2),
+    );
+
+    // Then Camille again.
+    me = profile(CAMILLE, [MILA, LUMIERE]);
+    api.on("GET", new RegExp(`${B1}/loyalty$`), ok(loyalty(340)));
+    await back();
+    expect(await screen.findByText("Solde : 340 points")).toBeTruthy();
+
+    // Inès's late answer, and Camille's first (an older screen): neither.
+    await act(async () => {
+      heldB.resolve(ok(loyalty(12)));
+      heldA.resolve(ok(loyalty(999)));
+    });
+    expect(screen.queryByText("Solde : 12 points")).toBeNull();
+    expect(screen.queryByText("Solde : 999 points")).toBeNull();
+    expect(screen.getByText("Solde : 340 points")).toBeTruthy();
+  });
+
+  it("a 401 on a read while someone else is signed in now (no message from the other tab): her screens, not an expiry", async () => {
+    const entry = (id: string) => ({
+      id,
+      type: "appointment_completed",
+      pointsDelta: 85,
+      balanceAfter: 340,
+      createdAt: inDays(-12),
+      appointmentId: null,
+      serviceName: "Pose",
+      rewardName: null,
+      isReversal: false,
+      reversed: false,
+    });
+    api.on("GET", new RegExp(`${B1}/loyalty/ledger$`), (call) =>
+      call.search.get("cursor")
+        ? ok({ items: [entry("l9")], nextCursor: null })
+        : ok({ items: [entry("l1")], nextCursor: "2" }),
+    );
+    inHub(<HubLoyalty businessId={B1} />);
+    await screen.findByText("Solde : 340 points");
+    me = ines();
+    api.on("GET", new RegExp(`${B1}/loyalty/ledger$`), (call) =>
+      call.search.get("cursor")
+        ? fail("client_hub_unauthenticated", 401)
+        : ok({ items: [], nextCursor: null }),
+    );
+    api.on("GET", new RegExp(`${B1}/loyalty$`), ok(loyalty(12)));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Afficher les plus anciens" }),
+    );
+    expect(await screen.findByText("Solde : 12 points")).toBeTruthy();
+    expect(screen.queryByText("Solde : 340 points")).toBeNull();
+    expect(router.replace).not.toHaveBeenCalledWith("/espace/connexion");
+  });
+
+  it("a next page served for another account is never appended", async () => {
+    api.on("GET", new RegExp(`${B1}/appointments$`), (call) =>
+      call.search.get("cursor")
+        ? {
+            ...ok({
+              items: [appointment("x9", inDays(9), "Soin d'Inès")],
+              nextCursor: null,
+            }),
+            account: accountOf(INES),
+          }
+        : ok({
+            items: [appointment("a1", inDays(3), "Pose cil à cil")],
+            nextCursor: "c2",
+          }),
+    );
+    inHub(<HubAppointments businessId={B1} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Afficher les suivants" }),
+    );
+    await waitFor(() => expect(api.to(/\/me$/).length).toBe(2));
+    await act(async () => {});
+    expect(screen.queryByText("Soin d'Inès")).toBeNull();
+    expect(screen.getByText("Pose cil à cil")).toBeTruthy();
   });
 });

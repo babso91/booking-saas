@@ -25,6 +25,14 @@ import { endSession, fetchProfile, type HubError, type HubResult } from "./api";
 // answer to a request started under an older generation is dropped,
 // including a late 401, which can never sign out the newer session.
 //
+// Identity: the customer shown is the ACCOUNT that GET /me confirmed. Every
+// private answer names the account it was served for (X-Client-Hub-Account,
+// decided by the server among the browser's session cookies). An answer
+// served for any other account, or for none, is never shown: the screens
+// are veiled and who is signed in is checked again. So a request that left
+// with another session's cookie (another tab signed someone else in
+// meanwhile) cannot put that person's data on this customer's screens.
+//
 // Verification: the cookie may change in another tab without any message
 // reaching this one. So when the tab is left, her data is veiled at once
 // (`check: "pending"`), and shown again only once GET /me confirms who is
@@ -40,6 +48,10 @@ export type HubSession =
       status: "signed-in";
       generation: number;
       profile: ClientHubProfileDto;
+      /** The account GET /me confirmed (X-Client-Hub-Account). */
+      account: string;
+      /** How many times GET /me confirmed her again (only ever grows). */
+      confirmations: number;
       /**
        * `ok`: her identity is confirmed, her data may be shown. `pending`:
        * being checked again (data veiled). `failed`: it could not be checked
@@ -57,10 +69,16 @@ type HubContext = {
   verify: () => void;
   /** A code was just verified: a new identity. */
   signedIn: (session: { email: string; expiresAt: string }) => void;
-  /** A read of `generation` answered 401: that session is over. */
-  expire: (generation: number) => void;
-  /** Whether answers of `generation` may still be shown. */
+  /**
+   * A read of `generation` was refused (401) or served for another
+   * account: her data is veiled and who is signed in is checked again (a
+   * refusal with nobody signed in any more is an expiry).
+   */
+  distrust: (generation: number) => void;
+  /** Whether answers of `generation` may still be considered. */
   isCurrent: (generation: number) => boolean;
+  /** Whether an answer of `generation`, served for `account`, may be shown. */
+  accepts: (generation: number, account: string | null) => boolean;
   signOut: (all: boolean) => Promise<HubResult<{ ended: true }>>;
 };
 
@@ -99,7 +117,13 @@ export function ClientHubSessionProvider({
       next:
         | { status: "checking" }
         | { status: "signed-out"; reason: SignedOutReason }
-        | { status: "signed-in"; profile: ClientHubProfileDto; check: "ok" }
+        | {
+            status: "signed-in";
+            profile: ClientHubProfileDto;
+            account: string;
+            confirmations: number;
+            check: "ok";
+          }
         | { status: "error"; error: HubError },
     ) => {
       apply({ ...next, generation: generation.current + 1 } as HubSession);
@@ -120,21 +144,38 @@ export function ClientHubSessionProvider({
       const token = (checks.current += 1);
       if (options.fresh) advance({ status: "checking" });
       else if (options.veil) veil();
-      void fetchProfile().then((result) => {
+      void fetchProfile().then((answer) => {
+        let result = answer;
         if (token !== checks.current) return; // a newer check runs
         const now = current.current;
-        if (result.ok) {
-          if (
-            now.status === "signed-in" &&
-            now.profile.email === result.data.email
-          ) {
+        if (result.ok && result.account) {
+          if (now.status === "signed-in" && now.account === result.account) {
             // Same customer: her screens come back as she left them (her
             // businesses may have changed; their reads check).
-            apply({ ...now, profile: result.data, check: "ok" });
+            apply({
+              ...now,
+              profile: result.data,
+              check: "ok",
+              confirmations: now.confirmations + 1,
+            });
           } else {
-            advance({ status: "signed-in", profile: result.data, check: "ok" });
+            advance({
+              status: "signed-in",
+              profile: result.data,
+              account: result.account,
+              confirmations: 0,
+              check: "ok",
+            });
           }
           return;
+        }
+        if (result.ok) {
+          // A profile that names no account: who it is cannot be told.
+          result = {
+            ok: false,
+            error: { code: "internal" },
+            account: null,
+          };
         }
         if (result.error.code === "client_hub_unauthenticated") {
           expiresAt.current = null;
@@ -251,19 +292,26 @@ export function ClientHubSessionProvider({
     },
     [check, post],
   );
-  const expire = useCallback(
-    (expired: number) => {
-      if (expired !== generation.current) return; // an older session's 401
-      checks.current += 1;
-      expiresAt.current = null;
-      advance({ status: "signed-out", reason: "expired" });
+  const distrust = useCallback(
+    (owner: number) => {
+      if (owner !== generation.current) return; // an older session's answer
+      check({ fresh: false, veil: true });
     },
-    [advance],
+    [check],
   );
   const isCurrent = useCallback(
     (value: number) => value === generation.current,
     [],
   );
+  const accepts = useCallback((owner: number, account: string | null) => {
+    const now = current.current;
+    return (
+      owner === generation.current &&
+      now.status === "signed-in" &&
+      account !== null &&
+      account === now.account
+    );
+  }, []);
   const signOut = useCallback(
     async (all: boolean) => {
       const result = await endSession(all);
@@ -282,8 +330,17 @@ export function ClientHubSessionProvider({
   );
 
   const value = useMemo<HubContext>(
-    () => ({ session, recheck, verify, signedIn, expire, isCurrent, signOut }),
-    [expire, isCurrent, recheck, session, signOut, signedIn, verify],
+    () => ({
+      session,
+      recheck,
+      verify,
+      signedIn,
+      distrust,
+      isCurrent,
+      accepts,
+      signOut,
+    }),
+    [accepts, distrust, isCurrent, recheck, session, signOut, signedIn, verify],
   );
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
@@ -307,17 +364,29 @@ export type HubRead<T> =
 /**
  * One read of the signed-in customer's data, started again when `key`
  * changes. Answers of an older key, an older session or a superseded read
- * are dropped; a 401 ends the session (if it is still the current one); a
- * 404 asks who is signed in again (an access may have been revoked).
+ * are dropped. An answer served for another account than the confirmed one
+ * (or a 401) is dropped too: her data is veiled while who is signed in is
+ * checked, and the read starts again once she is confirmed (another
+ * customer gets new screens). A 404 asks who is signed in again (an access
+ * may have been revoked).
  */
 export function useHubRead<T>(
   key: string | null,
   load: (signal: AbortSignal) => Promise<HubResult<T>>,
 ): HubRead<T> & { reload: () => void } {
-  const { session, expire, isCurrent, recheck } = useClientHub();
+  const { session, distrust, accepts, isCurrent, recheck } = useClientHub();
   const signedIn = session.status === "signed-in";
   const owner = session.generation;
+  const confirmations = signedIn ? session.confirmations : -1;
   const [run, setRun] = useState(0);
+  // A read dropped while her identity was in doubt (`at`: the confirmations
+  // then) is read again once GET /me confirmed her since.
+  const [doubt, setDoubt] = useState<{ for: string; at: number } | null>(null);
+  const doubts = useRef(0);
+  const confirmationsNow = useRef(confirmations);
+  useEffect(() => {
+    confirmationsNow.current = confirmations;
+  });
   const [state, setState] = useState<{ for: string; read: HubRead<T> }>({
     for: "",
     read: { status: "loading" },
@@ -326,29 +395,62 @@ export function useHubRead<T>(
   useEffect(() => {
     loadRef.current = load;
   });
-  const readKey = `${owner}|${key}|${run}`;
+  const baseKey = `${owner}|${key}|${run}`;
+  const again =
+    doubt !== null && doubt.for === baseKey && confirmations > doubt.at;
+  const readKey = again ? `${baseKey}|again` : baseKey;
 
   useEffect(() => {
     if (!signedIn || key === null) return;
     const controller = new AbortController();
     void loadRef.current(controller.signal).then((result) => {
       if (controller.signal.aborted || !isCurrent(owner)) return;
-      if (!result.ok && result.error.code === "client_hub_unauthenticated") {
-        expire(owner);
+      const refused =
+        !result.ok && result.error.code === "client_hub_unauthenticated";
+      if (refused || (result.account && !accepts(owner, result.account))) {
+        // Refused, or served for someone else: never shown. Read again once
+        // she is confirmed, once: if the server still disagrees with the
+        // confirmed identity, an error is shown (no loop of checks).
+        if (doubts.current === 0) {
+          doubts.current += 1;
+          setDoubt({ for: baseKey, at: confirmationsNow.current });
+          distrust(owner);
+        } else {
+          setState({
+            for: readKey,
+            read: { status: "error", error: { code: "internal" } },
+          });
+        }
         return;
       }
+      doubts.current = 0;
       if (!result.ok && result.error.code === "client_hub_not_found") {
         recheck();
       }
       setState({
         for: readKey,
-        read: result.ok
-          ? { status: "ready", data: result.data }
-          : { status: "error", error: result.error },
+        read:
+          result.ok && accepts(owner, result.account)
+            ? { status: "ready", data: result.data }
+            : {
+                status: "error",
+                // Data naming no account is never shown either.
+                error: result.ok ? { code: "internal" } : result.error,
+              },
       });
     });
     return () => controller.abort();
-  }, [expire, isCurrent, key, owner, readKey, recheck, signedIn]);
+  }, [
+    accepts,
+    baseKey,
+    distrust,
+    isCurrent,
+    key,
+    owner,
+    readKey,
+    recheck,
+    signedIn,
+  ]);
 
   // Another key, read or session than the one answered: nothing of it.
   const read =

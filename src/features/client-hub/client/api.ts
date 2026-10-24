@@ -21,8 +21,14 @@ export type HubError = {
   fieldErrors?: Record<string, string[]>;
 };
 
+/**
+ * `account`: the account the server says the answer was served for
+ * (X-Client-Hub-Account), null when it names none. A private answer is
+ * shown only for the account the page confirmed (client/session.tsx).
+ */
 export type HubResult<T> =
-  { ok: true; data: T } | { ok: false; error: HubError };
+  | { ok: true; data: T; account: string | null }
+  | { ok: false; error: HubError; account: string | null };
 
 /** Longest wait for an answer before saying so. */
 export const HUB_TIMEOUT_MS = 15_000;
@@ -47,20 +53,21 @@ async function request<T>(
         credentials: "same-origin",
       });
     } catch {
-      return { ok: false, error: { code: "network" } };
+      return { ok: false, error: { code: "network" }, account: null };
     }
+    const account = response.headers.get("x-client-hub-account");
     let body: unknown;
     try {
       body = await response.json();
     } catch {
-      return { ok: false, error: { code: "network" } };
+      return { ok: false, error: { code: "network" }, account: null };
     }
     const payload = body as {
       data?: T;
       error?: { code?: unknown; fieldErrors?: Record<string, string[]> };
     } | null;
     if (response.ok && payload?.data !== undefined) {
-      return { ok: true, data: payload.data };
+      return { ok: true, data: payload.data, account };
     }
     const code = payload?.error?.code;
     return {
@@ -71,6 +78,7 @@ async function request<T>(
           ? { fieldErrors: payload.error.fieldErrors }
           : {}),
       },
+      account,
     };
   } finally {
     clearTimeout(timer);

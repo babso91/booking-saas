@@ -1,6 +1,6 @@
 # Client Hub V1 : contrat backend (PR #25)
 
-Backend livré par la PR #25, interface par la PR #26 (§ 11). Ce document décrit l'architecture retenue, les règles d'identité et d'autorisation, et les contrats que l'interface (Claude UI) peut utiliser **sans rien supposer d'autre**. Migration : `supabase/migrations/20261021090000_client_hub.sql`. Code : `src/features/client-hub/`, `src/app/api/client-hub/`. Tests : `tests/integration/client-hub.test.ts`, `tests/upgrade/client-hub.test.ts`.
+Backend livré par la PR #25, interface et sessions dans le navigateur par la PR #26 (§ 3, § 11). Ce document décrit l'architecture retenue, les règles d'identité et d'autorisation, et les contrats que l'interface (Claude UI) peut utiliser **sans rien supposer d'autre**. Migrations : `supabase/migrations/20261021090000_client_hub.sql`, `supabase/migrations/20261024090000_client_hub_session_slots.sql`. Code : `src/features/client-hub/`, `src/app/api/client-hub/`. Tests : `tests/integration/client-hub.test.ts`, `tests/upgrade/client-hub.test.ts`, `tests/upgrade/client-hub-session-slots.test.ts`, `tests/e2e/client-hub-browser.test.ts` (Chromium réel, derrière une entrée TLS locale).
 
 > **Pas encore utilisable en production.** La connexion envoie un code par email via le transport configuré (`EMAIL_TRANSPORT`). Tant que l'envoi réel (Resend) n'est pas configuré, `POST /api/client-hub/session/code` répond `client_hub_unavailable` (503) et n'émet aucun code. Il n'existe aucun contournement de développement dans le code de production. Seul le transport Mailpit local, ou le transport en mémoire des tests, permet de se connecter aujourd'hui.
 
@@ -74,28 +74,65 @@ L'outbox est rattachée à une activité et à un rendez-vous, et fige chaque me
 
 ## 3. Session cliente
 
-- **Cookie `client_hub_session` :**
-  - `HttpOnly`, `SameSite=Lax`, `Path=/api/client-hub` ;
+- **Durée :** 7 jours, absolue, sans prolongation. Jeton opaque de 256 bits ; seul son SHA-256 est stocké.
+- **Un cookie par session** (migration `20261024090000_client_hub_session_slots`) : `client_hub_s_<id de la session>=<jeton>`.
+  - `HttpOnly`, `SameSite=Lax`, `Path=/api/client-hub`, sans `Domain` (cet hôte seulement) ;
   - `Secure` en production ;
   - `Max-Age` égal à la durée de la session.
-- **Durée :** 7 jours, absolue, sans prolongation.
-- **Fin de session :**
-  - `DELETE /api/client-hub/session` met fin à la session courante ;
-  - `DELETE /api/client-hub/session?all=true` met fin à toutes les sessions du compte, **seulement si la session présentée est encore active**. La ligne de cette session est verrouillée et vérifiée sous ce verrou. Une session révoquée, expirée ou inconnue n'a aucune autorité sur les autres, même si sa révocation est concurrente : la réponse reste `200 { ended: true }`, sans indiquer l'état de l'ancienne session ;
-  - **ordre des verrous de la déconnexion :** le compte (verrou consultatif de transaction), puis la ligne de la session appelante. Deux déconnexions globales simultanées du même compte s'exécutent donc l'une après l'autre, sans deadlock : la première révoque toutes les sessions actives, la seconde trouve la sienne révoquée et ne change plus rien (les deux répondent 200). Les comptes différents ne s'attendent jamais. Seules les sessions actives sont révoquées ; les sessions expirées relèvent de la purge, sur des lignes disjointes. Une connexion n'insère qu'une nouvelle session, sans verrou de session : elle ne bloque pas une déconnexion et n'est pas bloquée par elle ;
-  - le cookie est effacé dans les deux cas.
-- **Session refusée :** une session inconnue, expirée ou terminée donne `client_hub_unauthenticated` (401), **sans toucher au cookie**.
-  - Un `Set-Cookie` de suppression désigne le cookie par son nom, pas par sa valeur. Envoyé avec une lecture refusée et lente, il effacerait une session plus récente ouverte entre-temps dans le même navigateur.
-  - Un cookie mort reste inoffensif : toutes les routes le refusent.
-  - Seule une déconnexion explicite (`DELETE /api/client-hub/session`) l'efface.
 - **CSRF :**
   - `SameSite=Lax` empêche l'envoi du cookie lors d'un POST ou DELETE inter-sites ;
   - contre la « connexion forcée » (un formulaire d'un autre site qui ouvrirait une session dans le navigateur de la visiteuse), les POST et DELETE exigent `Content-Type: application/json`, et refusent un `Sec-Fetch-Site` autre que `same-origin`/`none` ou un `Origin` autre que celui de l'application (403 `forbidden`) ;
-  - les lectures sont des GET sans effet.
-- **Cookie dupliqué :** deux cookies `client_hub_session` (par exemple déposés par un sous-domaine) sont refusés, jamais départagés.
+  - les lectures sont des GET sans autre effet que la résolution décrite ci-dessous.
 - **Séparation des rôles :**
-  - le cookie client n'est accepté par aucune action ni route professionnelle, qui reposent sur la session Supabase ;
+  - aucun cookie client n'est accepté par une action ou une route professionnelle, qui reposent sur la session Supabase ;
   - une session Supabase, professionnelle ou anonyme, ne peut exécuter aucune fonction client (privilège refusé, testé).
+
+### Sessions dans le navigateur
+
+**Pourquoi un cookie par session.** Un navigateur applique le `Set-Cookie` d'une réponse à son arrivée, quoi que fasse la page (onglet caché, fermé, attente abandonnée), et la dernière réponse arrivée l'emporte. Avec un seul nom de cookie partagé par tous les onglets (`client_hub_session`, jusqu'à la PR #26) :
+
+- une déconnexion de A, dont la réponse arrivait après la connexion de B, effaçait le cookie de B ;
+- une connexion de A, traitée avant celle de B mais arrivée après, remettait le cookie de A : l'onglet de B affichait A.
+
+Aucun serveur ne peut connaître l'ordre d'arrivée de ses réponses, et aucune garde côté page ne peut empêcher le navigateur d'appliquer un `Set-Cookie` déjà parti. Désormais, une réponse ne fait que deux choses : **ajouter le cookie de la session qu'elle vient d'ouvrir**, ou **supprimer des cookies de sessions terminées**. Ces écritures commutent : quel que soit l'ordre d'arrivée, le navigateur finit avec les mêmes cookies. Un nom n'est jamais réutilisé (c'est l'id de la session), et seule la connexion qui a ouvert une session pose son cookie : supprimer le cookie d'une session terminée ne peut donc jamais effacer une autre session.
+
+**Résolution (PostgreSQL, `client_hub_resolve_session`, à chaque requête authentifiée).** Le navigateur peut présenter plusieurs cookies de session :
+
+| Ce que présente le navigateur                                                   | Résultat                                                                                                                       |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| aucune session vivante (inconnue, expirée, révoquée, jeton d'une autre session) | 401 `client_hub_unauthenticated` ; les cookies présentés sont supprimés                                                        |
+| des sessions vivantes d'**un seul compte**                                      | la plus récente (`created_at`, puis `id`) est utilisée ; les autres présentées sont révoquées et leurs cookies supprimés       |
+| des sessions vivantes de **plusieurs comptes**                                  | **échec fermé** : toutes sont révoquées, aucune n'est choisie, 401 et tous les cookies présentés supprimés                     |
+| plus de 16 cookies de session                                                   | **échec fermé** sans interroger la base : aucune session n'est utilisée ni révoquée, 401, tous les cookies présentés supprimés |
+| un en-tête `Cookie` au-delà de la limite du serveur (16 Kio pour Node)          | 431, avant toute route, sans `Set-Cookie`                                                                                      |
+| la base n'a pas pu répondre                                                     | 500, **aucun cookie touché**                                                                                                   |
+
+- **Un cookie ne compte que sous le nom de sa propre session :** le jeton d'une session sous le nom d'une autre, ou sous un nom qui n'est pas une session, n'authentifie rien.
+- **Noms invalides :** un cookie dont le nom n'est pas exactement `client_hub_s_<uuid en minuscules>` (y compris l'ancien `client_hub_session`) est ignoré, et jamais supprimé.
+- **Valeurs invalides :** un nom valide avec une valeur qui n'est pas un jeton n'authentifie rien ; son cookie est supprimé.
+- **Doublons :** un même nom présent deux fois (un cookie posé par un sous-domaine, par exemple) : chaque valeur est examinée seule ; seule celle qui est le jeton de cette session compte. Une valeur plantée n'empêche pas la vraie de fonctionner.
+- **« Plus récente » :** l'instant d'ouverture de la session en base (début de la transaction de vérification du code), puis l'id en cas d'égalité. Ce n'est ni l'ordre des clics, ni l'ordre d'arrivée des réponses. Elle ne départage que des sessions **d'un même compte** : la cliente reste la même, quelle que soit la session gagnante.
+- **Pourquoi l'échec fermé entre comptes :** deux comptes vivants dans un même navigateur n'arrivent que si deux connexions de comptes différents se croisent, ou si un sous-domaine a planté un cookie (cookie tossing). Dans les deux cas, le serveur ne peut pas savoir qui est la visiteuse ; il ne choisit pas. La règle « la plus récente gagne » entre comptes laisserait un sous-domaine hostile imposer son identité à la place de celle de la victime.
+- **Ce que les utilisatrices voient :** après deux connexions croisées de comptes différents, tous les onglets reviennent à la connexion ; il suffit de se reconnecter. Deux connexions croisées du même compte restent connectées.
+- **Identité des réponses :** toute réponse privée porte `X-Client-Hub-Account: <id du compte>` (le compte de la session résolue ; absent sur un 401). L'interface ne montre aucune réponse servie pour un autre compte que celui que `GET /me` a confirmé (§ 11).
+- **Révocations :** une requête ne révoque que des sessions dont elle présente le jeton, et, pour une déconnexion globale, les sessions du compte d'une session vivante présentée.
+
+**Connexion** (`client_hub_sign_in`) : vérifie le code (`client_hub_verify_code`), ouvre la session, puis **termine les sessions présentées par le navigateur** (se connecter remplace qui est le navigateur). La réponse ajoute le nouveau cookie, supprime les cookies présentés et nomme le compte. Un code refusé ne termine rien et ne touche aucun cookie.
+
+**Déconnexion** (`client_hub_sign_out`) :
+
+- `DELETE /api/client-hub/session` termine les sessions présentées ; `?all=true` termine aussi toutes les sessions de leurs comptes, **seulement à partir d'une session présentée encore vivante** (une session révoquée, expirée ou inconnue n'a aucune autorité) ;
+- la réponse supprime les cookies présentés, et seulement eux : une session ouverte après le départ de la requête a un autre cookie ;
+- toujours `200 { ended: true }`, aussi sans session.
+
+**Ordre des verrous.** Toute fonction qui termine ou choisit des sessions respecte le même ordre :
+
+1. **L1**, seulement pour une connexion : réseau, puis adresse (verrous consultatifs), puis ligne du défi ;
+2. **L2** : les comptes des sessions vivantes présentées (verrous consultatifs, dans l'ordre des uuid), puis les lignes de ces sessions (`FOR UPDATE`, dans l'ordre des id), relues sous verrou.
+
+L1 est toujours pris avant L2, jamais après. Les lectures ne verrouillent qu'une ligne de session et n'attendent rien d'autre. La purge (à chaque demande de code) ne supprime que des sessions expirées depuis un jour, qu'aucun détenteur de L2 ne verrouille. Aucun cycle d'attente n'est donc possible (tests de concurrence réels, § 10). Deux déconnexions ou résolutions du même compte s'exécutent l'une après l'autre ; des comptes différents ne s'attendent pas.
+
+**Points d'entrée remplacés :** `client_hub_verify_code` et `client_hub_end_session` restent dans l'historique, mais ne sont plus exécutables par la clé de service.
 
 ## 4. Règles d'identité et d'autorisation
 
@@ -158,7 +195,8 @@ Elles ne deviennent visibles qu'**à travers l'autorisation de la professionnell
 
 Toutes les routes ci-dessous :
 
-- exigent le cookie de session ;
+- exigent un cookie de session (résolu comme au § 3) ;
+- nomment le compte pour lequel elles répondent : `X-Client-Hub-Account` (absent sur un 401) ;
 - répondent `{ data }` ou `{ error: { code, message, fieldErrors? } }`, avec `Cache-Control: no-store` ;
 - utilisent des instants en ISO 8601 (UTC), des montants en centimes et des points entiers.
 
@@ -194,7 +232,7 @@ Les types sont dans `src/features/client-hub/types.ts`.
 | Connectée, aucune activité       | `GET /me` → `businesses: []`                 | expliquer que la professionnelle doit ouvrir l'accès |
 | Connectée                        | `businesses` non vide                        | liste par activité                                   |
 | Élément inaccessible             | 404 `client_hub_not_found`                   | « introuvable », sans détail                         |
-| Session expirée en cours d'usage | 401 sur n'importe quelle route               | retour au formulaire email                           |
+| Session expirée en cours d'usage | 401 sur n'importe quelle route               | revérifier `GET /me` ; si 401, formulaire email      |
 | Entrée invalide                  | 400 `validation_error` (`fieldErrors`)       | erreurs par champ                                    |
 
 Chargement : chaque route est une lecture bornée. Une page vide (`items: []`, `nextCursor: null`) est un état normal.
@@ -225,22 +263,50 @@ Les professionnelles restent la seule autorité sur ces opérations.
 - **Comptes :** une adresse vérifiée reste enregistrée (email et dates seulement) ; les sessions et les défis sont purgés.
 - **Fonctions de la clé de service :** elles ne prennent aucune heure en paramètre : l'heure est toujours celle de la base.
 
-## 10. Sensibilité des tests de concurrence
+### Limites des sessions dans le navigateur (testées)
 
-`node tests/mutation/client-hub.mjs` (pile Supabase locale requise) rejoue les mutations des protections de concurrence et d'autorité de session :
+Chacune est couverte par un test qui l'énonce (`tests/integration/client-hub.test.ts`, `tests/e2e/client-hub-browser.test.ts`, titres « LIMIT ») ou par un test qui en vérifie la conséquence sûre.
 
-| Mutation                                                                | Résultat                                                         |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| retirer le verrou d'adresse de la vérification (le comportement audité) | détectée : deadlock (`40P01`), et demande de code non sérialisée |
-| prendre le verrou d'adresse après le verrou de ligne                    | détectée                                                         |
-| une session révoquée garde l'autorité de déconnexion globale            | détectée                                                         |
-| une session expirée garde l'autorité de déconnexion globale             | détectée                                                         |
-| retirer le verrou de compte de la déconnexion (le comportement audité)  | détectée : deadlock (`40P01`) entre deux déconnexions globales   |
-| retirer à la fois le verrou de compte et le verrou de ligne             | détectée                                                         |
+- **Connexions croisées de deux comptes :** le navigateur est déconnecté (échec fermé) ; il faut se reconnecter. Jamais l'identité de l'une dans l'onglet de l'autre.
+- **Connexion validée avant une déconnexion, arrivée après :** une connexion dont le serveur a validé le code avant une déconnexion simple, mais dont la réponse arrive après, reste ouverte. La déconnexion ne termine que les sessions que le navigateur présentait. La déconnexion de tous les appareils la termine.
+- **Cookie tossing sur un navigateur sans session :** un sous-domaine hostile (`Domain=` le domaine parent) peut faire accepter **sa** session à un navigateur qui n'en a aucune, comme avec l'ancien cookie unique. À côté d'une session de la victime, la tentative échoue fermée (les deux sessions sont révoquées). Seul un cookie `__Host-` (avec `Path=/`, reporté à une réflexion séparée) l'empêcherait. Le cookie planté ne peut pas être supprimé par l'application (il appartient au domaine parent), mais une fois sa session terminée il n'authentifie plus rien.
+- **Déni de service par un sous-domaine hostile :** il peut déconnecter la victime (sessions croisées ou plus de 16 cookies), comme il pouvait déjà l'empêcher de se connecter avec l'ancien cookie unique.
+- **Sessions orphelines :** une connexion validée dont la réponse n'arrive jamais (onglet fermé, connexion coupée, attente abandonnée) laisse une session que nul navigateur ne détient. Elle expire au bout de 7 jours ; la déconnexion de tous les appareils la termine.
+- **Onglet fermé pendant une réponse :** Chromium peut appliquer ou non le `Set-Cookie` d'une réponse arrivée après la fermeture de l'onglet. Les deux issues sont sûres (testées).
+- **Requête rejouée par le navigateur :** Chromium renvoie une requête dont la connexion réutilisée est coupée avant toute réponse. Une vérification rejouée est refusée (code à usage unique) : pas de seconde session.
+- **Plus de 16 cookies :** aucune session n'est utilisée ni révoquée, toutes sont supprimées du navigateur (sessions orphelines, comme ci-dessus).
+- **« Plus récente » suppose des durées fixes :** l'ordre est celui de l'ouverture en base, pour un même compte. Il ne dépend ni des horloges des navigateurs ni de l'ordre d'arrivée.
 
-Retirer **seulement** le verrou de ligne n'est pas détecté : le verrou de compte ordonne à lui seul toute révocation d'une session, et le verrou de ligne n'est plus qu'une seconde garde, redondante.
+## 10. Sensibilité des tests (mutations)
 
-Pour chaque mutation, le script réinitialise la base, lance les tests ciblés et restaure la migration. Il échoue (code de sortie 1) si une mutation n'est pas détectée.
+`node tests/mutation/client-hub.mjs` (pile Supabase locale requise) rejoue les mutations des protections. Pour chaque mutation, le script modifie un fichier (migration, route ou page), réinitialise la base s'il s'agit d'une migration, lance les tests ciblés et restaure le fichier. Il échoue (code de sortie 1) si une mutation n'est pas détectée ; une exécution qui échoue sans test en échec ne compte pas comme une détection.
+
+| Mutation                                                            | Où                    | Résultat                                                                        |
+| ------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------- |
+| retirer le verrou d'adresse de la vérification                      | migration PR #25      | détectée : deadlock (`40P01`), demande de code non sérialisée                   |
+| prendre le verrou d'adresse après le verrou de ligne                | migration PR #25      | détectée                                                                        |
+| choisir la session la plus récente même entre comptes différents    | résolveur             | détectée : défaut 2, cookie tossing                                             |
+| garder la plus ancienne session d'un compte                         | résolveur             | détectée                                                                        |
+| laisser vivantes les autres sessions présentées                     | résolveur             | détectée                                                                        |
+| accepter un jeton sous le nom d'une autre session                   | résolveur             | détectée                                                                        |
+| verrouiller les comptes dans l'ordre de présentation                | résolveur             | détectée : une résolution bloquée détient déjà un verrou de compte (`pg_locks`) |
+| ne pas verrouiller les comptes                                      | résolveur             | détectée (y compris deadlock entre déconnexions globales)                       |
+| ne pas relire les sessions sous verrou                              | résolveur             | détectée                                                                        |
+| la connexion ne termine pas les sessions présentées                 | `client_hub_sign_in`  | détectée                                                                        |
+| un seul nom de cookie pour toutes les sessions (l'ancien protocole) | `data/session.ts`     | détectée : défauts 1 et 2, et la plupart des tests de sessions                  |
+| supprimer aussi le cookie de la session gagnante                    | `data/route.ts`       | détectée                                                                        |
+| supprimer les cookies quand la base n'a pas répondu                 | `data/route.ts`       | détectée                                                                        |
+| ne plus nommer le compte des réponses                               | `data/route.ts`       | détectée                                                                        |
+| examiner plus de 16 cookies                                         | `data/session.ts`     | détectée                                                                        |
+| la connexion ne supprime pas les cookies présentés                  | route de vérification | détectée                                                                        |
+| l'interface accepte une réponse de n'importe quel compte            | `client/session.tsx`  | détectée (composants ; et dans Chromium, voir ci-dessous)                       |
+| un 401 de lecture déconnecte sans revérifier                        | `client/session.tsx`  | détectée                                                                        |
+| revérifier sans limite                                              | `client/session.tsx`  | détectée                                                                        |
+| un profil sans compte nommé confirme une identité                   | `client/session.tsx`  | détectée                                                                        |
+
+La mutation « l'interface accepte une réponse de n'importe quel compte » a aussi été rejouée à la main sur le build de production, dans Chromium : le test « a read of a business both customers use… » échoue (les données de la seconde cliente s'affichent sous l'écran de la première).
+
+Retirer **seulement** le verrou de ligne de la déconnexion n'est pas détecté : le verrou de compte ordonne à lui seul toute révocation d'une session, et le verrou de ligne n'est plus qu'une seconde garde, redondante.
 
 ## 11. Interface (PR #26)
 
@@ -269,12 +335,13 @@ Pour chaque mutation, le script réinitialise la base, lance les tests ciblés e
   - Toute réponse à une requête partie sous une génération antérieure est ignorée. Cela vaut aussi pour un 401 tardif, qui ne peut jamais déconnecter la session suivante.
   - Chaque lecture et chaque page de liste vérifient aussi leur clé (établissement, période) : une page tardive n'est jamais ajoutée à une autre liste.
 - **Réponses des routes :**
-  - **401** sur n'importe quelle lecture : la session est terminée et l'écran revient à la connexion (« Votre session a expiré »). Le cookie n'est pas effacé par cette réponse (§ 3).
+  - **Identité de chaque réponse :** une réponse servie pour un autre compte que celui que `GET /me` a confirmé (`X-Client-Hub-Account`), ou une donnée qui ne nomme aucun compte, n'est jamais affichée. Les données sont voilées, l'identité est revérifiée, puis la lecture repart une fois l'identité confirmée (une autre cliente obtient de nouveaux écrans). Une seule revérification par lecture : si le serveur nomme encore un autre compte, la lecture affiche une erreur, sans boucle.
+  - **401** sur n'importe quelle lecture : l'identité est revérifiée par `GET /me`. Si personne n'est plus connecté, l'écran revient à la connexion (« Votre session a expiré ») ; si une autre cliente est connectée, ses écrans s'ouvrent.
   - **404 :** l'interface redemande `GET /me`. Une autorisation retirée fait disparaître l'établissement de l'espace.
   - **Établissement absent du profil :** aucune requête n'est faite pour lui. La sécurité reste celle de l'API.
 - **Fin de session :**
   - **Déconnexion :** `DELETE /api/client-hub/session` (ou `?all=true`). Seule une réponse confirmée vide l'écran ; sans réponse, l'écran dit que la déconnexion n'est pas confirmée.
-  - **Autres onglets :** prévenus par `BroadcastChannel` (`client-hub-session`).
+  - **Autres onglets :** prévenus par `BroadcastChannel` (`client-hub-session`), quand il existe. Sans lui, un onglet apprend le changement au retour sur l'onglet ou à sa lecture suivante (identité de la réponse).
   - **Expiration :** l'instant de fin de la session (7 jours) ferme l'écran à l'heure dite.
 
 **Connexion :**
@@ -317,4 +384,4 @@ Actions existantes : `getClientHubAccessAction`, `setClientHubAccessAction`. Auc
 
 - **Envoi d'invitation par email :** la professionnelle transmet le lien à la main.
 - **Fin de session :** `GET /me` ne renvoie pas `expiresAt`. Après un rechargement, l'interface ne connaît la fin de session qu'au premier 401.
-- **Identité des réponses :** les routes de lecture ne renvoient pas l'identité de la session qui a répondu. Deux onglets dont l'un connecte une autre cliente sont donc resynchronisés par `BroadcastChannel` et au retour sur l'onglet, pas réponse par réponse.
+- ~~**Identité des réponses**~~ : fournie par `X-Client-Hub-Account` (§ 3). `BroadcastChannel` ne sert plus qu'à accélérer la synchronisation entre onglets ; la correction n'en dépend pas (testé sans lui dans Chromium).

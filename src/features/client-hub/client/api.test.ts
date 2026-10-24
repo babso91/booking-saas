@@ -83,11 +83,37 @@ describe("Client Hub transport", () => {
     expect(await fetchProfile()).toEqual({
       ok: false,
       error: { code: "client_hub_unauthenticated" },
+      account: null,
     });
     fakeApi().on("GET", /\/me$/, "network").install();
     expect(await fetchProfile()).toEqual({
       ok: false,
       error: { code: "network" },
+      account: null,
+    });
+  });
+
+  it("every result carries the account the server says it was served for", async () => {
+    fakeApi()
+      .on("GET", /\/me$/, {
+        ...ok({ email: "a@b.fr", businesses: [] }),
+        account: "acc-1",
+      })
+      .on("GET", /loyalty$/, {
+        ...fail("client_hub_not_found", 404),
+        account: "acc-2",
+      })
+      .on("GET", /ledger$/, { ...ok({ items: [] }), account: null })
+      .install();
+    expect(await fetchProfile()).toMatchObject({ ok: true, account: "acc-1" });
+    const { fetchLoyalty } = await import("./api");
+    expect(await fetchLoyalty("b1")).toMatchObject({
+      ok: false,
+      account: "acc-2",
+    });
+    expect(await fetchLedger("b1", {})).toMatchObject({
+      ok: true,
+      account: null,
     });
   });
 
@@ -98,6 +124,7 @@ describe("Client Hub transport", () => {
     expect(await fetchProfile()).toEqual({
       ok: false,
       error: { code: "network" },
+      account: null,
     });
   });
 
@@ -113,6 +140,10 @@ describe("Client Hub transport", () => {
     ) as unknown as typeof fetch;
     const result = fetchProfile();
     await vi.advanceTimersByTimeAsync(15_000);
-    expect(await result).toEqual({ ok: false, error: { code: "network" } });
+    expect(await result).toEqual({
+      ok: false,
+      error: { code: "network" },
+      account: null,
+    });
   });
 });

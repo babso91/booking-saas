@@ -7,6 +7,7 @@ import { describe, expect, inject, it } from "vitest";
 
 const APP = inject("e2e").appUrl;
 const BUSINESS = "11111111-1111-4111-8111-111111111111";
+const UNKNOWN_SESSION = "00000000-0000-4000-8000-000000000000";
 
 const PAGES = [
   "/espace",
@@ -23,7 +24,7 @@ describe("Client Hub pages (production build)", () => {
       const response = await fetch(new URL(path, APP), { redirect: "manual" });
       expect(response.status).toBe(200);
       expect(response.headers.get("set-cookie") ?? "").not.toMatch(
-        /client_hub_session/,
+        /client_hub/,
       );
       const html = await response.text();
       expect(html).toMatch(/<meta name="robots" content="noindex, nofollow"/);
@@ -35,7 +36,9 @@ describe("Client Hub pages (production build)", () => {
 
   it("a page does not accept a session cookie as a way to render data server-side", async () => {
     const response = await fetch(new URL("/espace", APP), {
-      headers: { cookie: `client_hub_session=${"a".repeat(64)}` },
+      headers: {
+        cookie: `client_hub_s_${UNKNOWN_SESSION}=${"a".repeat(64)}`,
+      },
     });
     const html = await response.text();
     expect(html).not.toMatch(/Solde :|Bonjour [A-Z]/);
@@ -43,22 +46,27 @@ describe("Client Hub pages (production build)", () => {
 
   // A read carrying an unknown session cookie is refused for real: 401
   // client_hub_unauthenticated (never another failure taken for a refusal),
-  // uncached, and without any Set-Cookie: a late refusal must never erase a
-  // newer session.
-  it("a read carrying an unknown session cookie: 401, uncached, no Set-Cookie", async () => {
+  // uncached, naming no account, and its only Set-Cookie deletes that very
+  // cookie (a session cookie is named after its session: deleting it can
+  // never erase another session).
+  it("a read carrying an unknown session cookie: 401, uncached, deleting only that cookie", async () => {
+    const name = `client_hub_s_${UNKNOWN_SESSION}`;
     for (const path of [
       "/api/client-hub/me",
       `/api/client-hub/businesses/${BUSINESS}/loyalty`,
     ]) {
       const response = await fetch(new URL(path, APP), {
-        headers: { cookie: `client_hub_session=${"c".repeat(64)}` },
+        headers: { cookie: `${name}=${"c".repeat(64)}` },
       });
       expect(response.status).toBe(401);
       expect(await response.json()).toMatchObject({
         error: { code: "client_hub_unauthenticated" },
       });
       expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(response.headers.getSetCookie()).toEqual([]);
+      expect(response.headers.get("x-client-hub-account")).toBeNull();
+      expect(response.headers.getSetCookie()).toEqual([
+        `${name}=; Path=/api/client-hub; HttpOnly; SameSite=Lax; Max-Age=0; Secure`,
+      ]);
     }
   });
 

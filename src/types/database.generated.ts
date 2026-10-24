@@ -807,10 +807,23 @@ isOneToOne: false
               "challenge_id": string,"code": string,"email": string,"expires_at": string
             }[]
                            },
+"client_hub_resolve_session":
+{ Args: { "p_sessions": (string)[],"p_tokens": (string)[] }; Returns: {
+              "account_id": string,"session_id": string,"session_token": string,"status": string
+            }[]
+                           },
 "client_hub_set_access":
 { Args: { "p_business_id": string,"p_client_id": string,"p_expected_email"?: string,"p_granted": boolean }; Returns: {
               "email": string,"granted": boolean,"granted_at": string
             }[]
+                           },
+"client_hub_sign_in":
+{ Args: { "p_challenge_id": string,"p_client_ip": unknown,"p_code": string,"p_email": string,"p_sessions": (string)[],"p_tokens": (string)[] }; Returns: {
+              "account_id": string,"email": string,"expires_at": string,"session_id": string,"session_token": string,"status": string
+            }[]
+                           },
+"client_hub_sign_out":
+{ Args: { "p_all"?: boolean,"p_sessions": (string)[],"p_tokens": (string)[] }; Returns: undefined
                            },
 "client_hub_verify_code":
 { Args: { "p_challenge_id": string,"p_client_ip": unknown,"p_code": string,"p_email": string }; Returns: {
