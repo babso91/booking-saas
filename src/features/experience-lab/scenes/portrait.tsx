@@ -1,6 +1,11 @@
 "use client";
 
-import { motion, useScroll, useTransform } from "motion/react";
+import {
+  motion,
+  useReducedMotion,
+  useScroll,
+  useTransform,
+} from "motion/react";
 import { useRef } from "react";
 
 import type { PortraitVariant } from "../engine/config";
@@ -85,7 +90,9 @@ function Arch() {
     target: frame,
     offset: ["start end", "end start"],
   });
-  const y = useTransform(scrollYProgress, [0, 1], ["-8%", "8%"]);
+  const drift = useTransform(scrollYProgress, [0, 1], ["-8%", "8%"]);
+  // No scroll-driven drift when she asked for less motion.
+  const y = useReducedMotion() ? "0%" : drift;
   return (
     <section className="bg-[var(--u-bg)] text-[var(--u-ink)]">
       <div className="mx-auto flex max-w-[640px] flex-col items-center px-6 pt-8 pb-32 text-center">

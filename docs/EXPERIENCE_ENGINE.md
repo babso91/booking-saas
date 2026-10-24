@@ -244,17 +244,22 @@ Voir § 3 :
 ## 7. Performance (téléphone moyen, 4G)
 
 - **Typographie :** ne charger que la paire de la professionnelle. Le labo déclare les neuf familles (le studio change d'univers en direct) mais n'en précharge aucune : une page ne télécharge que les fichiers qu'elle affiche, 6 ou 7 au lieu de 14.
-- **Studio chargé à part :** une cliente ne télécharge jamais les éditeurs (`next/dynamic`). Dans le produit, le Studio vivra dans le dashboard.
+- **Studio chargé à la demande :** tant que « Personnaliser » n'a pas été utilisé, la page n'affiche qu'un lanceur, en police système. Le code du Studio, ses éditeurs et sa police ne sont téléchargés qu'à la première ouverture ; le survol ou le focus du lanceur les préchauffe. Dans le produit, le Studio vivra dans le dashboard.
+- **Ouvertures visibles sans attendre le JavaScript :** les entrées des ouvertures (cadre, photo, nom, ligne d'activité, sceau) sont des animations CSS (`scenes/opening.module.css`) : mêmes courbes, durées et délais que le langage de mouvement. Elles démarrent au premier affichage, et non après l'hydratation. Le parallaxe et les gestes restent pilotés par motion.
 - **Photo d'ouverture :** chargée immédiatement. Les autres en différé, responsives.
 - **Réservation :** elle n'attend jamais une animation.
 - **Préférence d'accessibilité :** « réduire les animations » est respecté partout (`MotionConfig reducedMotion="user"`).
 - **Budget :** LCP sous 2,5 s en 4G. Pas de bibliothèque 3D.
-- **Mesuré (build de production, profil « 4G lente » de Lighthouse : 1,6 Mb/s, 150 ms de latence, processeur ralenti ×4, cache vide) :**
-  - premier affichage vers 1,0 s dans les trois univers ;
-  - LCP de Mila : 1,0 s ;
-  - LCP d'Alma : 3,3 s (6,5 s avant ce travail). C'est le dernier mot de l'« Éclosion », une lenteur voulue et désormais resserrée ;
-  - LCP de Nail Lab : 3,6 à 4,4 s. C'est le téléchargement de sa grande photo d'ouverture ; sans limitation réseau, 0,17 s ;
-  - CLS de 0,024 au plus.
+- **Mesuré** avec `tests/experience-lab/perf.mjs` : build de production, Chromium, 390 × 844 en DPR 1, cache vide, 1,6 Mbit/s, 150 ms de latence, processeur ×4, trois passes par page (médiane). Ce sont les conditions de l'audit indépendant. Ce sont des mesures CDP, pas un téléphone physique.
+
+  | Univers  | LCP avant (`c494f82`) | LCP après | Élément LCP          |
+  | -------- | --------------------- | --------- | -------------------- |
+  | Mila     | 1,00 s                | 0,99 s    | le nom               |
+  | Alma     | 3,14 s                | 1,70 s    | « Maison », 1er mot  |
+  | Nail Lab | 2,83 s                | 1,09 s    | la photo d'ouverture |
+
+  Premier affichage vers 1,0 s, CLS de 0,025 au plus. Par page : 29 Ko de polices et 15 Ko de JavaScript en moins (le Studio et sa police). Les images d'ouverture n'ont pas été dégradées.
+
 - **Révélation « coupe » corrigée :** elle utilisait `clip-path`. Or Chromium considère hors du viewport un élément entièrement coupé par son propre `clip-path` : la révélation pouvait ne jamais démarrer, et le contenu de Mila restait invisible. Elle passe par un masque animé, au rendu identique.
 
 ## 7 bis. Retours de la première professionnelle (et ce qui en a été fait)
@@ -269,7 +274,22 @@ Voir § 3 :
 - **Studio → Partager :** son lien, « Copier le lien », le partage natif du téléphone et son QR code, à télécharger en PNG ou en SVG.
 - **Le QR est dessiné dans le navigateur** (`share/qr.ts` : encodeur maison, sans dépendance) : rien n'est envoyé. Chaque version (1 à 10, ASCII et UTF-8) a été vérifiée une fois avec le lecteur QR du système (CoreImage). Un code de référence, relu ainsi, est figé dans les tests.
 - **Les couleurs du QR** sont celles de son site seulement si elles se scannent bien (foncé sur clair, contraste d'au moins 7:1). Sinon, noir sur blanc.
-- **Le lien partagé** ne reprend que l'adresse publique de la page, jamais une clé d'accès présente dans l'URL.
+- **Le lien partagé** est celui de la démo de l'univers affiché (avec son métier), jamais une clé d'accès présente dans l'URL.
+- **Dans le labo, c'est une démonstration temporaire, et le panneau le dit :** le lien ouvre la démo avec son contenu de départ, les personnalisations de l'onglet ne sont pas transmises, et aucune réservation ni aucun email réels n'en découlent. La publication (« Publié dans cet onglet ») et la confirmation de réservation (« Simulation du laboratoire ») le disent aussi. Aucune persistance n'a été ajoutée : la vraie publication se conçoit avec le SaaS.
+
+## 7 quater. Stabilisation (audit `c494f82`) et suites reproductibles
+
+- **Suites versionnées** (`tests/experience-lab/`), à lancer contre un serveur du labo (`LAB_URL`), avec Chromium (`CHROMIUM`) et `playwright-core` (`PLAYWRIGHT`, sinon `node_modules`) :
+  - `journeys.mjs` : un cas par constat de l'audit (I1 à I8, mineurs 1 à 4), en vraies interactions ;
+  - `catalog.mjs` : catalogue, univers, publication, réservation avec option, trois métiers × trois univers, catalogue vidé, garde-fous, couleur du bouton ;
+  - `scenes.mjs` : portrait, sections, partage, réservation modale ;
+  - `a11y.mjs` : axe (WCAG 2.1 AA) sur 28 écrans, avec `AXE`, le chemin d'`axe.min.js` ;
+  - `perf.mjs` : mesures ci-dessus.
+- **Modales** (`engine/modal.tsx`) : la réservation et la galerie partagent un portail au-dessus de toutes les couches du Studio. Il porte les tokens et les polices de l'univers. Le reste de la page devient inerte, le défilement est verrouillé, le focus est confiné, Échap ferme, et le focus revient à l'élément d'origine.
+- **Saisie invalide** : un montant tapé de travers (« -12 », vide, lettres, plus de 99 999,99 €) est gardé dans le brouillon comme invalide (NaN), jamais remplacé par l'ancienne valeur. Il bloque la publication en nommant la prestation et le champ, et la prestation n'est plus proposée dans l'aperçu. Le texte tapé est réaffiché tel quel.
+- **Forfait** : le rendu « En ligne » applique le forfait courant à la version publiée (`online()` dans `plans.ts`). Ce qui a été publié n'est jamais réécrit : en repassant en Créatif, tout revient sans republier.
+- **Lisibilité** : une liste unique de couples texte/fond rendus (`renderedTextPairs`), y compris le secondaire nuit et le secondaire jour (calculé, plus d'opacités sur le texte). Elle est vérifiée sur les palettes conçues et sur 400 palettes aléatoires.
+- **Photos locales** : libérées dès que rien ne peut plus les afficher (brouillon, étapes annuler/rétablir, version publiée).
 
 ## 8. Prochaines étapes du laboratoire
 

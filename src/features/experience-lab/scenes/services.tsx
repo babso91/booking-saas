@@ -92,7 +92,7 @@ function editMark(
 function OptionsNote({ service }: { service: CatalogService }) {
   if (!service.options.length) return null;
   return (
-    <Note className="opacity-90">
+    <Note>
       À la réservation :{" "}
       {service.options.map((option) => option.question).join(" · ")}
     </Note>
@@ -121,7 +121,7 @@ function PriceIndex({ index }: { index: number }) {
             className="mt-10 scroll-mt-20 first-of-type:mt-6"
           >
             {group.category ? (
-              <h3 className="flex items-baseline justify-between gap-4 pb-1 opacity-70">
+              <h3 className="flex items-baseline justify-between gap-4 pb-1 text-[var(--u-soft-paper)]">
                 <Detail className="[overflow-wrap:anywhere]">
                   {group.category.name}
                 </Detail>
@@ -221,7 +221,7 @@ function Shelf() {
         >
           <Display>Rituels</Display>
         </motion.h2>
-        <p className="mt-3 max-w-[38ch] text-[15.5px] leading-relaxed opacity-75">
+        <p className="mt-3 max-w-[38ch] text-[15.5px] leading-relaxed text-[var(--u-soft-paper)]">
           Le temps indiqué est le vôtre : on ne le raccourcit pas.
         </p>
         <CategoryNav groups={catalog} />
@@ -240,7 +240,7 @@ function Shelf() {
               >
                 {group.category.name}
               </Display>
-              <Note className="shrink-0 opacity-80">
+              <Note className="shrink-0 text-[var(--u-soft-paper)]">
                 {group.services.length > 1
                   ? `${group.services.length} rituels`
                   : "1 rituel"}
@@ -263,7 +263,7 @@ function Shelf() {
                   style={{ borderRadius: "var(--s-radius)" }}
                 >
                   <div>
-                    <span className="opacity-65">
+                    <span className="text-[var(--u-soft-paper)]">
                       <Note>{minutes(service.durationMinutes)} pour vous</Note>
                     </span>
                     <Display
@@ -273,7 +273,7 @@ function Shelf() {
                       {service.name}
                     </Display>
                     {service.description ? (
-                      <p className="mt-4 text-[15px] leading-relaxed opacity-80">
+                      <p className="mt-4 text-[15px] leading-relaxed text-[var(--u-soft-paper)]">
                         {service.description}
                       </p>
                     ) : null}
@@ -383,7 +383,7 @@ function Tiles() {
                         {service.name}
                       </Display>
                       {service.description ? (
-                        <span className="mt-3 block max-w-[34ch] text-[15px] leading-snug opacity-90">
+                        <span className="mt-3 block max-w-[34ch] text-[15px] leading-snug">
                           {service.description}
                         </span>
                       ) : null}
@@ -429,7 +429,9 @@ function Empty({ variant }: { variant: ServicesVariant }) {
         >
           Bientôt
         </Display>
-        <Note className="max-w-[36ch] text-[16px] opacity-75">
+        <Note
+          className={`max-w-[36ch] text-[16px] ${night ? "text-[var(--u-muted)]" : "text-[var(--u-soft-paper)]"}`}
+        >
           {edit
             ? "Aucune prestation en ligne pour l’instant. Ajoute-les dans le Studio, onglet « Prestations »."
             : "Les prestations arrivent très vite ici."}

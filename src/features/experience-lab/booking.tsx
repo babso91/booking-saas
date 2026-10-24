@@ -1,8 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion, type MotionProps } from "motion/react";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useId, useRef, useState, type ReactNode } from "react";
 
 import {
   choiceOf,
@@ -19,7 +18,8 @@ import {
   price,
   useEngine,
 } from "./engine/engine";
-import { contrast, cssVariables, ctaColors } from "./engine/tokens";
+import { SitePortal, useModal } from "./engine/modal";
+import { contrast, ctaColors } from "./engine/tokens";
 import { nextDays, slotsFor } from "./slots";
 
 // The shared booking engine, staged by the site's tokens. Same steps as
@@ -69,56 +69,9 @@ export function Booking({
   const dialog = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
 
-  // A modal: focus moves in and back to what opened it on close; the page
-  // and the studio behind are inert (not focusable, not read) meanwhile.
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
-    dialog.current?.focus();
-    const madeInert = [...document.body.children].filter(
-      (element) => element !== root.current && !element.hasAttribute("inert"),
-    );
-    madeInert.forEach((element) => element.setAttribute("inert", ""));
-    return () => {
-      madeInert.forEach((element) => element.removeAttribute("inert"));
-      opener?.focus?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-        return;
-      }
-      // Tab stays inside the booking, both ways.
-      const panel = dialog.current;
-      if (event.key !== "Tab" || !panel) return;
-      const items = [
-        ...panel.querySelectorAll<HTMLElement>(
-          "a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])",
-        ),
-      ].filter((item) => item.offsetParent !== null);
-      if (!items.length) return;
-      const first = items[0]!;
-      const last = items[items.length - 1]!;
-      const active = document.activeElement;
-      const outside = !panel.contains(active) || active === panel;
-      if (event.shiftKey && (active === first || outside)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (active === last || outside)) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = overflow;
-    };
-  }, [onClose]);
+  // A modal (engine/modal.tsx): above the studio, the page behind inert,
+  // focus kept inside and given back on close.
+  useModal({ root, panel: dialog, onClose });
 
   const errors = {
     firstName: contact.firstName.trim() ? null : "Indiquez votre prénom.",
@@ -191,14 +144,8 @@ export function Booking({
           transition: { duration: 0.45, ease: language.ease },
         };
 
-  // Rendered on <body> (so the page behind can be made inert), with the
-  // site's tokens, which live on the site's own root.
-  return createPortal(
-    <div
-      ref={root}
-      lang="fr"
-      style={{ ...cssVariables(config.tokens), fontFamily: "var(--t-body)" }}
-    >
+  return (
+    <SitePortal rootRef={root}>
       {sheet ? (
         <motion.div
           className="fixed inset-0 z-50 bg-black/45"
@@ -274,7 +221,7 @@ export function Booking({
                   {service.options.map((option) => (
                     <span
                       key={option.id}
-                      className="block text-[15px] opacity-75"
+                      className="block text-[15px] text-[var(--u-soft-paper)]"
                     >
                       {option.question} {choiceOf(option, picks)?.label}
                     </span>
@@ -284,10 +231,11 @@ export function Booking({
                     {euros(total!.priceCents)}
                   </span>
                 </p>
-                <p className="text-[15px] leading-relaxed opacity-75">
-                  Un email de confirmation part vers {contact.email.trim()},
-                  avec le lien pour gérer votre rendez-vous. Aucun compte à
-                  créer.
+                <p className="text-[15px] leading-relaxed text-[var(--u-soft-paper)]">
+                  Simulation du laboratoire : aucun rendez-vous n’est créé et
+                  aucun email n’est envoyé. Dans le produit, une confirmation
+                  part vers {contact.email.trim()}, avec le lien pour gérer le
+                  rendez-vous. Aucun compte à créer.
                 </p>
                 <button
                   type="button"
@@ -333,7 +281,7 @@ export function Booking({
                             <span className="min-w-0 text-[17px] [overflow-wrap:anywhere]">
                               {item.name}
                             </span>
-                            <span className="shrink-0 text-right text-[14px] whitespace-nowrap tabular-nums opacity-70">
+                            <span className="shrink-0 text-right text-[14px] whitespace-nowrap tabular-nums text-[var(--u-soft-paper)]">
                               {minutes(item.durationMinutes)}
                               <br />
                               {price(item.priceCents)}
@@ -357,7 +305,9 @@ export function Booking({
                   onClick={() => setStage("service")}
                   className="mt-2 cursor-pointer text-left"
                 >
-                  <Note className="opacity-70">Soin · changer</Note>
+                  <Note className="text-[var(--u-soft-paper)]">
+                    Soin · changer
+                  </Note>
                   <Display className="mt-1 block text-[34px] leading-none [overflow-wrap:anywhere]">
                     {service.name}
                   </Display>
@@ -392,7 +342,9 @@ export function Booking({
                             style={control}
                           >
                             <span className="text-[17px]">{choice.label}</span>
-                            <span className="text-[14px] tabular-nums opacity-80">
+                            <span
+                              className={`text-[14px] tabular-nums ${selected ? "" : "text-[var(--u-soft-paper)]"}`}
+                            >
                               {extra.length
                                 ? extra.join(" · ")
                                 : "sans supplément"}
@@ -429,12 +381,14 @@ export function Booking({
                   onClick={() => setStage("slot")}
                   className="mt-2 cursor-pointer text-left"
                 >
-                  <Note className="opacity-70">{service.name} · changer</Note>
+                  <Note className="text-[var(--u-soft-paper)]">
+                    {service.name} · changer
+                  </Note>
                   <Display className="mt-1 block text-[34px] leading-none">
                     {when}
                   </Display>
                 </button>
-                <p className="mt-6 text-[15px] leading-relaxed opacity-75">
+                <p className="mt-6 text-[15px] leading-relaxed text-[var(--u-soft-paper)]">
                   Pas de compte, pas de mot de passe : juste de quoi vous
                   confirmer le rendez-vous.
                 </p>
@@ -514,7 +468,7 @@ export function Booking({
                   }
                   className="mt-2 cursor-pointer text-left"
                 >
-                  <Note className="opacity-70">
+                  <Note className="text-[var(--u-soft-paper)]">
                     {service.options.length
                       ? "Options · changer"
                       : "Soin · changer"}
@@ -522,7 +476,7 @@ export function Booking({
                   <Display className="mt-1 block text-[36px] leading-none [overflow-wrap:anywhere]">
                     {service.name}
                   </Display>
-                  <Note className="mt-2 block opacity-80">
+                  <Note className="mt-2 block text-[var(--u-soft-paper)]">
                     {minutes(total!.durationMinutes)} ·{" "}
                     {euros(total!.priceCents)}
                   </Note>
@@ -541,13 +495,17 @@ export function Booking({
                         className={`flex h-[76px] w-[62px] cursor-pointer flex-col items-center justify-center ${chip(day === item.index)}`}
                         style={control}
                       >
-                        <span className="text-[12px] opacity-70">
+                        <span
+                          className={`text-[12px] ${day === item.index ? "" : "text-[var(--u-soft-paper)]"}`}
+                        >
                           {item.weekday}
                         </span>
                         <Display className="text-[24px] leading-tight">
                           {item.day}
                         </Display>
-                        <span className="text-[11.5px] opacity-70">
+                        <span
+                          className={`text-[11.5px] ${day === item.index ? "" : "text-[var(--u-soft-paper)]"}`}
+                        >
                           {item.month}
                         </span>
                       </button>
@@ -609,8 +567,7 @@ export function Booking({
           </div>
         ) : null}
       </motion.div>
-    </div>,
-    document.body,
+    </SitePortal>
   );
 }
 

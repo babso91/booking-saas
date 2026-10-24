@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { can, dormant, effective } from "../plans";
+import { can, dormant, effective, online } from "../plans";
 import { universes } from "../universes";
-import { advise, ensureReadable } from "./harmony";
+import { advise, ensureReadable, renderedTextPairs } from "./harmony";
 import { contrast, ctaColors, readableOn } from "./tokens";
 
 const designed = Object.values(universes).flatMap((universe) => [
@@ -182,4 +182,124 @@ describe("experience engine", () => {
     const { text } = ctaColors({ palette, cta: fill }, palette.accent);
     expect(contrast(text, fill)).toBeGreaterThanOrEqual(4.5);
   });
+
+  describe("readability of every text actually rendered (I7)", () => {
+    const unreadable = (palette: Parameters<typeof renderedTextPairs>[0]) =>
+      renderedTextPairs(palette).filter(
+        (pair) => contrast(pair.text, pair.on) < 4.5,
+      );
+
+    it("the audit's case: night surface set to the secondary colour (1:1) is flagged, then fixed", () => {
+      const mila = universes.mila;
+      const signature = mila.signature!.apply(mila.config);
+      const custom = {
+        ...signature,
+        tokens: {
+          ...signature.tokens,
+          palette: {
+            ...signature.tokens.palette,
+            bg: signature.tokens.palette.muted,
+          },
+        },
+      };
+      expect(
+        contrast(custom.tokens.palette.muted, custom.tokens.palette.bg),
+      ).toBe(1);
+      expect(
+        advise(custom)
+          .filter((item) => item.level === "problem")
+          .map((item) => item.id),
+      ).toContain("contrast-muted");
+      const safe = ensureReadable(custom);
+      expect(unreadable(safe.tokens.palette)).toEqual([]);
+      // Her night colour is kept; the texts on it are what moved.
+      expect(safe.tokens.palette.bg).toBe(custom.tokens.palette.bg);
+    });
+
+    it("400 random palettes: after the safety net, every rendered pair reads (4.5:1)", () => {
+      let seed = 42;
+      const random = () => {
+        seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31;
+        return seed / 2 ** 31;
+      };
+      const colour = () =>
+        `#${Math.floor(random() * 0xffffff)
+          .toString(16)
+          .padStart(6, "0")
+          .toUpperCase()}`;
+      const base = universes.alma.config;
+      for (let run = 0; run < 400; run += 1) {
+        const palette = {
+          bg: colour(),
+          ink: colour(),
+          paper: colour(),
+          inkOnPaper: colour(),
+          muted: colour(),
+          line: colour(),
+          accent: colour(),
+          onAccent: colour(),
+        };
+        const safe = ensureReadable({
+          ...base,
+          tokens: { ...base.tokens, palette },
+        });
+        expect(
+          unreadable(safe.tokens.palette),
+          JSON.stringify(palette),
+        ).toEqual([]);
+        // Surfaces and accent are her art: never changed by the net.
+        expect(safe.tokens.palette.bg).toBe(palette.bg);
+        expect(safe.tokens.palette.paper).toBe(palette.paper);
+        expect(safe.tokens.palette.accent).toBe(palette.accent);
+      }
+    });
+
+    it.each(designed)(
+      "$name: every rendered pair reads, and the net changes nothing",
+      ({ palette }) => {
+        expect(unreadable(palette)).toEqual([]);
+        const config = {
+          ...universes.mila.config,
+          tokens: { ...universes.mila.config.tokens, palette },
+        };
+        expect(ensureReadable(config).tokens.palette).toEqual(palette);
+      },
+    );
+  });
+
+  it.each(["mila", "alma", "nail-lab"] as const)(
+    "%s: the published site follows the current plan, Signature → Core → Signature, without losing what was published (I5)",
+    (id) => {
+      const universe = universes[id];
+      const published = {
+        design: id,
+        config: {
+          ...universe.config,
+          sections: [
+            { kind: "opening" as const, variant: "bloom" as const },
+            ...universe.config.sections.slice(1).reverse(),
+          ],
+          tokens: { ...universe.config.tokens, motion: "snap" as const },
+        },
+      };
+      const signature = online(published, "signature");
+      expect(signature.sections).toEqual(published.config.sections);
+      for (const plan of ["core", "signature", "core", "signature"] as const) {
+        const rendered = online(published, plan);
+        expect(rendered.sections).toEqual(
+          plan === "core"
+            ? universe.config.sections
+            : published.config.sections,
+        );
+        expect(rendered.tokens.motion).toBe(
+          plan === "core" ? universe.config.tokens.motion : "snap",
+        );
+      }
+      // Nothing published was rewritten by the lens.
+      expect(published.config.sections[0]).toEqual({
+        kind: "opening",
+        variant: "bloom",
+      });
+    },
+  );
 });

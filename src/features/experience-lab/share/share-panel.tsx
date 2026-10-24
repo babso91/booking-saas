@@ -9,17 +9,22 @@ import { qrSvg } from "./qr";
 // "Partager": her link and her QR code, the two ways customers reach her
 // mini-site (a bio, a message, a card on the counter). Everything happens
 // in the browser: the code is drawn here (share/qr.ts), nothing is sent.
-// In the lab the link is the lab's page for this universe; in the product
-// it is her own address.
+// The lab keeps everything in this tab's memory, on purpose (the real
+// publication comes with the SaaS): so the panel says plainly what the link
+// is here, a temporary demo of the universe shown, opening on its starting
+// content; her changes in this tab do not travel with it, and no real
+// booking or email follows from it. In the product it is her own address.
 
-/** The public address of this page: never the lab's access key. */
-export function siteLink(location: {
-  origin: string;
-  pathname: string;
-  search: string;
-}) {
+/**
+ * The lab's public address of the universe shown (with the trade, if
+ * any): never the lab's access key, nothing else from the address.
+ */
+export function siteLink(
+  location: { origin: string; search: string },
+  design: string,
+) {
   const pro = new URLSearchParams(location.search).get("pro");
-  return `${location.origin}${location.pathname}${pro ? `?pro=${encodeURIComponent(pro)}` : ""}`;
+  return `${location.origin}/labo/${encodeURIComponent(design)}${pro ? `?pro=${encodeURIComponent(pro)}` : ""}`;
 }
 
 /**
@@ -65,15 +70,14 @@ async function png(svg: string, size: number) {
 
 export function SharePanel({
   config,
-  changed,
+  design,
 }: {
   config: SiteConfig;
-  /** Unpublished changes: the link shows the published version. */
-  changed: boolean;
+  /** The universe shown: the demo the link opens. */
+  design: string;
 }) {
-  const [link] = useState(() =>
-    typeof window === "undefined" ? "" : siteLink(window.location),
-  );
+  const link =
+    typeof window === "undefined" ? "" : siteLink(window.location, design);
   const [status, setStatus] = useState<string | null>(null);
   const colours = codeColours(config.tokens.palette);
   const svg = useMemo(
@@ -97,13 +101,22 @@ export function SharePanel({
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[13.5px] leading-snug text-black/60">
-        Ton lien, pour ta bio, tes messages et ta vitrine : tes clientes
-        arrivent directement chez toi et réservent sans compte.
-        {changed
-          ? " Elles voient ta version publiée : publie d’abord tes changements."
-          : ""}
-      </p>
+      <section
+        aria-label="Démonstration temporaire"
+        className="flex flex-col gap-1.5 rounded-2xl bg-[#FFF4D6] p-3 text-[13.5px] leading-snug text-[#5C4300]"
+      >
+        <p className="font-semibold">Démonstration temporaire du laboratoire</p>
+        <p>
+          Ce lien ouvre la démo de cet univers, avec son contenu de départ. Tes
+          personnalisations de cet onglet ne sont pas transmises à la personne
+          qui l’ouvre : elles restent ici, et disparaissent quand tu fermes
+          l’onglet.
+        </p>
+        <p>
+          Aucune réservation réelle, aucun email : la réservation y est simulée.
+          Dans le produit, ce sera ton adresse, avec ton site publié.
+        </p>
+      </section>
 
       <div className="flex flex-col gap-2 rounded-2xl border border-black/10 bg-white p-3">
         <label
@@ -189,7 +202,7 @@ export function SharePanel({
               className="text-[13px]"
               style={{ fontFamily: "var(--t-body)" }}
             >
-              Réservez en scannant
+              Démo · réservation simulée
             </figcaption>
           </figure>
           <div className="flex gap-2">

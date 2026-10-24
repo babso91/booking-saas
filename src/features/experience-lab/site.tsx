@@ -16,16 +16,18 @@ import {
   type EngineEdit,
 } from "./engine/engine";
 import { contrast, ctaColors, cssVariables } from "./engine/tokens";
-import { ensureReadable } from "./engine/harmony";
 import { useHistory } from "./history";
-import { effective, type Plan } from "./plans";
+import { releaseLocalPhotos } from "./photos";
+import { effective, online, type Plan } from "./plans";
 import { Intro } from "./scenes/intro";
 import { Opening } from "./scenes/opening";
 import { Portrait } from "./scenes/portrait";
 import { Services } from "./scenes/services";
 import { Work } from "./scenes/work";
-// The studio is the professional's tool, not her customers': it is loaded
-// on its own, so a customer's phone never downloads the editors.
+// The studio is the professional's tool, not her customers': its code is
+// a chunk of its own, mounted (so downloaded) only when "Personnaliser" is
+// first used; until then a plain launcher, which warms it on hover/focus.
+const loadStudio = () => import("./studio");
 const Studio = dynamic(
   () => import("./studio").then((module) => module.Studio),
   {
@@ -52,7 +54,12 @@ export type Published = {
 };
 
 /** What the studio edits: her design and her catalogue, side by side. */
-type Draft = { site: SiteConfig; catalog: Catalog };
+type Draft = {
+  site: SiteConfig;
+  catalog: Catalog;
+  /** The universe chosen: in the history, so "Annuler" brings it back. */
+  design: UniverseId;
+};
 
 /** A view of one part of the draft, with the draft's shared undo/redo. */
 export type Part<T> = {
@@ -80,10 +87,11 @@ export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
         }
       : base,
     catalog: pro ? pros[pro].catalog : universes[id].catalog,
+    design: id,
   };
-  const [design, setDesign] = useState<UniverseId>(id);
   const history = useHistory<Draft>(start);
-  const part = <K extends keyof Draft>(key: K): Part<Draft[K]> => ({
+  const design = history.value.design;
+  const part = <K extends "site" | "catalog">(key: K): Part<Draft[K]> => ({
     value: history.value[key],
     set: (value, mergeKey) =>
       history.set({ ...history.value, [key]: value }, mergeKey),
@@ -105,14 +113,29 @@ export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
   });
   const [view, setView] = useState<"draft" | "live">("draft");
   const [studio, setStudio] = useState(false);
+  const [studioLoaded, setStudioLoaded] = useState(false);
   const [photoSlot, setPhotoSlot] = useState<PhotoSlot | null>(null);
   const [serviceFocus, setServiceFocus] = useState<string | null>(null);
   const [replay, setReplay] = useState(0);
 
   const universe = universes[design];
-  const live = ensureReadable(
-    effective(published.config, published.plan, universes[published.design]),
-  );
+
+  // Her own photos (blob: URLs) are released once nothing can show them
+  // again: not the draft, not a step of undo/redo, not the published site.
+  const { reachable } = history;
+  useEffect(() => {
+    const used = new Set<string>();
+    for (const config of [
+      ...reachable.map((state) => state.site),
+      published.config,
+    ]) {
+      used.add(config.content.cover);
+      used.add(config.content.portrait.photo);
+      for (const work of config.content.works) used.add(work.photo);
+    }
+    releaseLocalPhotos(used);
+  }, [reachable, published]);
+  const live = online(published, plan);
   const preview =
     view === "live" ? live : effective(draft.value, plan, universe);
   const editing = studio && view === "draft";
@@ -160,47 +183,59 @@ export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
             : undefined
         }
       />
-      <Studio
-        open={studio}
-        onOpen={setStudio}
-        universe={universe}
-        design={design}
-        draft={draft}
-        catalog={catalog}
-        serviceFocus={serviceFocus}
-        onServiceFocus={setServiceFocus}
-        plan={plan}
-        onPlan={setPlan}
-        onDesign={(next) => {
-          // Another universe: her name, texts and photos follow; her
-          // catalogue is not part of the design at all, it stays as is.
-          const base = universes[next].config;
-          draft.set({
-            ...base,
-            brand: draft.value.brand,
-            content: draft.value.content,
-            hidden: draft.value.hidden,
-          });
-          setDesign(next);
-          setReplay((value) => value + 1);
-        }}
-        published={published}
-        onPublish={(config) => {
-          setPublished((value) => ({
-            config,
-            catalog: catalog.value,
-            design,
-            plan,
-            version: value.version + 1,
-            at: new Date(),
-          }));
-        }}
-        view={view}
-        onView={setView}
-        photoSlot={photoSlot}
-        onPhotoSlot={setPhotoSlot}
-        onReplay={() => setReplay((value) => value + 1)}
-      />
+      {studioLoaded ? (
+        <Studio
+          open={studio}
+          onOpen={setStudio}
+          universe={universe}
+          design={design}
+          draft={draft}
+          catalog={catalog}
+          serviceFocus={serviceFocus}
+          onServiceFocus={setServiceFocus}
+          plan={plan}
+          onPlan={setPlan}
+          onDesign={(next) => {
+            // Another universe: her name, texts and photos follow; her
+            // catalogue is not part of the design at all, it stays as is.
+            const base = universes[next].config;
+            history.set({
+              ...history.value,
+              site: {
+                ...base,
+                brand: draft.value.brand,
+                content: draft.value.content,
+                hidden: draft.value.hidden,
+              },
+              design: next,
+            });
+            setReplay((value) => value + 1);
+          }}
+          published={published}
+          onPublish={(config) => {
+            setPublished((value) => ({
+              config,
+              catalog: catalog.value,
+              design,
+              plan,
+              version: value.version + 1,
+              at: new Date(),
+            }));
+          }}
+          view={view}
+          onView={setView}
+          photoSlot={photoSlot}
+          onPhotoSlot={setPhotoSlot}
+          onReplay={() => setReplay((value) => value + 1)}
+        />
+      ) : (
+        <StudioLauncher
+          onOpen={() => {
+            setStudioLoaded(true);
+            setStudio(true);
+          }}
+        />
+      )}
     </MotionConfig>
   );
 }
@@ -405,5 +440,27 @@ function QuickBook() {
         </button>
       )}
     </motion.div>
+  );
+}
+
+/**
+ * "Personnaliser" before the studio's code is loaded: the same button, in
+ * the system face (no studio font either), loading the studio on intent.
+ */
+function StudioLauncher({ onOpen }: { onOpen: () => void }) {
+  const warm = () => void loadStudio();
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      onPointerEnter={warm}
+      onFocus={warm}
+      onTouchStart={warm}
+      className="fixed top-14 right-4 z-[45] flex h-11 cursor-pointer items-center gap-2 rounded-full bg-[#141414] px-4 text-[14px] font-semibold text-white shadow-[0_10px_30px_-10px_rgba(0,0,0,.6)] ring-1 ring-white/20"
+      style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}
+    >
+      <span aria-hidden="true">✎</span>
+      Personnaliser
+    </button>
   );
 }

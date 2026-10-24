@@ -541,6 +541,7 @@ function ServiceView({
           {(id) => (
             <Money
               id={id}
+              field={`${service.id}:price`}
               cents={service.priceCents}
               onChange={(priceCents) => set({ priceCents }, key("price"))}
             />
@@ -726,6 +727,7 @@ function OptionEditor({
             />
             <Money
               label={`Supplément, réponse ${index + 1}`}
+              field={`${choice.id}:price`}
               prefix="+"
               cents={choice.priceDeltaCents}
               onChange={(priceDeltaCents) =>
@@ -827,26 +829,45 @@ function Field({
 }
 
 /**
- * An amount in euros, as she types it ("25", "12,50"). What she types is
- * kept while it is not an amount yet (and said so); a valid amount is
- * saved at once. An outside change (undo) shows the saved amount again.
+ * An amount in euros, as she types it ("25", "12,50"). Every keystroke is
+ * saved: a valid amount in cents, anything else as NaN, which the
+ * catalogue's validation reports and which blocks publishing (the former
+ * value is never kept behind her back). An outside change (undo) shows
+ * the saved amount again.
  */
+/**
+ * What she typed in a field that is not an amount (by field): the draft
+ * holds NaN for it, the editor shows her own text again when she comes
+ * back to it, as she left it.
+ */
+const typed = new Map<string, string>();
+
 function Money({
   id,
   label,
+  field,
   prefix,
   cents,
   onChange,
 }: {
   id?: string;
   label?: string;
+  /** Which field this is, to show her own text again (see `typed`). */
+  field: string;
   prefix?: string;
   cents: number;
   onChange: (cents: number) => void;
 }) {
-  const [state, setState] = useState({ text: eurosInput(cents), cents });
-  if (state.cents !== cents && parseEuros(state.text) !== cents) {
-    setState({ text: eurosInput(cents), cents });
+  const [state, setState] = useState(() => ({
+    text: Number.isNaN(cents) ? (typed.get(field) ?? "") : eurosInput(cents),
+    cents,
+  }));
+  // Object.is: NaN equals NaN here (an invalid field stays as typed).
+  if (!Object.is(state.cents, cents)) {
+    setState({
+      text: Number.isNaN(cents) ? state.text : eurosInput(cents),
+      cents,
+    });
   }
   const invalid = parseEuros(state.text) === null;
   return (
@@ -865,9 +886,11 @@ function Money({
           aria-invalid={invalid || undefined}
           onChange={(event) => {
             const text = event.target.value;
-            const parsed = parseEuros(text);
-            setState({ text, cents: parsed ?? state.cents });
-            if (parsed !== null) onChange(parsed);
+            const parsed = parseEuros(text) ?? Number.NaN;
+            if (Number.isNaN(parsed)) typed.set(field, text);
+            else typed.delete(field);
+            setState({ text, cents: parsed });
+            onChange(parsed);
           }}
           className={`${field} h-11 tabular-nums ${prefix ? "pl-6" : ""} pr-8 ${invalid ? "border-[#B3261E]" : ""}`}
         />
@@ -876,7 +899,9 @@ function Money({
         </span>
       </span>
       {invalid ? (
-        <span className="text-[12px] text-[#B3261E]">Ex. 25 ou 12,50</span>
+        <span className="text-[12px] text-[#B3261E]">
+          Montant non valide : bloque la publication. Ex. 25 ou 12,50
+        </span>
       ) : null}
     </span>
   );

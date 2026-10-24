@@ -1,6 +1,7 @@
 import type { SiteConfig } from "./engine/config";
+import { ensureReadable } from "./engine/harmony";
 import { paletteKeys } from "./engine/tokens";
-import type { Universe } from "./universes";
+import { universes, type Universe, type UniverseId } from "./universes";
 
 // Three things are kept apart:
 //   1. the SAVED configuration: everything the professional set, never
@@ -89,5 +90,21 @@ export function dormant(config: SiteConfig, universe: Universe) {
     JSON.stringify(lens.sections) !== JSON.stringify(config.sections) ||
     lens.booking !== config.booking ||
     lens.quickBook !== config.quickBook
+  );
+}
+
+/**
+ * What her customers see: the published version through her CURRENT
+ * plan's rights (going back to Core stops rendering Signature settings at
+ * once, online too), then the readability safety net. The published
+ * configuration itself is never rewritten: back in Signature, it renders
+ * as published, without publishing again.
+ */
+export function online(
+  published: { config: SiteConfig; design: UniverseId },
+  plan: Plan,
+): SiteConfig {
+  return ensureReadable(
+    effective(published.config, plan, universes[published.design]),
   );
 }

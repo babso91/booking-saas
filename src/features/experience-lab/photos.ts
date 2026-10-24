@@ -7,6 +7,29 @@
 
 export const isLocal = (id: string) => id.startsWith("blob:");
 
+/** Her own photos of this tab, until released. */
+const local = new Set<string>();
+
+/** A photo she picked from her phone: kept in this tab's memory only. */
+export function localPhoto(file: Blob) {
+  const id = URL.createObjectURL(file);
+  local.add(id);
+  return id;
+}
+
+/**
+ * Frees her photos that nothing refers to any more (not the draft, not
+ * the published version, not a step "Annuler" or "Rétablir" can reach):
+ * the browser releases the file. A photo still reachable is kept.
+ */
+export function releaseLocalPhotos(referenced: Set<string>) {
+  for (const id of local) {
+    if (referenced.has(id)) continue;
+    URL.revokeObjectURL(id);
+    local.delete(id);
+  }
+}
+
 export const photo = (id: string, width: number) =>
   isLocal(id)
     ? id

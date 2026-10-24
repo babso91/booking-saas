@@ -164,7 +164,6 @@ export function Studio({
   const changed =
     JSON.stringify(config) !== JSON.stringify(published.config) ||
     JSON.stringify(catalog.value) !== JSON.stringify(published.catalog) ||
-    plan !== published.plan ||
     design !== published.design;
   const tabs: { id: Tab; label: string }[] = [
     { id: "catalog", label: "Prestations" },
@@ -211,7 +210,7 @@ export function Studio({
     if (corrections) draft.set(safe);
     onPublish(safe);
     setFlash(
-      `En ligne · version ${published.version + 1}${corrections ? ` · ${corrections} correction${corrections > 1 ? "s" : ""} de lisibilité appliquée${corrections > 1 ? "s" : ""}` : ""}`,
+      `Publié dans cet onglet (démonstration) · version ${published.version + 1}${corrections ? ` · ${corrections} correction${corrections > 1 ? "s" : ""} de lisibilité appliquée${corrections > 1 ? "s" : ""}` : ""}`,
     );
     window.setTimeout(() => setFlash(null), 3500);
   }
@@ -259,6 +258,8 @@ export function Studio({
           type="button"
           onClick={() => onOpen(true)}
           className="fixed top-14 right-4 z-[45] flex h-11 cursor-pointer items-center gap-2 rounded-full bg-[#141414] px-4 text-[14px] font-semibold text-white shadow-[0_10px_30px_-10px_rgba(0,0,0,.6)] ring-1 ring-white/20"
+          // The same face as the launcher it replaces (site.tsx).
+          style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}
         >
           <span aria-hidden="true">✎</span>
           Personnaliser
@@ -320,7 +321,8 @@ export function Studio({
                 </button>
               </div>
 
-              <div className="flex items-center gap-2 px-4 py-2">
+              {/* Wraps on the narrowest phones (320 px): publish goes below. */}
+              <div className="flex flex-wrap items-center gap-2 px-4 py-2">
                 <IconButton
                   label="Annuler"
                   onClick={draft.undo}
@@ -336,7 +338,7 @@ export function Studio({
                   ↷
                 </IconButton>
                 <div
-                  className="flex flex-1 justify-center rounded-full bg-black/5 p-1"
+                  className="flex min-w-[150px] flex-1 justify-center rounded-full bg-black/5 p-1"
                   role="group"
                   aria-label="Aperçu"
                 >
@@ -354,7 +356,7 @@ export function Studio({
                         onView(id);
                         onPhotoSlot(null);
                       }}
-                      className={`h-9 flex-1 cursor-pointer rounded-full px-2 text-[13px] font-semibold ${view === id ? "bg-white shadow-sm" : "text-black/55"}`}
+                      className={`h-9 flex-1 cursor-pointer rounded-full px-2 text-[13px] font-semibold whitespace-nowrap ${view === id ? "bg-white shadow-sm" : "text-black/55"}`}
                     >
                       {label}
                       {id === "draft" && changed ? (
@@ -382,7 +384,7 @@ export function Studio({
                   aria-describedby={
                     catalogIssues.length ? "studio-catalog-issues" : undefined
                   }
-                  className={`h-11 shrink-0 cursor-pointer rounded-full px-4 text-[14px] font-semibold disabled:cursor-default disabled:bg-black/10 disabled:text-black/60 ${changed && catalogIssues.length ? "bg-[#FDECEA] text-[#7A1F17]" : "bg-[#2B3BFF] text-white"}`}
+                  className={`ml-auto h-11 shrink-0 cursor-pointer rounded-full px-4 text-[14px] font-semibold disabled:cursor-default disabled:bg-black/10 disabled:text-black/60 ${changed && catalogIssues.length ? "bg-[#FDECEA] text-[#7A1F17]" : "bg-[#2B3BFF] text-white"}`}
                 >
                   {!changed
                     ? "Publié ✓"
@@ -397,7 +399,7 @@ export function Studio({
                 ) : null}
               </div>
 
-              {view === "draft" && !photoSlot ? (
+              {view === "draft" && photoSlot === null ? (
                 <nav
                   className="flex gap-1 overflow-x-auto px-3 pb-2 [scrollbar-width:none]"
                   aria-label="Réglages"
@@ -451,7 +453,8 @@ export function Studio({
                 <div className="flex flex-col gap-3">
                   <p className="rounded-xl bg-black/5 p-3 text-[13.5px] leading-relaxed">
                     Tu vois ton site{" "}
-                    <strong>tel que tes clientes le voient</strong> : version{" "}
+                    <strong>tel que tes clientes le verraient</strong>{" "}
+                    (démonstration : il n’existe que dans cet onglet) : version{" "}
                     {published.version}, publiée à{" "}
                     {published.at.toLocaleTimeString("fr-FR", {
                       hour: "2-digit",
@@ -466,15 +469,8 @@ export function Studio({
                     Revenir au brouillon
                   </SmallButton>
                 </div>
-              ) : current === "share" ? (
-                <SharePanel config={config} changed={changed} />
-              ) : current === "catalog" ? (
-                <CatalogEditor
-                  catalog={catalog}
-                  focus={serviceFocus}
-                  onFocus={onServiceFocus}
-                />
-              ) : photoSlot !== null && slotPhoto(photoSlot) ? (
+              ) : // A photo being edited wins over any tab (0 is a valid slot).
+              photoSlot !== null && slotPhoto(photoSlot) ? (
                 <PhotoEditor
                   slot={photoSlot}
                   id={slotPhoto(photoSlot)!}
@@ -500,6 +496,14 @@ export function Studio({
                   }
                   onReplace={(id) => replacePhoto(photoSlot, id)}
                   onBack={() => onPhotoSlot(null)}
+                />
+              ) : current === "share" ? (
+                <SharePanel config={config} design={design} />
+              ) : current === "catalog" ? (
+                <CatalogEditor
+                  catalog={catalog}
+                  focus={serviceFocus}
+                  onFocus={onServiceFocus}
                 />
               ) : (
                 <div className="flex flex-col gap-4">

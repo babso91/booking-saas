@@ -140,6 +140,48 @@ export const paletteKeys: { key: keyof Palette; label: string }[] = [
   { key: "line", label: "Filets" },
 ];
 
+/** `color` moved towards `target` by `amount` (0 to 1), in sRGB. */
+export function towards(color: string, target: string, amount: number) {
+  const channel = (hex: string, at: number) =>
+    parseInt(hex.replace("#", "").slice(at, at + 2), 16);
+  return `#${[0, 2, 4]
+    .map((at) =>
+      Math.round(
+        channel(color, at) +
+          (channel(target, at) - channel(color, at)) * amount,
+      )
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`.toUpperCase();
+}
+
+/**
+ * `color` as she chose it if it reads on `background` (4.5:1); otherwise
+ * the closest tone towards `ink` that does (her hue kept as long as
+ * possible), and as a last resort black or white.
+ */
+export function readableTone(color: string, background: string, ink: string) {
+  for (let step = 0; step <= 20; step += 1) {
+    const tone =
+      step === 0 ? color.toUpperCase() : towards(color, ink, step / 20);
+    if (contrast(tone, background) >= 4.5) return tone;
+  }
+  return readableOn(background, ["#FFFFFF", "#111111", "#000000"]);
+}
+
+/**
+ * Secondary text on the day surface (descriptions, durations, notes): her
+ * day ink softened towards the paper, then made readable. Computed, never
+ * an opacity: whatever the palette, it reads.
+ */
+export const softOnPaper = (palette: Palette) =>
+  readableTone(
+    towards(palette.inkOnPaper, palette.paper, 0.32),
+    palette.paper,
+    palette.inkOnPaper,
+  );
+
 /** The CSS variables a site renders with. */
 export function cssVariables(tokens: {
   palette: Palette;
@@ -155,6 +197,7 @@ export function cssVariables(tokens: {
     "--u-paper": p.paper,
     "--u-ink-on-paper": p.inkOnPaper,
     "--u-muted": p.muted,
+    "--u-soft-paper": softOnPaper(p),
     "--u-line": p.line,
     "--u-accent": p.accent,
     "--u-on-accent": p.onAccent,
@@ -210,9 +253,9 @@ export function ctaColors(
   const { palette } = tokens;
   const candidates =
     fill.toLowerCase() === palette.accent.toLowerCase()
-      ? [palette.onAccent, "#FFFFFF", "#111111"]
+      ? [palette.onAccent, "#FFFFFF", "#111111", "#000000"]
       : fill.toUpperCase() === "#FFFFFF"
-        ? [palette.accent, palette.bg, "#111111"]
-        : ["#FFFFFF", "#111111"];
+        ? [palette.accent, palette.bg, "#111111", "#000000"]
+        : ["#FFFFFF", "#111111", "#000000"];
   return { fill, text: readableOn(fill, candidates) };
 }

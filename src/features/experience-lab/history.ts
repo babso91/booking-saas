@@ -78,5 +78,7 @@ export function useHistory<T>(initial: T) {
     redo: () => dispatch({ type: "redo" }),
     canUndo: state.past.length > 0,
     canRedo: state.future.length > 0,
+    /** Every state still reachable: past, present, future. */
+    reachable: [...state.past, state.present, ...state.future],
   };
 }

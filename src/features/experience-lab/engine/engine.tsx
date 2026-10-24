@@ -176,7 +176,8 @@ export function EditTarget({
   const className = `absolute inset-0 z-10 -outline-offset-4 ${selected ? "outline-4 outline-white" : "outline-2 outline-white/70 outline-dashed"}`;
   const badge = (
     <span
-      className="absolute top-3 left-3 rounded-full bg-black/70 px-3 py-1.5 text-[12.5px] font-medium text-white backdrop-blur"
+      // On the cover, below the site's header (its name sits at the top).
+      className={`absolute ${slot === "cover" ? "top-[4.75rem]" : "top-3"} left-3 rounded-full bg-black/70 px-3 py-1.5 text-[12.5px] font-medium text-white backdrop-blur`}
       style={{ fontFamily: "var(--font-lab-sans)" }}
     >
       ✎ Photo
@@ -249,12 +250,14 @@ export function useReveal() {
   };
 }
 
-/** "25 €", "12,50 €" (never "12,5 €"). */
+/** "25 €", "12,50 €" (never "12,5 €"); a field typed wrong says so. */
 export const euros = (cents: number) =>
-  `${(cents / 100).toLocaleString("fr-FR", {
-    minimumFractionDigits: cents % 100 ? 2 : 0,
-    maximumFractionDigits: 2,
-  })} €`;
+  !Number.isFinite(cents)
+    ? "prix à corriger"
+    : `${(cents / 100).toLocaleString("fr-FR", {
+        minimumFractionDigits: cents % 100 ? 2 : 0,
+        maximumFractionDigits: 2,
+      })} €`;
 
 /** A price as customers read it: "Offert" rather than "0 €". */
 export const price = (cents: number) => (cents === 0 ? "Offert" : euros(cents));

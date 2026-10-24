@@ -89,8 +89,10 @@ export default function LabLayout({ children }: LayoutProps<"/labo">) {
   // lab instance (LAB_PUBLIC=1) used for remote tests behind a gatekeeper.
   if (process.env.NODE_ENV === "production" && process.env.LAB_PUBLIC !== "1")
     notFound();
+  // data-lab-fonts: modals rendered on <body> read the faces from here.
   return (
     <div
+      data-lab-fonts=""
       className={[
         milaDisplay,
         milaBody,

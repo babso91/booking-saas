@@ -67,7 +67,17 @@ export const limits = {
   minDuration: 5,
   maxDuration: 720,
   maxDurationDelta: 240,
+  /** 99 999,99 €: what the price field accepts (cents, an integer). */
+  maxPriceCents: 9_999_999,
 } as const;
+
+/**
+ * A valid amount: integer cents, 0 to the limit. A field she typed wrong
+ * ("-12", "abc", empty) is kept in the draft as NaN, never replaced by the
+ * former value, so it is seen here and blocks publishing.
+ */
+export const validAmount = (cents: number) =>
+  Number.isInteger(cents) && cents >= 0 && cents <= limits.maxPriceCents;
 
 let counter = 0;
 /** A local id (the backend assigns the real ones). */
@@ -76,8 +86,14 @@ export const localId = (prefix: string) =>
 
 // --- What customers see -----------------------------------------------------
 
+/** Shown and bookable: online, named, and every amount a real amount. */
 const bookable = (service: CatalogService) =>
-  service.active && service.name.trim() !== "";
+  service.active &&
+  service.name.trim() !== "" &&
+  validAmount(service.priceCents) &&
+  service.options.every((option) =>
+    option.choices.every((choice) => validAmount(choice.priceDeltaCents)),
+  );
 
 /**
  * The public projection: visible categories in her order, their active
@@ -176,8 +192,10 @@ export function validate(catalog: Catalog): Issue[] {
       service.durationMinutes > limits.maxDuration
     )
       add("une durée entre 5 min et 12 h.");
-    if (!Number.isInteger(service.priceCents) || service.priceCents < 0)
-      add("un prix valide.");
+    if (!validAmount(service.priceCents))
+      add(
+        "prix à corriger : un montant de 0 à 99 999,99 €, par exemple 25 ou 12,50.",
+      );
     let longest = service.durationMinutes;
     for (const option of service.options) {
       if (!option.question.trim()) add("une option n’a pas de question.");
@@ -185,14 +203,12 @@ export function validate(catalog: Catalog): Issue[] {
         add("une option propose au moins deux réponses.");
       if (option.choices.some((choice) => !choice.label.trim()))
         add("une réponse d’option n’a pas d’intitulé.");
-      if (
-        option.choices.some(
-          (choice) =>
-            !Number.isInteger(choice.priceDeltaCents) ||
-            choice.priceDeltaCents < 0,
-        )
-      )
-        add("un supplément d’option n’est pas valide.");
+      option.choices.forEach((choice, index) => {
+        if (!validAmount(choice.priceDeltaCents))
+          add(
+            `supplément à corriger (option « ${option.question.trim() || "sans question"} », réponse ${index + 1}) : un montant de 0 à 99 999,99 €.`,
+          );
+      });
       if (
         option.choices.some(
           (choice) =>

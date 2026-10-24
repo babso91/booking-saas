@@ -15,6 +15,7 @@ import {
   removeService,
   showcase,
   updateCategory,
+  updateService,
   validate,
   type Catalog,
   type CatalogService,
@@ -362,5 +363,58 @@ describe("fixtures", () => {
     expect(isProId("cils")).toBe(true);
     expect(isProId("nope")).toBe(false);
     expect(isProId(undefined)).toBe(false);
+  });
+
+  describe("a field typed wrong (I2)", () => {
+    const base = pros.cils.catalog;
+    const service = base.services.find(
+      (item) => item.active && item.options.length,
+    )!;
+
+    it.each([Number.NaN, -1200, 12.5, 10_000_000])(
+      "price %s: blocks publishing, named, and the service is not shown",
+      (priceCents) => {
+        const catalog = updateService(base, service.id, { priceCents });
+        const issues = validate(catalog).filter(
+          (issue) => issue.serviceId === service.id,
+        );
+        expect(issues.map((issue) => issue.text).join(" ")).toMatch(
+          /prix à corriger/,
+        );
+        expect(
+          bookableServices(catalog).some((item) => item.id === service.id),
+        ).toBe(false);
+      },
+    );
+
+    it("a supplement typed wrong blocks publishing, naming the option and the answer", () => {
+      const option = service.options[0]!;
+      const catalog = updateService(base, service.id, {
+        options: [
+          {
+            ...option,
+            choices: option.choices.map((choice, index) =>
+              index === 1 ? { ...choice, priceDeltaCents: Number.NaN } : choice,
+            ),
+          },
+        ],
+      });
+      const text = validate(catalog)
+        .filter((issue) => issue.serviceId === service.id)
+        .map((issue) => issue.text)
+        .join(" ");
+      expect(text).toMatch(/supplément à corriger/);
+      expect(text).toMatch(/réponse 2/);
+      expect(
+        bookableServices(catalog).some((item) => item.id === service.id),
+      ).toBe(false);
+    });
+
+    it("any price she chooses within the money model is hers: 0, cents, 99 999,99 €", () => {
+      for (const priceCents of [0, 1250, 9_999_999]) {
+        const catalog = updateService(base, service.id, { priceCents });
+        expect(validate(catalog)).toEqual([]);
+      }
+    });
   });
 });

@@ -1,6 +1,12 @@
 "use client";
 
-import { AnimatePresence, motion, useScroll, useTransform } from "motion/react";
+import {
+  AnimatePresence,
+  motion,
+  useReducedMotion,
+  useScroll,
+  useTransform,
+} from "motion/react";
 import { useRef, useState } from "react";
 
 import type { Work as WorkItem, WorkVariant } from "../engine/config";
@@ -12,6 +18,7 @@ import {
   useEngine,
   useReveal,
 } from "../engine/engine";
+import { SitePortal, useModal } from "../engine/modal";
 
 // The professional's work: her photos are the heart of her site. Three
 // compositions — a lookbook, arches with depth, a film strip — all
@@ -98,10 +105,10 @@ function Lookbook({
                   <EditTarget slot={position} inButton />
                 </motion.div>
                 <span className="mt-3 flex items-baseline justify-between gap-3">
-                  <Display className="text-[22px] leading-none">
+                  <Display className="min-w-0 text-[22px] leading-none [overflow-wrap:anywhere]">
                     {work.title}
                   </Display>
-                  <Detail className="text-[var(--u-muted)]">
+                  <Detail className="shrink-0 text-[var(--u-muted)]">
                     {String(position + 1).padStart(2, "0")}
                   </Detail>
                 </span>
@@ -162,7 +169,9 @@ function DriftFrame({
     target: frame,
     offset: ["start end", "end start"],
   });
-  const y = useTransform(scrollYProgress, [0, 1], ["-9%", "9%"]);
+  const drift = useTransform(scrollYProgress, [0, 1], ["-9%", "9%"]);
+  // No scroll-driven drift when she asked for less motion.
+  const y = useReducedMotion() ? "0%" : drift;
   return (
     <motion.li ref={frame} className={offset ? "md:mt-40" : ""} {...reveal()}>
       <button
@@ -260,41 +269,59 @@ function Filmstrip({
   );
 }
 
+/**
+ * A work full screen: a real modal (engine/modal.tsx), on <body> above the
+ * studio, the page behind inert, Escape or the button closes it and focus
+ * goes back to the photo that opened it.
+ */
 function FullView({ work, onClose }: { work: WorkItem; onClose: () => void }) {
+  const root = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const closer = useRef<HTMLButtonElement>(null);
+  useModal({ root, panel, initial: closer, onClose });
   return (
-    <motion.div
-      className="fixed inset-0 z-50 flex flex-col bg-black text-white"
-      initial={{ backgroundColor: "rgba(0,0,0,0)" }}
-      animate={{ backgroundColor: "rgba(0,0,0,1)" }}
-      exit={{ backgroundColor: "rgba(0,0,0,0)" }}
-      role="dialog"
-      aria-modal="true"
-      aria-label={work.title}
-    >
+    <SitePortal rootRef={root}>
       <motion.div
-        layoutId={`work-${work.id}`}
-        className="relative flex-1 overflow-hidden"
+        ref={panel}
+        tabIndex={-1}
+        className="fixed inset-0 flex flex-col bg-black text-white outline-none"
+        initial={{ backgroundColor: "rgba(0,0,0,0)" }}
+        animate={{ backgroundColor: "rgba(0,0,0,1)" }}
+        exit={{ backgroundColor: "rgba(0,0,0,0)" }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={work.title}
       >
-        <GradedPhoto id={work.photo} alt={work.title} eager />
-      </motion.div>
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0, transition: { delay: 0.35 } }}
-        exit={{ opacity: 0 }}
-        className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-4 bg-[linear-gradient(0deg,rgba(0,0,0,.7),transparent)] px-5 pt-20 pb-[max(env(safe-area-inset-bottom),22px)]"
-      >
-        <span>
-          <Display className="block text-[44px] leading-none">
-            {work.title}
-          </Display>
-          <span className="mt-2 block">
-            <Detail>{work.note}</Detail>
+        <motion.div
+          layoutId={`work-${work.id}`}
+          className="relative flex-1 overflow-hidden"
+        >
+          <GradedPhoto id={work.photo} alt={work.title} eager />
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0, transition: { delay: 0.35 } }}
+          exit={{ opacity: 0 }}
+          className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-4 bg-[linear-gradient(0deg,rgba(0,0,0,.7),transparent)] px-5 pt-20 pb-[max(env(safe-area-inset-bottom),22px)]"
+        >
+          <span>
+            <Display className="block text-[44px] leading-none">
+              {work.title}
+            </Display>
+            <span className="mt-2 block">
+              <Detail>{work.note}</Detail>
+            </span>
           </span>
-        </span>
-        <button type="button" onClick={onClose} className="cursor-pointer py-2">
-          <Detail>Fermer ✕</Detail>
-        </button>
+          <button
+            ref={closer}
+            type="button"
+            onClick={onClose}
+            className="cursor-pointer py-2"
+          >
+            <Detail>Fermer ✕</Detail>
+          </button>
+        </motion.div>
       </motion.div>
-    </motion.div>
+    </SitePortal>
   );
 }

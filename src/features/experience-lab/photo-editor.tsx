@@ -4,7 +4,7 @@ import { motion } from "motion/react";
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 import type { Focal, PhotoSlot } from "./engine/config";
-import { photo, photoPool } from "./photos";
+import { localPhoto, photo, photoPool } from "./photos";
 
 // The photo editor of the studio. The whole photo is shown, and she
 // drags a target onto what must stay visible (the eye, the nail, the
@@ -203,7 +203,7 @@ export function PhotoEditor({
           className="hidden"
           onChange={(event) => {
             const picked = event.target.files?.[0];
-            if (picked) onReplace(URL.createObjectURL(picked));
+            if (picked) onReplace(localPhoto(picked));
             event.target.value = "";
           }}
         />
