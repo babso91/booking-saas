@@ -13,6 +13,8 @@ import type {
   SiteConfig,
   TypePairId,
 } from "./engine/config";
+import { CatalogEditor } from "./catalog/catalog-editor";
+import { validate, type Catalog } from "./catalog/model";
 import { advise, ensureReadable } from "./engine/harmony";
 import {
   grades,
@@ -21,17 +23,18 @@ import {
   shapes,
   typePairs,
 } from "./engine/tokens";
-import type { useHistory } from "./history";
 import { PhotoEditor } from "./photo-editor";
 import { photo } from "./photos";
 import { can, dormant, plans, type Plan } from "./plans";
-import type { Published } from "./site";
+import type { Part, Published } from "./site";
 import { universes, type Universe, type UniverseId } from "./universes";
 
 // The creation studio, phone first: a bottom sheet over a live preview
-// (a side panel on larger screens), clearly an editor. One editor, two
-// modes: "Simple" (Core) — universe, photos, texts, colours — and
-// "Créatif" (Signature) — composition and style too. The preview is the
+// (a side panel on larger screens), clearly an editor. First her business:
+// "Prestations", her catalogue (catalog/catalog-editor.tsx), the same in
+// every universe and every plan. Then her site, one editor, two modes:
+// "Simple" (Core) — universe, photos, texts, colours — and "Créatif"
+// (Signature) — composition and style too. The preview is the
 // editor: touching a photo opens it. Undo/redo, draft vs. what is online,
 // and publishing. Artistic advice never blocks; readability problems are
 // fixed before anything is published.
@@ -77,6 +80,7 @@ const universeMoods: Record<UniverseId, string> = {
 };
 
 type Tab =
+  | "catalog"
   | "universe"
   | "photos"
   | "texts"
@@ -91,6 +95,9 @@ export function Studio({
   universe,
   design,
   draft,
+  catalog,
+  serviceFocus,
+  onServiceFocus,
   plan,
   onPlan,
   onDesign,
@@ -106,7 +113,11 @@ export function Studio({
   onOpen: (open: boolean) => void;
   universe: Universe;
   design: UniverseId;
-  draft: ReturnType<typeof useHistory<SiteConfig>>;
+  draft: Part<SiteConfig>;
+  /** Her catalogue (business data), with the draft's shared undo. */
+  catalog: Part<Catalog>;
+  serviceFocus: string | null;
+  onServiceFocus: (id: string | null) => void;
   plan: Plan;
   onPlan: (plan: Plan) => void;
   onDesign: (id: UniverseId) => void;
@@ -118,7 +129,7 @@ export function Studio({
   onPhotoSlot: (slot: PhotoSlot | null) => void;
   onReplay: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>("photos");
+  const [tab, setTab] = useState<Tab>("catalog");
   const [flash, setFlash] = useState<string | null>(null);
   const config = draft.value;
   const creative = plan === "signature";
@@ -131,11 +142,14 @@ export function Studio({
   const advice = advise(config);
   const problems = advice.filter((item) => item.level === "problem");
   const tips = advice.filter((item) => item.level === "tip");
+  const catalogIssues = validate(catalog.value);
   const changed =
     JSON.stringify(config) !== JSON.stringify(published.config) ||
+    JSON.stringify(catalog.value) !== JSON.stringify(published.catalog) ||
     plan !== published.plan ||
     design !== published.design;
   const tabs: { id: Tab; label: string }[] = [
+    { id: "catalog", label: "Prestations" },
     { id: "universe", label: "Univers" },
     { id: "photos", label: "Photos" },
     { id: "texts", label: "Textes" },
@@ -147,8 +161,12 @@ export function Studio({
         ]
       : [{ id: "creative" as const, label: "Créatif ✦" }]),
   ];
-  const current =
-    creative || !["composition", "style"].includes(tab) ? tab : "creative";
+  // A service touched in the preview opens in "Prestations".
+  const current = serviceFocus
+    ? "catalog"
+    : creative || !["composition", "style"].includes(tab)
+      ? tab
+      : "creative";
 
   // Desktop shortcuts, outside text fields.
   useEffect(() => {
@@ -167,6 +185,7 @@ export function Studio({
   }, [draft, open]);
 
   function publish() {
+    if (catalogIssues.length) return; // the button says what is missing
     const corrections = problems.length;
     const safe = ensureReadable(config);
     if (corrections) draft.set(safe);
@@ -320,12 +339,33 @@ export function Studio({
                 </div>
                 <button
                   type="button"
-                  onClick={publish}
+                  onClick={
+                    catalogIssues.length
+                      ? () => {
+                          onView("draft");
+                          onPhotoSlot(null);
+                          onServiceFocus(null);
+                          setTab("catalog");
+                        }
+                      : publish
+                  }
                   disabled={!changed}
-                  className="h-11 shrink-0 cursor-pointer rounded-full bg-[#2B3BFF] px-4 text-[14px] font-semibold text-white disabled:cursor-default disabled:bg-black/10 disabled:text-black/45"
+                  aria-describedby={
+                    catalogIssues.length ? "studio-catalog-issues" : undefined
+                  }
+                  className={`h-11 shrink-0 cursor-pointer rounded-full px-4 text-[14px] font-semibold disabled:cursor-default disabled:bg-black/10 disabled:text-black/45 ${changed && catalogIssues.length ? "bg-[#FDECEA] text-[#7A1F17]" : "bg-[#2B3BFF] text-white"}`}
                 >
-                  {changed ? "Publier" : "Publié ✓"}
+                  {!changed
+                    ? "Publié ✓"
+                    : catalogIssues.length
+                      ? `À compléter (${catalogIssues.length})`
+                      : "Publier"}
                 </button>
+                {catalogIssues.length ? (
+                  <span id="studio-catalog-issues" className="sr-only">
+                    Ton catalogue doit être complété avant de publier.
+                  </span>
+                ) : null}
               </div>
 
               {view === "draft" && !photoSlot ? (
@@ -338,10 +378,19 @@ export function Studio({
                       key={item.id}
                       type="button"
                       aria-pressed={current === item.id}
-                      onClick={() => setTab(item.id)}
-                      className={`flex h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-4 text-[14px] font-medium ${current === item.id ? "bg-[#141414] text-white" : "text-black/70"}`}
+                      onClick={() => {
+                        setTab(item.id);
+                        onServiceFocus(null);
+                      }}
+                      className={`flex h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-4 text-[14px] font-medium ${current === item.id ? "bg-[#141414] text-white" : "text-black/70"} ${item.id === "universe" ? "relative ml-2 before:absolute before:top-3 before:-left-1.5 before:h-5 before:w-px before:bg-black/15" : ""}`}
                     >
                       {item.label}
+                      {item.id === "catalog" && catalogIssues.length ? (
+                        <span
+                          className="size-2 rounded-full bg-[#D92D20]"
+                          aria-label="à compléter"
+                        />
+                      ) : null}
                       {item.id === "colors" && problems.length ? (
                         <span
                           className="size-2 rounded-full bg-[#D92D20]"
@@ -388,6 +437,12 @@ export function Studio({
                     Revenir au brouillon
                   </SmallButton>
                 </div>
+              ) : current === "catalog" ? (
+                <CatalogEditor
+                  catalog={catalog}
+                  focus={serviceFocus}
+                  onFocus={onServiceFocus}
+                />
               ) : photoSlot !== null && slotPhoto(photoSlot) ? (
                 <PhotoEditor
                   slot={photoSlot}
@@ -437,8 +492,9 @@ export function Studio({
                   {current === "universe" ? (
                     <>
                       <p className="text-[13.5px] text-black/60">
-                        Change d’univers : ton nom, tes textes, tes photos et
-                        tes prestations te suivent.
+                        Change d’univers : ton nom, tes textes et tes photos te
+                        suivent. Tes prestations ne dépendent pas de l’univers :
+                        elles restent exactement les mêmes.
                       </p>
                       {(Object.keys(universes) as UniverseId[]).map((id) => (
                         <button
@@ -610,6 +666,13 @@ export function Studio({
                         value={config.tokens.palette.accent}
                         onChange={(accent) => setPalette({ accent }, "accent")}
                       />
+                      {can(plan, "cta") ? (
+                        <CtaColor
+                          value={config.tokens.cta}
+                          palette={config.tokens.palette}
+                          onChange={(cta) => setTokens({ cta }, "cta")}
+                        />
+                      ) : null}
                       {can(plan, "palette-free")
                         ? paletteKeys
                             .filter(({ key }) => key !== "accent")
@@ -831,6 +894,70 @@ export function Studio({
           </motion.aside>
         ) : null}
       </AnimatePresence>
+    </div>
+  );
+}
+
+/**
+ * The colour of her booking buttons (the "Réserver" pill or bar, the
+ * booking's main button). She picks the colour; its text is computed, so
+ * it always reads (engine/tokens.ts, ctaColors).
+ */
+function CtaColor({
+  value,
+  palette,
+  onChange,
+}: {
+  value: string | undefined;
+  palette: Palette;
+  onChange: (cta: string | undefined) => void;
+}) {
+  const presets: { label: string; color: string | undefined }[] = [
+    { label: "Celle de l’univers", color: undefined },
+    { label: "Accent", color: palette.accent },
+    { label: "Encre", color: palette.bg },
+    { label: "Blanc", color: "#FFFFFF" },
+  ];
+  const custom =
+    value !== undefined &&
+    !presets.some(
+      (preset) => preset.color?.toLowerCase() === value.toLowerCase(),
+    );
+  return (
+    <div className="flex flex-col gap-2 rounded-2xl border border-black/10 bg-white p-3">
+      <p className="text-[14px] font-medium">Bouton « Réserver »</p>
+      <p className="text-[12.5px] leading-snug text-black/55">
+        Sa couleur est à toi ; le texte s’ajuste tout seul pour rester lisible.
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {presets.map((preset) => (
+          <Chip
+            key={preset.label}
+            selected={
+              preset.color === undefined
+                ? value === undefined
+                : value?.toLowerCase() === preset.color.toLowerCase()
+            }
+            onClick={() => onChange(preset.color)}
+          >
+            <span className="flex items-center gap-2">
+              {preset.color ? (
+                <span
+                  aria-hidden="true"
+                  className="size-4 rounded-full border border-black/15"
+                  style={{ background: preset.color }}
+                />
+              ) : null}
+              {preset.label}
+            </span>
+          </Chip>
+        ))}
+      </div>
+      <ColorRow
+        label={custom ? "Ta couleur" : "Une autre couleur"}
+        value={value ?? palette.accent}
+        onChange={(color) => onChange(color)}
+      />
     </div>
   );
 }

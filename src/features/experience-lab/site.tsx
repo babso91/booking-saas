@@ -4,9 +4,17 @@ import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useEffect, useState } from "react";
 
 import { Booking } from "./booking";
-import type { PhotoSlot, Service, SiteConfig } from "./engine/config";
-import { Detail, Display, EngineProvider, useEngine } from "./engine/engine";
-import { cssVariables, readableOn } from "./engine/tokens";
+import { showcase, type Catalog, type CatalogService } from "./catalog/model";
+import { pros, type ProId } from "./catalog/pros";
+import type { PhotoSlot, SiteConfig } from "./engine/config";
+import {
+  Detail,
+  Display,
+  EngineProvider,
+  useEngine,
+  type EngineEdit,
+} from "./engine/engine";
+import { contrast, ctaColors, cssVariables } from "./engine/tokens";
 import { ensureReadable } from "./engine/harmony";
 import { useHistory } from "./history";
 import { effective, type Plan } from "./plans";
@@ -17,26 +25,62 @@ import { Work } from "./scenes/work";
 import { Studio } from "./studio";
 import { universes, type UniverseId } from "./universes";
 
-// A professional's public mini-site, rendered from a SiteConfig: tokens as
-// CSS variables, scenes composed in her order, booking always one tap
-// away. In the lab, the studio edits the saved draft live; "En ligne"
-// shows what her customers see: the published version, through her
+// A professional's public mini-site, rendered from a SiteConfig (her
+// design: tokens as CSS variables, scenes composed in her order) and her
+// catalogue (her business: categories, services, options), booking always
+// one tap away. The two are kept apart: a universe never owns a service.
+// In the lab, the studio edits one draft of both live, with one undo; "En
+// ligne" shows what her customers see: the published version, through her
 // plan's rights and the readability safety net.
 
 export type Published = {
   config: SiteConfig;
+  catalog: Catalog;
   design: UniverseId;
   plan: Plan;
   version: number;
   at: Date;
 };
 
-export function BrandSite({ id }: { id: UniverseId }) {
+/** What the studio edits: her design and her catalogue, side by side. */
+type Draft = { site: SiteConfig; catalog: Catalog };
+
+/** A view of one part of the draft, with the draft's shared undo/redo. */
+export type Part<T> = {
+  value: T;
+  set: (value: T, key?: string) => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+};
+
+export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
+  // A lab demo of another trade: her identity and her catalogue, in any
+  // universe (the photos stay the universe's examples).
+  const start: Draft = {
+    site: pro
+      ? { ...universes[id].config, brand: pros[pro].brand }
+      : universes[id].config,
+    catalog: pro ? pros[pro].catalog : universes[id].catalog,
+  };
   const [design, setDesign] = useState<UniverseId>(id);
-  const draft = useHistory<SiteConfig>(universes[id].config);
+  const history = useHistory<Draft>(start);
+  const part = <K extends keyof Draft>(key: K): Part<Draft[K]> => ({
+    value: history.value[key],
+    set: (value, mergeKey) =>
+      history.set({ ...history.value, [key]: value }, mergeKey),
+    undo: history.undo,
+    redo: history.redo,
+    canUndo: history.canUndo,
+    canRedo: history.canRedo,
+  });
+  const draft = part("site");
+  const catalog = part("catalog");
   const [plan, setPlan] = useState<Plan>("core");
   const [published, setPublished] = useState<Published>({
-    config: universes[id].config,
+    config: start.site,
+    catalog: start.catalog,
     design: id,
     plan: "core",
     version: 1,
@@ -45,6 +89,7 @@ export function BrandSite({ id }: { id: UniverseId }) {
   const [view, setView] = useState<"draft" | "live">("draft");
   const [studio, setStudio] = useState(false);
   const [photoSlot, setPhotoSlot] = useState<PhotoSlot | null>(null);
+  const [serviceFocus, setServiceFocus] = useState<string | null>(null);
   const [replay, setReplay] = useState(0);
 
   const universe = universes[design];
@@ -55,13 +100,36 @@ export function BrandSite({ id }: { id: UniverseId }) {
     view === "live" ? live : effective(draft.value, plan, universe);
   const editing = studio && view === "draft";
 
+  // The service being edited comes into view in the preview, above the
+  // studio's sheet.
+  useEffect(() => {
+    if (!serviceFocus) return;
+    document
+      .querySelector(`[data-service="${CSS.escape(serviceFocus)}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [serviceFocus]);
+
   return (
     <MotionConfig reducedMotion="user">
       <SiteView
         key={`${replay}-${view}`}
         config={preview}
+        catalog={view === "live" ? published.catalog : catalog.value}
         edit={
-          editing ? { photo: setPhotoSlot, selected: photoSlot } : undefined
+          editing
+            ? {
+                photo: (slot) => {
+                  setServiceFocus(null);
+                  setPhotoSlot(slot);
+                },
+                selected: photoSlot,
+                service: (serviceId) => {
+                  setPhotoSlot(null);
+                  setServiceFocus(serviceId);
+                },
+                selectedService: serviceFocus,
+              }
+            : undefined
         }
       />
       <Studio
@@ -70,10 +138,14 @@ export function BrandSite({ id }: { id: UniverseId }) {
         universe={universe}
         design={design}
         draft={draft}
+        catalog={catalog}
+        serviceFocus={serviceFocus}
+        onServiceFocus={setServiceFocus}
         plan={plan}
         onPlan={setPlan}
         onDesign={(next) => {
-          // Another universe, with her own name, texts, photos and services.
+          // Another universe: her name, texts and photos follow; her
+          // catalogue is not part of the design at all, it stays as is.
           const base = universes[next].config;
           draft.set({
             ...base,
@@ -87,6 +159,7 @@ export function BrandSite({ id }: { id: UniverseId }) {
         onPublish={(config) => {
           setPublished((value) => ({
             config,
+            catalog: catalog.value,
             design,
             plan,
             version: value.version + 1,
@@ -105,14 +178,17 @@ export function BrandSite({ id }: { id: UniverseId }) {
 
 export function SiteView({
   config,
+  catalog,
   edit,
 }: {
   config: SiteConfig;
-  edit?: { photo: (slot: PhotoSlot) => void; selected: PhotoSlot | null };
+  catalog: Catalog;
+  edit?: EngineEdit;
 }) {
-  const [booking, setBooking] = useState<{ service: Service | null } | null>(
-    null,
-  );
+  const [booking, setBooking] = useState<{
+    service: CatalogService | null;
+  } | null>(null);
+  const groups = showcase(catalog);
   // Chapter numbers of the scenes after the opening: (01), (02)…
   const chapters = config.sections.map(
     (_, position) =>
@@ -123,11 +199,17 @@ export function SiteView({
 
   return (
     <div
+      lang="fr"
       className="min-h-dvh bg-[var(--u-bg)] text-[var(--u-ink)]"
       style={{ ...cssVariables(config.tokens), fontFamily: "var(--t-body)" }}
     >
       <EngineProvider
-        value={{ config, book: (service) => setBooking({ service }), edit }}
+        value={{
+          config,
+          catalog: groups,
+          book: (service) => setBooking({ service }),
+          edit,
+        }}
       >
         <Header />
         {config.sections.map((section, position) => {
@@ -167,20 +249,22 @@ export function SiteView({
 }
 
 function Header() {
-  const { config, book } = useEngine();
+  const { config, catalog, book } = useEngine();
   return (
     <header className="pointer-events-none fixed inset-x-0 top-0 z-40 text-white mix-blend-difference">
       <div className="mx-auto flex max-w-[1100px] items-center justify-between px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3">
         <Display className="text-[18px] leading-none">
           {config.brand.name}
         </Display>
-        <button
-          type="button"
-          onClick={() => book(null)}
-          className="pointer-events-auto cursor-pointer py-2"
-        >
-          <Detail>Réserver</Detail>
-        </button>
+        {catalog.length ? (
+          <button
+            type="button"
+            onClick={() => book(null)}
+            className="pointer-events-auto cursor-pointer py-2"
+          >
+            <Detail>Réserver</Detail>
+          </button>
+        ) : null}
       </div>
     </header>
   );
@@ -206,10 +290,21 @@ function Footer() {
 
 /** Always one tap from booking, as a bar or a pill (mobile first). */
 function QuickBook() {
-  const { config, book, motion: language } = useEngine();
-  const count = config.content.services.length;
-  const palette = config.tokens.palette;
-  const [hidden, setHidden] = useState(false);
+  const { config, catalog, book, motion: language } = useEngine();
+  const count = catalog.reduce((sum, group) => sum + group.services.length, 0);
+  // Her colour, or the universe's: the accent bar, the white pill.
+  const cta = ctaColors(
+    config.tokens,
+    config.quickBook === "bar" ? config.tokens.palette.accent : "#FFFFFF",
+  );
+  // A colour close to the night surface gets an outline: still a button.
+  const outline =
+    contrast(cta.fill, config.tokens.palette.bg) < 1.6
+      ? "inset 0 0 0 1.5px currentColor"
+      : undefined;
+  const [scrolledAway, setScrolledAway] = useState(false);
+  // Nothing to book yet: no button that leads nowhere.
+  const hidden = scrolledAway || count === 0;
 
   // Where every service is already a way into booking, the floating
   // button steps aside instead of covering a price or a description.
@@ -222,7 +317,7 @@ function QuickBook() {
           if (entry.isIntersecting) visible.add(entry.target);
           else visible.delete(entry.target);
         }
-        setHidden(visible.size > 0);
+        setScrolledAway(visible.size > 0);
       },
       { rootMargin: "-20% 0px -20% 0px" },
     );
@@ -250,25 +345,24 @@ function QuickBook() {
         <button
           type="button"
           onClick={() => book(null)}
-          className="mx-auto flex h-14 w-full max-w-[520px] cursor-pointer items-center justify-between bg-[var(--u-accent)] px-5 text-[var(--u-on-accent)]"
-          style={{ borderRadius: "min(var(--s-control), 18px)" }}
+          className="mx-auto flex h-14 w-full max-w-[520px] cursor-pointer items-center justify-between px-5"
+          style={{
+            borderRadius: "min(var(--s-control), 18px)",
+            background: cta.fill,
+            color: cta.text,
+            boxShadow: outline,
+          }}
         >
           <Detail>Réserver</Detail>
-          <Detail>{count} soins →</Detail>
+          <Detail>{count > 1 ? `${count} soins →` : "1 soin →"}</Detail>
         </button>
       ) : (
         <button
           type="button"
           onClick={() => book(null)}
-          className="pointer-events-auto flex h-14 cursor-pointer items-center gap-3 rounded-full bg-white px-7 text-[16px] font-semibold shadow-[0_18px_40px_-14px_rgba(0,0,0,.55)]"
-          // The brand's accent on white, unless it would not be readable.
-          style={{
-            color: readableOn("#FFFFFF", [
-              palette.accent,
-              palette.bg,
-              "#111111",
-            ]),
-          }}
+          className="pointer-events-auto flex h-14 cursor-pointer items-center gap-3 rounded-full px-7 text-[16px] font-semibold shadow-[0_18px_40px_-14px_rgba(0,0,0,.55)]"
+          // On white, the brand's accent unless it would not be readable.
+          style={{ background: cta.fill, color: cta.text, boxShadow: outline }}
         >
           Réserver
           <span aria-hidden="true">→</span>

@@ -1,4 +1,5 @@
 import type { Palette, SiteConfig } from "./engine/config";
+import type { Catalog } from "./catalog/model";
 
 // The universes we design. Each is a SiteConfig plus the palettes a Core
 // professional may choose from; Nail Lab has no code of its own: it is
@@ -10,6 +11,8 @@ export type Universe = {
   id: UniverseId;
   /** Our designed starting point. */
   config: SiteConfig;
+  /** The demo business's catalogue that comes with this universe (business data: it is not part of the config). */
+  catalog: Catalog;
   /** Palettes designed for this universe (Core picks among them). */
   palettes: { name: string; palette: Palette }[];
   /** A Signature recomposition, to show what the studio unlocks. */
@@ -72,37 +75,6 @@ export const mila: Universe = {
           note: "Restructuration, 45 min",
         },
       ],
-      services: [
-        {
-          id: "s1",
-          name: "Pose cil à cil",
-          durationMinutes: 120,
-          priceCents: 9000,
-          blurb:
-            "Une extension par cil naturel, pour une densité qui ne se voit pas.",
-        },
-        {
-          id: "s2",
-          name: "Volume russe",
-          durationMinutes: 150,
-          priceCents: 12000,
-          blurb: "Bouquets ultra-fins, regard intense, tenue quatre semaines.",
-        },
-        {
-          id: "s3",
-          name: "Rehaussement de cils",
-          durationMinutes: 60,
-          priceCents: 6500,
-          blurb: "Vos cils, courbés et teintés. Rien d'ajouté.",
-        },
-        {
-          id: "s4",
-          name: "Restructuration sourcils",
-          durationMinutes: 45,
-          priceCents: 4500,
-          blurb: "Ligne, épaisseur, teinte : un dessin à votre visage.",
-        },
-      ],
       focals: {},
     },
     tokens: {
@@ -120,6 +92,75 @@ export const mila: Universe = {
     ],
     booking: "page",
     quickBook: "bar",
+  },
+  catalog: {
+    categories: [
+      { id: "mila-cils", name: "Cils", visible: true },
+      { id: "mila-sourcils", name: "Sourcils", visible: true },
+    ],
+    services: [
+      {
+        id: "s1",
+        categoryId: "mila-cils",
+        name: "Pose cil à cil",
+        description:
+          "Une extension par cil naturel, pour une densité qui ne se voit pas.",
+        durationMinutes: 120,
+        priceCents: 9000,
+        active: true,
+        options: [],
+      },
+      {
+        id: "s2",
+        categoryId: "mila-cils",
+        name: "Volume russe",
+        description:
+          "Bouquets ultra-fins, regard intense, tenue quatre semaines.",
+        durationMinutes: 150,
+        priceCents: 12000,
+        active: true,
+        options: [
+          {
+            id: "mila-depose",
+            question: "Avez-vous besoin d’une dépose ?",
+            choices: [
+              {
+                id: "mila-depose-non",
+                label: "Non",
+                priceDeltaCents: 0,
+                durationDeltaMinutes: 0,
+              },
+              {
+                id: "mila-depose-oui",
+                label: "Oui",
+                priceDeltaCents: 500,
+                durationDeltaMinutes: 0,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "s3",
+        categoryId: "mila-cils",
+        name: "Rehaussement de cils",
+        description: "Vos cils, courbés et teintés. Rien d'ajouté.",
+        durationMinutes: 60,
+        priceCents: 6500,
+        active: true,
+        options: [],
+      },
+      {
+        id: "s4",
+        categoryId: "mila-sourcils",
+        name: "Restructuration sourcils",
+        description: "Ligne, épaisseur, teinte : un dessin à votre visage.",
+        durationMinutes: 45,
+        priceCents: 4500,
+        active: true,
+        options: [],
+      },
+    ],
   },
   palettes: [
     { name: "Encre", palette: milaInk },
@@ -234,29 +275,6 @@ export const alma: Universe = {
           note: "Dessinés au fil",
         },
       ],
-      services: [
-        {
-          id: "s1",
-          name: "Rituel regard",
-          durationMinutes: 75,
-          priceCents: 7800,
-          blurb: "Rehaussement, teinture et massage du contour de l'œil.",
-        },
-        {
-          id: "s2",
-          name: "Cils au naturel",
-          durationMinutes: 120,
-          priceCents: 9500,
-          blurb: "Une pose légère, invisible, qui suit vos propres cils.",
-        },
-        {
-          id: "s3",
-          name: "Sourcils au fil",
-          durationMinutes: 40,
-          priceCents: 3800,
-          blurb: "Une ligne nette, sans rougeur, à la main.",
-        },
-      ],
       focals: {},
     },
     tokens: {
@@ -274,6 +292,44 @@ export const alma: Universe = {
     ],
     booking: "sheet",
     quickBook: "pill",
+  },
+  catalog: {
+    categories: [
+      { id: "alma-regard", name: "Regard", visible: true },
+      { id: "alma-sourcils", name: "Sourcils", visible: true },
+    ],
+    services: [
+      {
+        id: "s1",
+        categoryId: "alma-regard",
+        name: "Rituel regard",
+        description: "Rehaussement, teinture et massage du contour de l'œil.",
+        durationMinutes: 75,
+        priceCents: 7800,
+        active: true,
+        options: [],
+      },
+      {
+        id: "s2",
+        categoryId: "alma-regard",
+        name: "Cils au naturel",
+        description: "Une pose légère, invisible, qui suit vos propres cils.",
+        durationMinutes: 120,
+        priceCents: 9500,
+        active: true,
+        options: [],
+      },
+      {
+        id: "s3",
+        categoryId: "alma-sourcils",
+        name: "Sourcils au fil",
+        description: "Une ligne nette, sans rougeur, à la main.",
+        durationMinutes: 40,
+        priceCents: 3800,
+        active: true,
+        options: [],
+      },
+    ],
   },
   palettes: [
     { name: "Olive", palette: almaOlive },
@@ -364,36 +420,6 @@ export const nailLab: Universe = {
           note: "Paillettes, babyboomer",
         },
       ],
-      services: [
-        {
-          id: "s1",
-          name: "Semi-permanent",
-          durationMinutes: 60,
-          priceCents: 3500,
-          blurb: "Couleur unie, tenue trois semaines.",
-        },
-        {
-          id: "s2",
-          name: "Construction gel",
-          durationMinutes: 120,
-          priceCents: 6500,
-          blurb: "Forme sur mesure : amande, coffin, stiletto.",
-        },
-        {
-          id: "s3",
-          name: "Nail art",
-          durationMinutes: 30,
-          priceCents: 2000,
-          blurb: "Par main. Apportez votre idée, on la dessine.",
-        },
-        {
-          id: "s4",
-          name: "Dépose + soin",
-          durationMinutes: 45,
-          priceCents: 2500,
-          blurb: "Dépose douce et soin des cuticules.",
-        },
-      ],
       focals: {},
     },
     tokens: {
@@ -411,6 +437,55 @@ export const nailLab: Universe = {
     ],
     booking: "sheet",
     quickBook: "pill",
+  },
+  catalog: {
+    categories: [
+      { id: "nail-pose", name: "Pose", visible: true },
+      { id: "nail-deco", name: "Déco", visible: true },
+      { id: "nail-soin", name: "Soin", visible: true },
+    ],
+    services: [
+      {
+        id: "s1",
+        categoryId: "nail-pose",
+        name: "Semi-permanent",
+        description: "Couleur unie, tenue trois semaines.",
+        durationMinutes: 60,
+        priceCents: 3500,
+        active: true,
+        options: [],
+      },
+      {
+        id: "s2",
+        categoryId: "nail-pose",
+        name: "Construction gel",
+        description: "Forme sur mesure : amande, coffin, stiletto.",
+        durationMinutes: 120,
+        priceCents: 6500,
+        active: true,
+        options: [],
+      },
+      {
+        id: "s3",
+        categoryId: "nail-deco",
+        name: "Nail art",
+        description: "Par main. Apportez votre idée, on la dessine.",
+        durationMinutes: 30,
+        priceCents: 2000,
+        active: true,
+        options: [],
+      },
+      {
+        id: "s4",
+        categoryId: "nail-soin",
+        name: "Dépose + soin",
+        description: "Dépose douce et soin des cuticules.",
+        durationMinutes: 45,
+        priceCents: 2500,
+        active: true,
+        options: [],
+      },
+    ],
   },
   palettes: [
     { name: "Cobalt", palette: nailCobalt },

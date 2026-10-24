@@ -24,7 +24,7 @@ Le Client Hub reste facultatif et hors du mini-site.
 
 Un site est une `SiteConfig` (`engine/config.ts`) :
 
-- **Contenu :** identité, photos, prestations.
+- **Contenu :** identité et photos. **Pas les prestations** : elles sont une donnée métier, à part (section 2 bis).
 - **Tokens :**
   - palette ;
   - paire typographique ;
@@ -53,6 +53,44 @@ Le moteur s'adapte à l'ambition artistique, pas l'inverse. Ajouter un univers, 
 - **Mila et Alma** sont des configurations.
 - **Nail Lab n'a aucun code propre.** Ses variantes nouvelles (Cinétique, Pellicule, Tuiles) enrichissent la bibliothèque commune.
 
+## 2 bis. Le catalogue : une donnée métier, jamais une donnée de design
+
+Le catalogue (`catalog/model.ts`) contient les catégories, les prestations et leurs options. Il ne vit **pas** dans la `SiteConfig`, et aucun univers ne le possède :
+
+- **Changer d'univers ne le touche pas.** Mila, Alma et Nail Lab décident seulement de la façon de le montrer.
+- **Le moteur ne reçoit qu'une projection publique**, `showcase()` :
+  - les catégories visibles, dans son ordre ;
+  - leurs prestations actives et nommées ;
+  - une catégorie vide ou masquée n'atteint jamais une scène ;
+  - les prestations sans catégorie viennent en dernier, sans titre.
+- **Aucun métier n'est codé :** aucune catégorie n'est obligatoire ni prédéfinie. Les trois catalogues fictifs du labo (`catalog/pros.ts`) le prouvent : cils, henné, épilation, à ouvrir dans chaque univers via `/labo/<univers>?pro=cils|henne|epilation`.
+- **Robustesse des scènes :**
+  - de 2 à 15 catégories ; à partir de 4, une rangée de raccourcis vers chaque catégorie ;
+  - d'une prestation à plusieurs dizaines (les tuiles se resserrent au-delà de 10) ;
+  - les intitulés longs passent à une taille plus petite avec césure française ;
+  - « Offert » plutôt que « 0 € », « 12,50 € » plutôt que « 12,5 € » ;
+  - catalogue vide : la scène garde sa place et dit « Bientôt », et aucun bouton « Réserver » ne mène nulle part.
+- **Options :**
+  - une question, des réponses ; la première est la réponse par défaut ;
+  - chaque réponse a un supplément (≥ 0) et une durée en plus, **0 sauf si la professionnelle la règle** : jamais supposée ;
+  - dans la réservation, une étape « Options » apparaît seulement si la prestation en a, et le prix et la durée se mettent à jour à chaque choix.
+
+### Contrat backend proposé (non construit ici)
+
+La source de vérité unique reste la table `services` (`name` 1–120, `description` ≤ 1000, `duration_minutes` 5–720, `price_cents` ≥ 0, `active`, `display_order`). Le labo en reprend exactement les limites (`limits`, `validate()`). Ajouts proposés pour une PR backend :
+
+- **`service_categories`** : `id`, `business_id`, `name` (1–60), `visible`, `display_order`.
+- **`services.category_id`** : nullable, `on delete set null`. Supprimer une catégorie demande à la professionnelle de garder ses prestations ou de les supprimer.
+- **`service_options`** : `id`, `service_id`, `question` (1–120), `display_order`.
+- **`service_option_choices`** : `id`, `option_id`, `label` (1–60), `price_delta_cents` (≥ 0), `duration_delta_minutes` (0–240), `display_order`. La première est le défaut.
+- **Réservation :**
+  - `POST /api/bookings` reçoit les réponses choisies ;
+  - **le serveur recalcule** prix et durée, sans jamais faire confiance au total envoyé ;
+  - la durée totale (prestation et options) entre dans le calcul des disponibilités, et ne dépasse jamais 720 min ;
+  - le rendez-vous garde un instantané des réponses et du prix, pour qu'une modification ultérieure du catalogue ne réécrive pas l'historique.
+- **Retrait d'une prestation :** une prestation déjà réservée ne se supprime pas physiquement. Elle passe inactive (archivée), car les rendez-vous la référencent.
+- **À trancher : brouillon ou effet immédiat ?** Dans le labo, le catalogue suit « Publier » comme le design. En production, on peut soit enregistrer chaque modification tout de suite (simple, mais un prix à moitié tapé serait réservable), soit tenir un brouillon côté serveur. Ma recommandation : brouillon côté serveur, publié avec le site.
+
 ## 3. Core (« Simple ») et Signature (« Créatif ») : un seul éditeur
 
 Même moteur, mêmes univers, mêmes animations, et le même studio en deux modes. Ce qui change, c'est ce que le studio peut modifier (`plans.ts`).
@@ -61,6 +99,8 @@ Même moteur, mêmes univers, mêmes animations, et le même studio en deux mode
 | ------------------------------------------------- | ------------- | ------------------- |
 | Univers complets, changer d'univers               | oui           | oui                 |
 | Photos (point focal compris), textes, prestations | oui           | oui                 |
+| Catalogue : catégories, prix, durées, options     | oui           | oui                 |
+| Couleur du bouton « Réserver »                    | oui           | oui                 |
 | Palettes de l'univers et couleur d'accent         | oui           | oui                 |
 | Palette complète                                  | non           | oui                 |
 | Variante de chaque scène, ordre des scènes        | non           | oui                 |
@@ -117,6 +157,13 @@ Le serveur appliquera la même règle à la publication. Le navigateur n'est pas
 
 ## 5. Studio : pensé pour une professionnelle sur son téléphone
 
+- **« Prestations » d'abord :** c'est le premier onglet, séparé des réglages artistiques par un filet. Il gère son activité, pas son style.
+  - **Une liste par catégorie, dans son ordre.** Toucher une prestation l'ouvre ; toucher l'en-tête d'une catégorie ouvre la catégorie.
+  - **Édition :** nom, description, prix tapé comme elle le dit (« 25 », « 12,50 »), durée en heures et minutes (sélecteurs natifs, des roues sur téléphone), réservable ou hors ligne, catégorie, position, options.
+  - **Déplacer :** « Monter » et « Descendre », plus un choix de catégorie. C'est fiable au pouce dans une feuille qui défile, au clavier et au lecteur d'écran. Le glisser-déposer viendra en complément, jamais à la place.
+  - **Retirer :** un geste, annulé par le toast « Annuler » ou par ↶. L'annulation est commune au design et au catalogue.
+  - **Ce que le backend refuserait** est signalé à l'endroit concerné, et « Publier » devient « À compléter (n) ».
+  - **L'aperçu suit :** une prestation modifiée vient se placer sous l'en-tête du site, entourée ; la toucher dans l'aperçu l'ouvre dans l'éditeur.
 - **L'aperçu est l'éditeur :** en mode édition, toucher une photo du site l'ouvre dans l'éditeur de photo.
 - **Point focal au doigt :**
   - la photo entière s'affiche, avec une cible à glisser et une grille des tiers ;
@@ -129,7 +176,8 @@ Le serveur appliquera la même règle à la publication. Le navigateur n'est pas
   - un point signale les modifications non publiées ;
   - « Publier » fige une nouvelle version.
 - **Mode Simple :** Univers, Photos, Textes, Couleurs.
-  - Changer d'univers garde son nom, ses textes, ses photos et ses prestations.
+  - Changer d'univers garde son nom, ses textes et ses photos. Le catalogue n'est pas concerné : il n'appartient à aucun univers.
+  - **Couleurs → Bouton « Réserver » :** celle de l'univers, l'accent, l'encre, le blanc ou une couleur libre. Le texte est toujours calculé pour rester lisible, et un liseré apparaît si la couleur se confond avec le fond.
   - Un onglet « Créatif ✦ » présente ce que Signature ouvre, sans l'imposer.
 - **Ergonomie :** feuille basse de 64 % de l'écran sur téléphone, cibles de 44 px. Un bandeau « mode édition » est toujours visible, et le studio ne recouvre jamais la réservation.
 
@@ -198,9 +246,15 @@ Voir § 3 :
 - **Préférence d'accessibilité :** « réduire les animations » est respecté partout (`MotionConfig reducedMotion="user"`).
 - **Budget :** LCP sous 2,5 s en 4G. Pas de bibliothèque 3D.
 
+## 7 bis. Retours de la première professionnelle (et ce qui en a été fait)
+
+- **« Remplacer Sourcils par Mixte, ajuster durées et tarifs » :** pas de valeur remplacée en dur. Le catalogue entier est à elle (section 2 bis).
+- **« Petites typographies trop robotiques » :** les capitales monospace font l'identité de Mila et de Nail Lab ; elles restent pour ce qui **indexe** (numéros, « Prix TTC », titres de catégorie, prix dans l'index). Tout ce qui **informe** (durées, notes d'options, intitulés de la réservation : « Jour », « Heure », « Prénom », étapes « changer ») passe dans la typographie de texte, en minuscules (`Note`). Les capitales passent de 11,5 px à 12 px, avec un interlettrage un peu plus serré.
+- **« Contrôler la couleur du bouton Réserver » :** fait, en Core, avec la lisibilité garantie.
+- **Réservation directe sans compte et photos personnelles :** inchangées. Ce sont les points qu'elle a le plus aimés.
+
 ## 8. Prochaines étapes du laboratoire
 
 - **Variantes à ajouter, une par une, soignées :** portrait de la professionnelle, témoignages, avant/après.
-- **Point focal des photos** dans le studio.
-- **Studio mobile :** prévisualisation du site publié par rapport au brouillon, et « annuler ».
+- **Catalogue :** glisser-déposer en complément de « Monter / Descendre » ; options à choix multiples, si un métier en a besoin.
 - **Vérification avec de vraies professionnelles** avant tout choix de prix.

@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { pros, type ProId } from "@/features/experience-lab/catalog/pros";
 import { universes } from "@/features/experience-lab/universes";
 
 // Internal index of the lab (for us, not part of any product path): in
@@ -40,6 +41,42 @@ export default function LabIndex() {
                 /labo/{universe.id} →
               </span>
             </Link>
+          </li>
+        ))}
+      </ul>
+
+      <h2 className="mt-14 text-[22px] font-semibold tracking-[-0.02em]">
+        D’autres métiers, dans chaque univers
+      </h2>
+      <p className="mt-2 text-[15px] leading-relaxed text-neutral-600">
+        Catalogues fictifs pour éprouver le moteur : deux catégories ou quinze,
+        intitulés longs, durées de 15 min à 6 h, catégories masquées ou vides,
+        options.
+      </p>
+      <ul className="mt-6 flex flex-col gap-3">
+        {(Object.keys(pros) as ProId[]).map((id) => (
+          <li
+            key={id}
+            className="rounded-2xl border border-neutral-200 px-5 py-4"
+          >
+            <span className="block text-[17px] font-medium">
+              {pros[id].brand.name}
+            </span>
+            <span className="text-[14px] text-neutral-500">
+              {pros[id].label} · {pros[id].catalog.categories.length} catégories
+              · {pros[id].catalog.services.length} prestations
+            </span>
+            <span className="mt-3 flex flex-wrap gap-2">
+              {Object.values(universes).map((universe) => (
+                <Link
+                  key={universe.id}
+                  href={`/labo/${universe.id}?pro=${id}`}
+                  className="rounded-full border border-neutral-300 px-3 py-1.5 text-[13.5px] hover:border-neutral-500"
+                >
+                  {universe.config.brand.name} →
+                </Link>
+              ))}
+            </span>
           </li>
         ))}
       </ul>

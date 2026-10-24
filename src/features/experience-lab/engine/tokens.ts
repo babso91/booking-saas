@@ -196,3 +196,23 @@ export function readableOn(background: string, candidates: string[]) {
     )[0]!
   );
 }
+
+/**
+ * The booking buttons' colours: her chosen colour (`tokens.cta`), or the
+ * universe's own (`fallback`). The text is never chosen, it is computed:
+ * on white, her accent if it reads (the white pill), else black or white.
+ */
+export function ctaColors(
+  tokens: { palette: Palette; cta?: string },
+  fallback: string,
+) {
+  const fill = tokens.cta ?? fallback;
+  const { palette } = tokens;
+  const candidates =
+    fill.toLowerCase() === palette.accent.toLowerCase()
+      ? [palette.onAccent, "#FFFFFF", "#111111"]
+      : fill.toUpperCase() === "#FFFFFF"
+        ? [palette.accent, palette.bg, "#111111"]
+        : ["#FFFFFF", "#111111"];
+  return { fill, text: readableOn(fill, candidates) };
+}

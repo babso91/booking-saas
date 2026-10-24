@@ -8,8 +8,9 @@ import type { Universe } from "./universes";
 //   2. the RIGHTS of her plan: a lens applied when rendering;
 //   3. the RENDERED site: the saved config seen through that lens (then,
 //      for the public, through the readability safety net).
-// Core ("Simple") edits identity, photos and the universe's palettes with
-// her accent; Signature ("Créatif") composes: variants, order, type, photo
+// Core ("Simple") edits identity, photos, her services (business data,
+// never behind a plan: catalog/model.ts), the universe's palettes with her
+// accent and her booking button's colour; Signature ("Créatif") composes: variants, order, type, photo
 // grade, motion, shapes, full palette. Going back to Core hides those
 // settings from the render; they stay saved and return with Signature.
 
@@ -36,19 +37,20 @@ export type Capability =
   | "content"
   | "palette-preset"
   | "accent"
+  | "cta"
   | "palette-free"
   | "composition"
   | "style";
 
-const core: Capability[] = ["content", "palette-preset", "accent"];
+const core: Capability[] = ["content", "palette-preset", "accent", "cta"];
 
 export const can = (plan: Plan, capability: Capability) =>
   plan === "signature" || core.includes(capability);
 
 /**
  * The saved config as a plan may render it. Core keeps her content, a
- * designed palette of the universe (her accent on it) and the universe's
- * own composition and style.
+ * designed palette of the universe (her accent on it), her booking
+ * button's colour and the universe's own composition and style.
  */
 export function effective(
   config: SiteConfig,
@@ -67,6 +69,7 @@ export function effective(
     ...config,
     tokens: {
       ...origin.tokens,
+      cta: config.tokens.cta,
       palette: {
         ...(designed?.palette ?? origin.tokens.palette),
         accent: config.tokens.palette.accent,

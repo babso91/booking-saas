@@ -9,19 +9,32 @@ import {
   type ReactNode,
 } from "react";
 
+import type { CatalogService, ShowcaseGroup } from "../catalog/model";
 import { photo, srcSet } from "../photos";
-import type { PhotoSlot, Service, SiteConfig } from "./config";
+import type { PhotoSlot, SiteConfig } from "./config";
 import { grades, motions, typePairs } from "./tokens";
 
 // What every scene variant receives: the site's config, its resolved
-// tokens, and the actions of the shared functional engine (booking). In
-// the studio, `edit` makes the preview itself the editor: touching a
-// photo opens it instead of its public behaviour.
+// tokens, her catalogue as customers see it (business data, given from
+// outside: no scene owns or changes it) and the actions of the shared
+// functional engine (booking). In the studio, `edit` makes the preview
+// itself the editor: touching a photo or a service opens it instead of
+// its public behaviour.
+
+export type EngineEdit = {
+  photo: (slot: PhotoSlot) => void;
+  selected: PhotoSlot | null;
+  /** Opens a service in the catalogue editor. */
+  service: (id: string) => void;
+  selectedService: string | null;
+};
 
 type Engine = {
   config: SiteConfig;
-  book: (service: Service | null) => void;
-  edit?: { photo: (slot: PhotoSlot) => void; selected: PhotoSlot | null };
+  /** Her catalogue's public projection: visible, non-empty groups only. */
+  catalog: ShowcaseGroup[];
+  book: (service: CatalogService | null) => void;
+  edit?: EngineEdit;
 };
 
 const Context = createContext<Engine | null>(null);
@@ -88,7 +101,7 @@ export function Detail({
   const { type } = useEngine();
   return (
     <span
-      className={`${type.detailCaps ? "text-[11.5px] tracking-[0.1em] uppercase" : "text-[14px]"} ${className ?? ""}`}
+      className={`${type.detailCaps ? "text-[12px] tracking-[0.08em] uppercase" : "text-[14px]"} ${className ?? ""}`}
       style={{ fontFamily: "var(--t-detail)" }}
     >
       {children}
@@ -227,8 +240,34 @@ export function useReveal() {
   };
 }
 
+/** "25 €", "12,50 €" (never "12,5 €"). */
 export const euros = (cents: number) =>
-  `${(cents / 100).toLocaleString("fr-FR", { minimumFractionDigits: 0 })} €`;
+  `${(cents / 100).toLocaleString("fr-FR", {
+    minimumFractionDigits: cents % 100 ? 2 : 0,
+    maximumFractionDigits: 2,
+  })} €`;
+
+/** A price as customers read it: "Offert" rather than "0 €". */
+export const price = (cents: number) => (cents === 0 ? "Offert" : euros(cents));
+
+/**
+ * Small text that informs rather than labels (a duration, a price note):
+ * the body face in sentence case, so it reads like a sentence, where
+ * `Detail` keeps the universe's index-like capitals.
+ */
+export function Note({
+  className,
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span className={`text-[14px] leading-snug ${className ?? ""}`}>
+      {children}
+    </span>
+  );
+}
 
 export const minutes = (value: number) => {
   const hours = Math.floor(value / 60);

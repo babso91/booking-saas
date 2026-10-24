@@ -3,31 +3,55 @@
 import { AnimatePresence, motion, type MotionProps } from "motion/react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
-import type { Service } from "./engine/config";
-import { Detail, Display, euros, minutes, useEngine } from "./engine/engine";
+import {
+  choiceOf,
+  quote,
+  type CatalogService,
+  type Picks,
+} from "./catalog/model";
+import {
+  Detail,
+  Display,
+  Note,
+  euros,
+  minutes,
+  price,
+  useEngine,
+} from "./engine/engine";
+import { contrast, ctaColors } from "./engine/tokens";
 import { nextDays, slotsFor } from "./slots";
 
 // The shared booking engine, staged by the site's tokens. Same steps as
-// the real public booking (docs/PUBLIC_BOOKING_CONTRACT.md): service → day
-// and time → contact → confirmed, with NO account. In the product the
-// confirm step is POST /api/bookings (idempotent requestId); simulated
-// here. Speed first: no step waits for an animation; large touch targets.
+// the real public booking (docs/PUBLIC_BOOKING_CONTRACT.md): service →
+// day and time → contact → confirmed, with NO account; plus, when her
+// service has some, its options (a question, one answer, a supplement and
+// possibly more time, as SHE set them). In the product the confirm step is
+// POST /api/bookings (idempotent requestId) and the price comes from the
+// backend; here everything is simulated. Speed first: no step waits for an
+// animation; large touch targets.
 
 const control = { borderRadius: "min(var(--s-control), 22px)" };
+
+type Stage = "service" | "options" | "slot" | "contact";
+const after = (service: CatalogService): Stage =>
+  service.options.length ? "options" : "slot";
 
 export function Booking({
   initialService,
   onClose,
 }: {
-  initialService: Service | null;
+  initialService: CatalogService | null;
   onClose: () => void;
 }) {
-  const { config, motion: language } = useEngine();
+  const { config, catalog, motion: language } = useEngine();
   const sheet = config.booking === "sheet";
-  const [service, setService] = useState<Service | null>(initialService);
+  const [service, setService] = useState<CatalogService | null>(initialService);
+  const [stage, setStage] = useState<Stage>(
+    initialService ? after(initialService) : "service",
+  );
+  const [picks, setPicks] = useState<Picks>({});
   const [day, setDay] = useState(0);
   const [time, setTime] = useState<string | null>(null);
-  const [contactStep, setContactStep] = useState(false);
   const [contact, setContact] = useState({
     firstName: "",
     email: "",
@@ -73,14 +97,38 @@ export function Booking({
     if (!errors.firstName && !errors.email) setDone(true);
   }
 
-  const step = !service ? 1 : contactStep ? 3 : 2;
+  const stages: Stage[] = [
+    "service",
+    ...(service?.options.length ? (["options"] as const) : []),
+    "slot",
+    "contact",
+  ];
+  const step = stages.indexOf(stage) + 1;
+  const total = service ? quote(service, picks) : null;
   const when = `${days[day]!.label} · ${time ?? ""}`;
+  const choose = (item: CatalogService) => {
+    setService(item);
+    setPicks({});
+    setStage(after(item));
+  };
   const chip = (selected: boolean) =>
     selected
       ? "border border-[var(--u-ink-on-paper)] bg-[var(--u-ink-on-paper)] text-[var(--u-paper)]"
       : "border border-current/25";
+  // Her button colour (the accent by default); its text is computed. A
+  // colour close to the page gets an outline so the button stays visible.
+  const cta = ctaColors(config.tokens, config.tokens.palette.accent);
   const primary =
-    "h-14 w-full cursor-pointer bg-[var(--u-accent)] text-[var(--u-on-accent)] disabled:cursor-not-allowed disabled:opacity-40";
+    "h-14 w-full cursor-pointer disabled:cursor-not-allowed disabled:opacity-40";
+  const primaryStyle = {
+    ...control,
+    background: cta.fill,
+    color: cta.text,
+    boxShadow:
+      contrast(cta.fill, config.tokens.palette.paper) < 1.6
+        ? "inset 0 0 0 1.5px currentColor"
+        : undefined,
+  };
   const field =
     "h-14 w-full border border-current/25 bg-transparent px-4 text-[17px] outline-none focus:border-[var(--u-accent)] focus:ring-2 focus:ring-[var(--u-accent)]/40";
 
@@ -143,7 +191,9 @@ export function Booking({
       >
         <div className="flex items-center justify-between px-5 pt-[max(env(safe-area-inset-top),16px)] pb-2">
           <Detail>
-            {done ? config.brand.name : `Réservation — ${step}/3`}
+            {done
+              ? config.brand.name
+              : `Réservation — ${step}/${stages.length}`}
           </Detail>
           <button
             type="button"
@@ -180,8 +230,18 @@ export function Booking({
                 </Display>
                 <p className="text-[17px] leading-relaxed">
                   {service.name}
-                  <br />
-                  {when} · {minutes(service.durationMinutes)}
+                  {service.options.map((option) => (
+                    <span
+                      key={option.id}
+                      className="block text-[15px] opacity-75"
+                    >
+                      {option.question} {choiceOf(option, picks)?.label}
+                    </span>
+                  ))}
+                  <span className="block">
+                    {when} · {minutes(total!.durationMinutes)} ·{" "}
+                    {euros(total!.priceCents)}
+                  </span>
                 </p>
                 <p className="text-[15px] leading-relaxed opacity-75">
                   Un email de confirmation part vers {contact.email.trim()},
@@ -192,12 +252,12 @@ export function Booking({
                   type="button"
                   onClick={onClose}
                   className={`${primary} mt-2`}
-                  style={control}
+                  style={primaryStyle}
                 >
                   Revenir chez {config.brand.name}
                 </button>
               </motion.div>
-            ) : !service ? (
+            ) : stage === "service" || !service ? (
               <motion.div
                 key="service"
                 initial={{ opacity: 0 }}
@@ -210,26 +270,107 @@ export function Booking({
                 >
                   Quel soin ?
                 </Display>
-                <ul className="mt-8 flex flex-col gap-2">
-                  {config.content.services.map((item) => (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        onClick={() => setService(item)}
-                        className={`flex min-h-16 w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-left ${chip(false)}`}
-                        style={control}
-                      >
-                        <span className="text-[17px]">{item.name}</span>
-                        <span className="text-[14px] whitespace-nowrap tabular-nums opacity-70">
-                          {minutes(item.durationMinutes)} ·{" "}
-                          {euros(item.priceCents)}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                {catalog.map((group) => (
+                  <div
+                    key={group.category?.id ?? "sans-categorie"}
+                    className="mt-8"
+                  >
+                    {group.category ? (
+                      <h3 className="mb-3 text-[15px] font-semibold [overflow-wrap:anywhere]">
+                        {group.category.name}
+                      </h3>
+                    ) : null}
+                    <ul className="flex flex-col gap-2">
+                      {group.services.map((item) => (
+                        <li key={item.id}>
+                          <button
+                            type="button"
+                            onClick={() => choose(item)}
+                            className={`flex min-h-16 w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-left ${chip(false)}`}
+                            style={control}
+                          >
+                            <span className="min-w-0 text-[17px] [overflow-wrap:anywhere]">
+                              {item.name}
+                            </span>
+                            <span className="shrink-0 text-right text-[14px] whitespace-nowrap tabular-nums opacity-70">
+                              {minutes(item.durationMinutes)}
+                              <br />
+                              {price(item.priceCents)}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
               </motion.div>
-            ) : contactStep ? (
+            ) : stage === "options" ? (
+              <motion.div
+                key="options"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setStage("service")}
+                  className="mt-2 cursor-pointer text-left"
+                >
+                  <Note className="opacity-70">Soin · changer</Note>
+                  <Display className="mt-1 block text-[34px] leading-none [overflow-wrap:anywhere]">
+                    {service.name}
+                  </Display>
+                </button>
+                {service.options.map((option) => (
+                  <fieldset key={option.id} className="mt-8">
+                    <legend className="text-[17px] font-medium">
+                      {option.question}
+                    </legend>
+                    <div className="mt-3 flex flex-col gap-2">
+                      {option.choices.map((choice) => {
+                        const selected =
+                          choiceOf(option, picks)?.id === choice.id;
+                        const extra = [
+                          choice.priceDeltaCents
+                            ? `+${euros(choice.priceDeltaCents)}`
+                            : null,
+                          choice.durationDeltaMinutes
+                            ? `+${minutes(choice.durationDeltaMinutes)}`
+                            : null,
+                        ].filter(Boolean);
+                        return (
+                          <button
+                            key={choice.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            onClick={() =>
+                              setPicks({ ...picks, [option.id]: choice.id })
+                            }
+                            className={`flex min-h-14 w-full cursor-pointer items-center justify-between gap-3 px-4 text-left ${chip(selected)}`}
+                            style={control}
+                          >
+                            <span className="text-[17px]">{choice.label}</span>
+                            <span className="text-[14px] tabular-nums opacity-80">
+                              {extra.length
+                                ? extra.join(" · ")
+                                : "sans supplément"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                ))}
+                <p className="mt-8 text-[15px]" aria-live="polite">
+                  Total :{" "}
+                  <strong className="tabular-nums">
+                    {euros(total!.priceCents)}
+                  </strong>{" "}
+                  · {minutes(total!.durationMinutes)}
+                </p>
+              </motion.div>
+            ) : stage === "contact" ? (
               <motion.form
                 key="contact"
                 id="lab-contact"
@@ -244,10 +385,10 @@ export function Booking({
               >
                 <button
                   type="button"
-                  onClick={() => setContactStep(false)}
+                  onClick={() => setStage("slot")}
                   className="mt-2 cursor-pointer text-left"
                 >
-                  <Detail>{service.name} · changer</Detail>
+                  <Note className="opacity-70">{service.name} · changer</Note>
                   <Display className="mt-1 block text-[34px] leading-none">
                     {when}
                   </Display>
@@ -327,17 +468,25 @@ export function Booking({
               >
                 <button
                   type="button"
-                  onClick={() => setService(null)}
+                  onClick={() =>
+                    setStage(service.options.length ? "options" : "service")
+                  }
                   className="mt-2 cursor-pointer text-left"
                 >
-                  <Detail>Soin · changer</Detail>
-                  <Display className="mt-1 block text-[36px] leading-none">
+                  <Note className="opacity-70">
+                    {service.options.length
+                      ? "Options · changer"
+                      : "Soin · changer"}
+                  </Note>
+                  <Display className="mt-1 block text-[36px] leading-none [overflow-wrap:anywhere]">
                     {service.name}
                   </Display>
+                  <Note className="mt-2 block opacity-80">
+                    {minutes(total!.durationMinutes)} ·{" "}
+                    {euros(total!.priceCents)}
+                  </Note>
                 </button>
-                <p className="mt-8">
-                  <Detail>Jour</Detail>
-                </p>
+                <p className="mt-8 text-[15px] font-medium">Jour</p>
                 <ul className="-mx-5 mt-3 flex gap-2 overflow-x-auto px-5 pb-1 [scrollbar-width:none]">
                   {days.map((item) => (
                     <li key={item.index}>
@@ -364,9 +513,7 @@ export function Booking({
                     </li>
                   ))}
                 </ul>
-                <p className="mt-8">
-                  <Detail>Heure</Detail>
-                </p>
+                <p className="mt-8 text-[15px] font-medium">Heure</p>
                 <ul className="mt-3 grid grid-cols-3 gap-2">
                   {slots.map((slot) => (
                     <li key={slot}>
@@ -387,24 +534,33 @@ export function Booking({
           </AnimatePresence>
         </div>
 
-        {!done && service ? (
+        {!done && service && stage !== "service" ? (
           <div className="border-t border-current/10 px-5 pt-3 pb-[max(env(safe-area-inset-bottom),16px)]">
-            {contactStep ? (
+            {stage === "contact" ? (
               <button
                 type="submit"
                 form="lab-contact"
                 className={primary}
-                style={control}
+                style={primaryStyle}
               >
-                Confirmer le rendez-vous
+                Confirmer · {euros(total!.priceCents)}
+              </button>
+            ) : stage === "options" ? (
+              <button
+                type="button"
+                onClick={() => setStage("slot")}
+                className={primary}
+                style={primaryStyle}
+              >
+                Continuer · {euros(total!.priceCents)}
               </button>
             ) : (
               <button
                 type="button"
                 disabled={!time}
-                onClick={() => setContactStep(true)}
+                onClick={() => setStage("contact")}
                 className={primary}
-                style={control}
+                style={primaryStyle}
               >
                 {time ? `Continuer · ${when}` : "Choisissez une heure"}
               </button>
@@ -429,8 +585,8 @@ function Field({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <label htmlFor={id}>
-        <Detail>{label}</Detail>
+      <label htmlFor={id} className="text-[15px] font-medium">
+        {label}
       </label>
       {children}
       {error ? <p className="text-[14px] text-[#B3261E]">{error}</p> : null}

@@ -18,14 +18,6 @@ export type Focal = { x: number; y: number };
 /** A photo spot of the site: the cover, or a work by its position. */
 export type PhotoSlot = "cover" | number;
 
-export type Service = {
-  id: string;
-  name: string;
-  durationMinutes: number;
-  priceCents: number;
-  blurb: string;
-};
-
 export type Palette = {
   /** Night surface (opening, work) and its ink. */
   bg: string;
@@ -58,6 +50,10 @@ export type Section =
   | { kind: "work"; variant: WorkVariant }
   | { kind: "services"; variant: ServicesVariant };
 
+/**
+ * A site's design and its showcase content. Her services are NOT here:
+ * they are business data (catalog/model.ts), given to the engine to show.
+ */
 export type SiteConfig = {
   /** The universe this site was started from (its designed defaults). */
   universe: string;
@@ -65,7 +61,6 @@ export type SiteConfig = {
   content: {
     cover: string;
     works: Work[];
-    services: Service[];
     /** Focal point of each photo, by photo id (centre when absent). */
     focals: Record<string, Focal>;
   };
@@ -75,6 +70,12 @@ export type SiteConfig = {
     grade: GradeId;
     motion: MotionId;
     shape: ShapeId;
+    /**
+     * The booking buttons' colour (the "Réserver" pill or bar and the
+     * booking's main button); the universe's own when absent. Their text
+     * colour is always computed to stay readable.
+     */
+    cta?: string;
   };
   sections: Section[];
   /** How booking enters: a full page or a sheet from the bottom. */
