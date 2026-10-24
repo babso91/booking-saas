@@ -70,7 +70,11 @@ export function PhotoEditor({
           ← Réglages
         </button>
         <span className="text-[14px] font-semibold">
-          {slot === "cover" ? "Photo de couverture" : `Réalisation ${slot + 1}`}
+          {slot === "cover"
+            ? "Photo de couverture"
+            : slot === "portrait"
+              ? "Ton portrait"
+              : `Réalisation ${slot + 1}`}
         </span>
       </div>
 
@@ -204,7 +208,7 @@ export function PhotoEditor({
           }}
         />
       </div>
-      <p className="-mt-2 text-[12px] text-black/45">
+      <p className="-mt-2 text-[12px] text-black/60">
         Laboratoire : ta photo reste sur ton téléphone, rien n’est envoyé.
       </p>
 

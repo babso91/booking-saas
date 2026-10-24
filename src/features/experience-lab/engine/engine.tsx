@@ -196,7 +196,9 @@ export function EditTarget({
       aria-label={
         slot === "cover"
           ? "Modifier la photo de couverture"
-          : `Modifier la réalisation ${slot + 1}`
+          : slot === "portrait"
+            ? "Modifier ton portrait"
+            : `Modifier la réalisation ${slot + 1}`
       }
       className={`${className} cursor-pointer`}
     >
@@ -216,9 +218,16 @@ export function useReveal() {
     const transition = { duration: motion.duration, ease: motion.ease, delay };
     const viewport = { once: true, margin: "-12%" };
     if (motion.entrance === "cut") {
+      // A hard-edged wipe from the top, drawn with a mask and not a
+      // clip-path: Chromium's IntersectionObserver sees an element fully
+      // clipped by its own clip-path as out of view, so the reveal never
+      // started and the content stayed hidden. A mask leaves its box intact
+      // (unprefixed mask-image: Safari 15.4+, Chrome 120+, Firefox 53+).
+      const wipe = (stop: number) =>
+        `linear-gradient(180deg, rgba(0,0,0,1) ${stop}%, rgba(0,0,0,0) ${stop}%)`;
       return {
-        initial: { clipPath: "inset(0 0 100% 0)" },
-        whileInView: { clipPath: "inset(0 0 0% 0)" },
+        initial: { maskImage: wipe(0) },
+        whileInView: { maskImage: wipe(100) },
         viewport,
         transition,
       };

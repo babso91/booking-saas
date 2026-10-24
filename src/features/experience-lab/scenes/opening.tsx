@@ -144,7 +144,9 @@ function BloomOpening() {
   });
   const veil = useTransform(scrollYProgress, [0, 0.8], [0.15, 0.75]);
   const titleY = useTransform(scrollYProgress, [0, 1], [0, 120]);
-  const wait = language.entrance === "bloom" ? 1 : 0.45;
+  // The photo blooms first, then her name surfaces: soon enough that her
+  // name is read within the first seconds, even on a slow phone.
+  const wait = language.entrance === "bloom" ? 0.6 : 0.45;
   const words = config.brand.name.split(" ");
 
   return (
@@ -187,7 +189,7 @@ function BloomOpening() {
                 animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                 transition={{
                   duration: language.duration * 1.1,
-                  delay: wait + index * 0.3,
+                  delay: wait + index * 0.25,
                   ease: language.ease,
                 }}
               >

@@ -15,8 +15,16 @@ export type Work = { id: string; photo: string; title: string; note: string };
  */
 export type Focal = { x: number; y: number };
 
-/** A photo spot of the site: the cover, or a work by its position. */
-export type PhotoSlot = "cover" | number;
+/** A photo spot of the site: the cover, her portrait, or a work by position. */
+export type PhotoSlot = "cover" | "portrait" | number;
+
+/** Who she is: the person behind the work. */
+export type Portrait = {
+  photo: string;
+  name: string;
+  role: string;
+  text: string;
+};
 
 export type Palette = {
   /** Night surface (opening, work) and its ink. */
@@ -37,17 +45,19 @@ export type GradeId = "silver" | "warm" | "natural" | "chrome";
 export type MotionId = "cut" | "settle" | "snap";
 export type ShapeId = "sharp" | "soft" | "round";
 
-export type SceneKind = "opening" | "intro" | "work" | "services";
+export type SceneKind = "opening" | "intro" | "work" | "portrait" | "services";
 
 export type OpeningVariant = "didone-cut" | "bloom" | "kinetic";
 export type IntroVariant = "statement" | "lines";
 export type WorkVariant = "lookbook" | "arches" | "filmstrip";
+export type PortraitVariant = "editorial" | "arch";
 export type ServicesVariant = "index" | "shelf" | "tiles";
 
 export type Section =
   | { kind: "opening"; variant: OpeningVariant }
   | { kind: "intro"; variant: IntroVariant }
   | { kind: "work"; variant: WorkVariant }
+  | { kind: "portrait"; variant: PortraitVariant }
   | { kind: "services"; variant: ServicesVariant };
 
 /**
@@ -61,6 +71,7 @@ export type SiteConfig = {
   content: {
     cover: string;
     works: Work[];
+    portrait: Portrait;
     /** Focal point of each photo, by photo id (centre when absent). */
     focals: Record<string, Focal>;
   };
@@ -78,6 +89,12 @@ export type SiteConfig = {
     cta?: string;
   };
   sections: Section[];
+  /**
+   * Scenes she chose not to show (her content, so every plan keeps it):
+   * no portrait yet, no manifesto. The opening and her services always
+   * show: one is her name, the other the way to book.
+   */
+  hidden?: SceneKind[];
   /** How booking enters: a full page or a sheet from the bottom. */
   booking: "page" | "sheet";
   /** The always-present quick booking (mobile first): a bar or a pill. */

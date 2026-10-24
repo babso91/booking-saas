@@ -75,6 +75,12 @@ export const mila: Universe = {
           note: "Restructuration, 45 min",
         },
       ],
+      portrait: {
+        photo: "1772235616130-b80e12f0ab7a",
+        name: "Mila",
+        role: "Technicienne cils · fondatrice",
+        text: "Je travaille seule, une cliente à la fois. Chaque pose commence par regarder votre œil, pas par choisir un modèle.",
+      },
       focals: {},
     },
     tokens: {
@@ -88,6 +94,7 @@ export const mila: Universe = {
       { kind: "opening", variant: "didone-cut" },
       { kind: "intro", variant: "statement" },
       { kind: "work", variant: "lookbook" },
+      { kind: "portrait", variant: "editorial" },
       { kind: "services", variant: "index" },
     ],
     booking: "page",
@@ -211,6 +218,7 @@ export const mila: Universe = {
         { kind: "opening", variant: "bloom" },
         { kind: "work", variant: "filmstrip" },
         { kind: "intro", variant: "lines" },
+        { kind: "portrait", variant: "arch" },
         { kind: "services", variant: "tiles" },
       ],
       booking: "sheet",
@@ -275,6 +283,12 @@ export const alma: Universe = {
           note: "Dessinés au fil",
         },
       ],
+      portrait: {
+        photo: "1772236617396-2f8460293c07",
+        name: "Alma",
+        role: "Praticienne du regard",
+        text: "J'ai ouvert la maison pour prendre le temps. Ici, on parle peu, on respire, et vous repartez avec votre propre regard.",
+      },
       focals: {},
     },
     tokens: {
@@ -287,6 +301,7 @@ export const alma: Universe = {
     sections: [
       { kind: "opening", variant: "bloom" },
       { kind: "intro", variant: "lines" },
+      { kind: "portrait", variant: "arch" },
       { kind: "work", variant: "arches" },
       { kind: "services", variant: "shelf" },
     ],
@@ -420,6 +435,12 @@ export const nailLab: Universe = {
           note: "Paillettes, babyboomer",
         },
       ],
+      portrait: {
+        photo: "1632345031435-8727f6897d53",
+        name: "Nina",
+        role: "Prothésiste ongulaire",
+        text: "Couleurs franches, formes nettes, zéro compromis sur la tenue. Ramenez une idée, on la dessine ensemble.",
+      },
       focals: {},
     },
     tokens: {
@@ -433,6 +454,7 @@ export const nailLab: Universe = {
       { kind: "opening", variant: "kinetic" },
       { kind: "work", variant: "filmstrip" },
       { kind: "intro", variant: "statement" },
+      { kind: "portrait", variant: "editorial" },
       { kind: "services", variant: "tiles" },
     ],
     booking: "sheet",

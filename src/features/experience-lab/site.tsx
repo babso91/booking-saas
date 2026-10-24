@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 
 import { Booking } from "./booking";
@@ -20,9 +21,17 @@ import { useHistory } from "./history";
 import { effective, type Plan } from "./plans";
 import { Intro } from "./scenes/intro";
 import { Opening } from "./scenes/opening";
+import { Portrait } from "./scenes/portrait";
 import { Services } from "./scenes/services";
 import { Work } from "./scenes/work";
-import { Studio } from "./studio";
+// The studio is the professional's tool, not her customers': it is loaded
+// on its own, so a customer's phone never downloads the editors.
+const Studio = dynamic(
+  () => import("./studio").then((module) => module.Studio),
+  {
+    ssr: false,
+  },
+);
 import { universes, type UniverseId } from "./universes";
 
 // A professional's public mini-site, rendered from a SiteConfig (her
@@ -58,10 +67,18 @@ export type Part<T> = {
 export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
   // A lab demo of another trade: her identity and her catalogue, in any
   // universe (the photos stay the universe's examples).
+  const base = universes[id].config;
   const start: Draft = {
     site: pro
-      ? { ...universes[id].config, brand: pros[pro].brand }
-      : universes[id].config,
+      ? {
+          ...base,
+          brand: pros[pro].brand,
+          content: {
+            ...base.content,
+            portrait: { ...base.content.portrait, ...pros[pro].portrait },
+          },
+        }
+      : base,
     catalog: pro ? pros[pro].catalog : universes[id].catalog,
   };
   const [design, setDesign] = useState<UniverseId>(id);
@@ -99,6 +116,17 @@ export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
   const preview =
     view === "live" ? live : effective(draft.value, plan, universe);
   const editing = studio && view === "draft";
+
+  // The lab keeps everything in this tab's memory (no backend, nothing
+  // sent): leaving or reloading after a change asks first, so a test
+  // never loses her work by accident.
+  const touched = history.canUndo;
+  useEffect(() => {
+    if (!touched) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [touched]);
 
   // The service being edited comes into view in the preview, above the
   // studio's sheet.
@@ -151,6 +179,7 @@ export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
             ...base,
             brand: draft.value.brand,
             content: draft.value.content,
+            hidden: draft.value.hidden,
           });
           setDesign(next);
           setReplay((value) => value + 1);
@@ -189,12 +218,15 @@ export function SiteView({
     service: CatalogService | null;
   } | null>(null);
   const groups = showcase(catalog);
+  // Her choice of scenes (the opening and her services always show).
+  const sections = config.sections.filter(
+    (section) => !config.hidden?.includes(section.kind),
+  );
   // Chapter numbers of the scenes after the opening: (01), (02)…
-  const chapters = config.sections.map(
+  const chapters = sections.map(
     (_, position) =>
-      config.sections
-        .slice(0, position + 1)
-        .filter((item) => item.kind !== "opening").length,
+      sections.slice(0, position + 1).filter((item) => item.kind !== "opening")
+        .length,
   );
 
   return (
@@ -212,7 +244,7 @@ export function SiteView({
         }}
       >
         <Header />
-        {config.sections.map((section, position) => {
+        {sections.map((section, position) => {
           const chapter = chapters[position]!;
           const key = `${section.kind}-${position}`;
           switch (section.kind) {
@@ -225,6 +257,10 @@ export function SiteView({
             case "work":
               return (
                 <Work key={key} variant={section.variant} index={chapter} />
+              );
+            case "portrait":
+              return (
+                <Portrait key={key} variant={section.variant} index={chapter} />
               );
             case "services":
               return (

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { can, dormant, effective } from "../plans";
 import { universes } from "../universes";
 import { advise, ensureReadable } from "./harmony";
-import { contrast, readableOn } from "./tokens";
+import { contrast, ctaColors, readableOn } from "./tokens";
 
 const designed = Object.values(universes).flatMap((universe) => [
   ...universe.palettes.map((item) => ({
@@ -137,5 +137,49 @@ describe("experience engine", () => {
     expect(advise(safe).filter((item) => item.level === "problem")).toEqual([]);
     expect(safe.sections).toEqual(unreadable.sections);
     expect(safe.tokens.type).toBe(unreadable.tokens.type);
+  });
+
+  it("Core keeps what is hers: scenes she hid and her booking button's colour", () => {
+    const universe = universes.mila;
+    const saved = {
+      ...universe.config,
+      hidden: ["portrait" as const],
+      tokens: { ...universe.config.tokens, cta: "#123456" },
+      sections: [...universe.config.sections].reverse(),
+    };
+    const core = effective(saved, "core", universe);
+    expect(core.hidden).toEqual(["portrait"]);
+    expect(core.tokens.cta).toBe("#123456");
+    // The composition stays the universe's in Core.
+    expect(core.sections).toEqual(universe.config.sections);
+    expect(dormant({ ...universe.config, hidden: ["intro"] }, universe)).toBe(
+      false,
+    );
+  });
+
+  it.each(Object.values(universes))(
+    "$id: every universe presents her portrait, and its Signature keeps it",
+    (universe) => {
+      expect(
+        universe.config.sections.some((item) => item.kind === "portrait"),
+      ).toBe(true);
+      if (universe.signature) {
+        expect(
+          universe.signature
+            .apply(universe.config)
+            .sections.some((item) => item.kind === "portrait"),
+        ).toBe(true);
+      }
+    },
+  );
+
+  it.each([
+    ["#FFFFFF", "on white: her accent when it reads"],
+    ["#0B0B0B", "on ink: white"],
+    ["#F2C14E", "on a light colour: black"],
+  ])("booking button text is always readable (%s, %s)", (fill) => {
+    const palette = universes.mila.config.tokens.palette;
+    const { text } = ctaColors({ palette, cta: fill }, palette.accent);
+    expect(contrast(text, fill)).toBeGreaterThanOrEqual(4.5);
   });
 });

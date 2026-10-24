@@ -92,7 +92,7 @@ function editMark(
 function OptionsNote({ service }: { service: CatalogService }) {
   if (!service.options.length) return null;
   return (
-    <Note className="opacity-75">
+    <Note className="opacity-90">
       À la réservation :{" "}
       {service.options.map((option) => option.question).join(" · ")}
     </Note>
@@ -240,7 +240,7 @@ function Shelf() {
               >
                 {group.category.name}
               </Display>
-              <Note className="shrink-0 opacity-65">
+              <Note className="shrink-0 opacity-80">
                 {group.services.length > 1
                   ? `${group.services.length} rituels`
                   : "1 rituel"}
@@ -383,7 +383,7 @@ function Tiles() {
                         {service.name}
                       </Display>
                       {service.description ? (
-                        <span className="mt-3 block max-w-[34ch] text-[15px] leading-snug opacity-80">
+                        <span className="mt-3 block max-w-[34ch] text-[15px] leading-snug opacity-90">
                           {service.description}
                         </span>
                       ) : null}

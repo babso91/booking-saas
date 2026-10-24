@@ -16,6 +16,7 @@ import type {
 import { CatalogEditor } from "./catalog/catalog-editor";
 import { validate, type Catalog } from "./catalog/model";
 import { advise, ensureReadable } from "./engine/harmony";
+import { SharePanel } from "./share/share-panel";
 import {
   grades,
   motions,
@@ -59,6 +60,10 @@ const variants: {
     { id: "arches", label: "Arches" },
     { id: "filmstrip", label: "Pellicule" },
   ],
+  portrait: [
+    { id: "editorial", label: "Éditorial" },
+    { id: "arch", label: "Arche" },
+  ],
   services: [
     { id: "index", label: "Index de prix" },
     { id: "shelf", label: "Étagère" },
@@ -70,8 +75,19 @@ const sceneNames: Record<Section["kind"], string> = {
   opening: "Ouverture",
   intro: "Manifeste",
   work: "Réalisations",
+  portrait: "Portrait",
   services: "Prestations",
 };
+
+/** What each scene brings, for the "Sections" switches. */
+const sceneRoles: Record<Section["kind"], string> = {
+  opening: "Ton nom et ta photo de couverture : toujours affichée.",
+  intro: "Ta présentation en quelques mots.",
+  work: "Tes photos de réalisations.",
+  portrait: "Toi, au travail, avec tes mots.",
+  services: "Tes prestations et la réservation : toujours affichée.",
+};
+const lockedScenes: Section["kind"][] = ["opening", "services"];
 
 const universeMoods: Record<UniverseId, string> = {
   mila: "Éditorial · noir et blanc, grandes lettres",
@@ -80,7 +96,9 @@ const universeMoods: Record<UniverseId, string> = {
 };
 
 type Tab =
+  | "share"
   | "catalog"
+  | "sections"
   | "universe"
   | "photos"
   | "texts"
@@ -151,6 +169,7 @@ export function Studio({
   const tabs: { id: Tab; label: string }[] = [
     { id: "catalog", label: "Prestations" },
     { id: "universe", label: "Univers" },
+    { id: "sections", label: "Sections" },
     { id: "photos", label: "Photos" },
     { id: "texts", label: "Textes" },
     { id: "colors", label: "Couleurs" },
@@ -160,6 +179,7 @@ export function Studio({
           { id: "style" as const, label: "Style" },
         ]
       : [{ id: "creative" as const, label: "Créatif ✦" }]),
+    { id: "share", label: "Partager" },
   ];
   // A service touched in the preview opens in "Prestations".
   const current = serviceFocus
@@ -205,18 +225,27 @@ export function Studio({
   }
 
   const slotPhoto = (slot: PhotoSlot) =>
-    slot === "cover" ? config.content.cover : config.content.works[slot]?.photo;
+    slot === "cover"
+      ? config.content.cover
+      : slot === "portrait"
+        ? config.content.portrait.photo
+        : config.content.works[slot]?.photo;
 
   function replacePhoto(slot: PhotoSlot, id: string) {
     const content =
       slot === "cover"
         ? { ...config.content, cover: id }
-        : {
-            ...config.content,
-            works: config.content.works.map((work, position) =>
-              position === slot ? { ...work, photo: id } : work,
-            ),
-          };
+        : slot === "portrait"
+          ? {
+              ...config.content,
+              portrait: { ...config.content.portrait, photo: id },
+            }
+          : {
+              ...config.content,
+              works: config.content.works.map((work, position) =>
+                position === slot ? { ...work, photo: id } : work,
+              ),
+            };
     set({ content });
   }
 
@@ -353,7 +382,7 @@ export function Studio({
                   aria-describedby={
                     catalogIssues.length ? "studio-catalog-issues" : undefined
                   }
-                  className={`h-11 shrink-0 cursor-pointer rounded-full px-4 text-[14px] font-semibold disabled:cursor-default disabled:bg-black/10 disabled:text-black/45 ${changed && catalogIssues.length ? "bg-[#FDECEA] text-[#7A1F17]" : "bg-[#2B3BFF] text-white"}`}
+                  className={`h-11 shrink-0 cursor-pointer rounded-full px-4 text-[14px] font-semibold disabled:cursor-default disabled:bg-black/10 disabled:text-black/60 ${changed && catalogIssues.length ? "bg-[#FDECEA] text-[#7A1F17]" : "bg-[#2B3BFF] text-white"}`}
                 >
                   {!changed
                     ? "Publié ✓"
@@ -437,6 +466,8 @@ export function Studio({
                     Revenir au brouillon
                   </SmallButton>
                 </div>
+              ) : current === "share" ? (
+                <SharePanel config={config} changed={changed} />
               ) : current === "catalog" ? (
                 <CatalogEditor
                   catalog={catalog}
@@ -526,6 +557,58 @@ export function Studio({
                         </button>
                       ))}
                     </>
+                  ) : current === "sections" ? (
+                    <>
+                      <p className="text-[13.5px] text-black/60">
+                        Choisis ce que ton site montre. Masquer une section ne
+                        supprime rien : elle revient telle quelle.
+                        {creative
+                          ? " L’ordre et les variantes se règlent dans Composition."
+                          : ""}
+                      </p>
+                      {(creative ? config : universe.config).sections.map(
+                        (section, index) => {
+                          const locked = lockedScenes.includes(section.kind);
+                          const shown = !config.hidden?.includes(section.kind);
+                          return (
+                            <button
+                              key={`${section.kind}-${index}`}
+                              type="button"
+                              role="switch"
+                              aria-checked={shown}
+                              disabled={locked}
+                              onClick={() =>
+                                set({
+                                  hidden: shown
+                                    ? [...(config.hidden ?? []), section.kind]
+                                    : (config.hidden ?? []).filter(
+                                        (kind) => kind !== section.kind,
+                                      ),
+                                })
+                              }
+                              className="flex min-h-14 w-full cursor-pointer items-center gap-3 rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-left disabled:cursor-default"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-[15px] font-medium">
+                                  {sceneNames[section.kind]}
+                                </span>
+                                <span className="block text-[12.5px] leading-snug text-black/55">
+                                  {sceneRoles[section.kind]}
+                                </span>
+                              </span>
+                              <span
+                                aria-hidden="true"
+                                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${shown ? (locked ? "bg-black/25" : "bg-[#2B3BFF]") : "bg-black/20"}`}
+                              >
+                                <span
+                                  className={`absolute top-0.5 size-6 rounded-full bg-white shadow transition-transform ${shown ? "translate-x-[22px]" : "translate-x-0.5"}`}
+                                />
+                              </span>
+                            </button>
+                          );
+                        },
+                      )}
+                    </>
                   ) : current === "photos" ? (
                     <>
                       <p className="text-[13.5px] text-black/60">
@@ -537,6 +620,7 @@ export function Studio({
                         {(
                           [
                             "cover",
+                            "portrait",
                             ...config.content.works.map((_, index) => index),
                           ] as PhotoSlot[]
                         ).map((slot) => {
@@ -566,7 +650,9 @@ export function Studio({
                               <span className="text-[12.5px] text-black/60">
                                 {slot === "cover"
                                   ? "Couverture"
-                                  : `Réalisation ${slot + 1}`}
+                                  : slot === "portrait"
+                                    ? "Ton portrait"
+                                    : `Réalisation ${slot + 1}`}
                               </span>
                             </button>
                           );
@@ -616,6 +702,37 @@ export function Studio({
                           )
                         }
                       />
+                      <p className="mt-2 border-t border-black/10 pt-4 text-[13px] font-semibold">
+                        Ton portrait
+                      </p>
+                      {(
+                        [
+                          ["name", "Ton prénom", false],
+                          ["role", "Ton métier", false],
+                          ["text", "Quelques mots sur toi", true],
+                        ] as const
+                      ).map(([key, label, multiline]) => (
+                        <Text
+                          key={key}
+                          label={label}
+                          multiline={multiline}
+                          value={config.content.portrait[key]}
+                          onChange={(value) =>
+                            set(
+                              {
+                                content: {
+                                  ...config.content,
+                                  portrait: {
+                                    ...config.content.portrait,
+                                    [key]: value,
+                                  },
+                                },
+                              },
+                              `portrait.${key}`,
+                            )
+                          }
+                        />
+                      ))}
                     </>
                   ) : current === "colors" ? (
                     <>
@@ -736,6 +853,11 @@ export function Studio({
                               <div className="flex items-center justify-between">
                                 <span className="text-[14px] font-semibold">
                                   {sceneNames[section.kind]}
+                                  {config.hidden?.includes(section.kind) ? (
+                                    <span className="ml-1.5 font-normal text-black/60">
+                                      · masquée
+                                    </span>
+                                  ) : null}
                                 </span>
                                 {index > 0 ? (
                                   <span className="flex gap-1">
@@ -757,7 +879,7 @@ export function Studio({
                                     </IconButton>
                                   </span>
                                 ) : (
-                                  <span className="text-[12px] text-black/45">
+                                  <span className="text-[12px] text-black/60">
                                     toujours en premier
                                   </span>
                                 )}
@@ -882,6 +1004,7 @@ export function Studio({
                           ...universe.config,
                           brand: config.brand,
                           content: config.content,
+                          hidden: config.hidden,
                         })
                       }
                     >
@@ -1050,7 +1173,7 @@ function ColorRow({
     <label className="flex min-h-11 items-center justify-between gap-3">
       <span className="text-[14px]">{label}</span>
       <span className="flex items-center gap-2">
-        <span className="font-mono text-[12px] text-black/50 uppercase">
+        <span className="font-mono text-[12px] text-black/60 uppercase">
           {value}
         </span>
         <input

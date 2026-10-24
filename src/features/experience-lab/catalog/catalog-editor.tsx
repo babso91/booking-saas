@@ -183,7 +183,11 @@ function ListView({
           Ton catalogue, tel que tes clientes le réservent. Il te suit dans tous
           les univers.
         </p>
-        <p className="mt-1 text-[12.5px] text-black/45">
+        <p className="mt-1 text-[13px] leading-snug text-black/60">
+          Tes prix et tes durées sont les tiens : ceux affichés ici sont des
+          exemples, à remplacer.
+        </p>
+        <p className="mt-1 text-[12.5px] text-black/60">
           {value.categories.length} catégorie
           {value.categories.length > 1 ? "s" : ""} · {value.services.length}{" "}
           prestation{value.services.length > 1 ? "s" : ""} · {online} en ligne
@@ -245,7 +249,7 @@ function ListView({
                 >
                   {category.name.trim() || "Catégorie sans nom"}
                 </span>
-                <span className="block text-[12.5px] text-black/50">
+                <span className="block text-[12.5px] text-black/60">
                   {services.length} prestation{services.length > 1 ? "s" : ""}
                   {!category.visible
                     ? " · masquée sur ton site"
@@ -276,11 +280,11 @@ function ListView({
                 >
                   <span className="min-w-0 flex-1">
                     <span
-                      className={`block text-[15px] [overflow-wrap:anywhere] ${service.name.trim() ? "" : "text-[#B3261E] italic"} ${service.active ? "" : "text-black/45"}`}
+                      className={`block text-[15px] [overflow-wrap:anywhere] ${service.name.trim() ? "" : "text-[#B3261E] italic"} ${service.active ? "" : "text-black/60"}`}
                     >
                       {service.name.trim() || "Sans nom"}
                     </span>
-                    <span className="block text-[12.5px] text-black/50 tabular-nums">
+                    <span className="block text-[12.5px] text-black/60 tabular-nums">
                       {minutes(service.durationMinutes)} ·{" "}
                       {euros(service.priceCents)}
                       {service.options.length
@@ -701,7 +705,7 @@ function OptionEditor({
           />
         )}
       </Field>
-      <p className="text-[12.5px] text-black/50">
+      <p className="text-[12.5px] text-black/60">
         Réponses (la première est proposée par défaut)
       </p>
       <ul className="flex flex-col gap-2">
@@ -813,7 +817,7 @@ function Field({
           {label}
         </label>
         {hint ? (
-          <span className="text-[12px] text-black/40 tabular-nums">{hint}</span>
+          <span className="text-[12px] text-black/60 tabular-nums">{hint}</span>
         ) : null}
       </span>
       {children(id)}
@@ -849,7 +853,7 @@ function Money({
     <span className="flex flex-col gap-1">
       <span className="relative flex items-center">
         {prefix ? (
-          <span className="pointer-events-none absolute left-3 text-[15px] text-black/45">
+          <span className="pointer-events-none absolute left-3 text-[15px] text-black/60">
             {prefix}
           </span>
         ) : null}
@@ -867,7 +871,7 @@ function Money({
           }}
           className={`${field} h-11 tabular-nums ${prefix ? "pl-6" : ""} pr-8 ${invalid ? "border-[#B3261E]" : ""}`}
         />
-        <span className="pointer-events-none absolute right-3 text-[15px] text-black/45">
+        <span className="pointer-events-none absolute right-3 text-[15px] text-black/60">
           €
         </span>
       </span>

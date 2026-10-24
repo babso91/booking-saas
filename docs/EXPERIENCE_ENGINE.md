@@ -38,7 +38,10 @@ Un site est une `SiteConfig` (`engine/config.ts`) :
 | Ouverture    | Coupe Didone · Éclosion · Cinétique |
 | Manifeste    | Manifeste · Lignes                  |
 | Réalisations | Lookbook · Arches · Pellicule       |
+| Portrait     | Éditorial · Arche                   |
 | Prestations  | Index de prix · Étagère · Tuiles    |
+
+**Sections affichées :** c'est son contenu, donc chaque formule le garde, y compris en changeant d'univers. Elle peut masquer le manifeste, les réalisations ou le portrait. L'ouverture (son nom) et les prestations (la réservation) restent toujours affichées. L'ordre et les variantes relèvent de Signature.
 
 **Principe :**
 
@@ -240,11 +243,19 @@ Voir § 3 :
 
 ## 7. Performance (téléphone moyen, 4G)
 
-- **Typographie :** ne charger que la paire de la professionnelle. Le labo charge les neuf familles, le produit non.
+- **Typographie :** ne charger que la paire de la professionnelle. Le labo déclare les neuf familles (le studio change d'univers en direct) mais n'en précharge aucune : une page ne télécharge que les fichiers qu'elle affiche, 6 ou 7 au lieu de 14.
+- **Studio chargé à part :** une cliente ne télécharge jamais les éditeurs (`next/dynamic`). Dans le produit, le Studio vivra dans le dashboard.
 - **Photo d'ouverture :** chargée immédiatement. Les autres en différé, responsives.
 - **Réservation :** elle n'attend jamais une animation.
 - **Préférence d'accessibilité :** « réduire les animations » est respecté partout (`MotionConfig reducedMotion="user"`).
 - **Budget :** LCP sous 2,5 s en 4G. Pas de bibliothèque 3D.
+- **Mesuré (build de production, profil « 4G lente » de Lighthouse : 1,6 Mb/s, 150 ms de latence, processeur ralenti ×4, cache vide) :**
+  - premier affichage vers 1,0 s dans les trois univers ;
+  - LCP de Mila : 1,0 s ;
+  - LCP d'Alma : 3,3 s (6,5 s avant ce travail). C'est le dernier mot de l'« Éclosion », une lenteur voulue et désormais resserrée ;
+  - LCP de Nail Lab : 3,6 à 4,4 s. C'est le téléchargement de sa grande photo d'ouverture ; sans limitation réseau, 0,17 s ;
+  - CLS de 0,024 au plus.
+- **Révélation « coupe » corrigée :** elle utilisait `clip-path`. Or Chromium considère hors du viewport un élément entièrement coupé par son propre `clip-path` : la révélation pouvait ne jamais démarrer, et le contenu de Mila restait invisible. Elle passe par un masque animé, au rendu identique.
 
 ## 7 bis. Retours de la première professionnelle (et ce qui en a été fait)
 
@@ -253,8 +264,15 @@ Voir § 3 :
 - **« Contrôler la couleur du bouton Réserver » :** fait, en Core, avec la lisibilité garantie.
 - **Réservation directe sans compte et photos personnelles :** inchangées. Ce sont les points qu'elle a le plus aimés.
 
+## 7 ter. Partage
+
+- **Studio → Partager :** son lien, « Copier le lien », le partage natif du téléphone et son QR code, à télécharger en PNG ou en SVG.
+- **Le QR est dessiné dans le navigateur** (`share/qr.ts` : encodeur maison, sans dépendance) : rien n'est envoyé. Chaque version (1 à 10, ASCII et UTF-8) a été vérifiée une fois avec le lecteur QR du système (CoreImage). Un code de référence, relu ainsi, est figé dans les tests.
+- **Les couleurs du QR** sont celles de son site seulement si elles se scannent bien (foncé sur clair, contraste d'au moins 7:1). Sinon, noir sur blanc.
+- **Le lien partagé** ne reprend que l'adresse publique de la page, jamais une clé d'accès présente dans l'URL.
+
 ## 8. Prochaines étapes du laboratoire
 
-- **Variantes à ajouter, une par une, soignées :** portrait de la professionnelle, témoignages, avant/après.
+- **Variantes à ajouter, une par une, soignées :** témoignages (explicitement fictifs dans le labo), avant/après au toucher.
 - **Catalogue :** glisser-déposer en complément de « Monter / Descendre » ; options à choix multiples, si un métier en a besoin.
 - **Vérification avec de vraies professionnelles** avant tout choix de prix.

@@ -4,7 +4,7 @@
 // of it describes a real business or a real tariff, and none of it must be
 // presented as such. Do not add real names or real prices here.
 
-import type { SiteConfig } from "../engine/config";
+import type { Portrait, SiteConfig } from "../engine/config";
 import type { Catalog, CatalogService, ServiceOption } from "./model";
 
 export type ProId = "cils" | "henne" | "epilation";
@@ -14,6 +14,8 @@ export type Pro = {
   /** Short label for the lab's switcher. */
   label: string;
   brand: SiteConfig["brand"];
+  /** Her portrait's words (the photo stays the universe's example). */
+  portrait: Omit<Portrait, "photo">;
   catalog: Catalog;
 };
 
@@ -71,6 +73,11 @@ const yesNo = (
 const cils: Pro = {
   id: "cils",
   label: "Technicienne cils",
+  portrait: {
+    name: "Prénom Exemple",
+    role: "Technicienne cils",
+    text: "Texte d’exemple : ici, la professionnelle se présente avec ses mots, son parcours et sa façon de travailler.",
+  },
   brand: {
     name: "Atelier Cilia Test",
     kind: "Extensions de cils",
@@ -192,6 +199,11 @@ const cils: Pro = {
 const henne: Pro = {
   id: "henne",
   label: "Artiste henné",
+  portrait: {
+    name: "Prénom Exemple",
+    role: "Artiste henné",
+    text: "Texte d’exemple : ici, l’artiste raconte ce qu’elle aime dessiner et comment se passe une séance.",
+  },
   brand: {
     name: "Maison Tracé Fictif",
     kind: "Henné",
@@ -283,6 +295,11 @@ const henne: Pro = {
 const epilation: Pro = {
   id: "epilation",
   label: "Institut épilation",
+  portrait: {
+    name: "Prénom Exemple",
+    role: "Esthéticienne",
+    text: "Texte d’exemple : ici, l’esthéticienne explique sa méthode, ses produits et ce qui rassure ses clientes.",
+  },
   brand: {
     name: "Institut Lisse Imaginaire",
     kind: "Épilation",
