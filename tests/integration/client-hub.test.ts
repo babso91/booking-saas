@@ -20,6 +20,7 @@ import { GET as getAppointments } from "@/app/api/client-hub/businesses/[busines
 import { GET as getAppointment } from "@/app/api/client-hub/businesses/[businessId]/appointments/[appointmentId]/route";
 import { GET as getLoyalty } from "@/app/api/client-hub/businesses/[businessId]/loyalty/route";
 import { GET as getLedger } from "@/app/api/client-hub/businesses/[businessId]/loyalty/ledger/route";
+import { CookieJar } from "../support/cookie-jar";
 import { NextRequest } from "next/server";
 
 import {
@@ -43,6 +44,7 @@ import {
 import {
   closeTransaction,
   openTransaction,
+  outcome,
   waitUntilBlocked,
 } from "./support/transactions";
 
@@ -89,7 +91,10 @@ function ok<T>(result: ActionResult<T>): T {
 
 type Call = {
   body?: unknown;
+  /** A session token: sent as its own session's cookie, as a browser would. */
   cookie?: string | null;
+  /** A raw Cookie header instead. */
+  rawCookie?: string;
   ip?: string;
   proxySecret?: string | null;
 };
@@ -100,12 +105,44 @@ function request(method: string, path: string, call: Call = {}) {
     headers.set("x-booking-proxy-secret", call.proxySecret ?? SECRET);
     headers.set("x-booking-client-ip", call.ip ?? randomIp());
   }
-  if (call.cookie) headers.set("cookie", `client_hub_session=${call.cookie}`);
+  if (call.cookie) headers.set("cookie", cookieOf(call.cookie));
+  if (call.rawCookie !== undefined) headers.set("cookie", call.rawCookie);
   return new NextRequest(new URL(path, BASE), {
     method,
     headers,
     body: call.body === undefined ? undefined : JSON.stringify(call.body),
   });
+}
+
+// Each issued token's session (its cookie's name), from the verify answers.
+const sessionOfToken = new Map<string, string>();
+const UNKNOWN_SESSION = "00000000-0000-4000-8000-000000000000";
+const SESSION_COOKIE = /^client_hub_s_([0-9a-f-]{36})=([0-9a-f]{64});/;
+
+/** The Cookie pair a browser holding `token` sends. */
+function cookieOf(token: string) {
+  return `client_hub_s_${sessionOfToken.get(token) ?? UNKNOWN_SESSION}=${token}`;
+}
+
+/** The session cookie a response adds, if any. */
+function addedSession(response: Response) {
+  for (const line of response.headers.getSetCookie()) {
+    const match = SESSION_COOKIE.exec(line);
+    if (match) {
+      sessionOfToken.set(match[2]!, match[1]!);
+      return { line, session: match[1]!, token: match[2]! };
+    }
+  }
+  return null;
+}
+
+/** The cookie names a response deletes. */
+function deletedNames(response: Response) {
+  return response.headers
+    .getSetCookie()
+    .filter((line) => /Max-Age=0/.test(line))
+    .map((line) => line.slice(0, line.indexOf("=")))
+    .sort();
 }
 
 async function json(response: Response) {
@@ -140,11 +177,13 @@ async function verify(
       body: { challengeId, email, code },
     }),
   );
-  const cookie = response.headers.get("set-cookie");
+  const added = addedSession(response);
   return {
     ...(await json(response)),
-    cookie,
-    token: cookie?.match(/client_hub_session=([0-9a-f]{64})/)?.[1] ?? null,
+    cookie: added?.line ?? null,
+    token: added?.token ?? null,
+    session: added?.session ?? null,
+    account: response.headers.get("x-client-hub-account"),
   };
 }
 
@@ -496,7 +535,7 @@ describe("passwordless login", () => {
     // Two networks: only the challenge's row lock orders them (not the
     // per-network advisory lock).
     const call =
-      "select status from public.client_hub_verify_code($1, $2, $3, $4)";
+      "select status from public.client_hub_sign_in($1, $2, $3, $4, '{}', '{}')";
     const first = await openTransaction({ role: "service_role" });
     const second = await openTransaction({ role: "service_role" });
     const firstResult = await first.connection.query(call, [
@@ -568,7 +607,7 @@ describe("passwordless login", () => {
 });
 
 describe("sessions", () => {
-  it("end on logout (one, or all of the account) and reject forged tokens", async () => {
+  it("end on logout (one, or all of the account), deleting only the presented cookie; forged tokens refused", async () => {
     const address = email("session");
     const first = await login(address);
     const second = await login(address);
@@ -578,7 +617,9 @@ describe("sessions", () => {
       request("DELETE", "/api/client-hub/session", { cookie: first }),
     );
     expect(out.status).toBe(200);
-    expect(out.headers.get("set-cookie")).toMatch(/Max-Age=0/);
+    expect(deletedNames(out)).toEqual([
+      `client_hub_s_${sessionOfToken.get(first)}`,
+    ]);
     expect((await me(first)).status).toBe(401);
     expect((await me(second)).status).toBe(200);
 
@@ -589,19 +630,48 @@ describe("sessions", () => {
     expect((await me(third)).status).toBe(401);
 
     expect((await me("f".repeat(64))).status).toBe(401);
-    // Two cookies of the session's name: refused, not guessed between.
-    const doubled = request("GET", "/api/client-hub/me");
-    doubled.headers.set(
-      "cookie",
-      `client_hub_session=${third}; client_hub_session=${"e".repeat(64)}`,
-    );
-    expect((await getMe(doubled)).status).toBe(401);
     expect((await me("not-a-token")).status).toBe(401);
     expect((await me(null)).body.error.code).toBe("client_hub_unauthenticated");
   });
 
-  it("expire: an expired session is refused and its cookie removed", async () => {
+  it("a cookie counts only under its own session's name: another session's token, or a planted value, authenticates nothing", async () => {
+    const mine = await login(email("own-name"));
+    const other = await login(email("other-name"));
+    const own = `client_hub_s_${sessionOfToken.get(mine)}`;
+    const otherName = `client_hub_s_${sessionOfToken.get(other)}`;
+
+    // Another session's token under my session's name, my token under
+    // another name, my token under a name that is no session: nothing.
+    for (const rawCookie of [
+      `${own}=${other}`,
+      `${otherName}=${mine}`,
+      `client_hub_s_${UNKNOWN_SESSION}=${mine}`,
+      `client_hub_session=${mine}`,
+    ]) {
+      const response = await getMe(
+        request("GET", "/api/client-hub/me", { rawCookie }),
+      );
+      expect(response.status, rawCookie).toBe(401);
+    }
+    // None of those attempts ended a session.
+    expect((await me(mine)).status).toBe(200);
+    expect((await me(other)).status).toBe(200);
+
+    // A planted value under my session's name, next to mine (a sibling
+    // subdomain's cookie): mine still counts, the planted one is nothing,
+    // and my cookie is not deleted.
+    const doubled = await getMe(
+      request("GET", "/api/client-hub/me", {
+        rawCookie: `${own}=${"e".repeat(64)}; ${own}=${mine}`,
+      }),
+    );
+    expect(doubled.status).toBe(200);
+    expect(deletedNames(doubled)).toEqual([]);
+  });
+
+  it("expired: refused, and the answer deletes that session's cookie only", async () => {
     const token = await login(email("expiry"));
+    const live = await login(email("expiry-other"));
     expect((await me(token)).status).toBe(200);
     await db.query(
       `update private.client_hub_sessions set expires_at = now() - interval '1 second'
@@ -612,7 +682,30 @@ describe("sessions", () => {
       request("GET", "/api/client-hub/me", { cookie: token }),
     );
     expect(expired.status).toBe(401);
-    expect(expired.headers.get("set-cookie")).toMatch(/Max-Age=0/);
+    expect(expired.headers.get("cache-control")).toBe("no-store");
+    expect(expired.headers.get("x-client-hub-account")).toBeNull();
+    expect(deletedNames(expired)).toEqual([
+      `client_hub_s_${sessionOfToken.get(token)}`,
+    ]);
+    expect((await me(live)).status).toBe(200);
+  });
+
+  it("a revoked session (signed out everywhere) stays refused; each refusal deletes only its own cookie", async () => {
+    const address = email("revoked");
+    const one = await login(address);
+    const two = await login(address);
+    await deleteSession(
+      request("DELETE", "/api/client-hub/session?all=true", { cookie: one }),
+    );
+    for (const token of [one, two]) {
+      const refused = await getMe(
+        request("GET", "/api/client-hub/me", { cookie: token }),
+      );
+      expect(refused.status).toBe(401);
+      expect(deletedNames(refused)).toEqual([
+        `client_hub_s_${sessionOfToken.get(token)}`,
+      ]);
+    }
   });
 
   it("sessions ended more than a day ago are purged", async () => {
@@ -651,6 +744,527 @@ describe("sessions", () => {
 });
 
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// One browser, several session cookies (docs/CLIENT_HUB_CONTRACT.md,
+// "Sessions in the browser"). The real route handlers and PostgreSQL; a
+// cookie jar applies each answer's real Set-Cookie headers WHEN THE TEST
+// SAYS, in any order, as late answers arrive in a browser (Chromium itself:
+// tests/e2e/client-hub-browser.test.ts).
+// ---------------------------------------------------------------------------
+
+/** A browser's request: its jar's cookies for that path. */
+function fromJar(
+  jar: CookieJar,
+  method: string,
+  path: string,
+  body?: unknown,
+  ip = randomIp(),
+) {
+  return request(method, path, { rawCookie: jar.header(path), body, ip });
+}
+
+/** Asks a code for `address`; the verification, still to be sent. */
+async function codeFor(address: string, ip = randomIp()) {
+  const asked = await askCode(address, { ip });
+  expect(asked.status).toBe(202);
+  const challengeId = asked.body.data.challengeId as string;
+  const code = lastCode();
+  return (jar: CookieJar) =>
+    postVerify(
+      fromJar(
+        jar,
+        "POST",
+        "/api/client-hub/session/verify",
+        { challengeId, email: address, code },
+        ip,
+      ),
+    );
+}
+
+/** Signs `address` in through `jar` (answer applied at once). */
+async function signInJar(jar: CookieJar, address: string) {
+  const response = await (await codeFor(address))(jar);
+  expect(response.status).toBe(200);
+  jar.apply(response);
+  return addedSession(response)!;
+}
+
+async function meOf(jar: CookieJar) {
+  const response = await getMe(fromJar(jar, "GET", "/api/client-hub/me"));
+  return {
+    status: response.status,
+    body: await response.json(),
+    account: response.headers.get("x-client-hub-account"),
+    response,
+  };
+}
+
+async function liveSessions(ids: string[]) {
+  const { rows } = await db.query<{ id: string }>(
+    `select id from private.client_hub_sessions
+     where id = any($1) and revoked_at is null and expires_at > now()
+     order by id`,
+    [ids],
+  );
+  return rows.map((row) => row.id).sort();
+}
+
+const jarSessions = (jar: CookieJar) =>
+  jar
+    .header("/api/client-hub/me")
+    .split("; ")
+    .filter((pair) => pair.startsWith("client_hub_s_"))
+    .map((pair) => pair.slice("client_hub_s_".length, pair.indexOf("=")))
+    .sort();
+
+describe("one browser, several session cookies", () => {
+  it("defect 1 fixed: A's sign-out, answered late after B signed in, never erases B (both orders)", async () => {
+    for (const order of ["sign-out first", "sign-in first"] as const) {
+      const jar = new CookieJar();
+      const a = await signInJar(jar, email("late-out-a"));
+      // A's sign-out is processed by the server; its answer is held.
+      const out = await deleteSession(
+        fromJar(jar, "DELETE", "/api/client-hub/session"),
+      );
+      expect(out.status).toBe(200);
+      // B signs in on the same browser (it still presents A's cookie).
+      const bAddress = email("late-out-b");
+      const verifyB = await (await codeFor(bAddress))(jar);
+      expect(verifyB.status).toBe(200);
+      const b = addedSession(verifyB)!;
+
+      if (order === "sign-out first") {
+        jar.apply(out);
+        jar.apply(verifyB);
+      } else {
+        jar.apply(verifyB);
+        jar.apply(out);
+      }
+      expect(jarSessions(jar), order).toEqual([b.session]);
+      const now = await meOf(jar);
+      expect(now.status, order).toBe(200);
+      expect(now.body.data.email).toBe(bAddress);
+      expect(await liveSessions([a.session, b.session])).toEqual([b.session]);
+    }
+  });
+
+  it("defect 2 fixed: A's sign-in, answered late after B signed in, never shows A in B's browser: no identity is chosen (both orders)", async () => {
+    for (const order of ["B first", "A first"] as const) {
+      const jar = new CookieJar();
+      const aAddress = email("late-in-a");
+      const bAddress = email("late-in-b");
+      // A's verification is processed by the server; its answer is held.
+      const verifyA = await (await codeFor(aAddress))(jar);
+      expect(verifyA.status).toBe(200);
+      const a = addedSession(verifyA)!;
+      const verifyB = await (await codeFor(bAddress))(jar);
+      const b = addedSession(verifyB)!;
+
+      if (order === "B first") {
+        jar.apply(verifyB);
+        expect((await meOf(jar)).body.data.email).toBe(bAddress);
+        jar.apply(verifyA);
+      } else {
+        jar.apply(verifyA);
+        jar.apply(verifyB);
+      }
+      // Live sessions of two accounts in one browser: both are ended,
+      // none is chosen, and every answer from now on says nobody.
+      const now = await meOf(jar);
+      expect(now.status, order).toBe(401);
+      expect(now.account).toBeNull();
+      expect(JSON.stringify(now.body)).not.toContain(aAddress);
+      expect(await liveSessions([a.session, b.session])).toEqual([]);
+      jar.apply(now.response);
+      expect(jarSessions(jar)).toEqual([]);
+      expect((await meOf(jar)).status).toBe(401);
+
+      // The browser signs in again normally.
+      await signInJar(jar, bAddress);
+      expect((await meOf(jar)).body.data.email).toBe(bAddress);
+    }
+  });
+
+  it("two sign-ins of ONE account crossing: the most recent session is kept, whatever order the answers arrive in", async () => {
+    for (const order of ["older last", "newer last"] as const) {
+      const jar = new CookieJar();
+      const address = email("same-account");
+      const verifyOld = await (await codeFor(address))(jar);
+      const older = addedSession(verifyOld)!;
+      const verifyNew = await (await codeFor(address))(jar);
+      const newer = addedSession(verifyNew)!;
+      if (order === "older last") {
+        jar.apply(verifyNew);
+        jar.apply(verifyOld);
+      } else {
+        jar.apply(verifyOld);
+        jar.apply(verifyNew);
+      }
+      const now = await meOf(jar);
+      expect(now.status, order).toBe(200);
+      expect(now.body.data.email).toBe(address);
+      expect(await liveSessions([older.session, newer.session])).toEqual([
+        newer.session,
+      ]);
+      jar.apply(now.response);
+      expect(jarSessions(jar)).toEqual([newer.session]);
+    }
+  });
+
+  it("signing in replaces who the browser is: the presented session is ended and its cookie deleted", async () => {
+    const jar = new CookieJar();
+    const a = await signInJar(jar, email("replace-a"));
+    const bAddress = email("replace-b");
+    const b = await signInJar(jar, bAddress);
+    expect(jarSessions(jar)).toEqual([b.session]);
+    expect(await liveSessions([a.session, b.session])).toEqual([b.session]);
+    const now = await meOf(jar);
+    expect(now.body.data.email).toBe(bAddress);
+  });
+
+  it("a wrong code ends nothing and changes no cookie", async () => {
+    const jar = new CookieJar();
+    const a = await signInJar(jar, email("wrong-code"));
+    const other = email("wrong-code-b");
+    const asked = await askCode(other);
+    const refused = await postVerify(
+      fromJar(jar, "POST", "/api/client-hub/session/verify", {
+        challengeId: asked.body.data.challengeId,
+        email: other,
+        code: "00000000",
+      }),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.headers.getSetCookie()).toEqual([]);
+    expect(await liveSessions([a.session])).toEqual([a.session]);
+  });
+
+  it("a read of A answered late, after B signed in: it names A (the page drops it) and deletes nothing of B", async () => {
+    const jar = new CookieJar();
+    const aAddress = email("late-read-a");
+    await signInJar(jar, aAddress);
+    const lateA = await meOf(jar); // processed now, applied later
+    const bAddress = email("late-read-b");
+    const b = await signInJar(jar, bAddress);
+    jar.apply(lateA.response);
+    expect(jarSessions(jar)).toEqual([b.session]);
+    const now = await meOf(jar);
+    expect(now.body.data.email).toBe(bAddress);
+    // Each answer names the account it was served for: different ones.
+    expect(lateA.account).toMatch(/^[0-9a-f-]{36}$/);
+    expect(now.account).toMatch(/^[0-9a-f-]{36}$/);
+    expect(lateA.account).not.toBe(now.account);
+  });
+
+  it("every authenticated route resolves the same way and names the same account", async () => {
+    const jar = new CookieJar();
+    await signInJar(jar, email("routes"));
+    const shop = await newShop("routes");
+    const me1 = await meOf(jar);
+    const paths = [
+      `/api/client-hub/businesses/${shop.business.id}/appointments?scope=upcoming`,
+      `/api/client-hub/businesses/${shop.business.id}/loyalty`,
+      `/api/client-hub/businesses/${shop.business.id}/loyalty/ledger`,
+      `/api/client-hub/businesses/${shop.business.id}/appointments/${randomUUID()}`,
+    ];
+    const handlers = [getAppointments, getLoyalty, getLedger, getAppointment];
+    for (const [index, path] of paths.entries()) {
+      const segments = new URL(path, BASE).pathname.split("/");
+      const response = await handlers[index]!(
+        fromJar(jar, "GET", path),
+        params({
+          businessId: shop.business.id,
+          appointmentId: segments[6],
+        }) as never,
+      );
+      // No relationship authorized: 404, but served for her account.
+      expect(response.status, path).toBe(404);
+      expect(response.headers.get("x-client-hub-account"), path).toBe(
+        me1.account,
+      );
+    }
+  });
+
+  it("cookie tossing: another account's live session planted next to the browser's is never chosen; both end", async () => {
+    const jar = new CookieJar();
+    const victimAddress = email("toss-victim");
+    const victim = await signInJar(jar, victimAddress);
+    const attackerAddress = email("toss-attacker");
+    const attacker = await login(attackerAddress);
+    const attackerSession = sessionOfToken.get(attacker)!;
+    // What a sibling subdomain can do: set a cookie (Domain=parent) the
+    // browser sends along with this host's own cookies.
+    jar.set(
+      `client_hub_s_${attackerSession}=${attacker}; Path=/api/client-hub/me; Max-Age=600`,
+    );
+    const now = await meOf(jar);
+    expect(now.status).toBe(401);
+    expect(JSON.stringify(now.body)).not.toContain(attackerAddress);
+    expect(await liveSessions([victim.session, attackerSession])).toEqual([]);
+  });
+
+  it("LIMIT (documented): a browser with no session of its own accepts a planted live session (as before; needs a hostile sibling subdomain, prevented only by a __Host- cookie)", async () => {
+    const attackerAddress = email("toss-empty");
+    const attacker = await login(attackerAddress);
+    const jar = new CookieJar();
+    jar.set(
+      `client_hub_s_${sessionOfToken.get(attacker)}=${attacker}; Path=/api/client-hub; Max-Age=600`,
+    );
+    const now = await meOf(jar);
+    expect(now.status).toBe(200);
+    expect(now.body.data.email).toBe(attackerAddress);
+  });
+
+  it("more session cookies than allowed: refused, none chosen and none ended (fail closed), every one deleted", async () => {
+    const jar = new CookieJar();
+    const address = email("too-many");
+    const real = await signInJar(jar, address);
+    for (let i = 0; i < 16; i += 1) {
+      jar.set(
+        `client_hub_s_${randomUUID()}=${"d".repeat(64)}; Path=/api/client-hub; Max-Age=600`,
+      );
+    }
+    const now = await meOf(jar);
+    expect(now.status).toBe(401);
+    expect(deletedNames(now.response)).toHaveLength(17);
+    // Not ended: the database was not asked (its cookie is gone though).
+    expect(await liveSessions([real.session])).toEqual([real.session]);
+    jar.apply(now.response);
+    expect(jarSessions(jar)).toEqual([]);
+    await signInJar(jar, address);
+    expect((await meOf(jar)).status).toBe(200);
+  });
+
+  it("an oversized Cookie header never reaches the handlers in production (Node answers 431); here: the limit applies first", async () => {
+    // Node's default header limit (16 KiB) refuses such a request before any
+    // route runs (covered with `next start` in the e2e tests). The handler,
+    // given one anyway, still refuses without asking the database.
+    const rawCookie = Array.from(
+      { length: 200 },
+      () => `client_hub_s_${randomUUID()}=${"a".repeat(64)}`,
+    ).join("; ");
+    const response = await getMe(
+      request("GET", "/api/client-hub/me", { rawCookie }),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("several devices: signing in on one ends only the session that browser presented", async () => {
+    const address = email("devices");
+    const phone = new CookieJar();
+    const laptop = new CookieJar();
+    const onPhone = await signInJar(phone, address);
+    const onLaptop = await signInJar(laptop, address);
+    const otherAccount = email("devices-other");
+    await signInJar(phone, otherAccount);
+    expect(await liveSessions([onPhone.session, onLaptop.session])).toEqual([
+      onLaptop.session,
+    ]);
+    expect((await meOf(laptop)).body.data.email).toBe(address);
+
+    // Signed out everywhere from the laptop: the phone's other account is
+    // not touched.
+    const out = await deleteSession(
+      fromJar(laptop, "DELETE", "/api/client-hub/session?all=true"),
+    );
+    laptop.apply(out);
+    expect((await meOf(laptop)).status).toBe(401);
+    expect((await meOf(phone)).body.data.email).toBe(otherAccount);
+  });
+
+  it("LIMIT (documented): a sign-in already validated by the server before a sign-out, answered after it, stays open; signing out everywhere ends it", async () => {
+    const jar = new CookieJar();
+    const address = email("after-out");
+    // Tab 1's verification is processed; its answer is held.
+    const verifyEarly = await (await codeFor(address))(jar);
+    const early = addedSession(verifyEarly)!;
+    // Tab 2 signs in and out.
+    const tab2 = await signInJar(jar, address);
+    const out = await deleteSession(
+      fromJar(jar, "DELETE", "/api/client-hub/session"),
+    );
+    jar.apply(out);
+    expect((await meOf(jar)).status).toBe(401);
+    // Tab 1's answer arrives: its session was never presented to the
+    // sign-out, so it is open (tab 1 shows it; tab 2 sees it once it checks).
+    jar.apply(verifyEarly);
+    expect((await meOf(jar)).body.data.email).toBe(address);
+    expect(await liveSessions([early.session, tab2.session])).toEqual([
+      early.session,
+    ]);
+    const all = await deleteSession(
+      fromJar(jar, "DELETE", "/api/client-hub/session?all=true"),
+    );
+    jar.apply(all);
+    expect(await liveSessions([early.session])).toEqual([]);
+  });
+
+  it("a sign-out presenting nothing (cookies already gone) is a quiet 200 that deletes nothing", async () => {
+    const out = await deleteSession(
+      fromJar(new CookieJar(), "DELETE", "/api/client-hub/session?all=true"),
+    );
+    expect(out.status).toBe(200);
+    expect(out.headers.getSetCookie()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The resolver under concurrency (lock order L1 → L2, accounts in uuid
+// order, then rows in id order). Real connections, interleaved.
+// ---------------------------------------------------------------------------
+
+const RESOLVE_SQL =
+  "select status, session_id from public.client_hub_resolve_session($1::uuid[], $2::text[])";
+const SIGN_OUT_SQL =
+  "select public.client_hub_sign_out($1::uuid[], $2::text[], $3)";
+
+async function accountOfSession(session: string) {
+  const { rows } = await db.query<{ account_id: string }>(
+    "select account_id from private.client_hub_sessions where id = $1",
+    [session],
+  );
+  return rows[0]!.account_id;
+}
+
+const pairs = (tokens: string[]) => [
+  tokens.map((token) => sessionOfToken.get(token)!),
+  tokens,
+];
+
+describe("resolution concurrency", () => {
+  it("resolution and sign-out of the same account: one waits for the other, no deadlock, nothing left live", async () => {
+    const address = email("resolve-out");
+    const older = await login(address);
+    const newer = await login(address);
+    const resolving = await openTransaction({ role: "service_role" });
+    const signingOut = await openTransaction({ role: "service_role" });
+    const resolved = await resolving.connection.query(
+      RESOLVE_SQL,
+      pairs([older, newer]),
+    );
+    expect(resolved.rows[0]).toMatchObject({
+      status: "ok",
+      session_id: sessionOfToken.get(newer),
+    });
+    const pending = outcome(
+      signingOut.connection.query(SIGN_OUT_SQL, [...pairs([newer]), false]),
+    );
+    await waitUntilBlocked(signingOut.pid);
+    await closeTransaction(resolving, "commit");
+    expect(await pending).toBe("ok");
+    await closeTransaction(signingOut, "commit");
+    expect(await liveSessions(pairs([older, newer])[0] as string[])).toEqual(
+      [],
+    );
+  });
+
+  it("a sign-out committed first: the resolution sees it under its locks and keeps only what is still live", async () => {
+    const address = email("out-resolve");
+    const older = await login(address);
+    const newer = await login(address);
+    const signingOut = await openTransaction({ role: "service_role" });
+    const resolving = await openTransaction({ role: "service_role" });
+    await signingOut.connection.query(SIGN_OUT_SQL, [...pairs([newer]), false]);
+    const pending = resolving.connection.query(
+      RESOLVE_SQL,
+      pairs([older, newer]),
+    );
+    await waitUntilBlocked(resolving.pid);
+    await closeTransaction(signingOut, "commit");
+    // Same account: the older session of that same customer is used.
+    expect((await pending).rows[0]).toMatchObject({
+      status: "ok",
+      session_id: sessionOfToken.get(older),
+    });
+    await closeTransaction(resolving, "commit");
+  });
+
+  it("two conflicting resolutions presented in opposite orders, released together: no deadlock, both ended", async () => {
+    const x = await login(email("order-x"));
+    const y = await login(email("order-y"));
+    const accounts = [
+      await accountOfSession(sessionOfToken.get(x)!),
+      await accountOfSession(sessionOfToken.get(y)!),
+    ].sort();
+    // A third transaction holds the first account (in uuid order): both
+    // resolutions wait for it before holding anything (sorted locks). In
+    // presentation order, one would hold the second account and wait for
+    // the first while the other holds the first and waits for the second.
+    const holder = await openTransaction();
+    await holder.connection.query(
+      "select pg_advisory_xact_lock(hashtextextended('client_hub_account:' || $1, 0))",
+      [accounts[0]],
+    );
+    const one = await openTransaction({ role: "service_role" });
+    const two = await openTransaction({ role: "service_role" });
+    const first = outcome(one.connection.query(RESOLVE_SQL, pairs([x, y])));
+    await waitUntilBlocked(one.pid);
+    const second = outcome(two.connection.query(RESOLVE_SQL, pairs([y, x])));
+    await waitUntilBlocked(two.pid);
+    // Both wait for the first account in uuid order, holding no account
+    // lock yet, whatever order their browser presented the sessions in.
+    for (const pid of [one.pid, two.pid]) {
+      const { rows } = await db.query(
+        `select count(*)::int as n from pg_locks
+         where pid = $1 and locktype = 'advisory' and granted`,
+        [pid],
+      );
+      expect(rows[0].n, `backend ${pid}`).toBe(0);
+    }
+    await closeTransaction(holder, "commit");
+    expect(await first).toBe("ok");
+    await closeTransaction(one, "commit");
+    expect(await second).toBe("ok");
+    await closeTransaction(two, "commit");
+    expect(await liveSessions(pairs([x, y])[0] as string[])).toEqual([]);
+  });
+
+  it("a sign-in (holding its code's locks) waits for a resolution of the session it replaces: no deadlock", async () => {
+    const jar = new CookieJar();
+    const a = await signInJar(jar, email("signin-wait"));
+    const pendingVerify = await codeFor(email("signin-wait-b"));
+    const resolving = await openTransaction({ role: "service_role" });
+    await resolving.connection.query(RESOLVE_SQL, [[a.session], [a.token]]);
+    const verifying = pendingVerify(jar);
+    // The sign-in reaches the account lock held by the resolution.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await closeTransaction(resolving, "commit");
+    const response = await verifying;
+    expect(response.status).toBe(200);
+    expect(await liveSessions([a.session])).toEqual([]);
+  });
+
+  it("global sign-out from another device racing a resolution in this browser: no deadlock, no session of that account left", async () => {
+    const address = email("global-resolve");
+    const here = await login(address);
+    const elsewhere = await login(address);
+    const resolving = await openTransaction({ role: "service_role" });
+    const global = await openTransaction({ role: "service_role" });
+    await resolving.connection.query(RESOLVE_SQL, pairs([here]));
+    const pending = outcome(
+      global.connection.query(SIGN_OUT_SQL, [...pairs([elsewhere]), true]),
+    );
+    await waitUntilBlocked(global.pid);
+    await closeTransaction(resolving, "commit");
+    expect(await pending).toBe("ok");
+    await closeTransaction(global, "commit");
+    expect((await me(here)).status).toBe(401);
+    expect((await me(elsewhere)).status).toBe(401);
+  });
+
+  it("the resolver refuses malformed input: arrays of different lengths, or more than the limit", async () => {
+    const ids = Array.from({ length: 17 }, () => randomUUID());
+    for (const [sessions, tokens] of [
+      [[randomUUID()], []],
+      [ids, ids.map(() => "a".repeat(64))],
+    ]) {
+      await expect(
+        db.query(RESOLVE_SQL, [sessions, tokens]),
+      ).rejects.toMatchObject({ code: "22023" });
+    }
+  });
+});
 
 describe("identity linking and authorization", () => {
   let a: Shop;
@@ -954,7 +1568,13 @@ describe("identity linking and authorization", () => {
         row.proname === "client_hub_set_access",
       );
       if (row.proname !== "client_hub_set_access") {
-        expect(row.service, row.proname).toBe(true);
+        // The single-token entry points are superseded (sessions are opened
+        // and ended with every cookie the browser presents).
+        expect(row.service, row.proname).toBe(
+          !["client_hub_verify_code", "client_hub_end_session"].includes(
+            row.proname,
+          ),
+        );
       }
     }
     const { rows: tables } = await db.query(
@@ -1146,7 +1766,7 @@ describe("appointment pagination", () => {
 // ---------------------------------------------------------------------------
 
 const VERIFY_SQL =
-  "select status from public.client_hub_verify_code($1, $2, $3, $4)";
+  "select status from public.client_hub_sign_in($1, $2, $3, $4, '{}', '{}')";
 
 /** The verification's status, or `error:<message>` (never rejects). */
 function settle(query: Promise<{ rows: { status: string }[] }>) {
@@ -1408,16 +2028,11 @@ describe("logout authority", () => {
     const t2 = await login(address);
     const revoke = await openTransaction({ role: "service_role" });
     const global = await openTransaction({ role: "service_role" });
-    await revoke.connection.query(
-      "select public.client_hub_end_session($1, false)",
-      [t1],
+    await revoke.connection.query(END_SQL, endArgs(t1, false));
+    const pending = global.connection.query(END_SQL, endArgs(t1, true)).then(
+      () => "ok",
+      (error: { message: string }) => error.message,
     );
-    const pending = global.connection
-      .query("select public.client_hub_end_session($1, true)", [t1])
-      .then(
-        () => "ok",
-        (error: { message: string }) => error.message,
-      );
     await waitUntilBlocked(global.pid);
     await closeTransaction(revoke, "commit");
     expect(await pending).toBe("ok");
@@ -1429,11 +2044,20 @@ describe("logout authority", () => {
 
 // ---------------------------------------------------------------------------
 // Global logouts racing each other (correction after the second Codex
-// audit). Lock order of client_hub_end_session: account (advisory), then
-// the calling session's row; only live sessions are revoked.
+// audit), now through client_hub_sign_out. Lock order: the accounts
+// (advisory, in order), then the presented sessions' rows; only live
+// sessions are revoked.
 // ---------------------------------------------------------------------------
 
-const END_SQL = "select public.client_hub_end_session($1, $2)";
+// Through public.client_hub_sign_out, as the sign-out route calls it (the
+// session id is the one the token's cookie is named after).
+const END_SQL =
+  "select public.client_hub_sign_out(array[$1::uuid], array[$2::text], $3)";
+const endArgs = (token: string, all: boolean) => [
+  sessionOfToken.get(token) ?? UNKNOWN_SESSION,
+  token,
+  all,
+];
 
 function settleEnd(query: Promise<unknown>) {
   return query.then(
@@ -1478,9 +2102,9 @@ describe("concurrent global logouts", () => {
     );
     const a = await openTransaction({ role: "service_role" });
     const b = await openTransaction({ role: "service_role" });
-    const first = settleEnd(a.connection.query(END_SQL, [t1, true]));
+    const first = settleEnd(a.connection.query(END_SQL, endArgs(t1, true)));
     await waitUntilBlocked(a.pid);
-    const second = settleEnd(b.connection.query(END_SQL, [t2, true]));
+    const second = settleEnd(b.connection.query(END_SQL, endArgs(t2, true)));
     await waitUntilBlocked(b.pid);
     await closeTransaction(holder, "commit");
 
@@ -1511,10 +2135,12 @@ describe("concurrent global logouts", () => {
     const t2 = await login(address);
     const single = await openTransaction({ role: "service_role" });
     const global = await openTransaction({ role: "service_role" });
-    expect(await settleEnd(single.connection.query(END_SQL, [t1, false]))).toBe(
-      "ok",
+    expect(
+      await settleEnd(single.connection.query(END_SQL, endArgs(t1, false))),
+    ).toBe("ok");
+    const pending = settleEnd(
+      global.connection.query(END_SQL, endArgs(t2, true)),
     );
-    const pending = settleEnd(global.connection.query(END_SQL, [t2, true]));
     await waitUntilBlocked(global.pid); // the account lock
     await closeTransaction(single, "commit");
     expect(await pending).toBe("ok");
@@ -1529,14 +2155,14 @@ describe("concurrent global logouts", () => {
     const code = lastCode();
     const verifying = await openTransaction({ role: "service_role" });
     const { rows } = await verifying.connection.query(
-      "select status, session_token from public.client_hub_verify_code($1, $2, $3, '198.51.100.51')",
+      "select status, session_id, session_token from public.client_hub_sign_in($1, $2, $3, '198.51.100.51', '{}', '{}')",
       [asked.body.data.challengeId, address, code],
     );
     expect(rows[0].status).toBe("ok");
 
     const global = await openTransaction({ role: "service_role" });
     const ended = await Promise.race([
-      settleEnd(global.connection.query(END_SQL, [t1, true])),
+      settleEnd(global.connection.query(END_SQL, endArgs(t1, true))),
       new Promise((resolve) => setTimeout(() => resolve("blocked"), 3000)),
     ]);
     expect(ended).toBe("ok");
@@ -1544,6 +2170,7 @@ describe("concurrent global logouts", () => {
     await closeTransaction(verifying, "commit");
 
     expect((await me(t1)).status).toBe(401);
+    sessionOfToken.set(rows[0].session_token, rows[0].session_id);
     expect((await me(rows[0].session_token)).status).toBe(200);
   });
 
@@ -1552,11 +2179,11 @@ describe("concurrent global logouts", () => {
     const second = await login(email("acct-b"));
     const a = await openTransaction({ role: "service_role" });
     const b = await openTransaction({ role: "service_role" });
-    expect(await settleEnd(a.connection.query(END_SQL, [first, true]))).toBe(
-      "ok",
-    );
+    expect(
+      await settleEnd(a.connection.query(END_SQL, endArgs(first, true))),
+    ).toBe("ok");
     const other = await Promise.race([
-      settleEnd(b.connection.query(END_SQL, [second, true])),
+      settleEnd(b.connection.query(END_SQL, endArgs(second, true))),
       new Promise((resolve) => setTimeout(() => resolve("blocked"), 3000)),
     ]);
     expect(other).toBe("ok");
@@ -1576,7 +2203,9 @@ describe("concurrent global logouts", () => {
     );
     const live = await login(address);
     for (const token of [stale, expired]) {
-      expect(await settleEnd(db.query(END_SQL, [token, true]))).toBe("ok");
+      expect(await settleEnd(db.query(END_SQL, endArgs(token, true)))).toBe(
+        "ok",
+      );
     }
     expect((await me(live)).status).toBe(200);
   });

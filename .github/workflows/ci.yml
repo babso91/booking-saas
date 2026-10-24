@@ -53,8 +53,12 @@ jobs:
       # an older schema, insert historical rows, migrate to the latest.
       - run: npm run test:upgrade
       - run: npm run test:db
-      # Sign-up → confirmation email → /auth/callback against `next start`.
+      # Sign-up → confirmation email → /auth/callback against `next start`,
+      # and the Client Hub's sessions in real Chromium (pinned by
+      # playwright-core) behind a local TLS ingress.
       - run: npm run build
+      - name: Install Chromium for the browser tests
+        run: npx playwright-core install --with-deps --only-shell chromium
       - run: npm run test:e2e
       - name: Stop local Supabase
         if: always()
