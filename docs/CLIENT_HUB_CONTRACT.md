@@ -354,7 +354,10 @@ Retirer **seulement** le verrou de ligne de la déconnexion n'est pas détecté 
     - si l'onglet montre encore la cliente qui s'est déconnectée, ses écrans disparaissent aussitôt (nouvelle génération, rien de privé ni de panneau ouvert), puis `/me` décide : une cliente confirmée (`X-Client-Hub-Account`) obtient ses écrans sans se reconnecter ; personne, et c'est la page de connexion (« Vous êtes déconnectée ») ;
     - si l'onglet est déjà passé à une autre identité (réponse tardive), celle-ci est seulement revérifiée sous voile : jamais déconnectée par cette réponse, ses écrans reviennent tels quels si `/me` la confirme.
   - **Autres onglets :** un message `BroadcastChannel` (`client-hub-session`) est une **demande de vérification**, jamais un ordre. L'onglet voile ses données et demande `/me` : la même cliente garde ses écrans, une autre en obtient de nouveaux, personne mène à la connexion (« depuis un autre onglet »). Les anciens messages (`signed-in`, `signed-out`) sont lus de la même façon. Sans `BroadcastChannel`, un onglet apprend le changement au retour sur l'onglet, à sa lecture suivante (identité de la réponse) ou à la réponse de sa propre déconnexion.
-  - **Expiration :** l'instant de fin de la session (7 jours) ferme l'écran à l'heure dite.
+  - **Expiration : le serveur décide.** La fin annoncée par la connexion (réponse de `verify`, 7 jours) appartient à la cliente qui s'est connectée dans cet onglet : elle est rattachée au compte que `/me` confirme ensuite, et abandonnée dès qu'une autre identité est confirmée (connexion dans un autre onglet, A → B → A). Elle n'est jamais réutilisée pour une autre cliente.
+    - À l'heure dite, l'interface ne déclare rien : elle **voile** les données et demande `/me`. Session toujours valide : ses écrans reviennent. Session terminée (401) : connexion, « Votre session a expiré ». Pas de réponse : le voile reste avec « Réessayer », jamais une expiration non confirmée.
+    - Une fin n'est utilisée qu'une fois : pas de boucle de vérifications si elle est déjà passée (horloge décalée).
+    - Une cliente connectée depuis un autre onglet n'a pas de fin connue ici (`/me` ne la donne pas) : rien n'est inventé. Sa fin est constatée par le serveur : un 401 sur une lecture, le retour sur l'onglet, un message d'un autre onglet.
 
 **Connexion :**
 
@@ -395,5 +398,5 @@ Actions existantes : `getClientHubAccessAction`, `setClientHubAccessAction`. Auc
 ### Contrats manquants (pour une prochaine PR backend)
 
 - **Envoi d'invitation par email :** la professionnelle transmet le lien à la main.
-- **Fin de session :** `GET /me` ne renvoie pas `expiresAt`. Après un rechargement, l'interface ne connaît la fin de session qu'au premier 401.
+- **Fin de session :** `GET /me` ne renvoie pas `expiresAt`. Après un rechargement, ou pour une cliente connectée depuis un autre onglet, l'interface ne connaît la fin de session qu'au premier 401 (ou au retour sur l'onglet). Exposer la fin de la session résolue dans `/me` permettrait de voiler à l'heure dite dans tous les cas : c'est un choix de protocole, laissé au backend.
 - ~~**Identité des réponses**~~ : fournie par `X-Client-Hub-Account` (§ 3). `BroadcastChannel` ne sert plus qu'à accélérer la synchronisation entre onglets ; la correction n'en dépend pas (testé sans lui dans Chromium).

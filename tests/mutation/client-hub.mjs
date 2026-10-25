@@ -274,7 +274,7 @@ const mutations = {
       check({ fresh: false, veil: true });`,
       `      if (owner !== generation.current) return; // an older session's answer
       checks.current += 1;
-      expiresAt.current = null;
+      deadline.current = null;
       advance({ status: "signed-out", reason: "expired" });`,
       `    [check],
   );
@@ -282,6 +282,27 @@ const mutations = {
       `    [advance],
   );
   const isCurrent`,
+    ],
+  },
+  pages_deadline_decides_alone: {
+    file: PAGES,
+    tests: PAGE_TESTS,
+    pairs: [
+      `      check({ fresh: false, veil: true, out: "expired" });
+    }, delay);`,
+      `      advance({ status: "signed-out", reason: "expired" });
+    }, delay);`,
+    ],
+  },
+  pages_deadline_kept_for_another_account: {
+    file: PAGES,
+    tests: PAGE_TESTS,
+    pairs: [
+      `            deadline.current = null;
+          }
+          if (now.status === "signed-in" && now.account === result.account) {`,
+      `          }
+          if (now.status === "signed-in" && now.account === result.account) {`,
     ],
   },
   pages_recheck_without_limit: {

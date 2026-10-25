@@ -116,7 +116,18 @@ export function ClientHubSessionProvider({
   const generation = useRef(0);
   const current = useRef<HubSession>(session);
   const checks = useRef(0);
-  const expiresAt = useRef<number | null>(null);
+  // Her session's end, as the sign-in in THIS tab announced it (verify
+  // answers it; /me does not). It belongs to the account the first check
+  // after that sign-in confirmed (`account`, null until then), and to no
+  // one else: confirming any other identity drops it. At that instant a
+  // timer asks /me (veiled) instead of deciding: the server says whether
+  // she is still signed in. Used once (no loop when it is already past).
+  const deadline = useRef<{
+    at: number;
+    /** Checks started from this one on may bind it (the sign-in's check). */
+    from: number;
+    account: string | null;
+  } | null>(null);
   const channel = useRef<BroadcastChannel | null>(null);
 
   const apply = useCallback((next: HubSession) => {
@@ -159,7 +170,7 @@ export function ClientHubSessionProvider({
       veil?: boolean;
       /** Why, if /me finds nobody signed in (shown on the sign-in page). */
       out?: SignedOutReason;
-    }) => {
+    }): number => {
       const token = (checks.current += 1);
       if (options.fresh) advance({ status: "checking" });
       else if (options.veil) veil();
@@ -168,6 +179,18 @@ export function ClientHubSessionProvider({
         if (token !== checks.current) return; // a newer check runs
         const now = current.current;
         if (result.ok && result.account) {
+          // The deadline is hers only: bound to the account confirmed by
+          // her sign-in's check, dropped as soon as anyone else is.
+          const due = deadline.current;
+          if (due && due.account === null && token >= due.from) {
+            deadline.current = { ...due, account: result.account };
+          } else if (
+            due &&
+            due.account !== null &&
+            due.account !== result.account
+          ) {
+            deadline.current = null;
+          }
           if (now.status === "signed-in" && now.account === result.account) {
             // Same customer: her screens come back as she left them (her
             // businesses may have changed; their reads check).
@@ -197,7 +220,7 @@ export function ClientHubSessionProvider({
           };
         }
         if (result.error.code === "client_hub_unauthenticated") {
-          expiresAt.current = null;
+          deadline.current = null;
           if (now.status === "signed-in") {
             advance({ status: "signed-out", reason: options.out ?? "expired" });
           } else if (now.status !== "signed-out") {
@@ -224,6 +247,7 @@ export function ClientHubSessionProvider({
           generation: now.generation,
         });
       });
+      return token;
     },
     [advance, apply, veil],
   );
@@ -275,31 +299,37 @@ export function ClientHubSessionProvider({
     };
   }, [advance, check, veil]);
 
-  // The session ends at a known instant (7 days, never extended): the
-  // screens stop showing it then, before any read is refused.
+  // At her deadline (7 days, never extended), her data is veiled and /me
+  // asked: still signed in (clock skew), her screens come back; over, the
+  // sign-in page says it expired; no answer, the veil stays with a retry.
+  // Only for the account the deadline belongs to; another identity shown
+  // (another tab's sign-in) has no deadline here: its end is learnt from
+  // the server (a refused read, the tab's return, another tab's message).
+  const signedInAccount =
+    session.status === "signed-in" ? session.account : null;
   const signedInGeneration =
     session.status === "signed-in" ? session.generation : null;
   useEffect(() => {
-    if (signedInGeneration === null || expiresAt.current === null) return;
-    const delay = Math.min(
-      Math.max(expiresAt.current - Date.now(), 0),
-      MAX_TIMER,
-    );
+    const due = deadline.current;
+    if (signedInAccount === null || !due || due.account !== signedInAccount)
+      return;
+    const delay = Math.min(Math.max(due.at - Date.now(), 0), MAX_TIMER);
     const timer = window.setTimeout(() => {
-      if (generation.current !== signedInGeneration) return;
-      expiresAt.current = null;
-      advance({ status: "signed-out", reason: "expired" });
+      if (deadline.current !== due) return; // replaced or dropped meanwhile
+      deadline.current = null; // used once
+      check({ fresh: false, veil: true, out: "expired" });
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [advance, signedInGeneration]);
+  }, [check, signedInAccount, signedInGeneration]);
 
   // Stable callbacks (they read refs only): a re-check of the same customer
   // never restarts the screens' reads.
   const signedIn = useCallback(
     ({ expiresAt: until }: { email: string; expiresAt: string }) => {
       const at = Date.parse(until);
-      expiresAt.current = Number.isFinite(at) ? at : null;
-      check({ fresh: true });
+      deadline.current = null;
+      const from = check({ fresh: true });
+      if (Number.isFinite(at)) deadline.current = { at, from, account: null };
       post({ type: "check" });
     },
     [check, post],
@@ -336,7 +366,7 @@ export function ClientHubSessionProvider({
         // at once. Already showing someone else (her answer was late):
         // that customer is only checked again, veiled, never signed out.
         if (owner === generation.current) {
-          expiresAt.current = null;
+          deadline.current = null;
           check({ fresh: true, out: "signed-out" });
         } else {
           check({ fresh: false, veil: true, out: "elsewhere" });

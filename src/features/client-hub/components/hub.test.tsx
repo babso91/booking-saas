@@ -1103,6 +1103,142 @@ describe("a late sign-out, with several tabs (the same browser)", () => {
     expect(api.to(/\/session$/, "DELETE")[0]!.search.get("all")).toBe("true");
     expect(router.replace).not.toHaveBeenCalled();
   });
+
+  describe("the session's deadline (the server stays the authority)", () => {
+    /** An instant `ms` from now, as the verify route sends it. */
+    const inMs = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const wait = (ms: number) =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    const camilleSignsIn = async (hub: Hub, until: string) => {
+      await act(async () => {
+        hub.signedIn({ email: CAMILLE, expiresAt: until });
+      });
+    };
+    const mes = () => api.to(/\/me$/).length;
+
+    for (const channel of [true, false]) {
+      it(`Camille close to her deadline signs out (answer late), Inès signs in in another tab: Camille's deadline never signs Inès out (BroadcastChannel ${channel ? "available" : "unavailable"})`, async () => {
+        if (!channel) vi.stubGlobal("BroadcastChannel", undefined);
+        const first = tab();
+        await waitFor(() =>
+          expect(first.shows("Solde : 340 points")).toBe(true),
+        );
+        await camilleSignsIn(first.probe.current!, inMs(500));
+        await waitFor(() =>
+          expect(first.shows("Solde : 340 points")).toBe(true),
+        );
+        const held = heldSignOut();
+        let out!: Promise<unknown>;
+        act(() => {
+          out = first.probe.current!.signOut(false);
+        });
+        me = ines();
+        const second = tab();
+        await waitFor(() =>
+          expect(second.shows("Solde : 12 points")).toBe(true),
+        );
+        await inesSignsIn(second.probe.current!);
+        await act(async () => {
+          held.resolve(ok({ ended: true }));
+          await out;
+        });
+        await waitFor(() =>
+          expect(first.shows("Solde : 12 points")).toBe(true),
+        );
+
+        // Camille's deadline passes.
+        await wait(800);
+        for (const each of [first, second]) {
+          expect(each.shows("Solde : 12 points")).toBe(true);
+          const session = each.probe.current!.session;
+          expect(session.status).toBe("signed-in");
+          if (session.status === "signed-in") {
+            expect(session.account).toBe(accountOf(INES));
+          }
+        }
+        expect(router.replace).not.toHaveBeenCalled();
+      });
+    }
+
+    it("her own deadline, her session really over on the server: her data hidden while it is checked, then « expired »", async () => {
+      const first = tab();
+      await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+      await camilleSignsIn(first.probe.current!, inMs(400));
+      await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+      const check = deferred<ReturnType<typeof ok>>();
+      api.on("GET", /\/me$/, () => check.promise);
+      await wait(600);
+      // Due: the timer asks the server, her data is veiled meanwhile.
+      expect(first.shows("Solde : 340 points")).toBe(false);
+      expect(router.replace).not.toHaveBeenCalled();
+      me = null;
+      await act(async () => {
+        check.resolve(fail("client_hub_unauthenticated", 401));
+      });
+      await waitFor(() =>
+        expect(router.replace).toHaveBeenCalledWith("/espace/connexion"),
+      );
+      const session = first.probe.current!.session;
+      expect(session.status).toBe("signed-out");
+      if (session.status === "signed-out")
+        expect(session.reason).toBe("expired");
+    });
+
+    it("her deadline passes but the server still confirms her (clock skew): she stays, one check only, no loop", async () => {
+      const first = tab();
+      await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+      await camilleSignsIn(first.probe.current!, inMs(300));
+      await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+      const before = mes();
+      await wait(600);
+      await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+      expect(mes()).toBe(before + 1);
+      await wait(600);
+      expect(mes()).toBe(before + 1);
+      expect(first.probe.current!.session.status).toBe("signed-in");
+    });
+
+    it("no answer at her deadline: her data stays hidden with a retry, never an unconfirmed « expired »", async () => {
+      const first = tab();
+      await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+      await camilleSignsIn(first.probe.current!, inMs(300));
+      await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+      api.on("GET", /\/me$/, "network");
+      await wait(600);
+      expect(first.shows("Solde : 340 points")).toBe(false);
+      expect(
+        within(first.view.container).getByText(/Impossible de vérifier/),
+      ).toBeTruthy();
+      expect(first.probe.current!.session.status).toBe("signed-in");
+      expect(router.replace).not.toHaveBeenCalled();
+    });
+
+    it("A → B → A: Camille's former deadline is not carried over to Inès, nor back to Camille's next session", async () => {
+      const first = tab();
+      await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+      await camilleSignsIn(first.probe.current!, inMs(500));
+      await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+      // Inès, confirmed (signed in from another tab)…
+      me = ines();
+      await act(async () => {
+        first.probe.current!.recheck();
+      });
+      await waitFor(() => expect(first.shows("Solde : 12 points")).toBe(true));
+      // …then Camille again (a new session of hers, its deadline unknown here).
+      me = profile(CAMILLE, [MILA, LUMIERE]);
+      await act(async () => {
+        first.probe.current!.recheck();
+      });
+      await waitFor(() => expect(first.shows("Solde : 340 points")).toBe(true));
+      const before = mes();
+      await wait(800);
+      expect(mes()).toBe(before);
+      expect(first.shows("Solde : 340 points")).toBe(true);
+      expect(router.replace).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("identity of every answer (X-Client-Hub-Account)", () => {

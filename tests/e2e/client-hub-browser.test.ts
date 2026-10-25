@@ -614,6 +614,40 @@ describe("headers too large", () => {
 // with another customer's data.
 // ---------------------------------------------------------------------------
 
+/**
+ * A customer signing in through the hub's own page (so the page learns her
+ * session's end from the verify answer, as in real life). `endsIn`: the
+ * verify answer announces an end that close, and the database's session
+ * is made to end then too (a session close to its expiry).
+ */
+async function signInThroughPage(page: Page, email: string, endsIn: number) {
+  let ends = 0;
+  await page.route("**/api/client-hub/session/verify", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    ends = Date.now() + endsIn;
+    if (json?.data) json.data.expiresAt = new Date(ends).toISOString();
+    // Same status and headers (its Set-Cookie included), the end rewritten.
+    await route.fulfill({ response, json });
+  });
+  await page.goto("/espace/connexion");
+  await page.getByLabel("Adresse email").fill(email);
+  await page.getByRole("button", { name: "Recevoir mon code" }).click();
+  const { codeFor } = await import("./support/browser");
+  const code = await codeFor(mailpitUrl, email);
+  // A complete code is sent at once.
+  await page.getByLabel("Code à 8 chiffres").fill(code);
+  await page.waitForURL(/\/espace$/);
+  await page.unroute("**/api/client-hub/session/verify");
+  await db.query(
+    `update private.client_hub_sessions s set expires_at = $2
+     from private.client_hub_accounts a
+     where a.id = s.account_id and a.email = $1 and s.revoked_at is null`,
+    [email, new Date(ends).toISOString()],
+  );
+  return ends;
+}
+
 async function customerWithAppointment(label: string, firstName: string) {
   const owner = await createProfessional(`hub-ui-${label}`);
   const business = await createBusiness(owner.userId, {
@@ -661,6 +695,76 @@ async function record(context: BrowserContext) {
 
 const statesOf = (page: Page) =>
   page.evaluate(() => (window as unknown as { __states: string[] }).__states);
+
+describe("the session's end, as the page knows it (the server decides)", () => {
+  for (const broadcastChannel of [true, false]) {
+    it(`A close to her end signs out (answer held), B signs in from another tab, then A's end passes: B is never shown signed out (BroadcastChannel ${broadcastChannel ? "available" : "unavailable"})`, async () => {
+      const alice = await customerWithAppointment("end-a", "Alice");
+      const berenice = await customerWithAppointment("end-b", "Bérénice");
+      const { context, tabs } = await profileWithTabs(2, { broadcastChannel });
+      await record(context);
+      const [hubTab, otherTab] = tabs as [Page, Page];
+      const ends = await signInThroughPage(hubTab, alice.email, 30_000);
+      await hubTab.getByText("Soin de Alice").waitFor();
+
+      // Alice signs out; the server processes it, the answer is held.
+      const held = await holdNext(hubTab, "DELETE", SESSION);
+      await hubTab.getByRole("button", { name: "Mon compte" }).click();
+      await hubTab
+        .getByRole("button", { name: "Se déconnecter", exact: true })
+        .click();
+      await held.processed;
+
+      // Bérénice signs in from the other tab; Alice's tab learns it.
+      await signIn(otherTab, mailpitUrl, berenice.email);
+      await otherTab.goto("/espace");
+      await otherTab.getByText("Soin de Bérénice").waitFor();
+      if (broadcastChannel) {
+        await otherTab.evaluate(() =>
+          new BroadcastChannel("client-hub-session").postMessage({
+            type: "check",
+          }),
+        );
+      } else {
+        await hubTab.evaluate(() =>
+          document.dispatchEvent(new Event("visibilitychange")),
+        );
+      }
+      await hubTab.getByText("Soin de Bérénice").waitFor({ timeout: 15_000 });
+      held.release();
+
+      // Alice's end passes.
+      await hubTab.waitForTimeout(Math.max(0, ends - Date.now()) + 4_000);
+      for (const page of [hubTab, otherTab]) {
+        expect(new URL(page.url()).pathname).toBe("/espace");
+        expect(await page.getByText("Soin de Bérénice").count()).toBe(1);
+        expect(await page.getByText(/session a expiré/).count()).toBe(0);
+      }
+      const now = await call(hubTab, "GET", ME);
+      expect(now.status).toBe(200);
+      expect(now.body?.data?.email).toBe(berenice.email);
+      for (const state of await statesOf(hubTab)) {
+        expect(/Alice/.test(state) && /Bérénice/.test(state), state).toBe(
+          false,
+        );
+      }
+    }, 120_000);
+  }
+
+  it("her own end, really over on the server: the page asks, then says it expired", async () => {
+    const alice = await customerWithAppointment("end-own", "Alice");
+    const { tabs } = await profileWithTabs(1);
+    const [hubTab] = tabs as [Page];
+    const ends = await signInThroughPage(hubTab, alice.email, 12_000);
+    await hubTab.getByText("Soin de Alice").waitFor();
+    await hubTab.waitForURL(/\/espace\/connexion/, {
+      timeout: Math.max(0, ends - Date.now()) + 15_000,
+    });
+    expect(await hubTab.getByText(/Votre session a expiré/).count()).toBe(1);
+    expect(await hubTab.getByText("Soin de Alice").count()).toBe(0);
+    expect((await call(hubTab, "GET", ME)).status).toBe(401);
+  }, 90_000);
+});
 
 describe("the pages never show one customer's data under another's identity", () => {
   for (const broadcastChannel of [true, false]) {
