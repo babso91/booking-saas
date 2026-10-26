@@ -10,6 +10,7 @@ import {
   ChevronRightIcon,
   ClockIcon,
   GiftIcon,
+  PaletteIcon,
   SparkIcon,
   UserIcon,
   UsersIcon,
@@ -21,13 +22,20 @@ import { cn } from "@/lib/cn";
 
 type Business = { name: string; slug: string };
 type Section =
-  "agenda" | "clients" | "services" | "loyalty" | "hours" | "calendar";
+  | "agenda"
+  | "clients"
+  | "services"
+  | "loyalty"
+  | "hours"
+  | "calendar"
+  | "appearance";
 
 const CALENDAR_SETTINGS = "/app/settings/calendar";
 const CLIENTS = "/app/clients";
 const SERVICES = "/app/services";
 const HOURS = "/app/settings/hours";
 const LOYALTY = "/app/loyalty";
+const APPEARANCE = "/app/settings/appearance";
 
 /**
  * Professional area frame. Desktop: compact sidebar. Phones and tablets: a
@@ -103,6 +111,13 @@ export function AppShell({
           >
             <CalendarSyncIcon size={18} /> Google Calendar
           </Link>
+          <Link
+            href={APPEARANCE}
+            aria-current={current === "appearance" ? "page" : undefined}
+            className={item("appearance")}
+          >
+            <PaletteIcon size={18} /> Apparence
+          </Link>
         </nav>
         <div className="mt-auto flex flex-col gap-3 rounded-2xl border border-line bg-paper p-4">
           <p className="truncate font-display text-[20px] leading-tight text-ink">
@@ -163,7 +178,8 @@ export function AppShell({
             "flex h-16 cursor-pointer flex-col items-center justify-center gap-1 text-[11.5px]",
             current === "calendar" ||
               current === "hours" ||
-              current === "loyalty"
+              current === "loyalty" ||
+              current === "appearance"
               ? "font-semibold text-ink"
               : "text-ink-soft",
           )}
@@ -207,6 +223,16 @@ export function AppShell({
           >
             <CalendarSyncIcon size={20} className="text-ink-soft" />
             <span className="flex-1">Google Calendar</span>
+            <ChevronRightIcon size={18} className="text-ink-muted" />
+          </Link>
+          <Link
+            href={APPEARANCE}
+            onClick={() => setAccountOpen(false)}
+            aria-current={current === "appearance" ? "page" : undefined}
+            className="flex min-h-14 items-center gap-3 rounded-2xl border border-line bg-paper px-4 text-[15px] font-medium text-ink transition-colors hover:border-line-strong"
+          >
+            <PaletteIcon size={20} className="text-ink-soft" />
+            <span className="flex-1">Apparence</span>
             <ChevronRightIcon size={18} className="text-ink-muted" />
           </Link>
           <PublicLink slug={business.slug} />

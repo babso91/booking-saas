@@ -108,7 +108,7 @@ export function OnboardingSuccess({
 
       <Link
         href={firstStep.href}
-        className="group mt-6 inline-flex h-14 w-full max-w-[460px] animate-rise items-center justify-center gap-2.5 rounded-2xl bg-ink text-base font-medium text-paper-raised shadow-[0_10px_24px_-12px_rgba(35,28,24,0.55)] transition-[background-color,transform] duration-200 [animation-delay:540ms] hover:bg-[#382d27] active:scale-[0.985]"
+        className="group mt-6 inline-flex h-14 w-full max-w-[460px] animate-rise items-center justify-center gap-2.5 rounded-2xl bg-ink text-base font-medium text-paper-raised shadow-[0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] transition-[background-color,transform] duration-200 [animation-delay:540ms] hover:bg-[#382d27] active:scale-[0.985]"
       >
         {firstStep.label}
         <ArrowRightIcon

@@ -20,13 +20,13 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 const variants = {
   primary:
-    "bg-ink text-paper-raised shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_10px_24px_-12px_rgba(35,28,24,0.55)] hover:bg-[#382d27] disabled:bg-ink/40 disabled:shadow-none",
+    "bg-ink text-paper-raised shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] hover:bg-[#382d27] disabled:bg-ink/40 disabled:shadow-none",
   secondary:
     "bg-paper-raised text-ink border border-line hover:border-line-strong hover:bg-white disabled:text-ink-muted",
   ghost:
     "bg-transparent text-ink-soft hover:text-ink hover:bg-sand/60 disabled:text-ink-muted",
   danger:
-    "bg-danger text-paper-raised hover:bg-[#86342a] disabled:bg-danger/40 shadow-[0_10px_24px_-14px_rgba(156,61,46,0.6)]",
+    "bg-danger text-paper-raised hover:bg-[#86342a] disabled:bg-danger/40 shadow-[0_10px_24px_-14px_color-mix(in_srgb,var(--danger)_60%,transparent)]",
 } as const;
 
 const sizes = {
