@@ -44,6 +44,7 @@ import {
   waitUntilBlocked,
   type OpenTransaction,
 } from "./support/transactions";
+import { availableSlotsAt, publicBookingAt } from "./support/fixed-clock";
 
 // Professional agenda V1 against the real stack. The Server Actions are
 // called as the UI will call them; only the cookie-based Supabase client is
@@ -126,6 +127,19 @@ async function newAgenda(
   sessionClient = owner.client;
 
   return { owner, business, service, shortService, client };
+}
+
+/**
+ * No minimum notice and a year of advance booking: what public availability
+ * offers then depends only on the "now" a test passes.
+ */
+async function bookableAnyTime(agenda: Agenda) {
+  await db.query(
+    `update public.business_settings
+     set minimum_booking_notice_minutes = 0, maximum_booking_advance_days = 365
+     where business_id = $1`,
+    [agenda.business.id],
+  );
 }
 
 function as(professional: Professional | null) {
@@ -1721,6 +1735,8 @@ describe("DST: the repeated autumn hour (Europe/Paris, 2026-10-25)", () => {
   const DAY = "2026-10-25";
   const FIRST = "2026-10-25T00:30:00.000Z"; // 02:30 CEST (UTC+2)
   const SECOND = "2026-10-25T01:30:00.000Z"; // 02:30 CET (UTC+1)
+  /** The fixed "now" of public availability: well before the change. */
+  const BEFORE = "2026-10-01T00:00:00Z";
 
   async function paris() {
     return newAgenda({ timezone: "Europe/Paris", bufferMinutes: 0 });
@@ -1916,28 +1932,22 @@ describe("DST: the repeated autumn hour (Europe/Paris, 2026-10-25)", () => {
   it("agrees with public booking, which only ever exchanges UTC instants", async () => {
     const a = await paris();
     await setWeeklyHours(a.business.id, [[0, "00:00", "06:00"]]);
+    await bookableAnyTime(a);
 
-    // The public listing offers 02:30 twice, as two distinct instants.
-    const { rows } = await db.query<{ starts_at: Date }>(
-      "select starts_at from public.get_available_slots($1, $2, $3)",
-      [a.business.slug, a.service, DAY],
-    );
-    const slots = rows.map((slot) => slot.starts_at.toISOString());
+    // The public listing (at a fixed "now", never the date of the run)
+    // offers 02:30 twice, as two distinct instants.
+    const slots = await availableSlotsAt(a.business.id, a.service, DAY, BEFORE);
     expect(slots).toContain(FIRST);
     expect(slots).toContain(SECOND);
 
     // A client books the first one; the agenda shows it as such.
-    const booking = await createPublicBooking(
-      bookingClient(),
-      bookingRequest({
-        slug: a.business.slug,
-        serviceId: a.service,
-        startsAt: FIRST,
-        firstName: "Léa",
-        email: "lea@x.test",
-      }),
-      randomIp(),
-    );
+    const booking = await publicBookingAt(BEFORE, {
+      slug: a.business.slug,
+      serviceId: a.service,
+      startsAt: FIRST,
+      firstName: "Léa",
+      email: "lea@x.test",
+    });
     as(a.owner);
     const shown = ok(
       await getAgendaAppointmentAction({
@@ -1953,6 +1963,33 @@ describe("DST: the repeated autumn hour (Europe/Paris, 2026-10-25)", () => {
     // Editing it from the agenda without touching the time keeps it there.
     const edited = ok(await update(a, shown, { internalNotes: "Vue" }));
     expect(edited.startsAt).toBe(FIRST);
+  });
+
+  it("offers each 02:30 up to its very start: before, between and after the two occurrences", async () => {
+    const a = await paris();
+    await setWeeklyHours(a.business.id, [[0, "00:00", "06:00"]]);
+    await bookableAnyTime(a);
+    const offered = async (now: string) => {
+      const slots = await availableSlotsAt(a.business.id, a.service, DAY, now);
+      return [FIRST, SECOND].filter((slot) => slots.includes(slot));
+    };
+    // Weeks before, the evening before, and at the first 02:30 itself
+    // (a slot is offered up to its start, included).
+    for (const now of [
+      BEFORE,
+      "2026-10-24T20:00:00Z",
+      "2026-10-25T00:30:00Z",
+    ]) {
+      expect(await offered(now), now).toEqual([FIRST, SECOND]);
+    }
+    // During: the first 02:30 (CEST) has begun, the second (CET) is ahead.
+    for (const now of ["2026-10-25T00:31:00Z", "2026-10-25T01:30:00Z"]) {
+      expect(await offered(now), now).toEqual([SECOND]);
+    }
+    // After both, and the next days.
+    for (const now of ["2026-10-25T01:31:00Z", "2026-10-26T12:00:00Z"]) {
+      expect(await offered(now), now).toEqual([]);
+    }
   });
 
   it("keeps blocks stable across an edit in the repeated hour", async () => {
@@ -2409,19 +2446,17 @@ describe("DST guarantees across paths", () => {
   it("public booking on the second occurrence, then edited from the agenda", async () => {
     const a = await newAgenda({ timezone: "Europe/Paris", bufferMinutes: 0 });
     await setWeeklyHours(a.business.id, [[0, "00:00", "06:00"]]);
+    await bookableAnyTime(a);
     const SECOND = "2026-10-25T01:30:00.000Z";
 
-    const booking = await createPublicBooking(
-      bookingClient(),
-      bookingRequest({
-        slug: a.business.slug,
-        serviceId: a.service,
-        startsAt: SECOND,
-        firstName: "Léa",
-        email: "lea2@x.test",
-      }),
-      randomIp(),
-    );
+    // Booked at a fixed "now" before the change (never the date of the run).
+    const booking = await publicBookingAt("2026-10-01T00:00:00Z", {
+      slug: a.business.slug,
+      serviceId: a.service,
+      startsAt: SECOND,
+      firstName: "Léa",
+      email: "lea2@x.test",
+    });
     as(a.owner);
     const shown = ok(
       await getAgendaAppointmentAction({
