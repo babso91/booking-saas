@@ -622,13 +622,13 @@ describe("headers too large", () => {
  */
 async function signInThroughPage(page: Page, email: string, endsIn: number) {
   let ends = 0;
-  await page.route("**/api/client-hub/session/verify", async (route) => {
-    const response = await route.fetch();
-    const json = await response.json();
+  // At the ingress: same status and headers (its Set-Cookie included), the
+  // announced end rewritten.
+  ingress.rewriteNext("POST", VERIFY, (body) => {
+    const json = JSON.parse(body);
     ends = Date.now() + endsIn;
     if (json?.data) json.data.expiresAt = new Date(ends).toISOString();
-    // Same status and headers (its Set-Cookie included), the end rewritten.
-    await route.fulfill({ response, json });
+    return JSON.stringify(json);
   });
   await page.goto("/espace/connexion");
   await page.getByLabel("Adresse email").fill(email);
@@ -638,7 +638,6 @@ async function signInThroughPage(page: Page, email: string, endsIn: number) {
   // A complete code is sent at once.
   await page.getByLabel("Code à 8 chiffres").fill(code);
   await page.waitForURL(/\/espace$/);
-  await page.unroute("**/api/client-hub/session/verify");
   await db.query(
     `update private.client_hub_sessions s set expires_at = $2
      from private.client_hub_accounts a

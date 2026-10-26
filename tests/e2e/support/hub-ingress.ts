@@ -84,6 +84,8 @@ type Hold = {
   taken: boolean;
   processed: () => void;
   decided: Promise<"deliver" | "lose">;
+  /** Rewrites the answer's body before it is delivered. */
+  rewrite?: (body: string) => string;
 };
 
 /**
@@ -158,8 +160,14 @@ export async function startIngress(secret: string) {
               return;
             }
             if (outgoing.destroyed || incoming.socket.destroyed) return;
-            outgoing.writeHead(answer.statusCode ?? 502, answer.headers);
-            outgoing.end(Buffer.concat(chunks));
+            let body = Buffer.concat(chunks);
+            const headers = { ...answer.headers };
+            if (hold.rewrite) {
+              body = Buffer.from(hold.rewrite(body.toString("utf8")));
+              headers["content-length"] = String(body.length);
+            }
+            outgoing.writeHead(answer.statusCode ?? 502, headers);
+            outgoing.end(body);
           });
         },
       );
@@ -193,6 +201,26 @@ export async function startIngress(secret: string) {
         release: () => decide("deliver"),
         lose: () => decide("lose"),
       };
+    },
+    /**
+     * Rewrites the body of the next `method path` answer (status and
+     * headers, Set-Cookie included, unchanged): what a test cannot do from
+     * the page (Playwright's route.fetch() replays the request from Node,
+     * which does not resolve *.hub.test).
+     */
+    rewriteNext(
+      method: string,
+      path: string,
+      rewrite: (body: string) => string,
+    ) {
+      holds.push({
+        method,
+        path,
+        taken: false,
+        processed: () => undefined,
+        decided: Promise.resolve("deliver"),
+        rewrite,
+      });
     },
     stop: async () => {
       ingress.closeAllConnections();
