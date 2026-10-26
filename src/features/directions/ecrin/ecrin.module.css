@@ -1,0 +1,850 @@
+/* ——— L’Écrin ———
+   Her day as a precious object: a dial, engraved, where each visit is a
+   capsule set on the ring and the hand points at now. Surfaces are satin
+   (a light from above, a hairline edge, a soft cast shadow): objects, not
+   panels. Marcellus is engraved lettering (monogram, names, labels); Jost,
+   light, says the rest. Gestures are deliberate: she slides to settle. */
+
+.root {
+  --bg-1: #f4f1f6;
+  --bg-2: #e6e0ec;
+  --surface: #faf8fb;
+  --surface-2: #efebf3;
+  --ink: #26212d;
+  --ink-2: #5c5566;
+  --ink-3: #6e6778;
+  --hair: #d6cfdd;
+  --accent: #7b5fa3;
+  --accent-ink: #634889;
+  --accent-soft: #e5dcf0;
+  --glow: 123 95 163;
+  --shadow: 38 30 50;
+  --highlight: 255 255 255;
+
+  min-height: 100dvh;
+  background:
+    radial-gradient(120% 80% at 20% 0%, var(--bg-1), transparent 60%),
+    radial-gradient(90% 70% at 100% 100%, var(--bg-2), transparent 70%),
+    linear-gradient(var(--bg-1), var(--bg-2));
+  color: var(--ink);
+  font-family: var(--ecrin-sans), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 16px;
+  line-height: 1.45;
+  padding-bottom: 120px;
+}
+.root[data-palette="poudre"] {
+  --bg-1: #f7f0ed;
+  --bg-2: #ecdcd7;
+  --surface: #fcf8f6;
+  --surface-2: #f3e9e5;
+  --ink: #2e2222;
+  --ink-2: #634f4e;
+  --ink-3: #75605f;
+  --hair: #e0cfca;
+  --accent: #a75d60;
+  --accent-ink: #8e4a4d;
+  --accent-soft: #f2dcd9;
+  --glow: 167 93 96;
+  --shadow: 60 34 30;
+}
+.root[data-palette="jade"] {
+  --bg-1: #eff3f1;
+  --bg-2: #dce6e1;
+  --surface: #f8fbf9;
+  --surface-2: #e9f0ec;
+  --ink: #1d2a26;
+  --ink-2: #4c5d57;
+  --ink-3: #5e6f69;
+  --hair: #cbd9d3;
+  --accent: #3f7a6a;
+  --accent-ink: #346658;
+  --accent-soft: #d5e8e1;
+  --glow: 63 122 106;
+  --shadow: 24 44 38;
+}
+.root[data-mode="dark"] {
+  --bg-1: #1a171d;
+  --bg-2: #0e0c10;
+  --surface: #221e26;
+  --surface-2: #2a2530;
+  --ink: #efe9f3;
+  --ink-2: #bdb4c6;
+  --ink-3: #a59cae;
+  --hair: #3a3440;
+  --accent: #c2a6e8;
+  --accent-ink: #d2bdf0;
+  --accent-soft: #3b2f4c;
+  --glow: 194 166 232;
+  --shadow: 0 0 0;
+  --highlight: 255 255 255;
+}
+.root[data-mode="dark"][data-palette="poudre"] {
+  --bg-1: #1d1616;
+  --bg-2: #100c0c;
+  --surface: #261d1d;
+  --surface-2: #2f2424;
+  --ink: #f5ebe9;
+  --ink-2: #c8b5b2;
+  --ink-3: #b19f9c;
+  --hair: #423433;
+  --accent: #eaa3a5;
+  --accent-ink: #f0b6b8;
+  --accent-soft: #4a2c2d;
+  --glow: 234 163 165;
+}
+.root[data-mode="dark"][data-palette="jade"] {
+  --bg-1: #141a18;
+  --bg-2: #0a0e0d;
+  --surface: #1b2320;
+  --surface-2: #222c28;
+  --ink: #e8f1ed;
+  --ink-2: #aec2ba;
+  --ink-3: #97aba3;
+  --hair: #31403a;
+  --accent: #8fd1bd;
+  --accent-ink: #a5dccb;
+  --accent-soft: #24413a;
+  --glow: 143 209 189;
+}
+
+.engraved {
+  font-family: var(--ecrin-engraved), serif;
+  font-weight: 400;
+}
+.caps {
+  font-family: var(--ecrin-engraved), serif;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.num {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* A satin object: light from above, a hairline, a soft cast shadow. */
+.object {
+  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  box-shadow:
+    inset 0 1px 0 rgb(var(--highlight) / 0.7),
+    0 0 0 1px var(--hair),
+    0 1px 2px rgb(var(--shadow) / 0.06),
+    0 12px 32px -14px rgb(var(--shadow) / 0.28);
+}
+.root[data-mode="dark"] .object {
+  box-shadow:
+    inset 0 1px 0 rgb(var(--highlight) / 0.07),
+    0 0 0 1px var(--hair),
+    0 14px 36px -12px rgb(0 0 0 / 0.6);
+}
+
+/* ——— Top ——— */
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 0;
+}
+@media (min-width: 900px) {
+  .top {
+    padding: 28px 44px 0;
+  }
+}
+.monogram {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  font-family: var(--ecrin-engraved), serif;
+  font-size: 17px;
+  letter-spacing: 0.12em;
+  padding-left: 0.12em;
+  color: var(--ink);
+}
+.date {
+  text-align: center;
+}
+.date b {
+  display: block;
+  font-family: var(--ecrin-engraved), serif;
+  font-weight: 400;
+  font-size: 15px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+.date span {
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.add {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  font-size: 26px;
+  font-weight: 300;
+  color: var(--ink);
+}
+.add:focus-visible,
+.monogram:focus-visible,
+.nav a:focus-visible,
+.knob:focus-visible,
+.choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* ——— Layout of today ——— */
+.stage {
+  display: grid;
+  gap: 28px;
+  padding: 12px 20px 0;
+  justify-items: center;
+}
+@media (min-width: 1100px) {
+  .stage {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 40px;
+    padding: 4px 44px 0;
+    justify-items: stretch;
+  }
+}
+
+/* ——— The dial ——— */
+.dialWrap {
+  position: relative;
+  width: min(100%, 360px);
+  aspect-ratio: 1;
+  justify-self: center;
+}
+@media (min-width: 1100px) {
+  .dialWrap {
+    width: 540px;
+  }
+}
+.dial {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.dialFace {
+  fill: var(--surface);
+}
+.dialRing {
+  fill: none;
+  stroke: var(--hair);
+  stroke-width: 1;
+}
+.dialTick {
+  stroke: var(--ink-3);
+  stroke-width: 1;
+}
+.dialHour {
+  fill: var(--ink-2);
+  font-family: var(--ecrin-sans), sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+.arc {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 20;
+  stroke: var(--ink);
+}
+.arc[data-state="done"] {
+  stroke: var(--ink-3);
+  opacity: 0.45;
+}
+.arc[data-state="now"] {
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 8px rgb(var(--glow) / 0.55));
+}
+.arcPause {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 2;
+  stroke-dasharray: 1 7;
+  stroke-linecap: round;
+}
+.hand {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.handJewel {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 3;
+}
+.hub {
+  fill: var(--surface-2);
+  stroke: var(--hair);
+}
+.dialCenter {
+  position: absolute;
+  inset: 24%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 4px;
+  pointer-events: none;
+}
+.bigTime {
+  font-weight: 200;
+  font-size: clamp(54px, 17vw, 92px);
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+}
+.bigTime small {
+  font-size: 0.42em;
+  margin: 0 0.06em;
+  vertical-align: 0.6em;
+  color: var(--ink-2);
+}
+.who {
+  font-family: var(--ecrin-engraved), serif;
+  font-size: clamp(17px, 4.8vw, 22px);
+  letter-spacing: 0.04em;
+}
+.left {
+  font-size: 14px;
+  color: var(--accent-ink);
+}
+
+/* ——— The tray: what comes next ——— */
+.tray {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.trayList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.capsule {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 0 18px 0 20px;
+  border-radius: 999px;
+}
+.capsuleTime {
+  font-size: 17px;
+  font-weight: 400;
+}
+.capsuleName {
+  font-family: var(--ecrin-engraved), serif;
+  font-size: 17px;
+  letter-spacing: 0.03em;
+  line-height: 1.15;
+}
+.capsuleWhat {
+  display: block;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.capsulePrice {
+  font-size: 15px;
+  color: var(--ink-2);
+}
+.capsule[data-flag] .capsuleTime::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 0.2em;
+}
+.flagNote {
+  display: block;
+  font-size: 13px;
+  color: var(--accent-ink);
+  font-style: normal;
+}
+
+/* ——— The case: takings ——— */
+.case {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  justify-self: end;
+}
+.pearls {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.pearl {
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-align: center;
+}
+.pearl b {
+  font-weight: 300;
+  font-size: clamp(24px, 6.5vw, 30px);
+  line-height: 1;
+}
+.pearl span {
+  font-family: var(--ecrin-engraved), serif;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.pearl[data-owed] b {
+  color: var(--accent-ink);
+}
+.caseFoot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: var(--ink-2);
+  padding: 0 6px;
+}
+
+/* Slide to settle. */
+.settle {
+  border-radius: 28px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settleHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 2px 6px 0;
+}
+.settleHead b {
+  font-family: var(--ecrin-engraved), serif;
+  font-weight: 400;
+  font-size: 17px;
+  letter-spacing: 0.03em;
+}
+.choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.choice {
+  min-height: 44px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+.choice[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 4px 12px -6px rgb(var(--glow) / 0.6);
+}
+.slider {
+  position: relative;
+  height: 60px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 2px 6px rgb(var(--shadow) / 0.12);
+  touch-action: none;
+  user-select: none;
+}
+.sliderLabel {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  color: var(--accent-ink);
+  padding-left: 48px;
+}
+.knob {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  color: var(--surface);
+  background:
+    radial-gradient(
+      circle at 35% 30%,
+      rgb(var(--highlight) / 0.45),
+      transparent 45%
+    ),
+    var(--accent);
+  box-shadow: 0 6px 14px -4px rgb(var(--glow) / 0.8);
+  cursor: grab;
+  transition: transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.knob[data-dragging] {
+  transition: none;
+  cursor: grabbing;
+}
+.settled {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 60px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  font-size: 15px;
+  animation: settle 420ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.settled i {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-style: normal;
+  font-size: 12px;
+  background: var(--accent);
+  color: var(--surface);
+}
+@keyframes settle {
+  from {
+    transform: scale(0.96);
+    opacity: 0;
+  }
+}
+
+/* ——— Navigation: a single capsule ——— */
+.nav {
+  position: fixed;
+  z-index: 30;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 999px;
+  max-width: calc(100vw - 24px);
+}
+.nav a {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-family: var(--ecrin-engraved), serif;
+  font-size: 12.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.nav a[aria-current="page"] {
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  box-shadow:
+    inset 0 1px 0 rgb(var(--highlight) / 0.8),
+    0 0 0 1px var(--hair),
+    0 4px 10px -4px rgb(var(--shadow) / 0.3);
+}
+.nav .more {
+  display: none;
+}
+@media (min-width: 600px) {
+  .nav .more {
+    display: flex;
+  }
+}
+
+/* ——— The tray of days ——— */
+.beads {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin: 22px auto 0;
+  padding: 0 16px;
+  position: relative;
+}
+.beads::before {
+  content: "";
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 50%;
+  height: 1px;
+  background: var(--hair);
+}
+.bead {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.bead b {
+  font-weight: 400;
+  font-size: 17px;
+}
+.bead span {
+  font-family: var(--ecrin-engraved), serif;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin-top: 3px;
+}
+.bead[aria-current="date"] {
+  background: var(--accent);
+  color: var(--surface);
+  box-shadow: 0 6px 16px -6px rgb(var(--glow) / 0.9);
+}
+.bead[aria-current="date"] span {
+  color: inherit;
+}
+
+.days {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 28px;
+  padding: 28px 20px 0;
+}
+.dayCol {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dayCol[data-side] {
+  display: none;
+}
+@media (min-width: 1100px) {
+  .dayCol[data-side] {
+    display: flex;
+    max-width: 300px;
+    opacity: 0.62;
+    transform: scale(0.9);
+    transform-origin: top center;
+  }
+}
+.dayTitle {
+  text-align: center;
+}
+.dayTitle b {
+  display: block;
+  font-weight: 200;
+  font-size: 64px;
+  line-height: 1;
+}
+.dayTitle span {
+  font-family: var(--ecrin-engraved), serif;
+  font-size: 13px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.rail {
+  position: relative;
+  margin: 8px 0 0;
+}
+.rail::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--hair);
+}
+.hang {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-radius: 26px;
+  padding: 10px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+.hang b {
+  font-family: var(--ecrin-engraved), serif;
+  font-weight: 400;
+  font-size: 16px;
+  letter-spacing: 0.03em;
+  line-height: 1.15;
+}
+.hang span {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.hang[data-short] {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.hang[data-state="done"] {
+  opacity: 0.55;
+}
+.hang[data-state="now"] {
+  box-shadow:
+    inset 0 1px 0 rgb(var(--highlight) / 0.7),
+    0 0 0 1.5px var(--accent),
+    0 10px 28px -10px rgb(var(--glow) / 0.7);
+}
+.hangPause {
+  position: absolute;
+  left: 22%;
+  right: 22%;
+  display: grid;
+  place-items: center;
+  font-family: var(--ecrin-engraved), serif;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border-top: 1px dotted var(--ink-3);
+  border-bottom: 1px dotted var(--ink-3);
+}
+.railNow {
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  height: 0;
+  border-top: 1.5px solid var(--accent);
+  z-index: 2;
+}
+.railNow::before {
+  content: attr(data-time);
+  position: absolute;
+  right: -2px;
+  top: 0;
+  transform: translateY(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 400;
+}
+.railHours span {
+  position: absolute;
+  left: -2px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  transform: translate(-100%, -50%);
+  padding-right: 8px;
+}
+.dayArrows {
+  display: none;
+}
+@media (min-width: 1100px) {
+  .dayArrows {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 6px;
+  }
+  .dayArrows a {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+  }
+}
+
+/* ——— Refinements ——— */
+.capsule[data-flag] .capsuleTime::after {
+  content: none;
+}
+@media (max-width: 1099px) {
+  .dialWrap {
+    order: -1;
+  }
+  .case {
+    order: 0;
+    justify-self: center;
+  }
+  .tray {
+    order: 1;
+  }
+}
+.beads {
+  width: fit-content;
+}
+.hang {
+  z-index: 1;
+}
+.hang[data-state="done"] {
+  opacity: 1;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+.hang[data-state="done"] b,
+.hang[data-state="done"] span {
+  color: var(--ink-3);
+}
+.railNow {
+  z-index: 0;
+  left: -64px;
+}
+.railNow::before {
+  right: auto;
+  left: 0;
+}
+@media (min-width: 1100px) {
+  .dayCol[data-side] {
+    opacity: 1;
+  }
+  .dayCol[data-side] .hang {
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    box-shadow: inset 0 0 0 1px var(--hair);
+  }
+}
+@media (max-width: 1099px) {
+  .dayCol:not([data-side]) .rail {
+    margin-left: 52px;
+  }
+  .railNow {
+    left: -58px;
+  }
+}
