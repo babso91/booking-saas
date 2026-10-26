@@ -1,8 +1,8 @@
 // Phone-like performance of the lab's public pages, in the conditions of
 // the independent audit: a PRODUCTION build (LAB_PUBLIC=1), Chromium,
-// 390 × 844 at DPR 1, cache disabled in a fresh context, 1.6 Mbit/s down /
-// 750 kbit/s up, 150 ms latency, CPU ×4, no interaction before collecting
-// LCP. Several runs per page, median reported. CDP measures, not a
+// 390 × 844 at DPR 1, cache disabled in a fresh context, 1 600 000 bit/s
+// down / 750 000 up, 150 ms latency, CPU ×4, no interaction, LCP collected
+// 9.5 s after load. Several runs per page, median reported. CDP measures, not a
 // Lighthouse score and not a physical phone.
 //
 //   LAB_URL=http://127.0.0.1:3009 CHROMIUM=… [PLAYWRIGHT=…] [RUNS=3] \
@@ -33,8 +33,9 @@ async function measure(path) {
   await cdp.send("Network.emulateNetworkConditions", {
     offline: false,
     latency: 150,
-    downloadThroughput: (1.6 * 1024 * 1024) / 8,
-    uploadThroughput: (750 * 1024) / 8,
+    // The audit's exact figures: 1 600 000 / 750 000 bit/s.
+    downloadThroughput: 1_600_000 / 8,
+    uploadThroughput: 750_000 / 8,
   });
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
   const bytes = { Script: 0, Font: 0, Image: 0, total: 0 };
@@ -70,7 +71,7 @@ async function measure(path) {
     }).observe({ type: "layout-shift", buffered: true });
   });
   await page.goto(`${APP}${path}`, { waitUntil: "load", timeout: 120_000 });
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(9500);
   const result = await page.evaluate(() => ({
     lcp: Math.round(window.__lcp.time),
     element: window.__lcp.element,

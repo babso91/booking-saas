@@ -541,7 +541,7 @@ function ServiceView({
           {(id) => (
             <Money
               id={id}
-              field={`${service.id}:price`}
+              fieldKey={`${service.id}:price`}
               cents={service.priceCents}
               onChange={(priceCents) => set({ priceCents }, key("price"))}
             />
@@ -727,7 +727,7 @@ function OptionEditor({
             />
             <Money
               label={`Supplément, réponse ${index + 1}`}
-              field={`${choice.id}:price`}
+              fieldKey={`${choice.id}:price`}
               prefix="+"
               cents={choice.priceDeltaCents}
               onChange={(priceDeltaCents) =>
@@ -845,7 +845,7 @@ const typed = new Map<string, string>();
 function Money({
   id,
   label,
-  field,
+  fieldKey,
   prefix,
   cents,
   onChange,
@@ -853,23 +853,28 @@ function Money({
   id?: string;
   label?: string;
   /** Which field this is, to show her own text again (see `typed`). */
-  field: string;
+  fieldKey: string;
   prefix?: string;
   cents: number;
   onChange: (cents: number) => void;
 }) {
   const [state, setState] = useState(() => ({
-    text: Number.isNaN(cents) ? (typed.get(field) ?? "") : eurosInput(cents),
+    text: Number.isNaN(cents) ? (typed.get(fieldKey) ?? "") : eurosInput(cents),
     cents,
   }));
-  // Object.is: NaN equals NaN here (an invalid field stays as typed).
+  // An outside change (undo, redo): the field shows that state's own entry.
+  // An invalid one comes back as she typed it, flagged; never the value of
+  // the state she left (Object.is: NaN equals NaN here).
   if (!Object.is(state.cents, cents)) {
     setState({
-      text: Number.isNaN(cents) ? state.text : eurosInput(cents),
+      text: Number.isNaN(cents)
+        ? (typed.get(fieldKey) ?? "")
+        : eurosInput(cents),
       cents,
     });
   }
-  const invalid = parseEuros(state.text) === null;
+  // What the draft holds decides: a NaN amount is always shown as invalid.
+  const invalid = Number.isNaN(cents) || parseEuros(state.text) === null;
   return (
     <span className="flex flex-col gap-1">
       <span className="relative flex items-center">
@@ -887,8 +892,8 @@ function Money({
           onChange={(event) => {
             const text = event.target.value;
             const parsed = parseEuros(text) ?? Number.NaN;
-            if (Number.isNaN(parsed)) typed.set(field, text);
-            else typed.delete(field);
+            if (Number.isNaN(parsed)) typed.set(fieldKey, text);
+            else typed.delete(fieldKey);
             setState({ text, cents: parsed });
             onChange(parsed);
           }}

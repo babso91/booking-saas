@@ -2,22 +2,31 @@
 
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 
 import { Booking } from "./booking";
 import { showcase, type Catalog, type CatalogService } from "./catalog/model";
 import { pros, type ProId } from "./catalog/pros";
 import type { PhotoSlot, SiteConfig } from "./engine/config";
 import {
+  revealVariables,
   Detail,
   Display,
   EngineProvider,
   useEngine,
   type EngineEdit,
 } from "./engine/engine";
-import { contrast, ctaColors, cssVariables } from "./engine/tokens";
+import revealStyles from "./engine/reveal.module.css";
+import { contrast, ctaColors, cssVariables, motions } from "./engine/tokens";
 import { useHistory } from "./history";
-import { releaseLocalPhotos } from "./photos";
+import { isLocal, releaseLocalPhotos } from "./photos";
 import { effective, online, type Plan } from "./plans";
 import { Intro } from "./scenes/intro";
 import { Opening } from "./scenes/opening";
@@ -122,7 +131,11 @@ export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
 
   // Her own photos (blob: URLs) are released once nothing can show them
   // again: not the draft, not a step of undo/redo, not the published site.
+  // This site's own photos (seen in its states), released with it when it
+  // goes away (a navigation): its history and publication go with it; a
+  // photo of another site still on screen is never touched.
   const { reachable } = history;
+  const mine = useRef(new Set<string>());
   useEffect(() => {
     const used = new Set<string>();
     for (const config of [
@@ -133,8 +146,13 @@ export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
       used.add(config.content.portrait.photo);
       for (const work of config.content.works) used.add(work.photo);
     }
-    releaseLocalPhotos(used);
+    for (const id of used) if (isLocal(id)) mine.current.add(id);
+    releaseLocalPhotos(used, mine.current);
   }, [reachable, published]);
+  useEffect(() => {
+    const own = mine.current;
+    return () => releaseLocalPhotos(new Set(), own);
+  }, []);
   const live = online(published, plan);
   const preview =
     view === "live" ? live : effective(draft.value, plan, universe);
@@ -253,6 +271,8 @@ export function SiteView({
     service: CatalogService | null;
   } | null>(null);
   const groups = showcase(catalog);
+  const siteRoot = useRef<HTMLDivElement>(null);
+  const armed = useRevealArming(siteRoot);
   // Her choice of scenes (the opening and her services always show).
   const sections = config.sections.filter(
     (section) => !config.hidden?.includes(section.kind),
@@ -266,9 +286,15 @@ export function SiteView({
 
   return (
     <div
+      ref={siteRoot}
       lang="fr"
-      className="min-h-dvh bg-[var(--u-bg)] text-[var(--u-ink)]"
-      style={{ ...cssVariables(config.tokens), fontFamily: "var(--t-body)" }}
+      data-reveal-kind={motions[config.tokens.motion].entrance}
+      className={`min-h-dvh bg-[var(--u-bg)] text-[var(--u-ink)] ${armed ? revealStyles.armed : ""}`}
+      style={{
+        ...cssVariables(config.tokens),
+        ...revealVariables(motions[config.tokens.motion]),
+        fontFamily: "var(--t-body)",
+      }}
     >
       <EngineProvider
         value={{
@@ -463,4 +489,69 @@ function StudioLauncher({ onOpen }: { onOpen: () => void }) {
       Personnaliser
     </button>
   );
+}
+
+/**
+ * Arms the site's reveals (engine/reveal.module.css) once the page runs:
+ * after hydration, with IntersectionObserver, motion not reduced. Until
+ * then (no JavaScript, slow or failed hydration) everything is visible.
+ * Armed, what is on screen is marked revealed at once (no flash), the
+ * rest is revealed as it comes into view; elements added later (her
+ * edits, another scene) are followed too.
+ */
+const REDUCED = "(prefers-reduced-motion: reduce)";
+function useRevealArming(root: RefObject<HTMLDivElement | null>) {
+  // false on the server and while hydrating (the HTML stays as served),
+  // then the browser's answer, following "reduce motion" if it changes.
+  const on = useSyncExternalStore(
+    (changed) => {
+      const query = window.matchMedia(REDUCED);
+      query.addEventListener("change", changed);
+      return () => query.removeEventListener("change", changed);
+    },
+    () =>
+      typeof IntersectionObserver === "function" &&
+      !window.matchMedia(REDUCED).matches,
+    () => false,
+  );
+  // Before paint: on-screen elements must never be hidden, even a frame.
+  useLayoutEffect(() => {
+    const site = root.current;
+    if (!on || !site) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          entry.target.setAttribute("data-revealed", "");
+          observer.unobserve(entry.target);
+        }
+      },
+      { rootMargin: "0px 0px -12% 0px" },
+    );
+    const follow = (element: Element) => {
+      if (element.hasAttribute("data-revealed")) return;
+      const box = element.getBoundingClientRect();
+      if (box.top < window.innerHeight && box.bottom > 0) {
+        element.setAttribute("data-revealed", "now");
+      } else {
+        observer.observe(element);
+      }
+    };
+    site.querySelectorAll("[data-reveal]").forEach(follow);
+    const added = new MutationObserver((records) => {
+      for (const record of records) {
+        record.addedNodes.forEach((node) => {
+          if (!(node instanceof Element)) return;
+          if (node.matches("[data-reveal]")) follow(node);
+          node.querySelectorAll("[data-reveal]").forEach(follow);
+        });
+      }
+    });
+    added.observe(site, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      added.disconnect();
+    };
+  }, [on, root]);
+  return on;
 }

@@ -336,17 +336,27 @@ function KineticOpening() {
           {config.brand.location} — réservation en ligne, sans compte
         </Detail>
       </p>
-      <motion.button
-        type="button"
-        onClick={() => book(null)}
-        aria-label={`Réserver chez ${name}`}
-        className={`absolute right-[6vw] bottom-[18svh] size-28 cursor-pointer rounded-full bg-[var(--u-bg)] text-[var(--u-ink)] md:size-36 ${seal.className}`}
+      {/* The seal: a round button (its name says what it does) under a
+          rotating ring of text, which is decoration only (outside the
+          button, so its repeated words are not read as its label). */}
+      <motion.div
+        className={`absolute right-[6vw] bottom-[18svh] size-28 md:size-36 ${seal.className}`}
         style={seal.style}
         whileTap={{ scale: 0.92 }}
       >
+        <button
+          type="button"
+          onClick={() => book(null)}
+          aria-label={`Réserver chez ${name}`}
+          className="absolute inset-0 cursor-pointer rounded-full bg-[var(--u-bg)] text-[var(--u-ink)]"
+        >
+          <span className="text-[26px]" aria-hidden="true">
+            →
+          </span>
+        </button>
         <motion.svg
           viewBox="0 0 100 100"
-          className="absolute inset-0"
+          className="pointer-events-none absolute inset-0 text-[var(--u-ink)]"
           animate={{ rotate: 360 }}
           transition={{ duration: 14, repeat: Infinity, ease: "linear" }}
           aria-hidden="true"
@@ -368,10 +378,7 @@ function KineticOpening() {
             </textPath>
           </text>
         </motion.svg>
-        <span className="relative text-[26px]" aria-hidden="true">
-          →
-        </span>
-      </motion.button>
+      </motion.div>
     </section>
   );
 }

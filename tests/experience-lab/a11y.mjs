@@ -1,14 +1,33 @@
 // axe-core (WCAG 2.1 A/AA) on the lab's real screens: each universe at
 // 320, 390 and 1440 px, every booking step, the studio's panels. Run like
-// journeys.mjs, plus AXE (path to axe.min.js). The site header is drawn in
-// mix-blend-mode: difference, which axe cannot evaluate: its two nodes are
-// reported apart as "blend" and not counted as violations.
+// journeys.mjs. axe-core is the copy pinned in ./vendor (version and
+// SHA-256 below, checked before every run; AXE=path overrides it). The
+// site header is drawn in mix-blend-mode: difference, whose colours axe
+// cannot compute: colour-contrast results on blended elements are set
+// apart in the page (before any truncation) and reported, not counted.
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT ?? "playwright-core");
 const APP = process.env.LAB_URL ?? "http://127.0.0.1:3008";
-// axe-core's axe.min.js (a path): AXE=/path/to/axe.min.js
-const AXE = process.env.AXE;
+
+// axe-core 4.14.0 (MPL-2.0), from the npm package's axe.min.js.
+const AXE_VERSION = "4.14.0";
+const AXE_SHA256 =
+  "20c09fe157a8a34a30e241aaa1fcdade657734f08ab379ecfbeb7d45cc46e878";
+const AXE =
+  process.env.AXE ??
+  fileURLToPath(
+    new URL(`./vendor/axe-core-${AXE_VERSION}.min.js`, import.meta.url),
+  );
+if (!process.env.AXE) {
+  const sum = createHash("sha256").update(readFileSync(AXE)).digest("hex");
+  if (sum !== AXE_SHA256)
+    throw new Error(`axe-core ${AXE_VERSION}: checksum mismatch`);
+}
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM });
 const report = [];
 
@@ -25,20 +44,38 @@ async function audit(page, label, include) {
         resultTypes: ["violations"],
       },
     );
-    return run.violations.map((v) => ({
-      id: v.id,
-      impact: v.impact,
-      help: v.help,
-      nodes: v.nodes
-        .slice(0, 4)
-        .map((n) =>
-          `${n.target.join(" ")} :: ${(n.failureSummary || "").split("\n")[1] ?? ""}`.slice(
-            0,
-            220,
+    // Colours under mix-blend-mode cannot be computed by axe: set apart.
+    const blended = (target) => {
+      for (
+        let node = document.querySelector(target[0]);
+        node;
+        node = node.parentElement
+      ) {
+        if (getComputedStyle(node).mixBlendMode !== "normal") return true;
+      }
+      return false;
+    };
+    return run.violations.map((v) => {
+      const kept =
+        v.id === "color-contrast"
+          ? v.nodes.filter((n) => !blended(n.target))
+          : v.nodes;
+      return {
+        id: v.id,
+        impact: v.impact,
+        help: v.help,
+        blend: v.nodes.length - kept.length,
+        nodes: kept
+          .slice(0, 4)
+          .map((n) =>
+            `${n.target.join(" ")} :: ${(n.failureSummary || "").split("\n")[1] ?? ""}`.slice(
+              0,
+              220,
+            ),
           ),
-        ),
-      count: v.nodes.length,
-    }));
+        count: kept.length,
+      };
+    });
   }, include ?? null);
   report.push({ label, result });
 }
@@ -127,17 +164,11 @@ for (const id of ["mila", "alma", "nail-lab"]) {
 }
 
 await browser.close();
-// The header (mix-blend-mode: difference) cannot be judged by axe.
-const blend = (node) =>
-  /^header /.test(node) ||
-  node.startsWith("header >") ||
-  /pointer-events-auto >/.test(node) ||
-  /text-\\\[18px\\\]\.leading-none/.test(node);
 let violations = 0;
+let blendNodes = 0;
 for (const entry of report) {
-  entry.result = entry.result
-    .map((v) => ({ ...v, nodes: v.nodes.filter((node) => !blend(node)) }))
-    .filter((v) => v.nodes.length);
+  for (const v of entry.result) blendNodes += v.blend;
+  entry.result = entry.result.filter((v) => v.count > 0);
   violations += entry.result.length;
 }
 for (const { label, result } of report) {
@@ -150,6 +181,6 @@ for (const { label, result } of report) {
   }
 }
 console.log(
-  `\n${report.length} screens, ${violations} violation(s) outside the blend-mode header`,
+  `\naxe-core ${AXE_VERSION}: ${report.length} screens, ${violations} violation(s); ${blendNodes} colour-contrast node(s) under mix-blend-mode set apart (not computable)`,
 );
 process.exit(violations ? 1 : 0);

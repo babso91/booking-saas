@@ -259,11 +259,11 @@ function Shelf() {
                 {...reveal(position)}
               >
                 <article
-                  className="flex h-full flex-col justify-between gap-10 bg-[color-mix(in_srgb,var(--u-paper)_70%,white)] p-6"
+                  className="flex h-full flex-col justify-between gap-10 bg-[var(--u-card)] p-6 text-[var(--u-ink-card)]"
                   style={{ borderRadius: "var(--s-radius)" }}
                 >
                   <div>
-                    <span className="text-[var(--u-soft-paper)]">
+                    <span className="text-[var(--u-soft-card)]">
                       <Note>{minutes(service.durationMinutes)} pour vous</Note>
                     </span>
                     <Display
@@ -273,7 +273,7 @@ function Shelf() {
                       {service.name}
                     </Display>
                     {service.description ? (
-                      <p className="mt-4 text-[15px] leading-relaxed text-[var(--u-soft-paper)]">
+                      <p className="mt-4 text-[15px] leading-relaxed text-[var(--u-soft-card)]">
                         {service.description}
                       </p>
                     ) : null}

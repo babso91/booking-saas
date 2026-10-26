@@ -3,7 +3,14 @@ import { describe, expect, it } from "vitest";
 import { can, dormant, effective, online } from "../plans";
 import { universes } from "../universes";
 import { advise, ensureReadable, renderedTextPairs } from "./harmony";
-import { contrast, ctaColors, readableOn } from "./tokens";
+import {
+  cardOnPaper,
+  contrast,
+  ctaColors,
+  inkOnCard,
+  readableOn,
+  softOnCard,
+} from "./tokens";
 
 const designed = Object.values(universes).flatMap((universe) => [
   ...universe.palettes.map((item) => ({
@@ -302,4 +309,43 @@ describe("experience engine", () => {
       });
     },
   );
+
+  describe("the service cards' own surface (shelf)", () => {
+    const alma = universes.alma.config;
+    it.each([
+      ["the audit's palette", "#707070", "#FFFFFF"],
+      ["mid grey, black ink", "#8A8A8A", "#000000"],
+      ["black paper, white ink", "#000000", "#FFFFFF"],
+      ["white paper, black ink", "#FFFFFF", "#000000"],
+      ["dark olive, pale ink", "#3A4A3A", "#E9ECE3"],
+      ["saturated red, white ink", "#C0392B", "#FFFFFF"],
+    ])("%s (paper %s, ink %s): the card's texts read", (_name, paper, ink) => {
+      const safe = ensureReadable({
+        ...alma,
+        tokens: {
+          ...alma.tokens,
+          palette: { ...alma.tokens.palette, paper, inkOnPaper: ink },
+        },
+      });
+      const palette = safe.tokens.palette;
+      const card = cardOnPaper(palette);
+      expect(contrast(inkOnCard(palette), card)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(softOnCard(palette), card)).toBeGreaterThanOrEqual(4.5);
+      // Her palette is not what changed for the card.
+      expect(palette.paper).toBe(paper);
+    });
+
+    it("the audit's palette: the card is the mixed grey, and her white ink only moves as far as needed", () => {
+      const palette = {
+        ...alma.tokens.palette,
+        paper: "#707070",
+        inkOnPaper: "#FFFFFF",
+      };
+      expect(cardOnPaper(palette)).toBe("#9B9B9B");
+      expect(contrast("#FFFFFF", "#9B9B9B")).toBeLessThan(3);
+      const ink = inkOnCard(palette);
+      expect(contrast(ink, "#9B9B9B")).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(ink, "#9B9B9B")).toBeLessThan(6);
+    });
+  });
 });

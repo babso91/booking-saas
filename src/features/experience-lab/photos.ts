@@ -22,9 +22,13 @@ export function localPhoto(file: Blob) {
  * the published version, not a step "Annuler" or "Rétablir" can reach):
  * the browser releases the file. A photo still reachable is kept.
  */
-export function releaseLocalPhotos(referenced: Set<string>) {
+export function releaseLocalPhotos(
+  referenced: Set<string>,
+  /** Only these (one site's own photos); all of this tab's when absent. */
+  among?: Set<string>,
+) {
   for (const id of local) {
-    if (referenced.has(id)) continue;
+    if (referenced.has(id) || (among && !among.has(id))) continue;
     URL.revokeObjectURL(id);
     local.delete(id);
   }

@@ -182,6 +182,39 @@ export const softOnPaper = (palette: Palette) =>
     palette.inkOnPaper,
   );
 
+/**
+ * An ink for text on `surface`: hers (`preferred`) if it reads (4.5:1);
+ * otherwise her hue moved towards black or towards white, whichever reads
+ * first (the smallest change), as a last resort pure black or white.
+ */
+export function inkOn(surface: string, preferred: string) {
+  if (contrast(preferred, surface) >= 4.5) return preferred.toUpperCase();
+  for (let step = 1; step <= 20; step += 1) {
+    const candidates = ["#000000", "#FFFFFF"]
+      .map((pole) => towards(preferred, pole, step / 20))
+      .filter((tone) => contrast(tone, surface) >= 4.5)
+      .sort((a, b) => contrast(b, surface) - contrast(a, surface));
+    if (candidates.length) return candidates[0]!;
+  }
+  return readableOn(surface, ["#FFFFFF", "#000000"]);
+}
+
+/**
+ * The service cards of the shelf (Alma): her day colour lifted towards
+ * white, a surface of their own. Their inks are resolved on THIS surface,
+ * not on the day colour it comes from.
+ */
+export const cardOnPaper = (palette: Palette) =>
+  towards(palette.paper, "#FFFFFF", 0.3);
+export const inkOnCard = (palette: Palette) =>
+  inkOn(cardOnPaper(palette), palette.inkOnPaper);
+/** Secondary text on a card: the card's ink softened, then readable. */
+export const softOnCard = (palette: Palette) => {
+  const card = cardOnPaper(palette);
+  const ink = inkOnCard(palette);
+  return readableTone(towards(ink, card, 0.32), card, ink);
+};
+
 /** The CSS variables a site renders with. */
 export function cssVariables(tokens: {
   palette: Palette;
@@ -198,6 +231,9 @@ export function cssVariables(tokens: {
     "--u-ink-on-paper": p.inkOnPaper,
     "--u-muted": p.muted,
     "--u-soft-paper": softOnPaper(p),
+    "--u-card": cardOnPaper(p),
+    "--u-ink-card": inkOnCard(p),
+    "--u-soft-card": softOnCard(p),
     "--u-line": p.line,
     "--u-accent": p.accent,
     "--u-on-accent": p.onAccent,

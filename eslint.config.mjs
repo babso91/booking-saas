@@ -44,6 +44,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Third-party code pinned for tests (axe-core, minified).
+    "tests/**/vendor/**",
   ]),
 ]);
 

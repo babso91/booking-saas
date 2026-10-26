@@ -3,6 +3,11 @@ import Link from "next/link";
 import { pros, type ProId } from "@/features/experience-lab/catalog/pros";
 import { universes } from "@/features/experience-lab/universes";
 
+// Rendered per request: the lab's layout decides at runtime whether this
+// build serves the lab (LAB_PUBLIC=1); a static page would freeze the
+// build machine's answer (a 404) into every production instance.
+export const dynamic = "force-dynamic";
+
 // Internal index of the lab (for us, not part of any product path): in
 // real life a customer arrives directly on one professional's link.
 export default function LabIndex() {

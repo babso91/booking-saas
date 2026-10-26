@@ -291,6 +291,13 @@ Voir § 3 :
 - **Lisibilité** : une liste unique de couples texte/fond rendus (`renderedTextPairs`), y compris le secondaire nuit et le secondaire jour (calculé, plus d'opacités sur le texte). Elle est vérifiée sur les palettes conçues et sur 400 palettes aléatoires.
 - **Photos locales** : libérées dès que rien ne peut plus les afficher (brouillon, étapes annuler/rétablir, version publiée).
 
+### Contre-audit (`162bdcf`)
+
+- **Surfaces réellement affichées :** les cartes de prestations (étagère) ont leur propre surface, le fond jour éclairci de 30 % vers le blanc. Elle est calculée exactement (`cardOnPaper`), et ses encres sont résolues sur elle (`inkOnCard`, `softOnCard`). La couleur choisie est gardée si elle se lit ; sinon, sa teinte est poussée vers le noir ou le blanc, le moins possible. La palette n'est jamais modifiée. Ces couples font partie de `renderedTextPairs`, vérifiés sur les palettes limites et sur 400 palettes aléatoires. Une vérification du DOM publié complète ces tests (`journeys.mjs`, cas J1).
+- **Révélations en amélioration progressive** (`engine/reveal.module.css`) : le HTML servi est entièrement visible, sans JavaScript ou si l'hydratation tarde ou échoue. Après l'hydratation seulement (`useSyncExternalStore`), si IntersectionObserver existe et que les animations ne sont pas réduites, la racine est armée. Ce qui est déjà à l'écran est marqué révélé sans transition (pas de flash) ; le reste se révèle à l'entrée dans l'écran, avec les mêmes poses et durées que le langage de mouvement. Contrôlé sur les trois univers, sans JavaScript, avec JavaScript retardé et avec JavaScript (cas J2).
+- **Accessibilité :** axe-core 4.14.0 est embarqué dans `tests/experience-lab/vendor/`, avec son empreinte SHA-256 vérifiée à chaque lancement, et identique sur jsDelivr et unpkg. Les nœuds de couleur sous `mix-blend-mode` sont écartés dans la page, avant toute troncature, et comptés à part. L'anneau de texte du sceau de Nail Lab est un décor, hors du bouton.
+- **Index du labo :** rendu à la demande (`force-dynamic`). En page statique, il figeait en 404 la réponse de la machine de build dans toute instance de production.
+
 ## 8. Prochaines étapes du laboratoire
 
 - **Variantes à ajouter, une par une, soignées :** témoignages (explicitement fictifs dans le labo), avant/après au toucher.

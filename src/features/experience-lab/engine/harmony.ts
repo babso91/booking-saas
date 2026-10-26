@@ -2,7 +2,10 @@ import type { Palette, Section, SiteConfig } from "./config";
 import {
   contrast,
   readableOn,
+  cardOnPaper,
+  inkOnCard,
   readableTone,
+  softOnCard,
   softOnPaper,
   typePairs,
 } from "./tokens";
@@ -49,6 +52,16 @@ export function renderedTextPairs(palette: Palette) {
       where: "Le texte secondaire sur le fond jour",
       text: softOnPaper(palette),
       on: palette.paper,
+    },
+    {
+      where: "Le texte des cartes de prestations",
+      text: inkOnCard(palette),
+      on: cardOnPaper(palette),
+    },
+    {
+      where: "Le texte secondaire des cartes de prestations",
+      text: softOnCard(palette),
+      on: cardOnPaper(palette),
     },
     {
       where: "Le fond nuit en texte sur l’encre",

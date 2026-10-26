@@ -631,6 +631,366 @@ const cases = [
       await context.close();
     },
   },
+  {
+    id: "J1",
+    name: "Alma's service cards read on the surface really shown (Fond jour #707070, Texte jour #FFFFFF)",
+    async run(check) {
+      const { context, page } = await open("/labo/alma");
+      const studio = await openStudio(page);
+      await studio
+        .getByRole("button", { name: "Créatif", exact: true })
+        .click();
+      await studio
+        .getByRole("button", { name: "Couleurs", exact: true })
+        .click();
+      await studio.getByLabel("Fond jour").fill("#707070");
+      await studio.getByLabel("Texte jour").fill("#ffffff");
+      await studio.getByRole("button", { name: /^Publier/ }).click();
+      await studio.getByRole("button", { name: "En ligne" }).click();
+      await studio.getByRole("button", { name: "Fermer le studio" }).click();
+      const card = page.locator("section[data-booking-scene] article").first();
+      await card.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(2500);
+      // Every text node of the cards against the colour it is drawn on.
+      const ratios = await page.evaluate(() => {
+        // rgb(…) or, for color-mix(), color(srgb r g b) in 0–1.
+        const rgb = (value) => {
+          const numbers = (value.match(/[\d.]+/g) ?? []).map(Number);
+          if (value.startsWith("color(srgb")) {
+            const [r, g, b, a = 1] = numbers;
+            return [r * 255, g * 255, b * 255, a];
+          }
+          return numbers.slice(0, 4);
+        };
+        const lum = ([r, g, b]) => {
+          const c = [r, g, b].map((v) => {
+            const x = v / 255;
+            return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+          });
+          return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        };
+        const ratio = (a, b) => {
+          const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+          return (hi + 0.05) / (lo + 0.05);
+        };
+        const background = (element) => {
+          for (let node = element; node; node = node.parentElement) {
+            const [r, g, b, a = 1] = rgb(
+              getComputedStyle(node).backgroundColor,
+            );
+            if (a > 0.99) return [r, g, b];
+          }
+          return [255, 255, 255];
+        };
+        const out = [];
+        for (const article of document.querySelectorAll(
+          "section[data-booking-scene] article",
+        )) {
+          const walker = document.createTreeWalker(
+            article,
+            NodeFilter.SHOW_TEXT,
+          );
+          for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+            const element = text.parentElement;
+            if (!text.textContent.trim() || element.closest("button")) continue;
+            const style = getComputedStyle(element);
+            const [r, g, b, a = 1] = rgb(style.color);
+            const bg = background(element);
+            const opacity = Number(style.opacity);
+            const fg = [r, g, b].map(
+              (v, i) => v * a * opacity + bg[i] * (1 - a * opacity),
+            );
+            out.push({
+              text: text.textContent.trim().slice(0, 24),
+              ratio: Number(ratio(fg, bg).toFixed(2)),
+            });
+          }
+        }
+        return out;
+      });
+      const worst = ratios.reduce(
+        (min, item) => (item.ratio < min.ratio ? item : min),
+        { ratio: 99 },
+      );
+      check(
+        "every text of every card reads (4.5:1)",
+        ratios.length > 0 && worst.ratio >= 4.5,
+        JSON.stringify(worst),
+      );
+      await context.close();
+    },
+  },
+  {
+    id: "J2",
+    name: "the services are visible without JavaScript, with JavaScript late, and revealed with JavaScript",
+    async run(check) {
+      const hidden = (page) =>
+        page.evaluate(
+          () =>
+            [
+              ...document.querySelectorAll(
+                "section[data-booking-scene] h2, section[data-booking-scene] li, section[data-booking-scene] article, [data-reveal]",
+              ),
+            ].filter((element) => {
+              const style = getComputedStyle(element);
+              return (
+                Number(style.opacity) < 0.99 ||
+                /\b0%\)?$/.test(style.maskSize) ||
+                style.maskSize === "100% 0%"
+              );
+            }).length,
+        );
+      for (const universe of ["mila", "alma", "nail-lab"]) {
+        // No JavaScript at all.
+        const off = await browser.newContext({
+          ...phone,
+          javaScriptEnabled: false,
+        });
+        const page = await off.newPage();
+        await page.goto(`${APP}/labo/${universe}`);
+        for (let y = 0; y < 9000; y += 600)
+          await page.evaluate((top) => window.scrollTo(0, top), y);
+        await page.waitForTimeout(3000);
+        const titles = await page
+          .locator(
+            "section[data-booking-scene] h2, section[data-booking-scene] li",
+          )
+          .count();
+        check(
+          `${universe}: without JavaScript, every service shown (${titles} elements)`,
+          titles > 0 && (await hidden(page)) === 0,
+          `${await hidden(page)} hidden`,
+        );
+        await off.close();
+
+        // JavaScript held back 6 s: what is served is visible meanwhile.
+        const late = await browser.newContext(phone);
+        const slow = await late.newPage();
+        await slow.route("**/_next/static/chunks/**", async (route) => {
+          await new Promise((resolve) => setTimeout(resolve, 6000));
+          await route.continue();
+        });
+        await slow.goto(`${APP}/labo/${universe}`, {
+          waitUntil: "domcontentloaded",
+        });
+        await slow.waitForTimeout(2500);
+        await slow
+          .locator("section[data-booking-scene]")
+          .scrollIntoViewIfNeeded();
+        await slow.waitForTimeout(500);
+        check(
+          `${universe}: JavaScript late: services visible before hydration`,
+          (await hidden(slow)) === 0,
+          `${await hidden(slow)} hidden`,
+        );
+        await late.close();
+
+        // JavaScript on: revealed on scroll, nothing left hidden at the end.
+        const { context, page: live } = await open(`/labo/${universe}`);
+        const armed = await live.evaluate(
+          () => !!document.querySelector("[data-reveal-kind][class*='armed']"),
+        );
+        for (let y = 0; y < 12000; y += 300) {
+          await live.mouse.wheel(0, 300);
+          await live.waitForTimeout(60);
+        }
+        // What a customer looks at, sideways too (film strips, shelves).
+        const count = await live.locator("[data-reveal]").count();
+        for (let index = 0; index < count; index += 1) {
+          await live
+            .locator("[data-reveal]")
+            .nth(index)
+            .evaluate((element) =>
+              element.scrollIntoView({ block: "center", inline: "center" }),
+            );
+          await live.waitForTimeout(120);
+        }
+        await live.waitForTimeout(2500);
+        check(
+          `${universe}: JavaScript on: reveals armed, all revealed after scrolling`,
+          armed && (await hidden(live)) === 0,
+          `${await hidden(live)} hidden`,
+        );
+        await context.close();
+      }
+    },
+  },
+  {
+    id: "J3",
+    name: "her local photos are released when the site goes away (navigation inside the app)",
+    async run(check) {
+      const context = await browser.newContext(phone);
+      await context.addInitScript(() => {
+        window.__made = [];
+        window.__freed = [];
+        const make = URL.createObjectURL.bind(URL);
+        const free = URL.revokeObjectURL.bind(URL);
+        URL.createObjectURL = (blob) => {
+          const url = make(blob);
+          window.__made.push(url);
+          return url;
+        };
+        URL.revokeObjectURL = (url) => {
+          window.__freed.push(url);
+          free(url);
+        };
+      });
+      const page = await context.newPage();
+      await page.goto(`${APP}/labo`);
+      await page
+        .getByRole("link", { name: /Studio Mila/ })
+        .first()
+        .click();
+      await page.waitForURL(/\/labo\/mila/);
+      const studio = await openStudio(page);
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      await studio.getByRole("button", { name: "Photos", exact: true }).click();
+      await studio.getByRole("button", { name: /Couverture/ }).click();
+      await studio
+        .locator('input[type="file"]')
+        .setInputFiles({ name: "a.png", mimeType: "image/png", buffer: png });
+      await page.waitForTimeout(300);
+      await studio.getByRole("button", { name: "Annuler" }).click();
+      await studio
+        .locator('input[type="file"]')
+        .setInputFiles({ name: "b.png", mimeType: "image/png", buffer: png });
+      await page.waitForTimeout(300);
+      await studio.getByRole("button", { name: /^Publier/ }).click();
+      await studio.getByRole("button", { name: "Annuler" }).click();
+      await page.waitForTimeout(300);
+      await page.goBack();
+      await page.waitForURL(/\/labo$/);
+      await page.waitForTimeout(500);
+      const { made, freed } = await page.evaluate(() => ({
+        made: window.__made,
+        freed: window.__freed,
+      }));
+      const kept = made.filter((url) => !freed.includes(url));
+      check(
+        "both photos were made, none is kept once the site is gone",
+        made.length === 2 && kept.length === 0,
+        JSON.stringify({ made: made.length, kept: kept.length }),
+      );
+      await context.close();
+    },
+  },
+  {
+    id: "J4",
+    name: "the Price field stays in its column, next to Duration (320 to 1440 px)",
+    async run(check) {
+      for (const width of [320, 375, 390, 768, 1440]) {
+        const device =
+          width < 768
+            ? {
+                viewport: { width, height: 844 },
+                hasTouch: true,
+                isMobile: true,
+              }
+            : { viewport: { width, height: 900 } };
+        const { context, page } = await open("/labo/mila", device);
+        const studio = await openStudio(page);
+        await studio.getByRole("button", { name: /Pose cil à cil/ }).click();
+        const price = studio.getByRole("textbox", {
+          name: "Prix",
+          exact: true,
+        });
+        const duration = studio.getByRole("combobox", {
+          name: "Durée",
+          exact: true,
+        });
+        const geometry = await price.evaluate(
+          (input, select) => {
+            const a = input.getBoundingClientRect();
+            const column =
+              input
+                .closest(".grid > div, .grid > *")
+                ?.getBoundingClientRect() ?? a;
+            const b = select.getBoundingClientRect();
+            return {
+              past: Math.round(a.right - column.right),
+              overlap: Math.round(
+                Math.max(
+                  0,
+                  Math.min(a.right, b.right) - Math.max(a.left, b.left),
+                ) *
+                  Math.max(
+                    0,
+                    Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top),
+                  ),
+              ),
+            };
+          },
+          await duration.elementHandle(),
+        );
+        check(
+          `${width} px: Price within its column, not over Duration`,
+          geometry.past <= 0 && geometry.overlap === 0,
+          JSON.stringify(geometry),
+        );
+        await context.close();
+      }
+    },
+  },
+  {
+    id: "J5",
+    name: "an invalid price comes back as typed and flagged after Annuler then Rétablir",
+    async run(check) {
+      const { context, page } = await open("/labo/mila");
+      const studio = await openStudio(page);
+      await studio.getByRole("button", { name: /Pose cil à cil/ }).click();
+      const price = studio.getByRole("textbox", { name: "Prix", exact: true });
+      await price.fill("-12");
+      await page.waitForTimeout(1000); // one undo step for the gesture
+      await studio.getByRole("button", { name: "Annuler" }).click();
+      check(
+        "undone: 90, valid",
+        (await price.inputValue()) === "90" &&
+          (await price.getAttribute("aria-invalid")) === null,
+      );
+      await studio.getByRole("button", { name: "Rétablir" }).click();
+      check(
+        "redone: « -12 », flagged invalid",
+        (await price.inputValue()) === "-12" &&
+          (await price.getAttribute("aria-invalid")) === "true",
+        `${await price.inputValue()} / ${await price.getAttribute("aria-invalid")}`,
+      );
+      check(
+        "and the publish button still says what is missing",
+        /À compléter/.test(
+          await studio
+            .getByRole("button", { name: /Publier|À compléter/ })
+            .innerText(),
+        ),
+      );
+      await context.close();
+    },
+  },
+  {
+    id: "J6",
+    name: "every « ✎ Photo » button says « photo » in its name",
+    async run(check) {
+      const { context, page } = await open("/labo/mila");
+      await openStudio(page);
+      const names = await page.evaluate(() =>
+        [...document.querySelectorAll("button")]
+          .filter(
+            (button) =>
+              button.textContent?.includes("Photo") &&
+              button.getAttribute("aria-label"),
+          )
+          .map((button) => button.getAttribute("aria-label")),
+      );
+      check(
+        `${names.length} button(s), all naming the photo`,
+        names.length > 0 && names.every((name) => /photo/i.test(name)),
+        JSON.stringify(names),
+      );
+      await context.close();
+    },
+  },
 ];
 
 let failed = 0;

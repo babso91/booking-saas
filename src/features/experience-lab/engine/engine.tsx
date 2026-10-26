@@ -1,6 +1,5 @@
 "use client";
 
-import type { MotionProps } from "motion/react";
 import {
   createContext,
   useContext,
@@ -198,8 +197,8 @@ export function EditTarget({
         slot === "cover"
           ? "Modifier la photo de couverture"
           : slot === "portrait"
-            ? "Modifier ton portrait"
-            : `Modifier la réalisation ${slot + 1}`
+            ? "Modifier la photo de ton portrait"
+            : `Modifier la photo de la réalisation ${slot + 1}`
       }
       className={`${className} cursor-pointer`}
     >
@@ -210,44 +209,29 @@ export function EditTarget({
 
 /**
  * How an element appears when it scrolls into view, in the site's motion
- * language: a clean wipe, a slow rise out of blur, or a springy pop.
+ * language (a clean wipe, a slow rise out of blur, a springy pop): marks
+ * for the site's reveal (engine/reveal.module.css, armed in site.tsx).
+ * They hide nothing by themselves: rendered on the server, without
+ * JavaScript or before hydration, the element is simply visible.
  */
 export function useReveal() {
-  const { motion } = useEngine();
-  return (index = 0): MotionProps => {
-    const delay = index * (motion.entrance === "bloom" ? 0.2 : 0.08);
-    const transition = { duration: motion.duration, ease: motion.ease, delay };
-    const viewport = { once: true, margin: "-12%" };
-    if (motion.entrance === "cut") {
-      // A hard-edged wipe from the top, drawn with a mask and not a
-      // clip-path: Chromium's IntersectionObserver sees an element fully
-      // clipped by its own clip-path as out of view, so the reveal never
-      // started and the content stayed hidden. A mask leaves its box intact
-      // (unprefixed mask-image: Safari 15.4+, Chrome 120+, Firefox 53+).
-      const wipe = (stop: number) =>
-        `linear-gradient(180deg, rgba(0,0,0,1) ${stop}%, rgba(0,0,0,0) ${stop}%)`;
-      return {
-        initial: { maskImage: wipe(0) },
-        whileInView: { maskImage: wipe(100) },
-        viewport,
-        transition,
-      };
-    }
-    if (motion.entrance === "snap") {
-      return {
-        initial: { opacity: 0, scale: 0.86, y: 30 },
-        whileInView: { opacity: 1, scale: 1, y: 0 },
-        viewport,
-        transition,
-      };
-    }
-    return {
-      initial: { opacity: 0, y: 26, filter: "blur(6px)" },
-      whileInView: { opacity: 1, y: 0, filter: "blur(0px)" },
-      viewport,
-      transition,
-    };
-  };
+  return (index = 0) => ({
+    "data-reveal": "",
+    "data-reveal-index": String(Math.min(Math.max(index, 0), 8)),
+  });
+}
+
+/** The CSS variables of the reveal, from the motion language. */
+export function revealVariables(motion: {
+  entrance: string;
+  duration: number;
+  ease: readonly number[];
+}): CSSProperties {
+  return {
+    "--reveal-d": `${motion.duration}s`,
+    "--reveal-ease": `cubic-bezier(${motion.ease.join(",")})`,
+    "--reveal-step": motion.entrance === "bloom" ? "0.2s" : "0.08s",
+  } as CSSProperties;
 }
 
 /** "25 €", "12,50 €" (never "12,5 €"); a field typed wrong says so. */
