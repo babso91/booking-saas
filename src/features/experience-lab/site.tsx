@@ -24,7 +24,13 @@ import {
   type EngineEdit,
 } from "./engine/engine";
 import revealStyles from "./engine/reveal.module.css";
-import { contrast, ctaColors, cssVariables, motions } from "./engine/tokens";
+import {
+  contrast,
+  ctaColors,
+  cssVariables,
+  inkOn,
+  motions,
+} from "./engine/tokens";
 import { useHistory } from "./history";
 import { isLocal, releaseLocalPhotos } from "./photos";
 import { effective, online, type Plan } from "./plans";
@@ -68,6 +74,24 @@ type Draft = {
   catalog: Catalog;
   /** The universe chosen: in the history, so "Annuler" brings it back. */
   design: UniverseId;
+  /**
+   * What she typed in amount fields that are not amounts, by field: the
+   * catalogue holds NaN there (it blocks publishing); this keeps her text,
+   * so undo and redo bring back each state's own entry. Editor state, not
+   * business data: never part of the catalogue.
+   */
+  inputs: Record<string, string>;
+};
+
+/** The catalogue's part of the draft, with the raw entries it shows. */
+export type CatalogPart = Omit<Part<Catalog>, "set"> & {
+  inputs: Record<string, string>;
+  /** `entry`: the field's raw text (null once it is a valid amount). */
+  set: (
+    value: Catalog,
+    key?: string,
+    entry?: { field: string; raw: string | null },
+  ) => void;
 };
 
 /** A view of one part of the draft, with the draft's shared undo/redo. */
@@ -97,6 +121,7 @@ export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
       : base,
     catalog: pro ? pros[pro].catalog : universes[id].catalog,
     design: id,
+    inputs: {},
   };
   const history = useHistory<Draft>(start);
   const design = history.value.design;
@@ -110,7 +135,18 @@ export function BrandSite({ id, pro }: { id: UniverseId; pro?: ProId }) {
     canRedo: history.canRedo,
   });
   const draft = part("site");
-  const catalog = part("catalog");
+  const catalog: CatalogPart = {
+    ...part("catalog"),
+    inputs: history.value.inputs,
+    set: (value, mergeKey, entry) => {
+      const inputs = { ...history.value.inputs };
+      if (entry) {
+        if (entry.raw === null) delete inputs[entry.field];
+        else inputs[entry.field] = entry.raw;
+      }
+      history.set({ ...history.value, catalog: value, inputs }, mergeKey);
+    },
+  };
   const [plan, setPlan] = useState<Plan>("core");
   const [published, setPublished] = useState<Published>({
     config: start.site,
@@ -345,24 +381,49 @@ export function SiteView({
   );
 }
 
+/**
+ * Her name over everything, in white with mix-blend-mode: difference (the
+ * site's signature: it inverts whatever passes under it). A name is a
+ * logotype (WCAG 1.4.3 exempts it). The "Réserver" action is not: a
+ * blended colour cannot be guaranteed on mid tones (grey under grey), so
+ * it is a separate, opaque chip in the site's night colours, its ink
+ * computed to read, readable on whatever scrolls beneath it.
+ */
 function Header() {
   const { config, catalog, book } = useEngine();
+  const { palette } = config.tokens;
   return (
-    <header className="pointer-events-none fixed inset-x-0 top-0 z-40 text-white mix-blend-difference">
-      <div className="mx-auto flex max-w-[1100px] items-center justify-between px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3">
-        <Display className="text-[18px] leading-none">
-          {config.brand.name}
-        </Display>
-        {catalog.length ? (
-          <button
-            type="button"
-            onClick={() => book(null)}
-            className="pointer-events-auto cursor-pointer py-2"
-          >
-            <Detail>Réserver</Detail>
-          </button>
-        ) : null}
+    // A plain <header> (no stacking context of its own): the name's blend
+    // still reaches the page beneath it.
+    <header>
+      <div className="pointer-events-none fixed inset-x-0 top-0 z-40 text-white mix-blend-difference">
+        <div className="mx-auto flex max-w-[1100px] items-center px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3">
+          <Display className="py-2 text-[18px] leading-none">
+            {config.brand.name}
+          </Display>
+        </div>
       </div>
+      {catalog.length ? (
+        <div
+          data-header-action=""
+          className="pointer-events-none fixed inset-x-0 top-0 z-40"
+        >
+          <div className="mx-auto flex max-w-[1100px] justify-end px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3">
+            <button
+              type="button"
+              onClick={() => book(null)}
+              className="pointer-events-auto -mr-1 cursor-pointer px-3 py-[7px] leading-none"
+              style={{
+                background: palette.bg,
+                color: inkOn(palette.bg, palette.ink),
+                borderRadius: "min(var(--s-control), 999px)",
+              }}
+            >
+              <Detail>Réserver</Detail>
+            </button>
+          </div>
+        </div>
+      ) : null}
     </header>
   );
 }

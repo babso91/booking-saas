@@ -14,7 +14,7 @@ import type {
   TypePairId,
 } from "./engine/config";
 import { CatalogEditor } from "./catalog/catalog-editor";
-import { validate, type Catalog } from "./catalog/model";
+import { validate } from "./catalog/model";
 import { advise, ensureReadable } from "./engine/harmony";
 import { SharePanel } from "./share/share-panel";
 import {
@@ -27,7 +27,7 @@ import {
 import { PhotoEditor } from "./photo-editor";
 import { photo } from "./photos";
 import { can, dormant, plans, type Plan } from "./plans";
-import type { Part, Published } from "./site";
+import type { CatalogPart, Part, Published } from "./site";
 import { universes, type Universe, type UniverseId } from "./universes";
 
 // The creation studio, phone first: a bottom sheet over a live preview
@@ -133,7 +133,7 @@ export function Studio({
   design: UniverseId;
   draft: Part<SiteConfig>;
   /** Her catalogue (business data), with the draft's shared undo. */
-  catalog: Part<Catalog>;
+  catalog: CatalogPart;
   serviceFocus: string | null;
   onServiceFocus: (id: string | null) => void;
   plan: Plan;

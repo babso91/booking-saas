@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useId, useState, type ReactNode } from "react";
 
 import { euros, minutes } from "../engine/engine";
-import type { Part } from "../site";
+import type { CatalogPart } from "../site";
 import {
   addCategory,
   addService,
@@ -22,7 +22,6 @@ import {
   updateCategory,
   updateService,
   validate,
-  type Catalog,
   type CatalogService,
   type Category,
   type ServiceOption,
@@ -49,7 +48,7 @@ export function CatalogEditor({
   focus,
   onFocus,
 }: {
-  catalog: Part<Catalog>;
+  catalog: CatalogPart;
   /** The service being edited (also chosen by touching it in the preview). */
   focus: string | null;
   onFocus: (id: string | null) => void;
@@ -154,7 +153,7 @@ function ListView({
   onService,
   onCategory,
 }: {
-  catalog: Part<Catalog>;
+  catalog: CatalogPart;
   issues: ReturnType<typeof validate>;
   onService: (id: string) => void;
   onCategory: (id: string) => void;
@@ -341,7 +340,7 @@ function CategoryView({
   onBack,
   onRemoved,
 }: {
-  catalog: Part<Catalog>;
+  catalog: CatalogPart;
   category: Category;
   onBack: () => void;
   onRemoved: (text: string) => void;
@@ -460,7 +459,7 @@ function ServiceView({
   onRemoved,
   onDuplicated,
 }: {
-  catalog: Part<Catalog>;
+  catalog: CatalogPart;
   service: CatalogService;
   issues: string[];
   onBack: () => void;
@@ -468,14 +467,15 @@ function ServiceView({
   onDuplicated: (id: string) => void;
 }) {
   const value = catalog.value;
-  const set = (patch: Partial<CatalogService>, key?: string) =>
-    catalog.set(updateService(value, service.id, patch), key);
+  type Entry = { field: string; raw: string | null };
+  const set = (patch: Partial<CatalogService>, key?: string, entry?: Entry) =>
+    catalog.set(updateService(value, service.id, patch), key, entry);
   const key = (name: string) => `srv-${service.id}-${name}`;
   const siblings = value.services.filter(
     (item) => item.categoryId === service.categoryId,
   );
   const position = siblings.findIndex((item) => item.id === service.id);
-  const setOption = (option: ServiceOption, name?: string) =>
+  const setOption = (option: ServiceOption, name?: string, entry?: Entry) =>
     set(
       {
         options: service.options.map((item) =>
@@ -483,6 +483,7 @@ function ServiceView({
         ),
       },
       name ? key(`${option.id}-${name}`) : undefined,
+      entry,
     );
   const most = quote(
     service,
@@ -541,9 +542,14 @@ function ServiceView({
           {(id) => (
             <Money
               id={id}
-              fieldKey={`${service.id}:price`}
+              raw={catalog.inputs[`${service.id}:price`]}
               cents={service.priceCents}
-              onChange={(priceCents) => set({ priceCents }, key("price"))}
+              onChange={(priceCents, raw) =>
+                set({ priceCents }, key("price"), {
+                  field: `${service.id}:price`,
+                  raw,
+                })
+              }
             />
           )}
         </Field>
@@ -615,6 +621,7 @@ function ServiceView({
           <OptionEditor
             key={option.id}
             option={option}
+            inputs={catalog.inputs}
             onChange={setOption}
             onRemove={() =>
               set({
@@ -668,17 +675,24 @@ function ServiceView({
 
 function OptionEditor({
   option,
+  inputs,
   onChange,
   onRemove,
 }: {
   option: ServiceOption;
-  onChange: (option: ServiceOption, key?: string) => void;
+  inputs: Record<string, string>;
+  onChange: (
+    option: ServiceOption,
+    key?: string,
+    entry?: { field: string; raw: string | null },
+  ) => void;
   onRemove: () => void;
 }) {
   const setChoice = (
     id: string,
     patch: Partial<ServiceOption["choices"][number]>,
     name?: string,
+    entry?: { field: string; raw: string | null },
   ) =>
     onChange(
       {
@@ -688,6 +702,7 @@ function OptionEditor({
         ),
       },
       name ? `${id}-${name}` : undefined,
+      entry,
     );
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-black/10 bg-white p-3">
@@ -727,11 +742,14 @@ function OptionEditor({
             />
             <Money
               label={`Supplément, réponse ${index + 1}`}
-              fieldKey={`${choice.id}:price`}
+              raw={inputs[`${choice.id}:price`]}
               prefix="+"
               cents={choice.priceDeltaCents}
-              onChange={(priceDeltaCents) =>
-                setChoice(choice.id, { priceDeltaCents }, "price")
+              onChange={(priceDeltaCents, raw) =>
+                setChoice(choice.id, { priceDeltaCents }, "price", {
+                  field: `${choice.id}:price`,
+                  raw,
+                })
               }
             />
             <Duration
@@ -835,43 +853,30 @@ function Field({
  * value is never kept behind her back). An outside change (undo) shows
  * the saved amount again.
  */
-/**
- * What she typed in a field that is not an amount (by field): the draft
- * holds NaN for it, the editor shows her own text again when she comes
- * back to it, as she left it.
- */
-const typed = new Map<string, string>();
-
 function Money({
   id,
   label,
-  fieldKey,
+  raw,
   prefix,
   cents,
   onChange,
 }: {
   id?: string;
   label?: string;
-  /** Which field this is, to show her own text again (see `typed`). */
-  fieldKey: string;
+  /** Her text when it is not an amount (from the draft's history). */
+  raw: string | undefined;
   prefix?: string;
   cents: number;
-  onChange: (cents: number) => void;
+  /** The amount (NaN if it is not one) and, then, her raw text. */
+  onChange: (cents: number, raw: string | null) => void;
 }) {
-  const [state, setState] = useState(() => ({
-    text: Number.isNaN(cents) ? (typed.get(fieldKey) ?? "") : eurosInput(cents),
-    cents,
-  }));
-  // An outside change (undo, redo): the field shows that state's own entry.
-  // An invalid one comes back as she typed it, flagged; never the value of
-  // the state she left (Object.is: NaN equals NaN here).
-  if (!Object.is(state.cents, cents)) {
-    setState({
-      text: Number.isNaN(cents)
-        ? (typed.get(fieldKey) ?? "")
-        : eurosInput(cents),
-      cents,
-    });
+  const shown = () => (Number.isNaN(cents) ? (raw ?? "") : eurosInput(cents));
+  const [state, setState] = useState(() => ({ text: shown(), cents, raw }));
+  // An outside change (undo, redo): the field shows that state's own
+  // entry, as typed and flagged when it was not an amount (Object.is: NaN
+  // equals NaN here). Her own typing never resets it (same amount, same raw).
+  if (!Object.is(state.cents, cents) || state.raw !== raw) {
+    setState({ text: shown(), cents, raw });
   }
   // What the draft holds decides: a NaN amount is always shown as invalid.
   const invalid = Number.isNaN(cents) || parseEuros(state.text) === null;
@@ -892,10 +897,9 @@ function Money({
           onChange={(event) => {
             const text = event.target.value;
             const parsed = parseEuros(text) ?? Number.NaN;
-            if (Number.isNaN(parsed)) typed.set(fieldKey, text);
-            else typed.delete(fieldKey);
-            setState({ text, cents: parsed });
-            onChange(parsed);
+            const entry = Number.isNaN(parsed) ? text : null;
+            setState({ text, cents: parsed, raw: entry ?? undefined });
+            onChange(parsed, entry);
           }}
           className={`${field} h-11 tabular-nums ${prefix ? "pl-6" : ""} pr-8 ${invalid ? "border-[#B3261E]" : ""}`}
         />

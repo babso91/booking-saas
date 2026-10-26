@@ -991,6 +991,218 @@ const cases = [
       await context.close();
     },
   },
+  {
+    id: "J7",
+    name: "the header's « Réserver » reads on what is really painted (pixels), palettes × scroll positions",
+    async run(check) {
+      /**
+       * Contrast measured on the screenshot of the element: the background
+       * is its most frequent colour, the text the contrast reached by its
+       * glyphs' cores (98th percentile of the pixels, past antialiasing).
+       */
+      const measure = async (page, locator) => {
+        const png = (await locator.screenshot()).toString("base64");
+        return page.evaluate(async (data) => {
+          const image = new Image();
+          image.src = `data:image/png;base64,${data}`;
+          await image.decode();
+          const canvas = document.createElement("canvas");
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const context = canvas.getContext("2d");
+          context.drawImage(image, 0, 0);
+          const pixels = context.getImageData(
+            0,
+            0,
+            canvas.width,
+            canvas.height,
+          ).data;
+          const lum = (r, g, b) => {
+            const c = [r, g, b].map((v) => {
+              const x = v / 255;
+              return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+            });
+            return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+          };
+          const counts = new Map();
+          for (let i = 0; i < pixels.length; i += 4) {
+            const key = `${pixels[i] >> 3},${pixels[i + 1] >> 3},${pixels[i + 2] >> 3}`;
+            counts.set(key, (counts.get(key) ?? 0) + 1);
+          }
+          const [mode] = [...counts.entries()]
+            .sort((a, b) => b[1] - a[1])[0][0]
+            .split(",")
+            .map(Number);
+          const top = [...counts.entries()]
+            .sort((a, b) => b[1] - a[1])[0][0]
+            .split(",")
+            .map((v) => Number(v) * 8 + 4);
+          const background = lum(top[0], top[1], top[2]);
+          const ratios = [];
+          for (let i = 0; i < pixels.length; i += 4) {
+            const l = lum(pixels[i], pixels[i + 1], pixels[i + 2]);
+            const [hi, lo] = [l, background].sort((a, b) => b - a);
+            ratios.push((hi + 0.05) / (lo + 0.05));
+          }
+          ratios.sort((a, b) => a - b);
+          void mode;
+          return Number(ratios[Math.floor(ratios.length * 0.98)].toFixed(2));
+        }, png);
+      };
+      const setups = [
+        { label: "mila", path: "/labo/mila" },
+        { label: "nail-lab", path: "/labo/nail-lab" },
+        { label: "alma", path: "/labo/alma" },
+        {
+          label: "alma #707070/#FFFFFF",
+          path: "/labo/alma",
+          paper: "#707070",
+          ink: "#ffffff",
+        },
+      ];
+      for (const setup of setups) {
+        const { context, page } = await open(setup.path);
+        if (setup.paper) {
+          const studio = await openStudio(page);
+          await studio
+            .getByRole("button", { name: "Créatif", exact: true })
+            .click();
+          await studio
+            .getByRole("button", { name: "Couleurs", exact: true })
+            .click();
+          await studio.getByLabel("Fond jour").fill(setup.paper);
+          await studio.getByLabel("Texte jour").fill(setup.ink);
+          await studio.getByRole("button", { name: /^Publier/ }).click();
+          await studio.getByRole("button", { name: "En ligne" }).click();
+          await studio
+            .getByRole("button", { name: "Fermer le studio" })
+            .click();
+          await page.waitForTimeout(600);
+        }
+        const action = page
+          .locator("header button, [data-header-action] button")
+          .filter({ hasText: /Réserver/i })
+          .first();
+        const height = await page.evaluate(
+          () => document.documentElement.scrollHeight,
+        );
+        const positions = {
+          top: 0,
+          middle: Math.round(height * 0.45),
+          services: await page.evaluate(() => {
+            const scene = document.querySelector(
+              "section[data-booking-scene] article, section[data-booking-scene] li, section[data-booking-scene]",
+            );
+            return scene
+              ? Math.round(scene.getBoundingClientRect().top + scrollY - 20)
+              : 0;
+          }),
+          bottom: height,
+        };
+        for (const [where, y] of Object.entries(positions)) {
+          await page.evaluate((top) => window.scrollTo(0, top), y);
+          await page.waitForTimeout(1500);
+          const ratio = await measure(page, action);
+          check(
+            `${setup.label}, ${where}: « Réserver » reads (${ratio}:1)`,
+            ratio >= 4.5,
+            `${ratio}:1`,
+          );
+        }
+        await context.close();
+      }
+    },
+  },
+  {
+    id: "J8",
+    name: "undo and redo keep what she typed, valid or not, for prices and supplements",
+    async run(check) {
+      const { context, page } = await open("/labo/mila");
+      const studio = await openStudio(page);
+      await studio.getByRole("button", { name: /Pose cil à cil/ }).click();
+      const price = studio.getByRole("textbox", { name: "Prix", exact: true });
+      const undo = studio.getByRole("button", { name: "Annuler" });
+      const redo = studio.getByRole("button", { name: "Rétablir" });
+      const state = async (field) =>
+        `${await field.inputValue()}|${(await field.getAttribute("aria-invalid")) ?? "valid"}`;
+      const pause = () => page.waitForTimeout(1100); // one step per gesture
+      await price.fill("-12");
+      await pause();
+      await price.fill("100");
+      await pause();
+      await undo.click();
+      check(
+        "undo after a valid entry: « -12 » back, flagged",
+        (await state(price)) === "-12|true",
+        await state(price),
+      );
+      await redo.click();
+      check(
+        "redo: « 100 », valid",
+        (await state(price)) === "100|valid",
+        await state(price),
+      );
+      await undo.click();
+      await undo.click();
+      check(
+        "undo twice: « 90 », valid",
+        (await state(price)) === "90|valid",
+        await state(price),
+      );
+      await redo.click();
+      check(
+        "redo: « -12 » again, flagged",
+        (await state(price)) === "-12|true",
+        await state(price),
+      );
+      await price.fill("abc");
+      await pause();
+      await price.fill("12,50");
+      await pause();
+      await undo.click();
+      check(
+        "several entries: undo brings « abc » back, flagged",
+        (await state(price)) === "abc|true",
+        await state(price),
+      );
+      await undo.click();
+      check(
+        "…then « -12 »",
+        (await state(price)) === "-12|true",
+        await state(price),
+      );
+      await redo.click();
+      await redo.click();
+      check(
+        "…redo twice: « 12,50 »",
+        (await state(price)) === "12,50|valid",
+        await state(price),
+      );
+
+      // A supplement, the same way.
+      await studio.getByRole("button", { name: /Ajouter une option/ }).click();
+      await studio.getByLabel("Question").fill("Une question ?");
+      await pause();
+      const supplement = studio.getByLabel("Supplément, réponse 2");
+      await supplement.fill("-5");
+      await pause();
+      await supplement.fill("7");
+      await pause();
+      await undo.click();
+      check(
+        "supplement: undo brings « -5 » back, flagged",
+        (await state(supplement)) === "-5|true",
+        await state(supplement),
+      );
+      await redo.click();
+      check(
+        "supplement: redo « 7 », valid",
+        (await state(supplement)) === "7|valid",
+        await state(supplement),
+      );
+      await context.close();
+    },
+  },
 ];
 
 let failed = 0;
