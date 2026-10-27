@@ -1,0 +1,168 @@
+# Studio 1 : dossier d'audit
+
+Branche `feat/dashboard-studio-1`, basée sur `main` à `249aff1`. Trois commits :
+
+1. **Fondations d'apparence** : tokens, ambiances, accent lisible, niveaux d'animation, cookie, page Apparence, aperçus protégés.
+2. **Studio 1** : choix du style, coquille Studio, page « Aujourd'hui » branchée sur l'agenda réel.
+3. **Renforcement** : chevauchements, confidentialité des notes, lien direct vers un rendez-vous, états honnêtes, journée chargée.
+
+Ce dossier sert à contrôler l'architecture, les régressions et l'isolation des données. Le plan d'ensemble est dans `docs/DASHBOARD_EXPERIENCE.md`.
+
+**Hors périmètre :**
+
+- Les prototypes de directions artistiques restent sur `feat/dashboard-experience`. Ils ne sont pas dans cette PR.
+- Rien ne touche aux PR #26 et #27 ni au laboratoire `proto/experience-engine`. Quatre fichiers sont aussi modifiés par #26 (`globals.css`, `icons.tsx`, `sheet.tsx`, `client-profile.tsx`). Une fusion d'essai (`git merge-tree`) avec #26 et avec #27 ne donne aucun conflit, quel que soit l'ordre de fusion.
+- Aucune migration, aucun déploiement, aucune nouvelle dépendance.
+
+---
+
+## 1. Intégration de Studio dans le dashboard existant
+
+Le principe : **un moteur métier unique, plusieurs mises en scène.** Studio ne réimplémente aucune règle. Il lit les mêmes données, par les mêmes fonctions, et renvoie vers l'agenda existant pour toute action.
+
+| Couche      | Ce qui change                                                                                                           | Ce qui ne change pas                                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Préférence  | `Appearance.style` (`classique` par défaut, `studio`) dans le cookie `dash_appearance`                                  | Aucune donnée serveur                                                                                                   |
+| Thème       | Studio a ses propres neutres (`studioPalettes`) et une couleur signature (`--signature`, `--on-signature`)              | Les composants ne connaissent que les tokens sémantiques                                                                |
+| Typographie | `[data-style="studio"]` passe le corps en Archivo et met les `.font-display` en condensé noir majuscule (`globals.css`) | Classes des composants inchangées                                                                                       |
+| Coquille    | `AppShell` rend `StudioShell` quand le style est Studio (`features/dashboard/components/studio-shell.tsx`)              | La branche Classique d'`AppShell` est identique (seul le type `Section` est partagé : `features/dashboard/sections.ts`) |
+| Accueil     | Nouvelle page `/app/today` (Studio uniquement)                                                                          | `/app` reste l'agenda, pour les deux styles                                                                             |
+| Agenda      | Un seul ajout : `?rdv=<uuid>` ouvre le panneau de détails d'un rendez-vous déjà lu (voir § 2)                           | Grille, formulaires, actions, protections (versions, jour canonique, DST) : intacts                                     |
+
+Le style est porté par `data-style` sur l'enveloppe de l'espace et sur `<html>` (pour les feuilles rendues dans `<body>`). Il est retiré quand on quitte `/app` (`appearance-provider.tsx`).
+
+## 2. Comment les vraies données alimentent l'accueil
+
+`src/app/(dashboard)/app/today/page.tsx`, composant serveur :
+
+1. `requireReadyBusiness()` : session validée côté Supabase Auth, entreprise résolue par `business_members` sous RLS. C'est la même garde que toutes les pages `/app`.
+2. Si le style n'est pas Studio, la page redirige vers `/app`.
+3. `readBusinessToday(client, business.id)` : la date civile et l'instant « maintenant » viennent de PostgreSQL, qui fait autorité pour le calendrier. L'horloge du serveur Node n'est pas utilisée.
+4. `getAgenda(client, { businessId, timezone }, { semaine de lundi à dimanche, includeCancelled: false })` : **exactement la fonction de lecture de l'agenda** (`features/agenda/data/agenda.ts`), avec le client Supabase de l'utilisatrice (JWT, RLS membres). Plafonds explicites, refus plutôt que troncature.
+5. Le DTO est passé tel quel au composant client `StudioToday`.
+
+**Isolation des données :**
+
+- Aucune nouvelle requête SQL, aucune nouvelle action serveur, aucune nouvelle route API, aucun usage de clé de service.
+- `businessId` vient uniquement de la session, jamais de l'URL ni du client. La page `/app/today` ne lit aucun paramètre d'URL.
+- `?rdv=` (agenda) : seul un UUID bien formé est retenu (`requestedAppointment`). L'agenda l'ouvre **uniquement si ce rendez-vous figure dans sa propre lecture**, faite sous RLS. Un id d'une autre entreprise est simplement introuvable : rien ne s'ouvre et aucune requête n'est faite. Le panneau ne s'ouvre qu'une fois, sur la première réponse (testé).
+- Aperçus `/apercu/*` : données fictives en mémoire (`features/dashboard/fixtures/sample-week.ts`), aucune lecture ni écriture. Ils renvoient une 404 en production sauf si `DASHBOARD_PREVIEW=1`, sont marqués `noindex` et rendus dynamiquement.
+
+**Calcul (pur, testé)** : `features/dashboard/client/today-model.ts`, appelé avec `todayModel(agenda, date, now)`.
+
+- **Visites du jour** : rendez-vous non annulés dont l'heure locale de début (`localStartsAt`, calculée par PostgreSQL) tombe à cette date, triés par instant.
+- **État de chaque visite :**
+  - `done` si elle est `completed` ou `no_show`, ou si elle est finie ;
+  - `now` si elle a commencé et n'est pas finie ;
+  - `upcoming` sinon.
+    Toutes les comparaisons se font **entre instants**.
+- **« Maintenant » en heure murale** : `wallOf(zone, now)` avec les décalages envoyés par PostgreSQL, comme la ligne « maintenant » de l'agenda. Le fuseau du navigateur n'est jamais utilisé.
+- **Frise** : l'ouverture réelle du jour (`openRanges`), élargie à toute visite qui en déborde. Les repères horaires sont posés en instants réels et étiquetés à l'heure murale (une heure répétée lors du changement d'heure est marquée deux fois).
+- **Chevauchements** : partition en lignes (`lane` / `lanes`) par groupe de visites qui se recouvrent.
+- **Remplissage de la semaine** : minutes ouvertes (somme des `openRanges`) et minutes réservées (somme des `durationMinutes` non annulées), jour par jour.
+- **Aucun montant.** Un rendez-vous réservé n'est pas un encaissement : les chiffres d'argent attendront le journal des encaissements (backend Claude Cloud, `docs/DASHBOARD_EXPERIENCE.md` § 5). Un test vérifie qu'aucun « € » n'apparaît.
+
+**Fraîcheur :**
+
+- Re-rendu toutes les 30 s pour faire avancer l'heure.
+- `router.refresh()` toutes les 5 min (onglet visible) et au retour sur l'onglet : un rendez-vous pris entre-temps n'est pas manqué.
+- `router.refresh()` dès que minuit est passé dans le fuseau de l'entreprise.
+- Premier rendu avec l'instant de PostgreSQL (`getServerSnapshot`), donc sans écart d'hydratation.
+
+## 3. Classique et Studio
+
+|                       | Classique (défaut)                                     | Studio                                                                                                                                                                                           |
+| --------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Accueil               | L'agenda (`/app`)                                      | « Aujourd'hui » (`/app/today`)                                                                                                                                                                   |
+| Navigation ordinateur | Barre latérale                                         | Nom en titre + dock flottant (Aujourd'hui, Agenda, Clientes, Prestations, Fidélité) + feuille (Horaires, Google Calendar, Apparence, page de réservation, déconnexion) ouverte par le monogramme |
+| Navigation téléphone  | Barre d'onglets + feuille « Compte »                   | Dock (Aujourd'hui, Agenda, Clientes, Plus) + même feuille                                                                                                                                        |
+| Couleurs              | Ambiance (Atelier, Lin, Sauge) × clair/sombre + accent | Neutres Studio × clair/sombre + couleur signature (aplats)                                                                                                                                       |
+| Typographie           | Hanken Grotesk + Instrument Serif                      | Archivo, de condensé à élargi                                                                                                                                                                    |
+| Écrans secondaires    | Inchangés                                              | Mêmes composants, habillés par les tokens et la typo Studio                                                                                                                                      |
+
+Invariants : mêmes rubriques, mêmes adresses, mêmes mots (`sections.ts`). Changer de style est instantané et réversible, depuis Apparence.
+
+## 4. Persistance actuelle des préférences
+
+- **Cookie `dash_appearance`**, propre à l'appareil :
+  - non `HttpOnly`, car il est écrit par le client au changement ;
+  - `Path=/app`, `Max-Age` d'un an, `SameSite=Lax`, `Secure` en HTTPS ;
+  - format `ambiance.mode.motion.accent.style`.
+- **Lecture stricte** (`parseAppearance`) : chaque valeur est vérifiée dans une liste fermée, sinon la valeur par défaut s'applique. L'accent doit être `#rrggbb`. Le CSS est généré **uniquement** à partir des valeurs validées (test d'injection : `…;}body{display:none`). Un cookie à quatre champs, écrit avant l'arrivée des styles, est lu en Classique.
+- **Rendu côté serveur** (le layout `/app` lit le cookie) : le premier affichage est déjà le bon, sans flash.
+- **Ce que le cookie contient** : de la présentation uniquement, aucune donnée personnelle ni sensible.
+- **Pas encore synchronisé entre appareils** : c'est la PR « Préférences synchronisées » (table par membre, RLS, côté Claude Cloud).
+
+## 5. Routes et navigation mobile
+
+| Route                             | Rôle                                                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `/app/today`                      | Accueil Studio. Redirige vers `/app` en Classique                                                               |
+| `/app?date=AAAA-MM-JJ&rdv=<uuid>` | Agenda ouvert sur ce jour, détails du rendez-vous ouverts. `rdv` est ignoré si absent de la lecture             |
+| `/app/settings/appearance`        | Style, ambiance (Classique), clair/sombre, couleur, animations                                                  |
+| `/apercu/studio/aujourdhui`       | Aperçu protégé. Paramètres : `?heure=HH:MM`, `?jour=AAAA-MM-JJ`, `?jeu=charge`, `?apparence=<valeur du cookie>` |
+| `/apercu/apparence`               | Aperçu protégé de la page Apparence (`?apparence=`)                                                             |
+
+**Mobile :**
+
+- Le dock est fixé en bas, dans la zone du pouce, avec des cibles de 44 px et les marges de sécurité iOS. La zone principale réserve sa hauteur.
+- **Le prochain rendez-vous s'atteint en un geste** : le bloc couleur affiche la visite en cours et la suivante, chacune avec un bouton « Voir le rendez-vous » qui ouvre directement ses détails dans l'agenda. Chaque ligne de la liste du jour y mène aussi.
+- Vérifié à 320, 390 et 1440 px, sans défilement horizontal.
+
+## 6. États de la journée
+
+| Phase                 | Condition                         | Bloc couleur                                                                                                                  |
+| --------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `before`              | Aucune visite passée, une à venir | « Premier rendez-vous · HH:MM », cliente, « dans X », bouton ; puis la suivante                                               |
+| `during` (une visite) | Une visite en cours               | « En cours », cliente, prestation, barre d'avancement + temps restant, bouton ; « Ensuite »                                   |
+| `during` (plusieurs)  | Visites qui se chevauchent        | « En cours · N rendez‑vous » et **toutes** les clientes avec leur heure de fin. **Pas de barre unique**, qui serait trompeuse |
+| `between`             | Entre deux visites                | « Ensuite · HH:MM », « dans X », bouton ; « Puis »                                                                            |
+| `after`               | Toutes les visites sont passées   | « Journée terminée · N rendez‑vous »                                                                                          |
+| `free`                | Aucune visite                     | « Journée libre · Rien de prévu », ou « Jour de fermeture · Repos » si aucune ouverture ce jour-là                            |
+| Minuit passé          | `nowTime` absent                  | L'heure affiche « ··.·· » le temps de la relecture                                                                            |
+
+Une visite `completed` ou `no_show` est rangée dans le passé, même avant son heure de fin. La liste distingue « Terminé », « Absente » et « Passé » (passée sans statut). Elle ne prétend jamais qu'une visite est terminée si ce n'est pas le cas.
+
+**Notes clientes (sensibles)** : le bloc couleur, lisible de loin, n'affiche **jamais** le contenu d'une note, seulement la mention « Note » sur le bouton du rendez-vous. La section « À ne pas oublier » n'affiche que le nombre de notes. Leur contenu n'est rendu (pas seulement masqué) que lorsqu'elle clique sur « Afficher », et il est retiré quand elle quitte la page.
+
+## 7. Tests et vérifications
+
+- **Unitaires et composants (vitest)** : 1 315 tests passent, dont :
+  - apparence : 600 couleurs signature aléatoires, chaque paire texte/surface à 4,5:1 au moins, cookie hérité, valeurs inconnues ;
+  - modèle du jour : toutes les phases, annulations, absences, minuit, journée fermée, débordement de l'ouverture, chevauchements, remplissage, notes ;
+  - `StudioToday` : liens directs, notes masquées puis affichées, aucun montant, journée chargée ;
+  - coquille Studio : dock, `aria-current`, feuille ;
+  - agenda `?rdv=` : ouverture, id inconnu, ouverture unique.
+- **Typage, lint et build** : `typecheck` et `next build --webpack` passent. Il reste un seul avertissement de lint, antérieur et hors de cette PR (`client-hub.ts`).
+- **Chromium + axe-core 4.14 (WCAG 2.1 AA)** : 0 violation, 0 erreur de console, 0 défilement horizontal, sur :
+  - les cinq phases ;
+  - la journée chargée à 14 h 05 et à 21 h ;
+  - le jour fermé ;
+  - la page Apparence ;
+  - 7 apparences (dont un jaune `#FFEE00` et le sombre) ;
+  - 3 largeurs (320, 390, 1440 px).
+- **Journée chargée** (`?jeu=charge`) : 13 visites dont 3 simultanées, une prestation de 4 h qui commence avant l'ouverture, une visite après la fermeture, une annulation, deux pauses, des noms, prestations et notes très longs.
+
+## 8. Limites (pas de Supabase local)
+
+- **Pas de bout en bout authentifié.** Ni Docker ni Supabase en local : `/app/today` et `/app?rdv=` n'ont pas été exercés contre une vraie base. Le code est vérifié par :
+  - les types ;
+  - le build ;
+  - les tests sur des DTO au format exact de `getAgenda` (fixtures de l'agenda et semaine fictive) ;
+  - le rendu réel des mêmes composants dans `/apercu`.
+
+  Recommandation : un passage manuel sur staging (avec ton accord) ou un test e2e authentifié une fois Supabase disponible en CI.
+
+- **Visites qui traversent minuit.** Une visite commencée la veille et finissant aujourd'hui n'apparaît pas dans « Aujourd'hui », qui filtre sur la date locale de début. L'agenda, lui, l'affiche.
+- **Heure de l'appareil.** « Maintenant » vient de l'horloge de l'appareil, convertie avec les décalages de PostgreSQL, comme la ligne « maintenant » de l'agenda. Un appareil mal réglé décale l'état « en cours ». Les décisions qui comptent (dates des actions) restent validées par PostgreSQL dans l'agenda.
+- **Préférences par appareil**, non synchronisées (voir § 4).
+- **En Studio, l'agenda garde sa grille actuelle**, habillée aux couleurs du Studio. Le planning mural est la PR suivante (Studio 2), sur les mêmes actions et protections.
+- **Pas de montants** tant que le journal des encaissements n'existe pas.
+
+## 9. Points d'attention pour l'audit
+
+1. Le **balayage des couleurs** (fondations, 23 fichiers) : remplacement mécanique de valeurs littérales par des tokens. Atelier clair garde exactement les valeurs historiques (test). À regarder pour les régressions visuelles en Classique.
+2. **`AgendaView`** : seul ajout, la prop `initialAppointmentId`, consommée une fois dans le rappel de la première lecture. Aucune règle, action ni protection modifiée.
+3. **Isolation** : aucune nouvelle lecture. `/app/today` réutilise `getAgenda` et `readBusinessToday` avec le client RLS de la session.
+4. **Cookie** : lecture stricte, CSS généré uniquement à partir des valeurs validées.
+5. **Aperçus** : 404 en production sauf `DASHBOARD_PREVIEW=1`, données fictives uniquement.

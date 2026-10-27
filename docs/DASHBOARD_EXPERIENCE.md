@@ -61,7 +61,7 @@ Principe : on améliore le back-office qui existe. Pas de second dashboard, pas 
 
 ## 3. Direction artistique : plusieurs styles, un seul moteur
 
-Trois directions ont été explorées en prototype (`/apercu/directions`, données fictives) : **le Carnet** (éditorial, un carnet imprimé), **le Studio** (graphique, la journée comme une affiche, une couleur signature) et **l'Écrin** (tactile, un cadran). Décision produit : les proposer comme **styles au choix**, dans Core, plutôt que d'en retenir un seul. C'est la logique des univers du mini-site, appliquée à l'espace pro.
+Trois directions ont été explorées en prototype (données fictives, sur la branche de travail `feat/dashboard-experience` uniquement, hors de toute PR) : **le Carnet** (éditorial, un carnet imprimé), **le Studio** (graphique, la journée comme une affiche, une couleur signature) et **l'Écrin** (tactile, un cadran). Décision produit : les proposer comme **styles au choix**, dans Core, plutôt que d'en retenir un seul. C'est la logique des univers du mini-site, appliquée à l'espace pro.
 
 Architecture, pour que trois styles ne coûtent pas trois dashboards :
 
@@ -184,4 +184,4 @@ Le BOFiP définit un système de caisse comme un outil qui mémorise et enregist
 | 8   | Encaissements : interface                   | Geste d'encaissement propre à chaque style, écran Encaissements, chiffres du jour, branchés sur la PR 7                                                                                                                                                                                                       | Données réelles via les contrats de la PR 7      | Claude Code                               |
 | 9   | Catalogue unifié                            | Catégories et options (backend), puis interface commune au dashboard et au Studio                                                                                                                                                                                                                             | Migration                                        | Claude Cloud, puis Claude Code            |
 
-Chaque PR est auditée avant fusion. Les PR 1 et 2 sont livrées sur la branche `feat/dashboard-experience`.
+Chaque PR est auditée avant fusion. Les PR 1 et 2 forment la PR « Studio 1 » (branche `feat/dashboard-studio-1`) ; son dossier d'audit : `docs/STUDIO_1_AUDIT.md`.
