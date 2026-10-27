@@ -280,7 +280,7 @@ function EntryRow({
         <span
           className={cn(
             "shrink-0 text-[14.5px] font-semibold tabular-nums",
-            positive ? "text-[#2c4f38]" : "text-ink",
+            positive ? "text-success-strong" : "text-ink",
           )}
         >
           {pointsDelta(entry.pointsDelta)}

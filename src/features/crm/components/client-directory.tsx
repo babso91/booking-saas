@@ -261,7 +261,7 @@ export function ClientDirectory({ initial }: { initial: DirectoryQuery }) {
               placeholder="Nom, email ou téléphone"
               autoComplete="off"
               enterKeyHint="search"
-              className="h-12 w-full rounded-2xl border border-line bg-paper-raised pr-11 pl-11 text-[16px] text-ink transition-[border-color,box-shadow] duration-200 placeholder:text-ink-muted hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_rgba(151,73,58,0.12)] focus-visible:outline-none [&::-webkit-search-cancel-button]:hidden"
+              className="h-12 w-full rounded-2xl border border-line bg-paper-raised pr-11 pl-11 text-[16px] text-ink transition-[border-color,box-shadow] duration-200 placeholder:text-ink-muted hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)] focus-visible:outline-none [&::-webkit-search-cancel-button]:hidden"
             />
             {text ? (
               <button
@@ -282,7 +282,7 @@ export function ClientDirectory({ initial }: { initial: DirectoryQuery }) {
               onChange={(event) =>
                 change({ sort: event.target.value as ClientSort })
               }
-              className="h-12 cursor-pointer rounded-2xl border border-line bg-paper-raised px-3 text-[15px] text-ink hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_rgba(151,73,58,0.12)] focus-visible:outline-none"
+              className="h-12 cursor-pointer rounded-2xl border border-line bg-paper-raised px-3 text-[15px] text-ink hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)] focus-visible:outline-none"
             >
               {CLIENT_SORTS.map((sort) => (
                 <option key={sort} value={sort}>

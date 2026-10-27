@@ -23,7 +23,7 @@ export default async function WelcomePage() {
     <div className="relative flex min-h-dvh flex-1 flex-col overflow-hidden px-5 pt-[max(env(safe-area-inset-top),0.75rem)] sm:px-10">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -top-60 left-1/2 size-[720px] -translate-x-1/2 animate-fade rounded-full bg-[radial-gradient(circle_at_center,rgba(151,73,58,0.14),transparent_62%)]"
+        className="pointer-events-none absolute -top-60 left-1/2 size-[720px] -translate-x-1/2 animate-fade rounded-full bg-[radial-gradient(circle_at_center,color-mix(in_srgb,var(--accent)_14%,transparent),transparent_62%)]"
       />
       <header className="relative flex h-14 items-center">
         <BrandMark />

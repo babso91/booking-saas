@@ -472,7 +472,7 @@ export function AgendaView({
 
         {empty && !loading ? (
           <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center p-6">
-            <div className="pointer-events-auto flex max-w-sm animate-rise flex-col items-center gap-3 rounded-3xl border border-line bg-paper-raised/95 px-6 py-7 text-center shadow-[0_24px_60px_-34px_rgba(35,28,24,0.45)]">
+            <div className="pointer-events-auto flex max-w-sm animate-rise flex-col items-center gap-3 rounded-3xl border border-line bg-paper-raised/95 px-6 py-7 text-center shadow-[0_24px_60px_-34px_rgb(var(--shadow-rgb)/0.45)]">
               <p className="font-display text-[28px] leading-tight text-ink">
                 {view === "week"
                   ? "Ta semaine est encore libre."

@@ -33,7 +33,7 @@ export function BookingPreview({
       : "ring-0 ring-transparent";
 
   return (
-    <div className="relative w-[300px] rounded-[46px] bg-ink p-2.5 shadow-[0_50px_90px_-40px_rgba(35,28,24,0.55)] xl:w-[320px]">
+    <div className="relative w-[300px] rounded-[46px] bg-ink p-2.5 shadow-[0_50px_90px_-40px_rgb(var(--shadow-rgb)/0.55)] xl:w-[320px]">
       <div className="relative flex h-[600px] flex-col overflow-hidden rounded-[38px] bg-paper-raised xl:h-[640px]">
         <div className="flex justify-center pt-2.5">
           <span className="h-[22px] w-[92px] rounded-full bg-ink" />
