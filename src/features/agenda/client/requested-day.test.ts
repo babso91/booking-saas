@@ -23,8 +23,14 @@ describe("requestedDay (?date= of the agenda)", () => {
 
 describe("requestedAppointment (?rdv= of the agenda)", () => {
   it.each([
-    ["0f1e2d3c-4b5a-4968-8776-655443322110", "0f1e2d3c-4b5a-4968-8776-655443322110"],
-    ["0F1E2D3C-4B5A-4968-8776-655443322110", "0f1e2d3c-4b5a-4968-8776-655443322110"],
+    [
+      "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "0f1e2d3c-4b5a-4968-8776-655443322110",
+    ],
+    [
+      "0F1E2D3C-4B5A-4968-8776-655443322110",
+      "0f1e2d3c-4b5a-4968-8776-655443322110",
+    ],
     ["0f1e2d3c-4b5a-4968-8776-65544332211", undefined],
     ["0f1e2d3c4b5a49688776655443322110", undefined],
     ["../../app/clients", undefined],

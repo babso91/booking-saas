@@ -24,7 +24,9 @@ export function requestedDay(value: string | string[] | undefined) {
  */
 export function requestedAppointment(value: string | string[] | undefined) {
   return typeof value === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      value,
+    )
     ? value.toLowerCase()
     : undefined;
 }
