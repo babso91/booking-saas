@@ -16,19 +16,15 @@ import {
   UsersIcon,
 } from "@/components/ui/icons";
 import { Sheet } from "@/components/ui/sheet";
+import { useDashboardStyle } from "@/features/appearance/components/appearance-provider";
 import { SignOutButton } from "@/features/auth/components/sign-out-button";
+import { StudioShell } from "@/features/dashboard/components/studio-shell";
+import type { DashboardSection } from "@/features/dashboard/sections";
 import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 type Business = { name: string; slug: string };
-type Section =
-  | "agenda"
-  | "clients"
-  | "services"
-  | "loyalty"
-  | "hours"
-  | "calendar"
-  | "appearance";
+type Section = DashboardSection;
 
 const CALENDAR_SETTINGS = "/app/settings/calendar";
 const CLIENTS = "/app/clients";
@@ -38,8 +34,9 @@ const LOYALTY = "/app/loyalty";
 const APPEARANCE = "/app/settings/appearance";
 
 /**
- * Professional area frame. Desktop: compact sidebar. Phones and tablets: a
- * top bar and a bottom tab bar within thumb reach (not a squeezed sidebar).
+ * Professional area frame, in her style. Classique — desktop: compact
+ * sidebar; phones and tablets: a top bar and a bottom tab bar within thumb
+ * reach (not a squeezed sidebar). Studio: its own frame (StudioShell).
  */
 export function AppShell({
   business,
@@ -60,6 +57,14 @@ export function AppShell({
     );
 
   const [accountOpen, setAccountOpen] = useState(false);
+  const style = useDashboardStyle();
+
+  if (style === "studio")
+    return (
+      <StudioShell business={business} current={current}>
+        {children}
+      </StudioShell>
+    );
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-paper lg:flex-row">

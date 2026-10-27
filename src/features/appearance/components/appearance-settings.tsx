@@ -11,12 +11,22 @@ import { cn } from "@/lib/cn";
 
 import {
   accentKeptAsIs,
+  defaultAccent,
   defaultAppearance,
   type Appearance,
   type ModePreference,
   type MotionPreference,
 } from "../appearance";
-import { accentPresets, ambiances, type AmbianceId } from "../palettes";
+import {
+  accentPresets,
+  ambiances,
+  signaturePresets,
+  STUDIO_SIGNATURE,
+  styles,
+  studioPalettes,
+  type AmbianceId,
+  type StyleId,
+} from "../palettes";
 import { useAppearance } from "./appearance-provider";
 
 // "Apparence": her area, her way. Every choice applies at once to the whole
@@ -36,8 +46,16 @@ export function AppearanceSettings() {
       )
       .some(
         (mode) =>
-          !accentKeptAsIs(appearance.ambiance, mode, appearance.accent!),
+          !accentKeptAsIs(
+            appearance.style,
+            appearance.ambiance,
+            mode,
+            appearance.accent!,
+          ),
       );
+  const studio = appearance.style === "studio";
+  const presets = studio ? signaturePresets : accentPresets;
+  const own = defaultAccent(appearance.style, appearance.ambiance);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -53,26 +71,56 @@ export function AppearanceSettings() {
           </p>
         </header>
 
-        <Group legend="Ambiance">
-          <div className="grid gap-3 sm:grid-cols-3">
-            {(Object.keys(ambiances) as AmbianceId[]).map((id) => (
+        <Group
+          legend="Style"
+          description="La mise en scène de tout ton espace. Les rubriques et les mots restent les mêmes."
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            {(Object.keys(styles) as StyleId[]).map((id) => (
               <Choice
                 key={id}
-                name="ambiance"
-                checked={appearance.ambiance === id}
-                onSelect={() => set({ ambiance: id })}
+                name="style"
+                checked={appearance.style === id}
+                onSelect={() =>
+                  // Her accent was picked for a style; the new one starts
+                  // from its own colour.
+                  set({ style: id, accent: null })
+                }
               >
-                <AmbianceSwatch id={id} />
+                <StyleSwatch id={id} />
                 <span className="mt-3 block text-[15px] font-semibold text-ink">
-                  {ambiances[id].name}
+                  {styles[id].name}
                 </span>
                 <span className="block text-[13px] leading-snug text-ink-soft">
-                  {ambiances[id].mood}
+                  {styles[id].line}
                 </span>
               </Choice>
             ))}
           </div>
         </Group>
+
+        {studio ? null : (
+          <Group legend="Ambiance">
+            <div className="grid gap-3 sm:grid-cols-3">
+              {(Object.keys(ambiances) as AmbianceId[]).map((id) => (
+                <Choice
+                  key={id}
+                  name="ambiance"
+                  checked={appearance.ambiance === id}
+                  onSelect={() => set({ ambiance: id })}
+                >
+                  <AmbianceSwatch id={id} />
+                  <span className="mt-3 block text-[15px] font-semibold text-ink">
+                    {ambiances[id].name}
+                  </span>
+                  <span className="block text-[13px] leading-snug text-ink-soft">
+                    {ambiances[id].mood}
+                  </span>
+                </Choice>
+              ))}
+            </div>
+          </Group>
+        )}
 
         <Group legend="Clair ou sombre">
           <div className="grid grid-cols-3 gap-2">
@@ -99,8 +147,12 @@ export function AppearanceSettings() {
         </Group>
 
         <Group
-          legend="Couleur d’accent"
-          description="Elle souligne les liens, les repères et l’heure actuelle dans ton agenda."
+          legend={studio ? "Ta couleur signature" : "Couleur d’accent"}
+          description={
+            studio
+              ? "Elle remplit le bloc « maintenant », marque l’heure et tes repères."
+              : "Elle souligne les liens, les repères et l’heure actuelle dans ton agenda."
+          }
         >
           <div className="flex flex-wrap gap-2">
             <Choice
@@ -114,37 +166,37 @@ export function AppearanceSettings() {
                   aria-hidden="true"
                   className="size-4 rounded-full border border-line-strong"
                   style={{
-                    background: ambiances[appearance.ambiance].light.accent,
+                    background: own,
                   }}
                 />
-                Celle de l’ambiance
+                {studio ? "Cobalt, celle du Studio" : "Celle de l’ambiance"}
               </span>
             </Choice>
-            {accentPresets.map((preset) => (
-              <Choice
-                key={preset.color}
-                name="accent"
-                compact
-                checked={appearance.accent === preset.color}
-                onSelect={() => set({ accent: preset.color })}
-              >
-                <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
-                  <span
-                    aria-hidden="true"
-                    className="size-4 rounded-full"
-                    style={{ background: preset.color }}
-                  />
-                  {preset.name}
-                </span>
-              </Choice>
-            ))}
+            {presets
+              .filter((preset) => !studio || preset.color !== STUDIO_SIGNATURE)
+              .map((preset) => (
+                <Choice
+                  key={preset.color}
+                  name="accent"
+                  compact
+                  checked={appearance.accent === preset.color}
+                  onSelect={() => set({ accent: preset.color })}
+                >
+                  <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
+                    <span
+                      aria-hidden="true"
+                      className="size-4 rounded-full"
+                      style={{ background: preset.color }}
+                    />
+                    {preset.name}
+                  </span>
+                </Choice>
+              ))}
           </div>
           <label className="mt-3 flex min-h-12 w-fit cursor-pointer items-center gap-3 rounded-2xl border border-line bg-paper-raised px-3 text-[14px] font-medium text-ink">
             <input
               type="color"
-              value={
-                appearance.accent ?? ambiances[appearance.ambiance].light.accent
-              }
+              value={appearance.accent ?? own}
               onChange={(event) => {
                 const value = event.target.value.toUpperCase();
                 if (isHexColor(value)) set({ accent: value });
@@ -155,8 +207,9 @@ export function AppearanceSettings() {
           </label>
           {adjusted ? (
             <p className="mt-2 text-[13px] text-ink-soft">
-              Ajustée pour rester lisible sur ton fond : la teinte est gardée,
-              un peu plus soutenue.
+              {studio
+                ? "Tes grands aplats gardent ta couleur ; dans le texte, elle est un peu plus soutenue pour rester lisible."
+                : "Ajustée pour rester lisible sur ton fond : la teinte est gardée, un peu plus soutenue."}
             </p>
           ) : null}
         </Group>
@@ -276,6 +329,68 @@ function Choice({
       />
       {children}
     </label>
+  );
+}
+
+/** A thumbnail of each style: its ground, its big moment, its type. */
+function StyleSwatch({ id }: { id: StyleId }) {
+  if (id === "studio") {
+    const palette = studioPalettes.light;
+    return (
+      <span
+        aria-hidden="true"
+        className="flex h-20 flex-col gap-1.5 rounded-xl border p-2"
+        style={{ background: palette.paper, borderColor: palette.line }}
+      >
+        <span
+          className="font-condensed flex flex-1 items-end rounded-lg px-2 pb-1 text-[26px] leading-none font-black"
+          style={{ background: STUDIO_SIGNATURE, color: "#FFFFFF" }}
+        >
+          14.05
+        </span>
+        <span className="flex gap-1">
+          {[3, 1, 2, 2].map((flex, index) => (
+            <span
+              key={index}
+              className="h-2 rounded-sm"
+              style={{ flex, background: palette.ink }}
+            />
+          ))}
+        </span>
+      </span>
+    );
+  }
+  const palette = ambiances.atelier.light;
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-20 gap-2 rounded-xl border p-2"
+      style={{ background: palette.paper, borderColor: palette.line }}
+    >
+      <span
+        className="w-1/4 rounded-lg"
+        style={{ background: palette.paperRaised }}
+      />
+      <span className="flex flex-1 flex-col gap-1.5 pt-1">
+        <span
+          className="text-[17px] leading-none"
+          style={{ color: palette.ink, fontFamily: "var(--font-serif)" }}
+        >
+          Agenda
+        </span>
+        {[0.9, 0.6].map((width) => (
+          <span
+            key={width}
+            className="h-2 rounded-sm"
+            style={{
+              width: `${width * 100}%`,
+              background: palette.accentSoft,
+              borderLeft: `3px solid ${palette.accent}`,
+            }}
+          />
+        ))}
+      </span>
+    </span>
   );
 }
 

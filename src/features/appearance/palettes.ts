@@ -206,3 +206,88 @@ export const accentPresets = [
   { name: "Forêt", color: "#2F6B4F" },
   { name: "Encre", color: "#2B2B6E" },
 ] as const;
+
+// ——— Styles ———
+// A style is the whole design of her area: composition, navigation,
+// typography. "Classique" is the area as it was, worn in her ambiance.
+// "Studio" is a poster: one family pushed across its widths, a neutral
+// ground (its own, not an ambiance) and her signature colour as a field.
+// The components still only know the semantic tokens; a style brings its
+// own neutrals and how big moments are set.
+
+export type StyleId = "classique" | "studio";
+
+export const styles: Record<StyleId, { name: string; line: string }> = {
+  classique: {
+    name: "Classique",
+    line: "Sobre et posé, dans l’ambiance de ton choix.",
+  },
+  studio: {
+    name: "Studio",
+    line: "Graphique et direct : ta journée comme une affiche, ta couleur en grand.",
+  },
+};
+
+/** Studio's neutrals; her signature colour does the rest. */
+export const studioPalettes: Record<Mode, Palette> = {
+  light: {
+    paper: "#F1EFEA",
+    paperRaised: "#FBFAF7",
+    sand: "#E6E3DC",
+    sandDeep: "#DAD6CD",
+    line: "#D9D6CF",
+    lineStrong: "#B4B0A7",
+    ink: "#0E0E10",
+    inkSoft: "#46464D",
+    inkMuted: "#5F5F67",
+    accent: "#2333C9",
+    accentStrong: "#1A2696",
+    accentSoft: "#E0E3FB",
+    success: "#2F6743",
+    successSoft: "#DFEBE1",
+    successStrong: "#224D31",
+    danger: "#A3361F",
+    dangerSoft: "#F7E0D9",
+    dangerStrong: "#7C2817",
+    warning: "#835615",
+    warningSoft: "#F3E6CF",
+    warningStrong: "#664210",
+    shadowRgb: "14 14 16",
+  },
+  dark: {
+    paper: "#0C0C0E",
+    paperRaised: "#161619",
+    sand: "#1F1F23",
+    sandDeep: "#29292E",
+    line: "#2C2C31",
+    lineStrong: "#4A4A52",
+    ink: "#F2F1EE",
+    inkSoft: "#C0C0C7",
+    inkMuted: "#9C9CA5",
+    accent: "#9AA5FF",
+    accentStrong: "#BCC3FF",
+    accentSoft: "#1D2255",
+    success: "#86C09A",
+    successSoft: "#17251B",
+    successStrong: "#AEDABB",
+    danger: "#F09A84",
+    dangerSoft: "#3A1C15",
+    dangerStrong: "#F7BBAD",
+    warning: "#E2AE63",
+    warningSoft: "#2F2416",
+    warningStrong: "#F0CD97",
+    shadowRgb: "0 0 0",
+  },
+};
+
+/** Studio's signature colours, in one tap (any colour is also possible). */
+export const signaturePresets = [
+  { name: "Cobalt", color: "#2D3FE6" },
+  { name: "Tomate", color: "#F2512E" },
+  { name: "Pistache", color: "#C3DD4F" },
+  { name: "Fuchsia", color: "#D9367F" },
+  { name: "Émeraude", color: "#14865F" },
+  { name: "Encre", color: "#1B1B2F" },
+] as const;
+
+export const STUDIO_SIGNATURE = signaturePresets[0].color;

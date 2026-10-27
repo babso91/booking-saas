@@ -6,16 +6,16 @@ Principe : on améliore le back-office qui existe. Pas de second dashboard, pas 
 
 ## 1. Ce qui existe (vérifié dans le code)
 
-| Écran | Route | Contenu | Données |
-| --- | --- | --- | --- |
-| Agenda (accueil actuel) | `/app` | Semaine dès 768 px, jour sur téléphone. Création de rendez-vous ou de blocage depuis un créneau, fiche du rendez-vous, statut (Terminé, Absente, Annulé avec motif), case « inclure les annulés », liste de configuration à terminer | Serveur : jour de l'établissement (PostgreSQL), progression de configuration. Client : actions `getAgenda`, `listAgendaServices`. Écritures idempotentes (`requestId`), conflits gérés |
-| Clientes | `/app/clients` | Annuaire : recherche, filtres, pagination par curseur, création | `listClients` |
-| Fiche cliente | `/app/clients/[id]` | Contact, édition, notes privées, historique paginé, fidélité (points, récompenses, ajustement, grand livre) | Profil, historique, notes et fidélité chargés séparément |
-| Prestations | `/app/services` | Créer, modifier, activer, réordonner, supprimer ; brouillons locaux ; verrou optimiste (`version`) | Nom 1–120, description ≤ 1000, durée 5–720 min, prix 0–100 000 €, actif, ordre. **Pas de catégories ni d'options** |
-| Fidélité | `/app/loyalty` | Mode (rendez-vous ou montant), règles par prestation, catalogue de récompenses | Quatre lectures parallèles, erreurs par section |
-| Horaires | `/app/settings/hours` | Semaine type, brouillon local, conflit relu | `replaceBusinessHours` |
-| Google Calendar | `/app/settings/calendar` | Connexion, reconnexion, déconnexion | OAuth |
-| Bienvenue | `/app/welcome` | Fin d'onboarding | Progression |
+| Écran                   | Route                    | Contenu                                                                                                                                                                                                                              | Données                                                                                                                                                                                |
+| ----------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agenda (accueil actuel) | `/app`                   | Semaine dès 768 px, jour sur téléphone. Création de rendez-vous ou de blocage depuis un créneau, fiche du rendez-vous, statut (Terminé, Absente, Annulé avec motif), case « inclure les annulés », liste de configuration à terminer | Serveur : jour de l'établissement (PostgreSQL), progression de configuration. Client : actions `getAgenda`, `listAgendaServices`. Écritures idempotentes (`requestId`), conflits gérés |
+| Clientes                | `/app/clients`           | Annuaire : recherche, filtres, pagination par curseur, création                                                                                                                                                                      | `listClients`                                                                                                                                                                          |
+| Fiche cliente           | `/app/clients/[id]`      | Contact, édition, notes privées, historique paginé, fidélité (points, récompenses, ajustement, grand livre)                                                                                                                          | Profil, historique, notes et fidélité chargés séparément                                                                                                                               |
+| Prestations             | `/app/services`          | Créer, modifier, activer, réordonner, supprimer ; brouillons locaux ; verrou optimiste (`version`)                                                                                                                                   | Nom 1–120, description ≤ 1000, durée 5–720 min, prix 0–100 000 €, actif, ordre. **Pas de catégories ni d'options**                                                                     |
+| Fidélité                | `/app/loyalty`           | Mode (rendez-vous ou montant), règles par prestation, catalogue de récompenses                                                                                                                                                       | Quatre lectures parallèles, erreurs par section                                                                                                                                        |
+| Horaires                | `/app/settings/hours`    | Semaine type, brouillon local, conflit relu                                                                                                                                                                                          | `replaceBusinessHours`                                                                                                                                                                 |
+| Google Calendar         | `/app/settings/calendar` | Connexion, reconnexion, déconnexion                                                                                                                                                                                                  | OAuth                                                                                                                                                                                  |
+| Bienvenue               | `/app/welcome`           | Fin d'onboarding                                                                                                                                                                                                                     | Progression                                                                                                                                                                            |
 
 **Coquille :**
 
@@ -59,26 +59,32 @@ Principe : on améliore le back-office qui existe. Pas de second dashboard, pas 
 4. **Couleurs codées en dur :** une quarantaine, surtout des ombres et quelques teintes de texte, dans une dizaine de fichiers. Elles empêchent tout thème cohérent (sombre en particulier).
 5. **Libellés au féminin** (« Clientes », « Absente ») : c'est un choix produit à confirmer, car la clientèle peut être mixte.
 
-## 3. Direction artistique
+## 3. Direction artistique : plusieurs styles, un seul moteur
 
-Un outil de travail quotidien, premium et calme : l'élégance éditoriale des mini-sites, sans leur mise en scène.
+Trois directions ont été explorées en prototype (`/apercu/directions`, données fictives) : **le Carnet** (éditorial, un carnet imprimé), **le Studio** (graphique, la journée comme une affiche, une couleur signature) et **l'Écrin** (tactile, un cadran). Décision produit : les proposer comme **styles au choix**, dans Core, plutôt que d'en retenir un seul. C'est la logique des univers du mini-site, appliquée à l'espace pro.
 
-- **Typographie :** la serif pour les titres et les grands chiffres (le « 3 rendez-vous » du jour, les montants), la grotesque pour tout ce qui est fonctionnel.
-- **Ambiances :** quelques palettes conçues, chacune en clair et en sombre, que la professionnelle choisit. Pas de couleurs libres partout.
-- **Accent personnel :** sa couleur, avec une lisibilité garantie par calcul (même principe que le filet du labo).
-- **Mouvement :** discret par nature (≤ 240 ms, jamais avant une action), avec trois niveaux au choix : Standard, Discret, Aucun. « Réduire les animations » du système l'emporte toujours.
-- **Densité :** des cibles de 44 px, et l'agenda prioritaire. Rien ne s'anime avant que les données soient lisibles.
+Architecture, pour que trois styles ne coûtent pas trois dashboards :
+
+- **Un moteur commun** : données, règles, actions, permissions et calculs (par exemple `features/dashboard/client/today-model.ts`, pur et testé). Écrit et testé une fois.
+- **Des styles qui ne réinventent que les écrans qui comptent** : l'accueil du jour, l'agenda et le geste d'encaissement. Chaque style a sa coquille (navigation) et sa typographie.
+- **Des écrans secondaires partagés** (clientes, prestations, fidélité, réglages) : mêmes composants, habillés par les tokens et la typographie du style.
+- **Des invariants** : mêmes rubriques, même ordre et mêmes mots dans tous les styles ; les actions critiques gardent la même logique (encaisser = choisir le moyen, puis confirmer) ; changer de style est instantané et réversible (Apparence).
+- **Qualité égale** : chaque style est au niveau du laboratoire, jamais une version au rabais. Mêmes exigences de contraste (calculées et testées) et d'accessibilité.
+
+Ordre : **Studio** d'abord (le plus efficace au quotidien, il valide le moteur), puis **Écrin**, puis **Carnet**. Le style **Classique** (l'espace actuel, dans l'ambiance choisie) reste celui par défaut tant qu'un style n'est pas complet.
+
+Principes communs : des cibles de 44 px, l'agenda prioritaire, rien ne s'anime avant que les données soient lisibles, trois niveaux d'animation (Standard, Discret, Aucun), et « Réduire les animations » du système l'emporte toujours.
 
 ## 4. Personnalisation (Core)
 
-| Réglage | Portée | Persistance |
-| --- | --- | --- |
-| Ambiance (Atelier, Lin, Sauge) | tout le back-office | tranche 1 : sur l'appareil (cookie) ; ensuite : son compte (backend) |
-| Clair / Sombre / Système | idem | idem |
-| Couleur d'accent (préréglages ou libre) | idem, lisibilité garantie | idem |
-| Animations : Standard / Discret / Aucun | idem | idem |
-| Widgets de l'accueil (afficher, masquer, ordonner) | accueil | backend |
-| Image personnelle facultative | accueil | backend (stockage, taille et type contrôlés) |
+| Réglage                                            | Portée                    | Persistance                                                          |
+| -------------------------------------------------- | ------------------------- | -------------------------------------------------------------------- |
+| Ambiance (Atelier, Lin, Sauge)                     | tout le back-office       | tranche 1 : sur l'appareil (cookie) ; ensuite : son compte (backend) |
+| Clair / Sombre / Système                           | idem                      | idem                                                                 |
+| Couleur d'accent (préréglages ou libre)            | idem, lisibilité garantie | idem                                                                 |
+| Animations : Standard / Discret / Aucun            | idem                      | idem                                                                 |
+| Widgets de l'accueil (afficher, masquer, ordonner) | accueil                   | backend                                                              |
+| Image personnelle facultative                      | accueil                   | backend (stockage, taille et type contrôlés)                         |
 
 **Rendu sans flash :**
 
@@ -166,15 +172,16 @@ Le BOFiP définit un système de caisse comme un outil qui mémorise et enregist
 
 ## 7. Découpage en PR indépendantes
 
-| # | PR | Contenu | Données / sécurité | Responsable |
-| --- | --- | --- | --- | --- |
-| 1 | **Apparence : fondations** | Couleurs codées en dur remplacées par des tokens ; ambiances claires et sombres ; accent garanti lisible ; niveaux d'animation ; page Apparence ; préférence par appareil (cookie) ; galerie de prévisualisation désactivée en production | Aucune donnée, aucune sécurité | Claude Code |
-| 2 | Coquille partagée | `AppShell` dans le layout `/app` (plus de remontage), déplacée hors de `agenda` ; navigation repensée (Accueil, Agenda, Clientes, Prestations, Fidélité, Encaissements ; réglages groupés) | Lecture seule | Claude Code |
-| 3 | Accueil et widgets | Aujourd'hui, prochains rendez-vous, à faire, fidélité ; ordre et visibilité des widgets | Lecture des données existantes | Claude Code |
-| 4 | Préférences synchronisées | Table de préférences par membre (RLS), image personnelle (Storage) | Migration, RLS | Claude Cloud |
-| 5 | Encaissements : backend | Journal ISCA, clôtures, actions, RLS, audit | Migration, conformité | Claude Cloud, avec validation d'un expert |
-| 6 | Encaissements : interface | Fiche du rendez-vous, écran Encaissements, widget, branchés sur la PR 5 | Données réelles via les contrats de la PR 5 | Claude Code |
-| 7 | Agenda | Déplacement rapide, « Terminer et encaisser », vue jour sur téléphone retravaillée | Actions existantes | Claude Code |
-| 8 | Catalogue unifié | Catégories et options (backend), puis interface commune au dashboard et au Studio | Migration | Claude Cloud, puis Claude Code |
+| #   | PR                                          | Contenu                                                                                                                                                                                                                                                                                                       | Données / sécurité                               | Responsable                               |
+| --- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------------- |
+| 1   | **Apparence : fondations**                  | Couleurs codées en dur remplacées par des tokens ; ambiances claires et sombres ; accent garanti lisible ; niveaux d'animation ; page Apparence ; préférence par appareil (cookie) ; aperçu `/apercu` désactivé en production                                                                                 | Aucune donnée, aucune sécurité                   | Claude Code                               |
+| 2   | **Studio 1 : style, coquille, Aujourd'hui** | Choix du style dans Apparence (Classique par défaut) ; couleur signature lisible par calcul ; coquille Studio (dock, monogramme, feuille « Plus ») ; page « Aujourd'hui » branchée sur l'agenda réel (en cours, ensuite, frise, remplissage, notes) ; aucun montant tant que les encaissements n'existent pas | Lecture seule, mêmes lectures que l'agenda (RLS) | Claude Code                               |
+| 3   | Studio 2 : agenda                           | Planning mural (semaine) et journée en blocs sur téléphone, sur le moteur de l'agenda existant (panneaux, formulaires et actions partagés)                                                                                                                                                                    | Actions existantes                               | Claude Code                               |
+| 4   | Coquille partagée                           | Coquille dans le layout `/app` (plus de remontage à chaque navigation)                                                                                                                                                                                                                                        | Lecture seule                                    | Claude Code                               |
+| 5   | Écrin, puis Carnet                          | Chaque style : coquille, accueil, agenda, geste d'encaissement                                                                                                                                                                                                                                                | Mêmes données                                    | Claude Code                               |
+| 6   | Préférences synchronisées                   | Table de préférences par membre (RLS), image personnelle (Storage)                                                                                                                                                                                                                                            | Migration, RLS                                   | Claude Cloud                              |
+| 7   | Encaissements : backend                     | Journal ISCA, clôtures, actions, RLS, audit                                                                                                                                                                                                                                                                   | Migration, conformité                            | Claude Cloud, avec validation d'un expert |
+| 8   | Encaissements : interface                   | Geste d'encaissement propre à chaque style, écran Encaissements, chiffres du jour, branchés sur la PR 7                                                                                                                                                                                                       | Données réelles via les contrats de la PR 7      | Claude Code                               |
+| 9   | Catalogue unifié                            | Catégories et options (backend), puis interface commune au dashboard et au Studio                                                                                                                                                                                                                             | Migration                                        | Claude Cloud, puis Claude Code            |
 
-Chaque PR est auditée avant fusion. La PR 1 est la première tranche, livrée sur cette branche.
+Chaque PR est auditée avant fusion. Les PR 1 et 2 sont livrées sur la branche `feat/dashboard-experience`.

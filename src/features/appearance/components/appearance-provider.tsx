@@ -51,11 +51,13 @@ export function AppearanceProvider({
     const root = document.documentElement;
     root.setAttribute("data-appearance", "");
     root.setAttribute("data-motion", appearance.motion);
+    root.setAttribute("data-style", appearance.style);
     return () => {
       root.removeAttribute("data-appearance");
       root.removeAttribute("data-motion");
+      root.removeAttribute("data-style");
     };
-  }, [appearance.motion]);
+  }, [appearance.motion, appearance.style]);
 
   const setAppearance = useCallback((next: Appearance) => {
     setState(next);
@@ -73,12 +75,21 @@ export function AppearanceProvider({
       <div
         data-appearance=""
         data-motion={appearance.motion}
+        data-style={appearance.style}
         className="contents"
       >
         {children}
       </div>
     </Context.Provider>
   );
+}
+
+/**
+ * The style of her area, for the frames that change with it; "classique"
+ * outside the area (a component rendered without the provider).
+ */
+export function useDashboardStyle() {
+  return useContext(Context)?.appearance.style ?? "classique";
 }
 
 export function useAppearance() {

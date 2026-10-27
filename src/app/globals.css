@@ -19,6 +19,9 @@
   --accent: #97493a;
   --accent-strong: #7c3a2d;
   --accent-soft: #f2e2d8;
+  /* Her colour as a field, and what is written on it. */
+  --signature: #97493a;
+  --on-signature: #fffcf8;
   --success: #3d6a4c;
   --success-soft: #e2ece3;
   --success-strong: #2c4f38;
@@ -53,6 +56,8 @@
   --color-accent: var(--accent);
   --color-accent-strong: var(--accent-strong);
   --color-accent-soft: var(--accent-soft);
+  --color-signature: var(--signature);
+  --color-on-signature: var(--on-signature);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
   --color-danger: var(--danger);
@@ -383,4 +388,32 @@ input[type="search"]::-webkit-search-cancel-button {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
+}
+
+/*
+ * Studio style (professional area). One family, Archivo, across its widths:
+ * the body in its normal width, every display title condensed and black.
+ * Components keep their classes; the style decides how they are set.
+ */
+[data-style="studio"] {
+  --font-sans: var(--font-studio), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-sans);
+}
+[data-style="studio"] .font-display {
+  font-family: var(--font-studio), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 900;
+  font-stretch: 62%;
+  font-variation-settings: "wdth" 62;
+  letter-spacing: -0.015em;
+  text-transform: uppercase;
+}
+.font-condensed {
+  font-family: var(--font-studio), ui-sans-serif, system-ui, sans-serif;
+  font-stretch: 62%;
+  font-variation-settings: "wdth" 62;
+}
+.font-expanded {
+  font-family: var(--font-studio), ui-sans-serif, system-ui, sans-serif;
+  font-stretch: 125%;
+  font-variation-settings: "wdth" 125;
 }
