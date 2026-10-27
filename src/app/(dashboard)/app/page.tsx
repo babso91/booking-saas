@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 
 import { requireReadyBusiness } from "@/features/auth/data/guards";
-import { requestedDay } from "@/features/agenda/client/requested-day";
+import {
+  requestedAppointment,
+  requestedDay,
+} from "@/features/agenda/client/requested-day";
 import { AgendaView } from "@/features/agenda/components/agenda-view";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import {
@@ -20,7 +23,7 @@ export default async function AgendaPage({ searchParams }: PageProps<"/app">) {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
   const { business } = await requireReadyBusiness();
-  const { date } = await searchParams;
+  const { date, rdv } = await searchParams;
   // The business's date today, from the calendar authority (PostgreSQL).
   const client = await createServerSupabaseClient();
   const [{ today }, progress] = await Promise.all([
@@ -36,7 +39,11 @@ export default async function AgendaPage({ searchParams }: PageProps<"/app">) {
           <SetupChecklist progress={progress} compact />
         </div>
       )}
-      <AgendaView today={today} initialDate={requestedDay(date)} />
+      <AgendaView
+        today={today}
+        initialDate={requestedDay(date)}
+        initialAppointmentId={requestedAppointment(rdv)}
+      />
     </AppShell>
   );
 }

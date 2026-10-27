@@ -4,6 +4,7 @@ import type { AgendaDto } from "@/features/agenda/data/agenda";
 
 import {
   SAMPLE_TODAY,
+  sampleBusyWeek,
   sampleInstant,
   sampleWeek,
 } from "../fixtures/sample-week";
@@ -174,5 +175,33 @@ describe("todayModel", () => {
     expect(
       later.notes.map(({ appointment }) => appointment.client.displayName),
     ).toEqual(["Nadia Haddad"]);
+  });
+
+  it("overlapping visits: all of them going on now, each in its own row", () => {
+    const model = todayModel(sampleBusyWeek, SAMPLE_TODAY, at("14:05"));
+    expect(
+      model.currents.map((visit) => visit.appointment.client.displayName),
+    ).toEqual(["Sarah Benali", "Aïcha Diallo"]);
+    const rows = Object.fromEntries(
+      model.visits.map((visit) => [
+        visit.appointment.client.displayName.split(" ")[0],
+        [visit.lane, visit.lanes],
+      ]),
+    );
+    expect(rows["Marie-Charlotte"]).toEqual([0, 3]);
+    expect(rows.Lina).toEqual([1, 3]);
+    // Lina is over at 9:45: Zoé (9:30) still needs a third row.
+    expect(rows.Zoé).toEqual([2, 3]);
+    expect(rows.Sarah).toEqual([0, 2]);
+    expect(rows.Aïcha).toEqual([1, 2]);
+    expect(rows.Emma).toEqual([0, 1]);
+  });
+
+  it("back-to-back visits do not overlap (end = next start)", () => {
+    const model = todayModel(sampleBusyWeek, SAMPLE_TODAY, at("14:05"));
+    const emma = model.visits.find(
+      (visit) => visit.appointment.client.displayName === "Emma Girard",
+    )!;
+    expect([emma.lane, emma.lanes]).toEqual([0, 1]);
   });
 });

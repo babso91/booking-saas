@@ -1259,3 +1259,60 @@ describe("links with the customer profiles", () => {
     expect(link.textContent).toContain("Camille Roux");
   });
 });
+
+describe("a link to one appointment (?rdv=, from Aujourd’hui)", () => {
+  const wanted = appointment({ local: "2026-09-30T14:00" });
+
+  beforeEach(() => {
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [wanted] })),
+    );
+  });
+
+  it("opens its details once its day is read, as a tap on the grid would", async () => {
+    render(
+      <AgendaView
+        today={TODAY}
+        initialDate="2026-09-30"
+        initialAppointmentId={wanted.id}
+      />,
+    );
+    const details = within(await screen.findByRole("dialog"));
+    expect(details.getByText("Camille Roux")).toBeTruthy();
+    expect(actions.getAgendaAction).toHaveBeenCalledWith({
+      startDate: "2026-09-30",
+      endDate: "2026-09-30",
+      includeCancelled: false,
+    });
+  });
+
+  it("an id the agenda read does not hold opens nothing", async () => {
+    render(
+      <AgendaView
+        today={TODAY}
+        initialDate="2026-09-30"
+        initialAppointmentId="99999999-0000-4000-8000-000000000000"
+      />,
+    );
+    await screen.findByRole("button", { name: /Camille Roux/ });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens it only once: closing it and reloading the range keeps it closed", async () => {
+    const user = userEvent.setup();
+    render(
+      <AgendaView
+        today={TODAY}
+        initialDate="2026-09-30"
+        initialAppointmentId={wanted.id}
+      />,
+    );
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(screen.getByRole("button", { name: /jour suivant/i }));
+    await user.click(screen.getByRole("button", { name: /jour précédent/i }));
+    await screen.findByRole("button", { name: /Camille Roux/ });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});

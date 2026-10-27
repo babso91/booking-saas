@@ -86,9 +86,16 @@ const DEFAULT_TIME = "09:00";
 export function AgendaView({
   today: initialToday,
   initialDate,
+  initialAppointmentId,
 }: {
   /** Day to open on (a link from a customer profile); today otherwise. */
   initialDate?: string;
+  /**
+   * Appointment to open once the first range is read (a link from
+   * "Aujourd’hui"): its details panel, exactly as a tap on the grid opens
+   * it. Ignored if that range does not hold it.
+   */
+  initialAppointmentId?: string;
   /** The business's date today, from PostgreSQL. */
   today: string;
 }) {
@@ -111,6 +118,8 @@ export function AgendaView({
   const [awaitingToday, setAwaitingToday] = useState<number | null>(null);
   const intent = useRef(0);
   const alive = useRef(true);
+  // Opened once, from the first answer that comes back.
+  const pendingAppointment = useRef(initialAppointmentId ?? null);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -132,7 +141,14 @@ export function AgendaView({
       if (!active) return;
       if (result.ok) {
         canonical.observe(observation, result.data);
-        setLoaded({ key, data: restrictToDays(result.data, range.days) });
+        const data = restrictToDays(result.data, range.days);
+        setLoaded({ key, data });
+        const wanted = pendingAppointment.current;
+        pendingAppointment.current = null;
+        const found = wanted
+          ? data.appointments.find((item) => item.id === wanted)
+          : undefined;
+        if (found) setPanelState({ kind: "appointment", appointment: found });
       } else setFailed({ key, error: result.error });
     });
     return () => {

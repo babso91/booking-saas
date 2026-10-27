@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import {
+  dateOf,
   formatDuration,
   formatWeekdayLong,
   formatWeekdayShort,
@@ -29,6 +30,10 @@ import {
 // then her own notes on what is still to come. Every figure is read from
 // her agenda; nothing is invented, nothing is money (bookings are not
 // takings: those come with the payment record, docs/DASHBOARD_EXPERIENCE.md).
+//
+// Her notes on clients stay out of the big, readable-from-afar zones: the
+// colour field only says that a note exists; the notes themselves are shown
+// when she asks (a client may be sitting next to the screen).
 
 // Re-renders every 30 s so "now" stays true.
 function subscribeClock(callback: () => void) {
@@ -37,8 +42,25 @@ function subscribeClock(callback: () => void) {
 }
 const clockNow = () => Math.floor(Date.now() / 30_000) * 30_000;
 
+// The agenda read again every 5 minutes and when she comes back to the tab:
+// a booking made meanwhile is not missed.
+const REFRESH_MS = 5 * 60_000;
+
 const agendaOf = (date: string) =>
   ({ pathname: "/app", query: { date } }) as const;
+
+/** The agenda on that visit's day, its details open. */
+const visitHref = (visit: TodayVisit) =>
+  ({
+    pathname: "/app",
+    query: {
+      date: dateOf(visit.appointment.localStartsAt),
+      rdv: visit.appointment.id,
+    },
+  }) as const;
+
+const hasNote = (visit: TodayVisit) =>
+  Boolean(visit.appointment.internalNotes?.trim());
 
 export function StudioToday({
   agenda,
@@ -73,6 +95,19 @@ export function StudioToday({
     if (rolledOver && frozenNow === undefined) router.refresh();
   }, [rolledOver, frozenNow, router]);
 
+  useEffect(() => {
+    if (frozenNow !== undefined) return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    const timer = window.setInterval(refresh, REFRESH_MS);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [frozenNow, router]);
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-10 pb-10 lg:gap-12">
@@ -100,7 +135,7 @@ const eyebrow =
   "font-expanded text-[12px] font-semibold tracking-[0.08em] uppercase";
 
 function Hero({ model, now }: { model: TodayModel; now: number }) {
-  const { current, next, phase, visits } = model;
+  const { current, currents, next, phase, visits } = model;
   const after = next ? visits[visits.indexOf(next) + 1] : undefined;
 
   return (
@@ -111,7 +146,30 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
       <Clock time={model.nowTime} date={model.date} />
 
       <div className="flex min-w-0 flex-col gap-2">
-        {phase === "during" && current ? (
+        {phase === "during" && currents.length > 1 ? (
+          // Overlapping visits: all of them, none hidden behind another.
+          <>
+            <span className={eyebrow}>
+              En cours · {currents.length} rendez{"\u2011"}vous
+            </span>
+            <ul className="flex flex-col gap-2">
+              {currents.map((visit) => (
+                <li key={visit.appointment.id}>
+                  <Link
+                    href={visitHref(visit)}
+                    className="font-expanded block text-[clamp(24px,6vw,36px)] leading-tight font-extrabold [overflow-wrap:anywhere] hover:underline focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-on-signature"
+                  >
+                    {visit.appointment.client.displayName}
+                  </Link>
+                  <span className="text-[15px] font-medium">
+                    {visit.appointment.service.name} · jusqu’à{" "}
+                    {timeOf(visit.appointment.localEndsAt)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : phase === "during" && current ? (
           <>
             <span className={eyebrow}>En cours</span>
             <Name visit={current} />
@@ -119,6 +177,7 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
               {current.appointment.service.name}
             </span>
             <Progress visit={current} now={now} />
+            <OpenVisit visit={current} />
           </>
         ) : phase === "before" || phase === "between" ? (
           <>
@@ -131,6 +190,7 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
               {next!.appointment.service.name} · dans{" "}
               {formatDuration(minutesUntil(next!.start, now))}
             </span>
+            <OpenVisit visit={next!} />
           </>
         ) : phase === "after" ? (
           <>
@@ -174,6 +234,23 @@ function Name({ visit }: { visit: TodayVisit }) {
     <span className="font-expanded text-[clamp(34px,9vw,66px)] leading-[0.95] font-extrabold tracking-[-0.02em] [overflow-wrap:anywhere]">
       {visit.appointment.client.displayName}
     </span>
+  );
+}
+
+/** Straight to that visit in the agenda (its details, its actions). */
+function OpenVisit({ visit, label }: { visit: TodayVisit; label?: string }) {
+  return (
+    <Link
+      href={visitHref(visit)}
+      className="mt-2 inline-flex min-h-11 items-center gap-2 self-start rounded-full bg-on-signature px-4 text-[14.5px] font-bold text-signature focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-on-signature"
+    >
+      {label ?? "Voir le rendez-vous"}
+      {hasNote(visit) ? (
+        <span className="rounded-full border-2 border-signature px-2 text-[12px] leading-5">
+          Note
+        </span>
+      ) : null}
+    </Link>
   );
 }
 
@@ -228,11 +305,7 @@ function Aside({
             {visit.appointment.client.displayName}
           </span>
           <span>{visit.appointment.service.name}</span>
-          {visit.appointment.internalNotes?.trim() ? (
-            <span className="mt-2 self-start rounded-2xl bg-on-signature px-3 py-1.5 text-[13px] font-bold text-signature">
-              {visit.appointment.internalNotes.trim()}
-            </span>
-          ) : null}
+          <OpenVisit visit={visit} label="Voir" />
         </>
       ) : (
         <>
@@ -246,12 +319,14 @@ function Aside({
           </span>
         </>
       )}
-      <Link
-        href={agendaOf(date)}
-        className="mt-2 self-start text-[14px] font-bold underline decoration-2 underline-offset-4 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-on-signature"
-      >
-        Ouvrir l’agenda
-      </Link>
+      {visit ? null : (
+        <Link
+          href={agendaOf(date)}
+          className="mt-2 inline-flex min-h-11 items-center self-start text-[14px] font-bold underline decoration-2 underline-offset-4 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-on-signature"
+        >
+          Ouvrir l’agenda
+        </Link>
+      )}
     </div>
   );
 }
@@ -267,6 +342,8 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
   const left = (at: number) => positionOf(span, at);
   const width = (start: number, end: number) =>
     `calc(${left(end) - left(start)}% - 4px)`;
+  // Too short on the line for words: her initial, the rest in the list.
+  const narrow = (visit: TodayVisit) => left(visit.end) - left(visit.start) < 7;
 
   return (
     <section aria-labelledby="journee" className="mx-4 lg:mx-10">
@@ -317,31 +394,44 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
                   width: width(pause.start, pause.end),
                 }}
               >
-                <span className="truncate">{pause.label}</span>
+                {left(pause.end) - left(pause.start) < 7 ? null : (
+                  <span className="truncate">{pause.label}</span>
+                )}
               </span>
             ))}
             {visits.map((visit) => (
-              <span
+              // The list below is the accessible way in; these are a
+              // shortcut for the pointer only.
+              <Link
                 key={visit.appointment.id}
+                href={visitHref(visit)}
+                tabIndex={-1}
                 className={cn(
-                  "absolute top-[26px] bottom-0 flex flex-col justify-between overflow-hidden rounded-[14px] px-3 pt-3 pb-2.5",
+                  "absolute flex flex-col justify-between overflow-hidden rounded-[14px] px-3 transition-transform hover:-translate-y-0.5",
+                  visit.lanes > 1 ? "justify-center py-1" : "pt-3 pb-2.5",
                   stateClass[visit.state],
                 )}
                 style={{
                   left: `${left(visit.start)}%`,
                   width: width(visit.start, visit.end),
+                  top: `calc(26px + ${visit.lane} * (126px / ${visit.lanes}))`,
+                  height: `calc(126px / ${visit.lanes} - ${visit.lanes > 1 ? 4 : 0}px)`,
                 }}
               >
                 <b className="font-expanded truncate text-[16px] leading-none font-extrabold">
-                  {firstName(visit)}
+                  {narrow(visit) ? initial(visit) : firstName(visit)}
                 </b>
-                <span className="truncate text-[13px] leading-tight">
-                  {visit.appointment.service.name}
-                </span>
-                <span className="truncate text-[13px] font-bold tabular-nums">
-                  {timeOf(visit.appointment.localStartsAt)}
-                </span>
-              </span>
+                {visit.lanes > 1 || narrow(visit) ? null : (
+                  <>
+                    <span className="truncate text-[13px] leading-tight">
+                      {visit.appointment.service.name}
+                    </span>
+                    <span className="truncate text-[13px] font-bold tabular-nums">
+                      {timeOf(visit.appointment.localStartsAt)}
+                    </span>
+                  </>
+                )}
+              </Link>
             ))}
             {model.nowTime ? (
               <span
@@ -365,7 +455,7 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
                 <i
                   key={visit.appointment.id}
                   className={cn(
-                    "absolute top-1.5 bottom-1.5 rounded-[5px]",
+                    "absolute rounded-[5px]",
                     visit.state === "done"
                       ? "bg-ink-muted"
                       : visit.state === "now"
@@ -375,6 +465,8 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
                   style={{
                     left: `${left(visit.start)}%`,
                     width: width(visit.start, visit.end),
+                    top: `calc(6px + ${visit.lane} * (28px / ${visit.lanes}))`,
+                    height: `calc(28px / ${visit.lanes} - ${visit.lanes > 1 ? 2 : 0}px)`,
                   }}
                 />
               ))}
@@ -396,47 +488,41 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
 
           <ol aria-label="Rendez-vous du jour" className="mt-4 md:mt-6">
             {visits.map((visit) => (
-              <li
-                key={visit.appointment.id}
-                className="grid grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-3 border-b border-line py-3.5 md:grid-cols-[88px_minmax(0,1fr)_auto]"
-              >
-                <span
-                  className={cn(
-                    "font-condensed text-[26px] leading-none font-black tabular-nums",
-                    visit.state === "done"
-                      ? "text-ink-muted"
-                      : visit.state === "now"
-                        ? "text-accent"
-                        : "text-ink",
-                  )}
+              <li key={visit.appointment.id} className="border-b border-line">
+                <Link
+                  href={visitHref(visit)}
+                  className="grid min-h-16 grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-3 py-3.5 transition-colors hover:bg-paper-raised focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature md:grid-cols-[88px_minmax(0,1fr)_auto]"
                 >
-                  {timeOf(visit.appointment.localStartsAt)}
-                </span>
-                <span className="min-w-0">
                   <span
                     className={cn(
-                      "font-expanded block truncate text-[17px] leading-tight font-extrabold",
-                      visit.state === "done" ? "text-ink-soft" : "text-ink",
+                      "font-condensed text-[26px] leading-none font-black tabular-nums",
+                      visit.state === "done"
+                        ? "text-ink-muted"
+                        : visit.state === "now"
+                          ? "text-accent"
+                          : "text-ink",
                     )}
                   >
-                    {visit.appointment.client.displayName}
+                    {timeOf(visit.appointment.localStartsAt)}
                   </span>
-                  <span className="block truncate text-[14px] text-ink-soft">
-                    {visit.appointment.service.name} ·{" "}
-                    {formatDuration(visit.appointment.durationMinutes)}
+                  <span className="min-w-0">
+                    <span
+                      className={cn(
+                        "font-expanded block truncate text-[17px] leading-tight font-extrabold",
+                        visit.state === "done" ? "text-ink-soft" : "text-ink",
+                      )}
+                    >
+                      {visit.appointment.client.displayName}
+                    </span>
+                    <span className="block truncate text-[14px] text-ink-soft">
+                      {visit.appointment.service.name} ·{" "}
+                      {formatDuration(visit.appointment.durationMinutes)}
+                    </span>
                   </span>
-                </span>
-                <span className="text-right text-[13px] font-bold text-ink-soft">
-                  {visit.state === "now"
-                    ? "En cours"
-                    : visit.appointment.status === "no_show"
-                      ? "Absente"
-                      : visit.state === "done"
-                        ? "Terminé"
-                        : visit.appointment.source === "public"
-                          ? "En ligne"
-                          : ""}
-                </span>
+                  <span className="text-right text-[13px] font-bold text-ink-soft">
+                    {stateLabel(visit)}
+                  </span>
+                </Link>
               </li>
             ))}
           </ol>
@@ -467,7 +553,7 @@ function Figures({ model }: { model: TodayModel }) {
       <Figure label="Aujourd’hui" value={String(model.counts.total)}>
         {model.counts.total === 0
           ? "aucun rendez-vous"
-          : `${model.counts.done} terminé${model.counts.done > 1 ? "s" : ""} · ${model.counts.left} à venir`}
+          : `${model.counts.done} passé${model.counts.done > 1 ? "s" : ""} · ${model.counts.left} à venir`}
       </Figure>
       <Figure
         label="Pris en ligne"
@@ -572,33 +658,65 @@ function Figure({
   );
 }
 
+/**
+ * Her notes on what is still to come, on demand only: hidden until she
+ * asks (not even in the page), hidden again when she leaves.
+ */
 function Notes({ model }: { model: TodayModel }) {
+  const [shown, setShown] = useState(false);
   if (model.notes.length === 0) return null;
+  const count = model.notes.length;
   return (
     <section aria-labelledby="notes" className="mx-4 lg:mx-10">
-      <h2 id="notes" className={cn(eyebrow, "text-ink")}>
-        À ne pas oublier
-      </h2>
-      <ol className="mt-3 grid lg:grid-cols-3 lg:gap-6">
-        {model.notes.map(({ appointment }, index) => (
-          <li
-            key={appointment.id}
-            className="grid grid-cols-[44px_1fr] gap-2 border-t border-line py-3.5 text-[16px] leading-snug font-medium text-ink"
-          >
-            <b className="font-condensed text-[22px] leading-none font-black text-accent">
-              {String(index + 1).padStart(2, "0")}
-            </b>
-            <span>
-              {timeOf(appointment.localStartsAt)} —{" "}
-              {appointment.client.displayName.split(" ")[0]} :{" "}
-              {appointment.internalNotes!.trim()}
-            </span>
-          </li>
-        ))}
-      </ol>
+      <div className="flex items-center justify-between gap-3 border-t border-line pt-3.5">
+        <h2 id="notes" className={cn(eyebrow, "text-ink")}>
+          À ne pas oublier · {count} note{count > 1 ? "s" : ""}
+        </h2>
+        <button
+          type="button"
+          aria-expanded={shown}
+          aria-controls="notes-list"
+          onClick={() => setShown(!shown)}
+          className="min-h-11 cursor-pointer rounded-full px-4 text-[14px] font-bold text-ink shadow-[inset_0_0_0_2px_var(--ink)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature"
+        >
+          {shown ? "Masquer" : "Afficher"}
+        </button>
+      </div>
+      <div id="notes-list">
+        {shown ? (
+          <ol className="mt-1 grid lg:grid-cols-3 lg:gap-6">
+            {model.notes.map(({ appointment }, index) => (
+              <li
+                key={appointment.id}
+                className="grid grid-cols-[44px_minmax(0,1fr)] gap-2 border-b border-line py-3.5 text-[16px] leading-snug font-medium text-ink lg:border-b-0"
+              >
+                <b className="font-condensed text-[22px] leading-none font-black text-accent">
+                  {String(index + 1).padStart(2, "0")}
+                </b>
+                <span className="[overflow-wrap:anywhere] whitespace-pre-line">
+                  {timeOf(appointment.localStartsAt)} —{" "}
+                  {appointment.client.displayName.split(" ")[0]} :{" "}
+                  {appointment.internalNotes!.trim()}
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+      </div>
     </section>
   );
 }
+
+function stateLabel(visit: TodayVisit) {
+  if (visit.state === "now") return "En cours";
+  if (visit.appointment.status === "no_show") return "Absente";
+  if (visit.appointment.status === "completed") return "Terminé";
+  if (visit.state === "done") return "Passé";
+  return visit.appointment.source === "public" ? "En ligne" : "";
+}
+
+const initial = (visit: TodayVisit) =>
+  [...visit.appointment.client.displayName.trim()][0] ?? "·";
 
 const firstName = (visit: TodayVisit) =>
   visit.appointment.client.displayName.split(" ")[0];

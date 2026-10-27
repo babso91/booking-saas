@@ -20,6 +20,13 @@ export type TodayVisit = {
   /** Instants, ms. */
   start: number;
   end: number;
+  /**
+   * Row on the day's line when visits overlap (0-based) and how many rows
+   * its group of overlapping visits needs: overlaps are shown, never hidden
+   * under each other.
+   */
+  lane: number;
+  lanes: number;
 };
 
 export type TodayPhase =
@@ -54,6 +61,9 @@ export type TodayModel = {
   /** No opening at all on that date (weekly hours or exceptions). */
   closed: boolean;
   visits: TodayVisit[];
+  /** Every visit going on now (overlaps happen: both are said). */
+  currents: TodayVisit[];
+  /** The first of them, or null. */
   current: TodayVisit | null;
   next: TodayVisit | null;
   /** The span the day's line covers (ms), and its hour marks. */
@@ -101,11 +111,13 @@ export function todayModel(
           : start <= now
             ? "now"
             : "upcoming";
-      return { appointment, state, start, end };
+      return { appointment, state, start, end, lane: 0, lanes: 1 };
     })
-    .sort((a, b) => a.start - b.start);
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  placeInLanes(visits);
 
-  const current = visits.find((visit) => visit.state === "now") ?? null;
+  const currents = visits.filter((visit) => visit.state === "now");
+  const current = currents[0] ?? null;
   const next = visits.find((visit) => visit.state === "upcoming") ?? null;
   const done = visits.filter((visit) => visit.state === "done").length;
 
@@ -130,6 +142,7 @@ export function todayModel(
       (agenda.workingHours.days.find((item) => item.date === date)?.openRanges
         .length ?? 0) === 0,
     visits,
+    currents,
     current,
     next,
     span,
@@ -162,6 +175,34 @@ export function todayModel(
       )
       .map((visit) => ({ appointment: visit.appointment })),
   };
+}
+
+/**
+ * Overlapping visits side by side: each group of visits that overlap one
+ * another gets as many rows as it needs, each visit the first free row.
+ */
+function placeInLanes(visits: TodayVisit[]) {
+  let group: TodayVisit[] = [];
+  let groupEnd = -Infinity;
+  const close = () => {
+    const lanes = Math.max(1, ...group.map((visit) => visit.lane + 1));
+    for (const visit of group) visit.lanes = lanes;
+  };
+  const laneEnds: number[] = [];
+  for (const visit of visits) {
+    if (visit.start >= groupEnd) {
+      close();
+      group = [];
+      laneEnds.length = 0;
+    }
+    let lane = laneEnds.findIndex((end) => end <= visit.start);
+    if (lane === -1) lane = laneEnds.length;
+    laneEnds[lane] = visit.end;
+    visit.lane = lane;
+    group.push(visit);
+    groupEnd = Math.max(groupEnd, visit.end);
+  }
+  close();
 }
 
 /**
