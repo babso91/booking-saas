@@ -11,7 +11,7 @@ Ce dossier sert à contrôler l'architecture, les régressions et l'isolation de
 **Hors périmètre :**
 
 - Les prototypes de directions artistiques restent sur `feat/dashboard-experience`. Ils ne sont pas dans cette PR.
-- Rien ne touche aux PR #26 et #27 ni au laboratoire `proto/experience-engine`.
+- Rien ne touche aux PR #26 et #27 ni au laboratoire `proto/experience-engine`. Quatre fichiers sont aussi modifiés par #26 (`globals.css`, `icons.tsx`, `sheet.tsx`, `client-profile.tsx`). Une fusion d'essai (`git merge-tree`) avec #26 et avec #27 ne donne aucun conflit, quel que soit l'ordre de fusion.
 - Aucune migration, aucun déploiement, aucune nouvelle dépendance.
 
 ---
@@ -20,14 +20,14 @@ Ce dossier sert à contrôler l'architecture, les régressions et l'isolation de
 
 Le principe : **un moteur métier unique, plusieurs mises en scène.** Studio ne réimplémente aucune règle. Il lit les mêmes données, par les mêmes fonctions, et renvoie vers l'agenda existant pour toute action.
 
-| Couche | Ce qui change | Ce qui ne change pas |
-| --- | --- | --- |
-| Préférence | `Appearance.style` (`classique` par défaut, `studio`) dans le cookie `dash_appearance` | Aucune donnée serveur |
-| Thème | Studio a ses propres neutres (`studioPalettes`) et une couleur signature (`--signature`, `--on-signature`) | Les composants ne connaissent que les tokens sémantiques |
-| Typographie | `[data-style="studio"]` passe le corps en Archivo et met les `.font-display` en condensé noir majuscule (`globals.css`) | Classes des composants inchangées |
-| Coquille | `AppShell` rend `StudioShell` quand le style est Studio (`features/dashboard/components/studio-shell.tsx`) | La branche Classique d'`AppShell` est identique (seul le type `Section` est partagé : `features/dashboard/sections.ts`) |
-| Accueil | Nouvelle page `/app/today` (Studio uniquement) | `/app` reste l'agenda, pour les deux styles |
-| Agenda | Un seul ajout : `?rdv=<uuid>` ouvre le panneau de détails d'un rendez-vous déjà lu (voir § 2) | Grille, formulaires, actions, protections (versions, jour canonique, DST) : intacts |
+| Couche      | Ce qui change                                                                                                           | Ce qui ne change pas                                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Préférence  | `Appearance.style` (`classique` par défaut, `studio`) dans le cookie `dash_appearance`                                  | Aucune donnée serveur                                                                                                   |
+| Thème       | Studio a ses propres neutres (`studioPalettes`) et une couleur signature (`--signature`, `--on-signature`)              | Les composants ne connaissent que les tokens sémantiques                                                                |
+| Typographie | `[data-style="studio"]` passe le corps en Archivo et met les `.font-display` en condensé noir majuscule (`globals.css`) | Classes des composants inchangées                                                                                       |
+| Coquille    | `AppShell` rend `StudioShell` quand le style est Studio (`features/dashboard/components/studio-shell.tsx`)              | La branche Classique d'`AppShell` est identique (seul le type `Section` est partagé : `features/dashboard/sections.ts`) |
+| Accueil     | Nouvelle page `/app/today` (Studio uniquement)                                                                          | `/app` reste l'agenda, pour les deux styles                                                                             |
+| Agenda      | Un seul ajout : `?rdv=<uuid>` ouvre le panneau de détails d'un rendez-vous déjà lu (voir § 2)                           | Grille, formulaires, actions, protections (versions, jour canonique, DST) : intacts                                     |
 
 Le style est porté par `data-style` sur l'enveloppe de l'espace et sur `<html>` (pour les feuilles rendues dans `<body>`). Il est retiré quand on quitte `/app` (`appearance-provider.tsx`).
 
@@ -55,7 +55,7 @@ Le style est porté par `data-style` sur l'enveloppe de l'espace et sur `<html>`
   - `done` si elle est `completed` ou `no_show`, ou si elle est finie ;
   - `now` si elle a commencé et n'est pas finie ;
   - `upcoming` sinon.
-  Toutes les comparaisons se font **entre instants**.
+    Toutes les comparaisons se font **entre instants**.
 - **« Maintenant » en heure murale** : `wallOf(zone, now)` avec les décalages envoyés par PostgreSQL, comme la ligne « maintenant » de l'agenda. Le fuseau du navigateur n'est jamais utilisé.
 - **Frise** : l'ouverture réelle du jour (`openRanges`), élargie à toute visite qui en déborde. Les repères horaires sont posés en instants réels et étiquetés à l'heure murale (une heure répétée lors du changement d'heure est marquée deux fois).
 - **Chevauchements** : partition en lignes (`lane` / `lanes`) par groupe de visites qui se recouvrent.
@@ -71,14 +71,14 @@ Le style est porté par `data-style` sur l'enveloppe de l'espace et sur `<html>`
 
 ## 3. Classique et Studio
 
-| | Classique (défaut) | Studio |
-| --- | --- | --- |
-| Accueil | L'agenda (`/app`) | « Aujourd'hui » (`/app/today`) |
-| Navigation ordinateur | Barre latérale | Nom en titre + dock flottant (Aujourd'hui, Agenda, Clientes, Prestations, Fidélité) + feuille (Horaires, Google Calendar, Apparence, page de réservation, déconnexion) ouverte par le monogramme |
-| Navigation téléphone | Barre d'onglets + feuille « Compte » | Dock (Aujourd'hui, Agenda, Clientes, Plus) + même feuille |
-| Couleurs | Ambiance (Atelier, Lin, Sauge) × clair/sombre + accent | Neutres Studio × clair/sombre + couleur signature (aplats) |
-| Typographie | Hanken Grotesk + Instrument Serif | Archivo, de condensé à élargi |
-| Écrans secondaires | Inchangés | Mêmes composants, habillés par les tokens et la typo Studio |
+|                       | Classique (défaut)                                     | Studio                                                                                                                                                                                           |
+| --------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Accueil               | L'agenda (`/app`)                                      | « Aujourd'hui » (`/app/today`)                                                                                                                                                                   |
+| Navigation ordinateur | Barre latérale                                         | Nom en titre + dock flottant (Aujourd'hui, Agenda, Clientes, Prestations, Fidélité) + feuille (Horaires, Google Calendar, Apparence, page de réservation, déconnexion) ouverte par le monogramme |
+| Navigation téléphone  | Barre d'onglets + feuille « Compte »                   | Dock (Aujourd'hui, Agenda, Clientes, Plus) + même feuille                                                                                                                                        |
+| Couleurs              | Ambiance (Atelier, Lin, Sauge) × clair/sombre + accent | Neutres Studio × clair/sombre + couleur signature (aplats)                                                                                                                                       |
+| Typographie           | Hanken Grotesk + Instrument Serif                      | Archivo, de condensé à élargi                                                                                                                                                                    |
+| Écrans secondaires    | Inchangés                                              | Mêmes composants, habillés par les tokens et la typo Studio                                                                                                                                      |
 
 Invariants : mêmes rubriques, mêmes adresses, mêmes mots (`sections.ts`). Changer de style est instantané et réversible, depuis Apparence.
 
@@ -95,13 +95,13 @@ Invariants : mêmes rubriques, mêmes adresses, mêmes mots (`sections.ts`). Cha
 
 ## 5. Routes et navigation mobile
 
-| Route | Rôle |
-| --- | --- |
-| `/app/today` | Accueil Studio. Redirige vers `/app` en Classique |
-| `/app?date=AAAA-MM-JJ&rdv=<uuid>` | Agenda ouvert sur ce jour, détails du rendez-vous ouverts. `rdv` est ignoré si absent de la lecture |
-| `/app/settings/appearance` | Style, ambiance (Classique), clair/sombre, couleur, animations |
-| `/apercu/studio/aujourdhui` | Aperçu protégé. Paramètres : `?heure=HH:MM`, `?jour=AAAA-MM-JJ`, `?jeu=charge`, `?apparence=<valeur du cookie>` |
-| `/apercu/apparence` | Aperçu protégé de la page Apparence (`?apparence=`) |
+| Route                             | Rôle                                                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `/app/today`                      | Accueil Studio. Redirige vers `/app` en Classique                                                               |
+| `/app?date=AAAA-MM-JJ&rdv=<uuid>` | Agenda ouvert sur ce jour, détails du rendez-vous ouverts. `rdv` est ignoré si absent de la lecture             |
+| `/app/settings/appearance`        | Style, ambiance (Classique), clair/sombre, couleur, animations                                                  |
+| `/apercu/studio/aujourdhui`       | Aperçu protégé. Paramètres : `?heure=HH:MM`, `?jour=AAAA-MM-JJ`, `?jeu=charge`, `?apparence=<valeur du cookie>` |
+| `/apercu/apparence`               | Aperçu protégé de la page Apparence (`?apparence=`)                                                             |
 
 **Mobile :**
 
@@ -111,15 +111,15 @@ Invariants : mêmes rubriques, mêmes adresses, mêmes mots (`sections.ts`). Cha
 
 ## 6. États de la journée
 
-| Phase | Condition | Bloc couleur |
-| --- | --- | --- |
-| `before` | Aucune visite passée, une à venir | « Premier rendez-vous · HH:MM », cliente, « dans X », bouton ; puis la suivante |
-| `during` (une visite) | Une visite en cours | « En cours », cliente, prestation, barre d'avancement + temps restant, bouton ; « Ensuite » |
-| `during` (plusieurs) | Visites qui se chevauchent | « En cours · N rendez‑vous » et **toutes** les clientes avec leur heure de fin. **Pas de barre unique**, qui serait trompeuse |
-| `between` | Entre deux visites | « Ensuite · HH:MM », « dans X », bouton ; « Puis » |
-| `after` | Toutes les visites sont passées | « Journée terminée · N rendez‑vous » |
-| `free` | Aucune visite | « Journée libre · Rien de prévu », ou « Jour de fermeture · Repos » si aucune ouverture ce jour-là |
-| Minuit passé | `nowTime` absent | L'heure affiche « ··.·· » le temps de la relecture |
+| Phase                 | Condition                         | Bloc couleur                                                                                                                  |
+| --------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `before`              | Aucune visite passée, une à venir | « Premier rendez-vous · HH:MM », cliente, « dans X », bouton ; puis la suivante                                               |
+| `during` (une visite) | Une visite en cours               | « En cours », cliente, prestation, barre d'avancement + temps restant, bouton ; « Ensuite »                                   |
+| `during` (plusieurs)  | Visites qui se chevauchent        | « En cours · N rendez‑vous » et **toutes** les clientes avec leur heure de fin. **Pas de barre unique**, qui serait trompeuse |
+| `between`             | Entre deux visites                | « Ensuite · HH:MM », « dans X », bouton ; « Puis »                                                                            |
+| `after`               | Toutes les visites sont passées   | « Journée terminée · N rendez‑vous »                                                                                          |
+| `free`                | Aucune visite                     | « Journée libre · Rien de prévu », ou « Jour de fermeture · Repos » si aucune ouverture ce jour-là                            |
+| Minuit passé          | `nowTime` absent                  | L'heure affiche « ··.·· » le temps de la relecture                                                                            |
 
 Une visite `completed` ou `no_show` est rangée dans le passé, même avant son heure de fin. La liste distingue « Terminé », « Absente » et « Passé » (passée sans statut). Elle ne prétend jamais qu'une visite est terminée si ce n'est pas le cas.
 
@@ -152,6 +152,7 @@ Une visite `completed` ou `no_show` est rangée dans le passé, même avant son 
   - le rendu réel des mêmes composants dans `/apercu`.
 
   Recommandation : un passage manuel sur staging (avec ton accord) ou un test e2e authentifié une fois Supabase disponible en CI.
+
 - **Visites qui traversent minuit.** Une visite commencée la veille et finissant aujourd'hui n'apparaît pas dans « Aujourd'hui », qui filtre sur la date locale de début. L'agenda, lui, l'affiche.
 - **Heure de l'appareil.** « Maintenant » vient de l'horloge de l'appareil, convertie avec les décalages de PostgreSQL, comme la ligne « maintenant » de l'agenda. Un appareil mal réglé décale l'état « en cours ». Les décisions qui comptent (dates des actions) restent validées par PostgreSQL dans l'agenda.
 - **Préférences par appareil**, non synchronisées (voir § 4).
