@@ -240,18 +240,18 @@ export const UserOffIcon = (props: IconProps) => (
   </Icon>
 );
 
-export const SearchIcon = (props: IconProps) => (
-  <Icon {...props}>
-    <circle cx="11" cy="11" r="6.5" />
-    <path d="M16 16l4.5 4.5" />
-  </Icon>
-);
-
 export const PaletteIcon = (props: IconProps) => (
   <Icon {...props}>
     <path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.1 0 1.7-.7 1.7-1.5 0-.5-.2-.9-.5-1.2-.3-.4-.5-.8-.5-1.3 0-.9.7-1.6 1.6-1.6h1.9c2.4 0 4.3-1.9 4.3-4.3C20.5 6.6 16.7 3.5 12 3.5Z" />
     <circle cx="7.6" cy="11.2" r="1" />
     <circle cx="10.4" cy="7.6" r="1" />
     <circle cx="14.8" cy="7.8" r="1" />
+  </Icon>
+);
+
+export const SearchIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="M16 16l4.5 4.5" />
   </Icon>
 );
