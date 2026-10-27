@@ -11,6 +11,8 @@ import {
 } from "./appearance";
 import {
   ambiances,
+  signaturePresets,
+  studioPalettes,
   type AmbianceId,
   type Mode,
   type Palette,
@@ -90,16 +92,18 @@ describe("the professional area's ambiances", () => {
           .toString(16)
           .padStart(6, "0")
           .toUpperCase()}`;
-        const palette = paletteFor(ambiance, mode, accent);
+        const palette = paletteFor("classique", ambiance, mode, accent);
         expect(unreadable(palette), accent).toEqual([]);
       }
     },
   );
 
   it("an accent that already reads is kept exactly as she picked it", () => {
-    expect(paletteFor("atelier", "light", "#2B2B6E").accent).toBe("#2B2B6E");
+    expect(paletteFor("classique", "atelier", "light", "#2B2B6E").accent).toBe(
+      "#2B2B6E",
+    );
     // A pale yellow cannot be text on ivory: moved towards the ink.
-    const pale = paletteFor("atelier", "light", "#F2D45C").accent;
+    const pale = paletteFor("classique", "atelier", "light", "#F2D45C").accent;
     expect(pale).not.toBe("#F2D45C");
     expect(
       contrast(pale, ambiances.atelier.light.paper),
@@ -107,9 +111,83 @@ describe("the professional area's ambiances", () => {
   });
 });
 
+// Studio: its own neutrals, and her signature colour as a field.
+const randomColors = (count: number, seed = 11) => {
+  const colors: string[] = [];
+  for (let run = 0; run < count; run += 1) {
+    seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31;
+    colors.push(
+      `#${Math.floor((seed / 2 ** 31) * 0xffffff)
+        .toString(16)
+        .padStart(6, "0")
+        .toUpperCase()}`,
+    );
+  }
+  return colors;
+};
+
+describe("the Studio style", () => {
+  it.each(["light", "dark"] as Mode[])(
+    "%s: every text the screens use reads on its surface (4.5:1)",
+    (mode) => {
+      expect(unreadable(studioPalettes[mode])).toEqual([]);
+    },
+  );
+
+  it.each(["light", "dark"] as Mode[])(
+    "%s: any signature colour is a field her text reads on, and stays readable as text",
+    (mode) => {
+      for (const color of [
+        ...signaturePresets.map((preset) => preset.color),
+        ...randomColors(300),
+      ]) {
+        const palette = paletteFor("studio", "atelier", mode, color);
+        expect(
+          contrast(palette.onSignature, palette.signature),
+          color,
+        ).toBeGreaterThanOrEqual(4.5);
+        expect(unreadable(palette), color).toEqual([]);
+      }
+    },
+  );
+
+  it("keeps her signature as she picked it whenever an ink reads on it", () => {
+    expect(paletteFor("studio", "atelier", "light", null).signature).toBe(
+      "#2D3FE6",
+    );
+    expect(paletteFor("studio", "lin", "dark", "#C3DD4F").signature).toBe(
+      "#C3DD4F",
+    );
+  });
+
+  it("does not depend on the ambiance (Studio brings its own neutrals)", () => {
+    expect(paletteFor("studio", "sauge", "light", null).paper).toBe(
+      paletteFor("studio", "atelier", "light", null).paper,
+    );
+  });
+});
+
 describe("her preference, as stored on the device", () => {
+  it("reads a value saved before styles existed as Classique", () => {
+    expect(parseAppearance("lin.dark.none.-")).toEqual({
+      style: "classique",
+      ambiance: "lin",
+      mode: "dark",
+      motion: "none",
+      accent: null,
+    });
+  });
+
+  it.each(["lin.dark.none.-.poster", "lin.dark.none.-.studio;}"])(
+    "an unknown style falls back to Classique (%s)",
+    (raw) => {
+      expect(parseAppearance(raw).style).toBe("classique");
+    },
+  );
+
   it("round-trips", () => {
     const value = {
+      style: "studio" as const,
       ambiance: "sauge" as const,
       mode: "system" as const,
       motion: "discrete" as const,
