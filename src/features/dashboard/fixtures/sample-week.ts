@@ -242,3 +242,138 @@ export const sampleWeek: AgendaDto = {
 /** A moment of that Tuesday, as an instant (ms). */
 export const sampleNow = (time: string) =>
   Date.parse(sampleInstant(SAMPLE_TODAY, time));
+
+// ——— A heavy Tuesday, for the hard cases ———
+// Fourteen visits, three overlapping at once, a 4-hour service starting
+// before opening, one after closing, a cancelled one (never shown), two
+// pauses, very long names, services and notes.
+
+const LONG_NOTE =
+  "Allergie au latex et à la colle classique : n’utiliser que la colle sensible.\nPrévenir 10 minutes avant si retard, elle vient avec sa fille.\nA demandé un devis pour une pose mariage le 14 juin, à rappeler après le rendez-vous.";
+
+const busyEntries: Entry[] = [
+  [
+    "2026-10-27",
+    "08:00",
+    "12:00",
+    "Marie-Charlotte de La Rochefoucauld-Montbazon",
+    "Pose volume russe 4D avec dépose complète, soin kératine et teinture des sourcils",
+    24000,
+    { status: "completed" },
+  ],
+  [
+    "2026-10-27",
+    "09:00",
+    "09:45",
+    "Lina Saïdi",
+    "Rehaussement de cils",
+    6000,
+    { status: "completed" },
+  ],
+  [
+    "2026-10-27",
+    "09:30",
+    "10:15",
+    "Zoé Petit",
+    "Remplissage",
+    5000,
+    { status: "no_show" },
+  ],
+  [
+    "2026-10-27",
+    "10:30",
+    "11:00",
+    "Annulée Exemple",
+    "Remplissage",
+    5000,
+    { status: "cancelled" },
+  ],
+  [
+    "2026-10-27",
+    "13:00",
+    "14:30",
+    "Sarah Benali",
+    "Remplissage volume mixte",
+    5500,
+  ],
+  [
+    "2026-10-27",
+    "13:45",
+    "14:15",
+    "Aïcha Diallo",
+    "Teinture des cils",
+    3000,
+    { internalNotes: "Peau réactive" },
+  ],
+  [
+    "2026-10-27",
+    "14:30",
+    "15:00",
+    "Jeanne-Marie Vasseur-Lemoine",
+    "Rehaussement de cils et teinture",
+    7000,
+    { internalNotes: LONG_NOTE, source: "public" },
+  ],
+  ["2026-10-27", "15:00", "15:30", "Emma Girard", "Remplissage", 5000],
+  [
+    "2026-10-27",
+    "16:00",
+    "16:30",
+    "Lou Martin",
+    "Remplissage",
+    5000,
+    { source: "public" },
+  ],
+  ["2026-10-27", "16:30", "17:00", "Inès Roy", "Rehaussement de cils", 6000],
+  ["2026-10-27", "17:00", "17:30", "Nour Haddad", "Teinture des cils", 3000],
+  ["2026-10-27", "17:30", "18:00", "Clara Moreau", "Remplissage", 5000],
+  ["2026-10-27", "18:00", "19:30", "Rose Aubert", "Pose cil à cil", 8000],
+  [
+    "2026-10-27",
+    "19:30",
+    "20:30",
+    "Nina Ollivier",
+    "Pose mixte",
+    8500,
+    { internalNotes: "Après la fermeture, à sa demande" },
+  ],
+];
+
+export const sampleBusyWeek: AgendaDto = {
+  ...sampleWeek,
+  appointments: [
+    ...sampleWeek.appointments.filter(
+      (appointment) => !appointment.localStartsAt.startsWith(SAMPLE_TODAY),
+    ),
+    ...busyEntries.map(
+      ([date, start, end, client, service, priceCents, extra], index) => ({
+        ...appointments[0]!,
+        id: `00000000-0000-4000-a000-${String(index + 1).padStart(12, "0")}`,
+        status: "confirmed" as const,
+        startsAt: sampleInstant(date, start),
+        endsAt: sampleInstant(date, end),
+        localStartsAt: `${date}T${start}`,
+        localEndsAt: `${date}T${end}`,
+        durationMinutes: minutesBetween(start, end),
+        priceCents,
+        service: { id: `service-${service}`, name: service },
+        client: { id: `busy-${index + 1}`, displayName: client },
+        internalNotes: null,
+        source: "manual" as const,
+        ...extra,
+      }),
+    ),
+  ],
+  blocks: [
+    ...sampleWeek.blocks,
+    {
+      ...sampleWeek.blocks[0]!,
+      id: "00000000-0000-4000-b000-000000000001",
+      startsAt: sampleInstant(SAMPLE_TODAY, "15:30"),
+      endsAt: sampleInstant(SAMPLE_TODAY, "16:00"),
+      localStartsAt: `${SAMPLE_TODAY}T15:30`,
+      localEndsAt: `${SAMPLE_TODAY}T16:00`,
+      reason: "Rendez-vous à la banque, ne rien caler",
+    },
+  ],
+};
