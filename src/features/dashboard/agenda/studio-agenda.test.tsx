@@ -421,6 +421,36 @@ describe("Studio agenda — hard cases", () => {
   });
 });
 
+describe("Studio agenda — back to the tab", () => {
+  beforeEach(() => useViewport(true));
+
+  function setVisibility(state: "hidden" | "visible") {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => state,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }
+
+  it("after more than a minute away, the week is read again; a glance away is not", async () => {
+    renderStudio();
+    await screen.findByRole("button", { name: /Camille Roux/ });
+    const reads = actions.getAgendaAction.mock.calls.length;
+
+    setVisibility("hidden");
+    vi.setSystemTime(Date.now() + 20_000);
+    setVisibility("visible");
+    expect(actions.getAgendaAction.mock.calls.length).toBe(reads);
+
+    setVisibility("hidden");
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    setVisibility("visible");
+    await waitFor(() =>
+      expect(actions.getAgendaAction.mock.calls.length).toBe(reads + 1),
+    );
+  });
+});
+
 describe("isoWeek", () => {
   it.each([
     ["2026-01-01", 1],

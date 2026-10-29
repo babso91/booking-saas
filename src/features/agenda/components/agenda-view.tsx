@@ -515,6 +515,7 @@ export function AgendaView({
         onCreateAt={(date, time) => openCreateAppointment(date, time)}
         banners={banners}
         panels={panels}
+        onRefresh={reload}
       />
     );
 

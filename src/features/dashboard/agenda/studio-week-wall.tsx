@@ -356,7 +356,7 @@ export function StudioWeekWall({
                               : undefined
                           }
                           className={cn(
-                            "@container absolute z-20 flex cursor-pointer flex-col justify-center overflow-hidden rounded-[11px] px-2.5 text-left transition-[transform,box-shadow] duration-150 hover:z-30 hover:-translate-y-px hover:shadow-[0_10px_22px_-12px_rgb(var(--shadow-rgb)/0.6)] focus-visible:z-30 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent active:translate-y-0 motion-reduce:transition-none",
+                            "@container absolute z-20 flex cursor-pointer flex-col justify-center overflow-hidden rounded-[11px] px-2 text-left transition-[transform,box-shadow] duration-150 hover:z-30 hover:-translate-y-px hover:shadow-[0_10px_22px_-12px_rgb(var(--shadow-rgb)/0.6)] focus-visible:z-30 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent active:translate-y-0 motion-reduce:transition-none",
                             look.className,
                             (continuesBefore || part > 0) && "rounded-l-[3px]",
                             (continuesAfter || part < pieces.length - 1) &&
@@ -369,13 +369,13 @@ export function StudioWeekWall({
                               {/* Too narrow for a name: her initials. */}
                               <span
                                 data-name=""
-                                className="hidden text-[13px] leading-tight font-extrabold @max-[58px]:block"
+                                className="hidden text-[13px] leading-tight font-extrabold @max-[34px]:block"
                               >
                                 {initials(appointment.client.displayName)}
                               </span>
                               <span
                                 data-name=""
-                                className="truncate text-[13.5px] leading-tight font-extrabold @max-[58px]:hidden @[150px]:hidden"
+                                className="truncate text-[13.5px] leading-tight font-extrabold @max-[34px]:hidden @[150px]:hidden"
                               >
                                 {appointment.client.displayName.split(" ")[0]}
                               </span>

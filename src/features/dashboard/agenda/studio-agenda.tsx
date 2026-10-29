@@ -68,7 +68,12 @@ export type StudioAgendaProps = {
   banners: ReactNode;
   /** The agenda's own panels (details, forms). */
   panels: ReactNode;
+  /** Read the period shown again (back to the tab after a while). */
+  onRefresh?: () => void;
 };
+
+/** Away longer than this, the period is read again on return. */
+export const WAKE_AFTER_MS = 60_000;
 
 /** ISO 8601 week number of a local date. */
 export function isoWeek(date: string) {
@@ -97,6 +102,26 @@ export function StudioAgenda(props: StudioAgendaProps) {
     panels,
   } = props;
   const count = data ? distinctBookings(data, days) : null;
+
+  // Back to the tab after a while: bookings may have come meanwhile.
+  // (The latest callback, without re-listening at every render: the time
+  // she left must survive the clock's re-renders.)
+  const refresh = useRef(props.onRefresh);
+  useEffect(() => {
+    refresh.current = props.onRefresh;
+  });
+  useEffect(() => {
+    let hiddenAt: number | null = null;
+    const onChange = () => {
+      if (document.visibilityState === "hidden") hiddenAt = Date.now();
+      else if (hiddenAt !== null && Date.now() - hiddenAt > WAKE_AFTER_MS) {
+        hiddenAt = null;
+        refresh.current?.();
+      } else hiddenAt = null;
+    };
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
   const onToday = today !== null && days.includes(today);
 
   return (
