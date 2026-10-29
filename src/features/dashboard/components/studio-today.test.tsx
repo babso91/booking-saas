@@ -236,4 +236,127 @@ describe("StudioToday", () => {
       expect(screen.getByText("jeudi : fermé")).toBeTruthy();
     });
   });
+
+  describe("counter-audit of fc24a56", () => {
+    const lateNight: AgendaDto = {
+      ...sampleWeek,
+      appointments: [
+        ...sampleWeek.appointments,
+        {
+          ...sampleWeek.appointments[0]!,
+          id: "00000000-0000-4000-8000-0000000000aa",
+          status: "confirmed",
+          startsAt: sampleInstant("2026-10-27", "23:30"),
+          endsAt: sampleInstant("2026-10-28", "01:30"),
+          localStartsAt: "2026-10-27T23:30",
+          localEndsAt: "2026-10-28T01:30",
+          durationMinutes: 120,
+          service: {
+            id: "long",
+            name: "Pose volume russe 4D avec dépose complète et soin kératine",
+          },
+          client: {
+            id: "night",
+            displayName: "Marie-Charlotte de La Rochefoucauld-Montbazon",
+          },
+        },
+      ],
+    };
+
+    it("« Cette semaine » counts one booking once, even across midnight", () => {
+      renderAt("22:00", SAMPLE_TODAY, lateNight);
+      const figures = within(screen.getByRole("region", { name: "Chiffres" }));
+      // 25 bookings in the sample week, plus the night one: 26, not 27.
+      expect(figures.getByText("26")).toBeTruthy();
+      expect(figures.queryByText("27")).toBeNull();
+    });
+
+    it("the time across midnight is never inside a truncated label", () => {
+      for (const [time, date, text] of [
+        ["22:00", SAMPLE_TODAY, /jusqu’à demain 01:30/],
+        ["00:30", "2026-10-28", /depuis hier 23:30/],
+      ] as const) {
+        const { unmount } = renderAt(time, date, lateNight);
+        const row = screen.getByRole("link", { name: /Marie-Charlotte/ });
+        const mention = within(row).getByText(text);
+        expect(mention.closest(".truncate")).toBeNull();
+        expect(mention.className).not.toMatch(/\btruncate\b/);
+        unmount();
+      }
+    });
+
+    const training = (
+      from: string,
+      to: string,
+      keepVisits = false,
+    ): AgendaDto => ({
+      ...sampleWeek,
+      appointments: keepVisits
+        ? sampleWeek.appointments
+        : sampleWeek.appointments.filter(
+            (appointment) =>
+              !appointment.localStartsAt.startsWith("2026-10-29"),
+          ),
+      blocks: [
+        ...sampleWeek.blocks,
+        {
+          ...sampleWeek.blocks[0]!,
+          id: "00000000-0000-4000-9000-0000000000dd",
+          kind: "closed",
+          startsAt: sampleInstant("2026-10-29", from),
+          endsAt: sampleInstant("2026-10-29", to),
+          localStartsAt: `2026-10-29T${from}`,
+          localEndsAt: `2026-10-29T${to}`,
+          reason: "Formation",
+        },
+      ],
+    });
+
+    it("free day, partly closed: the closure is said, not « Journée libre »", () => {
+      renderAt("11:00", "2026-10-29", training("10:00", "12:00"));
+      const now = within(screen.getByRole("region", { name: "Maintenant" }));
+      expect(now.getByText("Fermeture partielle")).toBeTruthy();
+      expect(now.queryByText("Journée libre")).toBeNull();
+      expect(
+        screen.getAllByText(/Fermé de 10:00 à 12:00 · Formation/).length,
+      ).toBeGreaterThan(0);
+    });
+
+    it("a day with visits and a partial closure says both", () => {
+      renderAt("09:30", "2026-10-29", training("12:00", "13:00", true));
+      const now = within(screen.getByRole("region", { name: "Maintenant" }));
+      expect(now.getByText("Anaïs Thomas")).toBeTruthy();
+      expect(
+        screen.getByText(/Fermé de 12:00 à 13:00 · Formation/),
+      ).toBeTruthy();
+    });
+
+    it("a truly free day stays « Journée libre », with no closure mention", () => {
+      renderAt("11:00", "2026-11-01", {
+        ...sampleWeek,
+        workingHours: {
+          ...sampleWeek.workingHours,
+          days: sampleWeek.workingHours.days.map((day) =>
+            day.date === "2026-11-01"
+              ? {
+                  ...day,
+                  openRanges: sampleWeek.workingHours.days[0]!.openRanges.map(
+                    (range) => ({
+                      ...range,
+                      startsAt: sampleInstant("2026-11-01", "09:00"),
+                      endsAt: sampleInstant("2026-11-01", "19:00"),
+                      localStartsAt: "2026-11-01T09:00",
+                      localEndsAt: "2026-11-01T19:00",
+                    }),
+                  ),
+                }
+              : day,
+          ),
+        },
+      });
+      const now = within(screen.getByRole("region", { name: "Maintenant" }));
+      expect(now.getByText("Journée libre")).toBeTruthy();
+      expect(screen.queryByText(/Fermé de/)).toBeNull();
+    });
+  });
 });

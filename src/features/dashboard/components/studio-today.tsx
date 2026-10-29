@@ -209,7 +209,9 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
                 ? "Fermeture exceptionnelle"
                 : model.closure
                   ? "Jour de fermeture"
-                  : "Journée libre"}
+                  : model.closures.length
+                    ? "Fermeture partielle"
+                    : "Journée libre"}
             </span>
             <span className="font-expanded text-[clamp(34px,9vw,64px)] leading-[0.95] font-extrabold tracking-[-0.02em]">
               {model.closure?.kind === "exceptional"
@@ -223,7 +225,9 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
                 ? "Ton espace est fermé aujourd’hui : aucune réservation possible."
                 : model.closure
                   ? "Ton espace est fermé aujourd’hui. Profites-en."
-                  : "Aucun rendez-vous aujourd’hui."}
+                  : model.closures.length
+                    ? `${closuresText(model)}. Le reste de la journée est libre.`
+                    : "Aucun rendez-vous aujourd’hui."}
             </span>
           </>
         )}
@@ -373,10 +377,20 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
         </Link>
       </div>
 
+      {model.closures.length ? (
+        // Part of her day is closed: said here, with or without visits.
+        <p className="mt-3.5 inline-flex max-w-full items-center gap-2 rounded-full bg-sand px-3.5 py-1.5 text-[14px] font-bold text-ink [overflow-wrap:anywhere]">
+          {closuresText(model)}
+        </p>
+      ) : null}
+
       {visits.length === 0 ? (
         <p className="mt-5 text-[16px] text-ink-soft">
-          Ta journée est libre. Les rendez-vous pris en ligne ou ajoutés dans
-          l’agenda s’afficheront ici.
+          {model.closures.length
+            ? "Le reste de ta journée est libre. "
+            : "Ta journée est libre. "}
+          Les rendez-vous pris en ligne ou ajoutés dans l’agenda s’afficheront
+          ici.
         </p>
       ) : (
         <>
@@ -525,15 +539,21 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
                       {visit.appointment.client.displayName}
                     </span>
                     <span className="block truncate text-[14px] text-ink-soft">
-                      {visit.startsBefore
-                        ? `depuis hier ${timeOf(visit.appointment.localStartsAt)} · `
-                        : null}
                       {visit.appointment.service.name} ·{" "}
                       {formatDuration(visit.appointment.durationMinutes)}
-                      {visit.endsAfter
-                        ? ` · jusqu’à demain ${timeOf(visit.appointment.localEndsAt)}`
-                        : null}
                     </span>
+                    {/* Across midnight: on its own line, never cut off. */}
+                    {visit.startsBefore || visit.endsAfter ? (
+                      <span className="mt-0.5 block text-[13px] leading-snug font-bold text-ink">
+                        {visit.startsBefore
+                          ? `depuis hier ${timeOf(visit.appointment.localStartsAt)}`
+                          : null}
+                        {visit.startsBefore && visit.endsAfter ? " · " : null}
+                        {visit.endsAfter
+                          ? `jusqu’à demain ${timeOf(visit.appointment.localEndsAt)}`
+                          : null}
+                      </span>
+                    ) : null}
                   </span>
                   <span className="text-right text-[13px] font-bold text-ink-soft">
                     {stateLabel(visit)}
@@ -559,7 +579,8 @@ function Figures({ model }: { model: TodayModel }) {
   const open = model.week.filter(
     (day) => !day.closed && day.bookableMinutes > 0,
   );
-  const weekVisits = model.week.reduce((total, day) => total + day.visits, 0);
+  // Distinct bookings: one across midnight is on two days, counted once.
+  const weekVisits = model.weekVisits;
   const busiest = open.reduce<(typeof open)[number] | null>(
     (best, day) => (!best || fill(day) > fill(best) ? day : best),
     null,
@@ -723,6 +744,16 @@ function Notes({ model }: { model: TodayModel }) {
       </div>
     </section>
   );
+}
+
+/** "Fermé de 10:00 à 12:00 · Formation", each closure of her day. */
+function closuresText(model: TodayModel) {
+  return model.closures
+    .map(
+      (closure) =>
+        `Fermé de ${closure.from} à ${closure.to}${closure.reason ? ` · ${closure.reason}` : ""}`,
+    )
+    .join(" ; ");
 }
 
 function stateLabel(visit: TodayVisit) {

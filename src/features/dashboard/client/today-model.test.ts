@@ -326,3 +326,183 @@ describe("an exceptional closure", () => {
     expect(tuesday.closed).toBe(false);
   });
 });
+
+// ——— Counter-audit of fc24a56 ———
+
+describe("the week's count: one booking is one appointment", () => {
+  it("a visit across midnight is on two days, counted once in the week", () => {
+    const model = todayModel(lateNight, SAMPLE_TODAY, at("22:00"));
+    // On both days (daily views are right)…
+    expect(model.week.find((day) => day.date === SAMPLE_TODAY)!.visits).toBe(7);
+    expect(model.week.find((day) => day.date === "2026-10-28")!.visits).toBe(6);
+    // …but one booking in the week: 25 of the sample week, plus this one.
+    expect(model.weekVisits).toBe(26);
+  });
+
+  it("cancelled visits stay out of the count, as everywhere else", () => {
+    const cancelled: AgendaDto = {
+      ...lateNight,
+      appointments: lateNight.appointments.map((appointment) =>
+        appointment.client.displayName === "Lou Minuit"
+          ? { ...appointment, status: "cancelled" }
+          : appointment,
+      ),
+    };
+    expect(todayModel(cancelled, SAMPLE_TODAY, at("22:00")).weekVisits).toBe(
+      25,
+    );
+  });
+
+  // The week of the autumn change in Paris: Sunday 25 October 2026 lasts
+  // 25 hours (02:00–03:00 is lived twice: UTC+2, then UTC+1).
+  const utc = (iso: string) => new Date(iso).toISOString();
+  const dstWeekDays = Array.from({ length: 7 }, (_, index) => {
+    const date = `2026-10-${String(19 + index).padStart(2, "0")}`;
+    const next =
+      index === 6
+        ? "2026-10-26"
+        : `2026-10-${String(20 + index).padStart(2, "0")}`;
+    // Midnight is UTC+2 every day of that week; the next Monday's is UTC+1.
+    const startsAt = utc(`${date}T00:00:00+02:00`);
+    const endsAt = utc(`${next}T00:00:00${index === 6 ? "+01:00" : "+02:00"}`);
+    return { date, weekday: (index + 1) % 7, startsAt, endsAt, openRanges: [] };
+  });
+  const visit = (
+    id: string,
+    startsAt: string,
+    endsAt: string,
+    local: string,
+    localEnd: string,
+  ) => ({
+    ...sampleWeek.appointments[0]!,
+    id,
+    status: "confirmed" as const,
+    startsAt: utc(startsAt),
+    endsAt: utc(endsAt),
+    localStartsAt: local,
+    localEndsAt: localEnd,
+    client: { id, displayName: `Cliente ${id}` },
+  });
+  // Both 02:30 of the repeated hour, and Sunday 23:30 → Monday 01:30.
+  const firstHalf = visit(
+    "d1",
+    "2026-10-25T00:30:00Z",
+    "2026-10-25T01:15:00Z",
+    "2026-10-25T02:30",
+    "2026-10-25T02:15",
+  );
+  const secondHalf = visit(
+    "d2",
+    "2026-10-25T01:30:00Z",
+    "2026-10-25T02:15:00Z",
+    "2026-10-25T02:30",
+    "2026-10-25T03:15",
+  );
+  const sundayNight = visit(
+    "d3",
+    "2026-10-25T22:30:00Z",
+    "2026-10-26T00:30:00Z",
+    "2026-10-25T23:30",
+    "2026-10-26T01:30",
+  );
+  const dstWeek: AgendaDto = {
+    ...sampleWeek,
+    offsets: [
+      {
+        startsAt: utc("2026-10-18T22:00:00Z"),
+        endsAt: utc("2026-10-25T01:00:00Z"),
+        offsetSeconds: 7200,
+      },
+      {
+        startsAt: utc("2026-10-25T01:00:00Z"),
+        endsAt: utc("2026-10-26T23:00:00Z"),
+        offsetSeconds: 3600,
+      },
+    ],
+    range: {
+      startDate: "2026-10-19",
+      endDate: "2026-10-25",
+      startsAt: dstWeekDays[0]!.startsAt,
+      endsAt: dstWeekDays[6]!.endsAt,
+    },
+    appointments: [firstHalf, secondHalf, sundayNight],
+    blocks: [],
+    workingHours: { weekly: [], days: dstWeekDays },
+  };
+
+  it("DST week: both 02:30 of the repeated hour are two bookings; Sunday → Monday is one", () => {
+    const model = todayModel(
+      dstWeek,
+      "2026-10-25",
+      Date.parse("2026-10-25T10:00:00Z"),
+    );
+    expect(model.weekVisits).toBe(3);
+    expect(model.week[6]!.visits).toBe(3);
+  });
+
+  it("week boundary: a booking belongs to the week it starts in, never to both", () => {
+    // The next week (Monday 26) reads Sunday's night visit too (it overlaps
+    // Monday), shows it on Monday, but does not count it again.
+    const nextWeek: AgendaDto = {
+      ...sampleWeek,
+      appointments: [...sampleWeek.appointments, sundayNight],
+    };
+    const model = todayModel(nextWeek, "2026-10-26", at("10:00", "2026-10-26"));
+    expect(model.week[0]!.visits).toBe(5);
+    expect(model.weekVisits).toBe(25);
+  });
+});
+
+describe("a partial closure is said, even on a day without visits", () => {
+  const training = (from: string, to: string): AgendaDto => ({
+    ...sampleWeek,
+    appointments: sampleWeek.appointments.filter(
+      (appointment) => !appointment.localStartsAt.startsWith("2026-10-29"),
+    ),
+    blocks: [
+      ...sampleWeek.blocks,
+      {
+        ...sampleWeek.blocks[0]!,
+        id: "00000000-0000-4000-9000-0000000000dd",
+        kind: "closed",
+        startsAt: sampleInstant("2026-10-29", from),
+        endsAt: sampleInstant("2026-10-29", to),
+        localStartsAt: `2026-10-29T${from}`,
+        localEndsAt: `2026-10-29T${to}`,
+        reason: "Formation",
+      },
+    ],
+  });
+
+  it("09:00–19:00 open, closed 10:00–12:00, nothing booked: free, partly closed", () => {
+    const model = todayModel(
+      training("10:00", "12:00"),
+      "2026-10-29",
+      at("11:00", "2026-10-29"),
+    );
+    expect(model.phase).toBe("free");
+    expect(model.closure).toBeNull();
+    expect(model.closures).toEqual([
+      {
+        id: "00000000-0000-4000-9000-0000000000dd",
+        from: "10:00",
+        to: "12:00",
+        reason: "Formation",
+      },
+    ]);
+    // The fill rate already validated: 600 open − 120 closed − 75 lunch.
+    expect(model.week.find((day) => day.date === "2026-10-29")).toMatchObject({
+      bookableMinutes: 600 - 120 - 75,
+      closed: false,
+    });
+  });
+
+  it("a truly free day has no closure at all", () => {
+    const model = todayModel(
+      training("10:00", "12:00"),
+      "2026-10-28",
+      at("11:00", "2026-10-28"),
+    );
+    expect(model.closures).toEqual([]);
+  });
+});
