@@ -263,6 +263,15 @@ describe("StudioToday", () => {
       ],
     };
 
+    it("« Cette semaine » says what it counts: bookings starting this week", () => {
+      renderAt("14:05");
+      const figures = within(screen.getByRole("region", { name: "Chiffres" }));
+      expect(
+        figures.getByText("rendez-vous commençant cette semaine, lun. → dim."),
+      ).toBeTruthy();
+      expect(figures.queryByText(/du lundi au dimanche/)).toBeNull();
+    });
+
     it("« Cette semaine » counts one booking once, even across midnight", () => {
       renderAt("22:00", SAMPLE_TODAY, lateNight);
       const figures = within(screen.getByRole("region", { name: "Chiffres" }));
