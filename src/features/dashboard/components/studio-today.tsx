@@ -604,7 +604,7 @@ function Figures({ model }: { model: TodayModel }) {
         aujourd’hui, sans un appel
       </Figure>
       <Figure label="Cette semaine" value={String(weekVisits)} wide>
-        rendez-vous du lundi au dimanche
+        rendez-vous commençant cette semaine, lun. → dim.
       </Figure>
       <div className="col-span-2 flex flex-col gap-1.5 border-b border-line py-4 lg:col-span-1 lg:border-b-0 lg:border-l lg:px-6 lg:pt-5">
         <span className={cn(eyebrow, "text-ink")}>Remplissage</span>
