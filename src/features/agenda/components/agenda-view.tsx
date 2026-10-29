@@ -118,7 +118,8 @@ export function AgendaView({
   const [awaitingToday, setAwaitingToday] = useState<number | null>(null);
   const intent = useRef(0);
   const alive = useRef(true);
-  // Opened once, from the first answer that comes back.
+  // Opened once, from the first answer that comes back, and only if she has
+  // not done anything else meanwhile (see supersede).
   const pendingAppointment = useRef(initialAppointmentId ?? null);
   useEffect(() => {
     alive.current = true;
@@ -148,7 +149,11 @@ export function AgendaView({
         const found = wanted
           ? data.appointments.find((item) => item.id === wanted)
           : undefined;
-        if (found) setPanelState({ kind: "appointment", appointment: found });
+        // Never over a panel she has opened meanwhile (a draft is kept).
+        if (found)
+          setPanelState(
+            (open) => open ?? { kind: "appointment", appointment: found },
+          );
       } else setFailed({ key, error: result.error });
     });
     return () => {
@@ -187,6 +192,9 @@ export function AgendaView({
    */
   function supersede() {
     intent.current += 1;
+    // Her intention changed: the appointment a link asked to open is no
+    // longer what she wants on screen.
+    pendingAppointment.current = null;
     setAwaitingToday(null);
     setTodayFailure(null);
   }

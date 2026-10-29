@@ -1298,6 +1298,60 @@ describe("a link to one appointment (?rdv=, from Aujourd’hui)", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("a late answer never replaces what she has opened since (her draft is kept)", async () => {
+    const user = userEvent.setup();
+    let answer: (value: unknown) => void = () => {};
+    actions.getAgendaAction.mockImplementationOnce(
+      () => new Promise((done) => (answer = done)),
+    );
+    actions.searchAgendaClientsAction.mockResolvedValue(ok([]));
+    render(
+      <AgendaView
+        today={TODAY}
+        initialDate="2026-09-30"
+        initialAppointmentId={wanted.id}
+      />,
+    );
+    // The agenda is still reading; she starts a new appointment.
+    await user.click(
+      screen.getAllByRole("button", { name: /Nouveau rendez-vous/ })[0]!,
+    );
+    const form = within(panel());
+    await user.type(form.getByLabelText(/Note interne/), "Brouillon en cours");
+
+    answer(ok(agenda("2026-09-30", "2026-09-30", { appointments: [wanted] })));
+    await screen.findByRole("button", { name: /Camille Roux/ });
+
+    // Still her form, still her words: not the linked appointment's details.
+    expect(
+      within(panel()).getByRole("heading", { name: "Nouveau rendez-vous" }),
+    ).toBeTruthy();
+    expect(
+      (within(panel()).getByLabelText(/Note interne/) as HTMLTextAreaElement)
+        .value,
+    ).toBe("Brouillon en cours");
+  });
+
+  it("moving to another day before the answer drops the link too", async () => {
+    const user = userEvent.setup();
+    let answer: (value: unknown) => void = () => {};
+    actions.getAgendaAction.mockImplementationOnce(
+      () => new Promise((done) => (answer = done)),
+    );
+    render(
+      <AgendaView
+        today={TODAY}
+        initialDate="2026-09-30"
+        initialAppointmentId={wanted.id}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /Jour suivant/ }));
+    await user.click(screen.getByRole("button", { name: /Jour précédent/ }));
+    answer(ok(agenda("2026-09-30", "2026-09-30", { appointments: [wanted] })));
+    await screen.findByRole("button", { name: /Camille Roux/ });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("opens it only once: closing it and reloading the range keeps it closed", async () => {
     const user = userEvent.setup();
     render(
