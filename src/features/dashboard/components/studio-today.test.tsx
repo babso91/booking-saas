@@ -39,12 +39,17 @@ describe("StudioToday", () => {
     renderAt("14:05");
     const now = within(screen.getByRole("region", { name: "Maintenant" }));
     expect(now.getByText("14.05")).toBeTruthy();
-    expect(now.getByText("En cours")).toBeTruthy();
+    // A confirmed slot that has started is not a service known to have
+    // started: the slot is said, its progress is theoretical.
+    expect(now.getByText("Créneau en cours")).toBeTruthy();
+    expect(now.queryByText("En cours")).toBeNull();
     expect(now.getByText("Sarah Benali")).toBeTruthy();
     const progress = now.getByRole("progressbar", {
-      name: "Avancement du rendez-vous",
+      name: "Avancement théorique du créneau",
     });
-    expect(progress.getAttribute("aria-valuetext")).toBe("encore 40 min");
+    expect(progress.getAttribute("aria-valuetext")).toBe(
+      "fin prévue dans 40 min",
+    );
     expect(now.getByText("Léa Fontaine")).toBeTruthy();
     // Straight to each visit in the agenda, its details open.
     const links = now.getAllByRole("link");
@@ -90,8 +95,10 @@ describe("StudioToday", () => {
     expect(figures.queryByText(/€/)).toBeNull();
     expect(screen.queryByText(/€/)).toBeNull();
     expect(
-      figures.getByText("Vendredi 30 est le plus rempli (73 %)."),
+      figures.getByText("Vendredi 30 est le plus rempli (83 %)."),
     ).toBeTruthy();
+    // Measured on bookable time: 435 min booked of 9 h–19 h minus lunch.
+    expect(figures.getByText("vendredi : 83 % réservé")).toBeTruthy();
   });
 
   it("a closed day is a day off, said kindly, without a fake line", () => {
@@ -113,7 +120,7 @@ describe("StudioToday", () => {
     it("overlapping visits are all said, none hidden, and no single progress bar pretends", () => {
       renderAt("14:05", SAMPLE_TODAY, sampleBusyWeek);
       const now = within(screen.getByRole("region", { name: "Maintenant" }));
-      expect(now.getByText("En cours · 2 rendez\u2011vous")).toBeTruthy();
+      expect(now.getByText("Créneaux en cours · 2")).toBeTruthy();
       expect(now.getByRole("link", { name: "Sarah Benali" })).toBeTruthy();
       expect(now.getByRole("link", { name: "Aïcha Diallo" })).toBeTruthy();
       expect(now.queryByRole("progressbar")).toBeNull();
@@ -141,6 +148,92 @@ describe("StudioToday", () => {
       expect(screen.getByText(/latex/).textContent).toContain(
         "à rappeler après le rendez-vous",
       );
+    });
+  });
+
+  describe("audit #28", () => {
+    const lateNight: AgendaDto = {
+      ...sampleWeek,
+      appointments: [
+        ...sampleWeek.appointments,
+        {
+          ...sampleWeek.appointments[0]!,
+          id: "00000000-0000-4000-8000-0000000000aa",
+          status: "confirmed",
+          startsAt: sampleInstant("2026-10-27", "23:30"),
+          endsAt: sampleInstant("2026-10-28", "01:30"),
+          localStartsAt: "2026-10-27T23:30",
+          localEndsAt: "2026-10-28T01:30",
+          durationMinutes: 120,
+          client: { id: "night", displayName: "Lou Minuit" },
+        },
+      ],
+    };
+
+    it("a visit across midnight is on both days, said as such", () => {
+      const { unmount } = renderAt("22:00", SAMPLE_TODAY, lateNight);
+      const tuesday = within(
+        screen.getByRole("list", { name: "Rendez-vous du jour" }),
+      );
+      expect(
+        within(tuesday.getByRole("link", { name: /Lou Minuit/ })).getByText(
+          /jusqu’à demain 01:30/,
+        ),
+      ).toBeTruthy();
+      unmount();
+      renderAt("00:30", "2026-10-28", lateNight);
+      const now = within(screen.getByRole("region", { name: "Maintenant" }));
+      expect(now.getByText("Lou Minuit")).toBeTruthy();
+      const wednesday = within(
+        screen.getByRole("list", { name: "Rendez-vous du jour" }),
+      );
+      expect(
+        within(wednesday.getByRole("link", { name: /Lou Minuit/ })).getByText(
+          /depuis hier 23:30/,
+        ),
+      ).toBeTruthy();
+    });
+
+    it("the list says « Créneau en cours », never that a service has started", () => {
+      renderAt("14:05");
+      const day = within(
+        screen.getByRole("list", { name: "Rendez-vous du jour" }),
+      );
+      expect(
+        within(day.getByRole("link", { name: /Sarah Benali/ })).getByText(
+          "Créneau en cours",
+        ),
+      ).toBeTruthy();
+    });
+
+    it("an exceptional closure is said as one, and counts as closed in the fill rate", () => {
+      const closed: AgendaDto = {
+        ...sampleWeek,
+        appointments: sampleWeek.appointments.filter(
+          (appointment) => !appointment.localStartsAt.startsWith("2026-10-29"),
+        ),
+        blocks: [
+          ...sampleWeek.blocks.filter(
+            (block) => !block.localStartsAt.startsWith("2026-10-29"),
+          ),
+          {
+            ...sampleWeek.blocks[0]!,
+            id: "00000000-0000-4000-9000-0000000000cc",
+            kind: "closed",
+            startsAt: sampleInstant("2026-10-29", "00:00"),
+            endsAt: sampleInstant("2026-10-30", "00:00"),
+            localStartsAt: "2026-10-29T00:00",
+            localEndsAt: "2026-10-30T00:00",
+            reason: "Formation",
+          },
+        ],
+      };
+      renderAt("11:00", "2026-10-29", closed);
+      const now = within(screen.getByRole("region", { name: "Maintenant" }));
+      expect(now.getByText("Fermeture exceptionnelle")).toBeTruthy();
+      expect(now.getByText("Formation")).toBeTruthy();
+      expect(now.queryByText("Journée libre")).toBeNull();
+      expect(screen.getByText("jeudi : fermé")).toBeTruthy();
     });
   });
 });

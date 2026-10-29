@@ -27,6 +27,10 @@ export type TodayVisit = {
    */
   lane: number;
   lanes: number;
+  /** Began on the day before (across midnight). */
+  startsBefore: boolean;
+  /** Ends on the day after. */
+  endsAfter: boolean;
 };
 
 export type TodayPhase =
@@ -46,10 +50,25 @@ export type WeekDay = {
   isToday: boolean;
   /** Minutes open, from the real opening ranges of that date. */
   openMinutes: number;
-  /** Minutes booked (visits not cancelled). */
+  /**
+   * Of those, minutes that can still be booked: neither closed nor blocked
+   * (an exceptional closure, a lunch). The fill rate is measured on them.
+   */
+  bookableMinutes: number;
+  /** Nothing bookable that day: weekly closing day or exceptional closure. */
+  closed: boolean;
+  /** Minutes booked on that day (visits not cancelled, cut at its bounds). */
   bookedMinutes: number;
+  /** Visits (not cancelled) on that day, including across midnight. */
   visits: number;
 };
+
+/**
+ * Why a day offers nothing: no opening hours that weekday, or an
+ * exceptional closure (her "closed" exception) over all of its opening.
+ */
+export type Closure =
+  { kind: "weekly" } | { kind: "exceptional"; reason: string | null };
 
 export type TimelineTick = { at: number; label: string };
 
@@ -58,8 +77,8 @@ export type TodayModel = {
   /** Wall clock `HH:MM` now, or null if now is not on that date any more. */
   nowTime: string | null;
   phase: TodayPhase;
-  /** No opening at all on that date (weekly hours or exceptions). */
-  closed: boolean;
+  /** The day is closed (and why), or null when it is open. */
+  closure: Closure | null;
   visits: TodayVisit[];
   /** Every visit going on now (overlaps happen: both are said). */
   currents: TodayVisit[];
@@ -96,11 +115,16 @@ export function todayModel(
   const wall = wallOf(zone, now);
   const nowTime = wall && dateOf(wall) === date ? wall.slice(11, 16) : null;
 
+  const bounds = dayBoundsOf(agenda, date);
+
+  // Every visit that covers part of this civil day, as PostgreSQL bounds it
+  // (a 23 h or 25 h day included): one that crosses midnight is on both.
   const visits: TodayVisit[] = agenda.appointments
     .filter(
       (appointment) =>
         appointment.status !== "cancelled" &&
-        dateOf(appointment.localStartsAt) === date,
+        Date.parse(appointment.startsAt) < bounds.end &&
+        Date.parse(appointment.endsAt) > bounds.start,
     )
     .map((appointment) => {
       const start = Date.parse(appointment.startsAt);
@@ -111,7 +135,16 @@ export function todayModel(
           : start <= now
             ? "now"
             : "upcoming";
-      return { appointment, state, start, end, lane: 0, lanes: 1 };
+      return {
+        appointment,
+        state,
+        start,
+        end,
+        lane: 0,
+        lanes: 1,
+        startsBefore: start < bounds.start,
+        endsAfter: end > bounds.end,
+      };
     })
     .sort((a, b) => a.start - b.start || a.end - b.end);
   placeInLanes(visits);
@@ -132,15 +165,14 @@ export function todayModel(
             ? "between"
             : "after";
 
-  const span = spanOf(agenda, date, visits);
+  const span = spanOf(agenda, date, bounds, visits);
+  const week = weekOf(agenda, date);
 
   return {
     date,
     nowTime,
     phase,
-    closed:
-      (agenda.workingHours.days.find((item) => item.date === date)?.openRanges
-        .length ?? 0) === 0,
+    closure: closureOf(agenda, date, week),
     visits,
     currents,
     current,
@@ -150,7 +182,6 @@ export function todayModel(
     pauses: agenda.blocks
       .filter(
         (block) =>
-          block.kind === "blocked" &&
           Date.parse(block.startsAt) < span.end &&
           Date.parse(block.endsAt) > span.start,
       )
@@ -158,9 +189,11 @@ export function todayModel(
         id: block.id,
         start: Math.max(span.start, Date.parse(block.startsAt)),
         end: Math.min(span.end, Date.parse(block.endsAt)),
-        label: block.reason?.trim() || "Indisponible",
+        label:
+          block.reason?.trim() ||
+          (block.kind === "closed" ? "Fermé" : "Indisponible"),
       })),
-    week: weekOf(agenda, date),
+    week,
     counts: {
       total: visits.length,
       done,
@@ -205,26 +238,78 @@ function placeInLanes(visits: TodayVisit[]) {
   close();
 }
 
+/** The real bounds of a civil day, as PostgreSQL sent them. */
+function dayBoundsOf(agenda: AgendaDto, date: string) {
+  const day = agenda.workingHours.days.find((item) => item.date === date);
+  return {
+    start: Date.parse(day?.startsAt ?? agenda.range.startsAt),
+    end: Date.parse(day?.endsAt ?? agenda.range.endsAt),
+  };
+}
+
 /**
  * The day's line: its opening, widened to every visit (a visit outside the
- * opening is still hers). Closed and nothing booked: the whole civil day.
+ * opening is still hers), never beyond the day itself. Closed and nothing
+ * booked: the whole civil day.
  */
-function spanOf(agenda: AgendaDto, date: string, visits: TodayVisit[]) {
+function spanOf(
+  agenda: AgendaDto,
+  date: string,
+  day: { start: number; end: number },
+  visits: TodayVisit[],
+) {
   const today = agenda.workingHours.days.find((item) => item.date === date);
-  const bounds = [
+  const marks = [
     ...(today?.openRanges ?? []).flatMap((range) => [
       Date.parse(range.startsAt),
       Date.parse(range.endsAt),
     ]),
     ...visits.flatMap((visit) => [visit.start, visit.end]),
-  ];
-  if (bounds.length === 0) {
-    return {
-      start: Date.parse(today?.startsAt ?? agenda.range.startsAt),
-      end: Date.parse(today?.endsAt ?? agenda.range.endsAt),
-    };
+  ].map((at) => Math.min(day.end, Math.max(day.start, at)));
+  if (marks.length === 0) return day;
+  return { start: Math.min(...marks), end: Math.max(...marks) };
+}
+
+type Interval = { start: number; end: number };
+
+/** The union of intervals, sorted, overlaps merged. */
+function union(intervals: Interval[]) {
+  const sorted = [...intervals].sort((a, b) => a.start - b.start);
+  const merged: Interval[] = [];
+  for (const interval of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && interval.start <= last.end)
+      last.end = Math.max(last.end, interval.end);
+    else merged.push({ ...interval });
   }
-  return { start: Math.min(...bounds), end: Math.max(...bounds) };
+  return merged;
+}
+
+/** Minutes of `a` covered by `b` (both unions). */
+function overlapMinutes(a: Interval[], b: Interval[]) {
+  let total = 0;
+  for (const x of a)
+    for (const y of b)
+      total += Math.max(0, Math.min(x.end, y.end) - Math.max(x.start, y.start));
+  return total / MINUTE;
+}
+
+function closureOf(
+  agenda: AgendaDto,
+  date: string,
+  week: WeekDay[],
+): Closure | null {
+  const day = week.find((item) => item.date === date);
+  if (!day || !day.closed) return null;
+  if (day.openMinutes === 0) return { kind: "weekly" };
+  const bounds = dayBoundsOf(agenda, date);
+  const closing = agenda.blocks.find(
+    (block) =>
+      block.kind === "closed" &&
+      Date.parse(block.startsAt) < bounds.end &&
+      Date.parse(block.endsAt) > bounds.start,
+  );
+  return { kind: "exceptional", reason: closing?.reason?.trim() || null };
 }
 
 /** A mark at every whole hour of the span, labelled with its wall clock. */
@@ -247,27 +332,49 @@ function ticksOf(zone: Zone, span: { start: number; end: number }) {
 }
 
 function weekOf(week: AgendaDto, today: string): WeekDay[] {
+  const span = (block: AgendaDto["blocks"][number]) => ({
+    start: Date.parse(block.startsAt),
+    end: Date.parse(block.endsAt),
+  });
+  const unavailable = union(week.blocks.map(span));
+  const closings = union(
+    week.blocks.filter((block) => block.kind === "closed").map(span),
+  );
   return week.workingHours.days.map((day) => {
-    const openMinutes = day.openRanges.reduce(
-      (total, range) =>
-        total +
-        (Date.parse(range.endsAt) - Date.parse(range.startsAt)) / MINUTE,
-      0,
+    const bounds = [
+      { start: Date.parse(day.startsAt), end: Date.parse(day.endsAt) },
+    ];
+    const open = union(
+      day.openRanges.map((range) => ({
+        start: Date.parse(range.startsAt),
+        end: Date.parse(range.endsAt),
+      })),
     );
-    const booked = week.appointments.filter(
-      (appointment) =>
-        appointment.status !== "cancelled" &&
-        dateOf(appointment.localStartsAt) === day.date,
-    );
+    const openMinutes = overlapMinutes(open, bounds);
+    const bookableMinutes = openMinutes - overlapMinutes(open, unavailable);
+    const visits = week.appointments
+      .filter((appointment) => appointment.status !== "cancelled")
+      .map((appointment) => ({
+        start: Date.parse(appointment.startsAt),
+        end: Date.parse(appointment.endsAt),
+      }))
+      .filter(
+        (visit) => visit.start < bounds[0]!.end && visit.end > bounds[0]!.start,
+      );
     return {
       date: day.date,
       isToday: day.date === today,
       openMinutes,
-      bookedMinutes: booked.reduce(
-        (total, appointment) => total + appointment.durationMinutes,
+      bookableMinutes,
+      // Closed: no opening, or her "closed" exceptions cover all of it (a
+      // day fully blocked by pauses is still an open day, just full).
+      closed:
+        openMinutes === 0 || overlapMinutes(open, closings) >= openMinutes,
+      bookedMinutes: visits.reduce(
+        (total, visit) => total + overlapMinutes([visit], bounds),
         0,
       ),
-      visits: booked.length,
+      visits: visits.length,
     };
   });
 }

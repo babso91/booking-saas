@@ -150,7 +150,7 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
           // Overlapping visits: all of them, none hidden behind another.
           <>
             <span className={eyebrow}>
-              En cours · {currents.length} rendez{"\u2011"}vous
+              Créneaux en cours · {currents.length}
             </span>
             <ul className="flex flex-col gap-2">
               {currents.map((visit) => (
@@ -171,7 +171,7 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
           </>
         ) : phase === "during" && current ? (
           <>
-            <span className={eyebrow}>En cours</span>
+            <span className={eyebrow}>Créneau en cours</span>
             <Name visit={current} />
             <span className="text-[17px] font-medium">
               {current.appointment.service.name}
@@ -205,15 +205,25 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
         ) : (
           <>
             <span className={eyebrow}>
-              {model.closed ? "Jour de fermeture" : "Journée libre"}
+              {model.closure?.kind === "exceptional"
+                ? "Fermeture exceptionnelle"
+                : model.closure
+                  ? "Jour de fermeture"
+                  : "Journée libre"}
             </span>
             <span className="font-expanded text-[clamp(34px,9vw,64px)] leading-[0.95] font-extrabold tracking-[-0.02em]">
-              {model.closed ? "Repos" : "Rien de prévu"}
+              {model.closure?.kind === "exceptional"
+                ? (model.closure.reason ?? "Fermé")
+                : model.closure
+                  ? "Repos"
+                  : "Rien de prévu"}
             </span>
             <span className="text-[17px] font-medium">
-              {model.closed
-                ? "Ton espace est fermé aujourd’hui. Profites-en."
-                : "Aucun rendez-vous aujourd’hui."}
+              {model.closure?.kind === "exceptional"
+                ? "Ton espace est fermé aujourd’hui : aucune réservation possible."
+                : model.closure
+                  ? "Ton espace est fermé aujourd’hui. Profites-en."
+                  : "Aucun rendez-vous aujourd’hui."}
             </span>
           </>
         )}
@@ -262,11 +272,11 @@ function Progress({ visit, now }: { visit: TodayVisit; now: number }) {
     <>
       <span
         role="progressbar"
-        aria-label="Avancement du rendez-vous"
+        aria-label="Avancement théorique du créneau"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round((elapsed / total) * 100)}
-        aria-valuetext={`encore ${formatDuration(left)}`}
+        aria-valuetext={`fin prévue dans ${formatDuration(left)}`}
         className="mt-2.5 h-2.5 overflow-hidden rounded-full bg-on-signature/25"
       >
         <span
@@ -276,7 +286,7 @@ function Progress({ visit, now }: { visit: TodayVisit; now: number }) {
       </span>
       <span className="flex justify-between text-[13px] font-semibold tabular-nums">
         <span>{timeOf(visit.appointment.localStartsAt)}</span>
-        <span>encore {formatDuration(left)}</span>
+        <span>fin prévue dans {formatDuration(left)}</span>
         <span>{timeOf(visit.appointment.localEndsAt)}</span>
       </span>
     </>
@@ -515,8 +525,14 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
                       {visit.appointment.client.displayName}
                     </span>
                     <span className="block truncate text-[14px] text-ink-soft">
+                      {visit.startsBefore
+                        ? `depuis hier ${timeOf(visit.appointment.localStartsAt)} · `
+                        : null}
                       {visit.appointment.service.name} ·{" "}
                       {formatDuration(visit.appointment.durationMinutes)}
+                      {visit.endsAfter
+                        ? ` · jusqu’à demain ${timeOf(visit.appointment.localEndsAt)}`
+                        : null}
                     </span>
                   </span>
                   <span className="text-right text-[13px] font-bold text-ink-soft">
@@ -533,15 +549,19 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
 }
 
 function Figures({ model }: { model: TodayModel }) {
-  const open = model.week.filter((day) => day.openMinutes > 0);
+  const fill = (day: TodayModel["week"][number]) =>
+    day.bookableMinutes > 0
+      ? Math.min(
+          100,
+          Math.round((day.bookedMinutes / day.bookableMinutes) * 100),
+        )
+      : 0;
+  const open = model.week.filter(
+    (day) => !day.closed && day.bookableMinutes > 0,
+  );
   const weekVisits = model.week.reduce((total, day) => total + day.visits, 0);
   const busiest = open.reduce<(typeof open)[number] | null>(
-    (best, day) =>
-      !best ||
-      day.bookedMinutes / day.openMinutes >
-        best.bookedMinutes / best.openMinutes
-        ? day
-        : best,
+    (best, day) => (!best || fill(day) > fill(best) ? day : best),
     null,
   );
 
@@ -576,17 +596,15 @@ function Figures({ model }: { model: TodayModel }) {
               <i
                 className={cn(
                   "block rounded-t",
-                  day.openMinutes === 0
+                  day.closed
                     ? "h-[3px] bg-line-strong"
                     : day.isToday
                       ? "bg-signature"
                       : "bg-ink",
                 )}
                 style={
-                  day.openMinutes > 0
-                    ? {
-                        height: `${Math.max(4, Math.min(100, (day.bookedMinutes / day.openMinutes) * 100))}%`,
-                      }
+                  !day.closed
+                    ? { height: `${Math.max(4, fill(day))}%` }
                     : undefined
                 }
               />
@@ -605,16 +623,16 @@ function Figures({ model }: { model: TodayModel }) {
         </div>
         <p className="text-[14px] text-ink-soft">
           {busiest && busiest.bookedMinutes > 0
-            ? `${capitalize(formatWeekdayLong(busiest.date))} ${dayNumber(busiest.date)} est le plus rempli (${Math.round((busiest.bookedMinutes / busiest.openMinutes) * 100)} %).`
+            ? `${capitalize(formatWeekdayLong(busiest.date))} ${dayNumber(busiest.date)} est le plus rempli (${fill(busiest)} %).`
             : "Ta semaine est encore toute à remplir."}
         </p>
         <ul className="sr-only">
           {model.week.map((day) => (
             <li key={day.date}>
               {formatWeekdayLong(day.date)} :{" "}
-              {day.openMinutes === 0
-                ? "fermé"
-                : `${Math.round((day.bookedMinutes / day.openMinutes) * 100)} % réservé`}
+              {day.closed
+                ? `fermé${day.visits ? ` (${day.visits} rendez-vous)` : ""}`
+                : `${fill(day)} % réservé`}
             </li>
           ))}
         </ul>
@@ -708,7 +726,9 @@ function Notes({ model }: { model: TodayModel }) {
 }
 
 function stateLabel(visit: TodayVisit) {
-  if (visit.state === "now") return "En cours";
+  // A started slot is not a service known to have started: only her own
+  // statuses (completed, no-show) say what happened.
+  if (visit.state === "now") return "Créneau en cours";
   if (visit.appointment.status === "no_show") return "Absente";
   if (visit.appointment.status === "completed") return "Terminé";
   if (visit.state === "done") return "Passé";

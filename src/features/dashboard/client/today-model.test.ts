@@ -87,7 +87,7 @@ describe("todayModel", () => {
       at("11:00", "2026-11-01"),
     );
     expect(sunday.phase).toBe("free");
-    expect(sunday.closed).toBe(true);
+    expect(sunday.closure).toEqual({ kind: "weekly" });
     // Closed and empty: the line covers the whole civil day.
     expect(sunday.span).toEqual({
       start: at("00:00", "2026-11-01"),
@@ -203,5 +203,126 @@ describe("todayModel", () => {
       (visit) => visit.appointment.client.displayName === "Emma Girard",
     )!;
     expect([emma.lane, emma.lanes]).toEqual([0, 1]);
+  });
+});
+
+// ——— Audit #28: a visit across midnight, an exceptional closure ———
+
+const lateNight: AgendaDto = {
+  ...sampleWeek,
+  appointments: [
+    ...sampleWeek.appointments,
+    {
+      ...sampleWeek.appointments[0]!,
+      id: "00000000-0000-4000-8000-0000000000aa",
+      status: "confirmed",
+      startsAt: sampleInstant("2026-10-27", "23:30"),
+      endsAt: sampleInstant("2026-10-28", "01:30"),
+      localStartsAt: "2026-10-27T23:30",
+      localEndsAt: "2026-10-28T01:30",
+      durationMinutes: 120,
+      client: { id: "night", displayName: "Lou Minuit" },
+    },
+  ],
+};
+
+const night = (model: ReturnType<typeof todayModel>) =>
+  model.visits.find(
+    (visit) => visit.appointment.client.displayName === "Lou Minuit",
+  );
+
+describe("a visit across midnight (23:30 → 01:30)", () => {
+  it("is on both days it covers, flagged as such", () => {
+    const tuesday = todayModel(lateNight, SAMPLE_TODAY, at("22:00"));
+    expect(night(tuesday)).toMatchObject({
+      startsBefore: false,
+      endsAfter: true,
+      state: "upcoming",
+    });
+    const wednesday = todayModel(
+      lateNight,
+      "2026-10-28",
+      at("00:30", "2026-10-28"),
+    );
+    expect(night(wednesday)).toMatchObject({
+      startsBefore: true,
+      endsAfter: false,
+      state: "now",
+    });
+    expect(wednesday.phase).toBe("during");
+  });
+
+  it("each day's line stays within that day's real bounds", () => {
+    const tuesday = todayModel(lateNight, SAMPLE_TODAY, at("22:00"));
+    expect(tuesday.span.end).toBe(at("00:00", "2026-10-28"));
+    const wednesday = todayModel(
+      lateNight,
+      "2026-10-28",
+      at("00:30", "2026-10-28"),
+    );
+    expect(wednesday.span.start).toBe(at("00:00", "2026-10-28"));
+  });
+
+  it("its minutes count on the day they fall on", () => {
+    const { week } = todayModel(lateNight, SAMPLE_TODAY, at("22:00"));
+    const tuesday = week.find((day) => day.date === SAMPLE_TODAY)!;
+    const wednesday = week.find((day) => day.date === "2026-10-28")!;
+    expect(tuesday.bookedMinutes).toBe(405 + 30);
+    expect(wednesday.bookedMinutes).toBe(60 + 105 + 45 + 90 + 90 + 90);
+    expect(wednesday.visits).toBe(6);
+  });
+});
+
+const closedThursday: AgendaDto = {
+  ...sampleWeek,
+  appointments: sampleWeek.appointments.filter(
+    (appointment) => !appointment.localStartsAt.startsWith("2026-10-29"),
+  ),
+  blocks: [
+    ...sampleWeek.blocks.filter(
+      (block) => !block.localStartsAt.startsWith("2026-10-29"),
+    ),
+    {
+      ...sampleWeek.blocks[0]!,
+      id: "00000000-0000-4000-9000-0000000000cc",
+      kind: "closed",
+      startsAt: sampleInstant("2026-10-29", "00:00"),
+      endsAt: sampleInstant("2026-10-30", "00:00"),
+      localStartsAt: "2026-10-29T00:00",
+      localEndsAt: "2026-10-30T00:00",
+      reason: "Formation",
+    },
+  ],
+};
+
+describe("an exceptional closure", () => {
+  it("is a closure, not a free day", () => {
+    const model = todayModel(
+      closedThursday,
+      "2026-10-29",
+      at("11:00", "2026-10-29"),
+    );
+    expect(model.phase).toBe("free");
+    expect(model.closure).toEqual({ kind: "exceptional", reason: "Formation" });
+  });
+
+  it("an open day with nothing booked is not closed", () => {
+    const empty: AgendaDto = {
+      ...closedThursday,
+      blocks: sampleWeek.blocks,
+    };
+    const model = todayModel(empty, "2026-10-29", at("11:00", "2026-10-29"));
+    expect(model.phase).toBe("free");
+    expect(model.closure).toBeNull();
+  });
+
+  it("the closed day offers no bookable time; pauses are not bookable either", () => {
+    const { week } = todayModel(closedThursday, SAMPLE_TODAY, at("14:05"));
+    const thursday = week.find((day) => day.date === "2026-10-29")!;
+    expect(thursday).toMatchObject({ bookableMinutes: 0, closed: true });
+    const tuesday = week.find((day) => day.date === SAMPLE_TODAY)!;
+    // 9 h–19 h minus the 12:00–13:15 lunch.
+    expect(tuesday.bookableMinutes).toBe(600 - 75);
+    expect(tuesday.closed).toBe(false);
   });
 });
