@@ -82,7 +82,7 @@ export function StudioShell({
           onClick={() => setOpen(true)}
           aria-label={`${business.name} : réglages et compte`}
           aria-current={inMore ? "page" : undefined}
-          className="font-expanded grid size-11 shrink-0 cursor-pointer place-items-center rounded-full bg-ink text-[13px] font-extrabold text-paper focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-signature"
+          className="font-expanded grid size-11 shrink-0 cursor-pointer place-items-center rounded-full bg-ink text-[13px] font-extrabold text-paper focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-accent"
         >
           {initialsOf(business.name)}
         </button>
@@ -102,7 +102,7 @@ export function StudioShell({
             href={sectionHref[item.section]}
             aria-current={current === item.section ? "page" : undefined}
             className={cn(
-              "h-11 items-center rounded-full px-2.5 text-[14px] font-bold whitespace-nowrap transition-colors min-[360px]:px-3.5 min-[360px]:text-[14.5px] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature sm:px-4",
+              "h-11 items-center rounded-full px-2.5 text-[14px] font-bold whitespace-nowrap transition-colors min-[360px]:px-3.5 min-[360px]:text-[14.5px] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-paper sm:px-4",
               item.wide ? "hidden md:flex" : "flex",
               current === item.section
                 ? "bg-paper text-ink"
@@ -115,7 +115,7 @@ export function StudioShell({
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="flex h-11 cursor-pointer items-center rounded-full px-2.5 text-[14px] font-bold min-[360px]:px-3.5 min-[360px]:text-[14.5px] whitespace-nowrap text-paper/75 hover:text-paper focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature md:hidden"
+          className="flex h-11 cursor-pointer items-center rounded-full px-2.5 text-[14px] font-bold min-[360px]:px-3.5 min-[360px]:text-[14.5px] whitespace-nowrap text-paper/75 hover:text-paper focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-paper md:hidden"
         >
           Plus
         </button>

@@ -515,7 +515,7 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
               <li key={visit.appointment.id} className="border-b border-line">
                 <Link
                   href={visitHref(visit)}
-                  className="grid min-h-16 grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-3 py-3.5 transition-colors hover:bg-paper-raised focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature md:grid-cols-[88px_minmax(0,1fr)_auto]"
+                  className="grid min-h-16 grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-3 py-3.5 transition-colors hover:bg-paper-raised focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent md:grid-cols-[88px_minmax(0,1fr)_auto]"
                 >
                   <span
                     className={cn(
@@ -716,7 +716,7 @@ function Notes({ model }: { model: TodayModel }) {
           aria-expanded={shown}
           aria-controls="notes-list"
           onClick={() => setShown(!shown)}
-          className="min-h-11 cursor-pointer rounded-full px-4 text-[14px] font-bold text-ink shadow-[inset_0_0_0_2px_var(--ink)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature"
+          className="min-h-11 cursor-pointer rounded-full px-4 text-[14px] font-bold text-ink shadow-[inset_0_0_0_2px_var(--ink)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           {shown ? "Masquer" : "Afficher"}
         </button>

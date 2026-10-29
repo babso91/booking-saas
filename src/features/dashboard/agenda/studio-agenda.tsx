@@ -141,7 +141,7 @@ export function StudioAgenda(props: StudioAgendaProps) {
               <button
                 type="button"
                 onClick={props.onNewBlock}
-                className="h-11 cursor-pointer rounded-full px-4 text-[14px] font-bold text-ink-soft transition-colors hover:text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature"
+                className="h-11 cursor-pointer rounded-full px-4 text-[14px] font-bold text-ink-soft transition-colors hover:text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
                 Bloquer un créneau
               </button>
@@ -163,7 +163,7 @@ export function StudioAgenda(props: StudioAgendaProps) {
                   type="button"
                   onClick={props.onToday}
                   data-on-today={false}
-                  className="h-11 cursor-pointer rounded-full px-3.5 text-[13.5px] font-bold text-ink shadow-[inset_0_0_0_2px_var(--ink)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature"
+                  className="h-11 cursor-pointer rounded-full px-3.5 text-[13.5px] font-bold text-ink shadow-[inset_0_0_0_2px_var(--ink)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   Aujourd’hui
                 </button>
@@ -314,7 +314,7 @@ function ViewSwitch({
           aria-pressed={view === option}
           onClick={() => onView(option)}
           className={cn(
-            "h-9 cursor-pointer rounded-full px-4 text-[14px] font-bold transition-colors focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature",
+            "h-9 cursor-pointer rounded-full px-4 text-[14px] font-bold transition-colors focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent",
             view === option
               ? "bg-ink text-paper"
               : "text-ink-soft hover:text-ink",
@@ -351,7 +351,7 @@ function Navigation({
         onClick={onToday}
         data-on-today={isOnToday}
         className={cn(
-          "h-11 cursor-pointer rounded-full px-4 text-[14px] font-bold shadow-[inset_0_0_0_2px_var(--ink)] transition-colors focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature",
+          "h-11 cursor-pointer rounded-full px-4 text-[14px] font-bold shadow-[inset_0_0_0_2px_var(--ink)] transition-colors focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent",
           isOnToday
             ? "text-ink-soft"
             : "text-ink hover:bg-ink hover:text-paper",
@@ -381,7 +381,7 @@ function CancelledChip({
   return (
     <label
       className={cn(
-        "inline-flex h-11 cursor-pointer items-center gap-1.5 rounded-full px-3.5 text-[13.5px] font-bold transition-colors has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-signature",
+        "inline-flex h-11 cursor-pointer items-center gap-1.5 rounded-full px-3.5 text-[13.5px] font-bold transition-colors has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent",
         on ? "bg-ink text-paper" : "bg-sand text-ink hover:bg-sand-deep",
       )}
     >
@@ -435,7 +435,7 @@ function Options({
         aria-controls="agenda-options"
         aria-label="Options de l’agenda"
         onClick={() => setOpen(!open)}
-        className="grid size-11 cursor-pointer place-items-center rounded-full bg-sand text-[20px] leading-none font-black text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature"
+        className="grid size-11 cursor-pointer place-items-center rounded-full bg-sand text-[20px] leading-none font-black text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
         ⋯
       </button>
@@ -450,11 +450,11 @@ function Options({
               setOpen(false);
               onNewBlock();
             }}
-            className="flex min-h-12 cursor-pointer items-center rounded-[14px] px-3 text-left text-[15px] font-bold text-ink hover:bg-sand focus-visible:outline-3 focus-visible:outline-offset-[-3px] focus-visible:outline-signature"
+            className="flex min-h-12 cursor-pointer items-center rounded-[14px] px-3 text-left text-[15px] font-bold text-ink hover:bg-sand focus-visible:outline-3 focus-visible:outline-offset-[-3px] focus-visible:outline-accent"
           >
             Bloquer un créneau
           </button>
-          <label className="flex min-h-12 cursor-pointer items-center gap-3 rounded-[14px] px-3 text-[15px] font-bold text-ink hover:bg-sand has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-[-3px] has-[:focus-visible]:outline-signature">
+          <label className="flex min-h-12 cursor-pointer items-center gap-3 rounded-[14px] px-3 text-[15px] font-bold text-ink hover:bg-sand has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-[-3px] has-[:focus-visible]:outline-accent">
             <input
               type="checkbox"
               checked={includeCancelled}
@@ -488,7 +488,7 @@ function RoundButton({
       onClick={onClick}
       className={cn(
         small ? "h-11 w-9" : "size-11",
-        "grid cursor-pointer place-items-center rounded-full text-ink shadow-[inset_0_0_0_2px_var(--line-strong)] transition-colors hover:shadow-[inset_0_0_0_2px_var(--ink)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature",
+        "grid cursor-pointer place-items-center rounded-full text-ink shadow-[inset_0_0_0_2px_var(--line-strong)] transition-colors hover:shadow-[inset_0_0_0_2px_var(--ink)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent",
       )}
     >
       {children}
@@ -523,7 +523,7 @@ function DayStrip({
             aria-pressed={selected}
             aria-label={formatFullDate(date)}
             className={cn(
-              "flex h-[60px] min-w-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-[14px] transition-colors focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature",
+              "flex h-[60px] min-w-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-[14px] transition-colors focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent",
               selected ? "bg-ink text-paper" : "text-ink-soft hover:bg-sand",
             )}
           >

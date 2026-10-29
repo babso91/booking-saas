@@ -162,7 +162,7 @@ function Row({
           type="button"
           onClick={() => onCreateAt(date, item.time)}
           aria-label={`${label} à partir de ${item.time} : nouveau rendez-vous`}
-          className="group flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-[16px] border-[1.5px] border-dashed border-line-strong px-4 text-left text-[14px] font-bold text-ink-soft transition-colors hover:border-ink hover:bg-paper-raised hover:text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature"
+          className="group flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-[16px] border-[1.5px] border-dashed border-line-strong px-4 text-left text-[14px] font-bold text-ink-soft transition-colors hover:border-ink hover:bg-paper-raised hover:text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           <span className="w-12 shrink-0 tabular-nums">{item.time}</span>
           <span className="flex-1">{label}</span>
@@ -190,7 +190,7 @@ function Row({
           type="button"
           onClick={() => onOpenBlock(block)}
           className={cn(
-            "flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-[16px] bg-sand px-4 py-2 text-left text-[14px] font-bold text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature",
+            "flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-[16px] bg-sand px-4 py-2 text-left text-[14px] font-bold text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent",
             hatch,
           )}
         >
@@ -288,11 +288,11 @@ function VisitCard({
       data-focus={lookId === "now" || isNext ? "" : undefined}
       aria-label={`${start} à ${end}, ${appointment.client.displayName}, ${appointment.service.name}, ${look.label}${isNext ? ", prochain rendez-vous" : ""}`}
       className={cn(
-        "relative flex w-full cursor-pointer flex-col justify-between gap-2 overflow-hidden rounded-[18px] p-3.5 text-left transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-[0_14px_28px_-16px_rgb(var(--shadow-rgb)/0.6)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature active:translate-y-0 motion-reduce:transition-none",
+        "relative flex w-full cursor-pointer flex-col justify-between gap-2 overflow-hidden rounded-[18px] p-3.5 text-left transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-[0_14px_28px_-16px_rgb(var(--shadow-rgb)/0.6)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent active:translate-y-0 motion-reduce:transition-none",
         roomy && "p-4",
         behind && "gap-1.5 py-3",
         look.className,
-        isNext && "ring-[3px] ring-signature ring-offset-2 ring-offset-paper",
+        isNext && "ring-[3px] ring-accent ring-offset-2 ring-offset-paper",
       )}
       style={{ minHeight: height }}
     >
@@ -318,9 +318,7 @@ function VisitCard({
         >
           {appointment.client.displayName}
         </span>
-        <span className="truncate text-[14px] opacity-90">
-          {appointment.service.name}
-        </span>
+        <span className="truncate text-[14px]">{appointment.service.name}</span>
         <span className="text-[13px] font-semibold tabular-nums">
           {formatDuration(minutes)}
           {visit.endsAfter ? "" : ` · jusqu’à ${end}`}

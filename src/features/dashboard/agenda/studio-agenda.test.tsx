@@ -343,6 +343,84 @@ describe("Studio agenda — a link from « Aujourd’hui » (?rdv=)", () => {
   });
 });
 
+describe("Studio agenda — hard cases", () => {
+  beforeEach(() => useViewport(true));
+
+  it("a network error is said, with a retry, as in the Classique agenda", async () => {
+    const user = userEvent.setup();
+    actions.getAgendaAction.mockRejectedValueOnce(
+      new TypeError("Failed to fetch"),
+    );
+    renderStudio();
+    expect(await screen.findByText("Connexion interrompue")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Réessayer" }));
+    expect(
+      await screen.findByRole("button", { name: /Camille Roux/ }),
+    ).toBeTruthy();
+  });
+
+  it("the autumn change: both 02:30 are on the wall, each where it really is", async () => {
+    vi.setSystemTime(new Date("2026-10-22T08:00:00Z"));
+    actions.getAgendaTodayAction.mockImplementation(async () =>
+      ok(businessToday()),
+    );
+    const first = appointment({
+      local: "2026-10-25T02:30",
+      occurrence: "first",
+      durationMinutes: 30,
+      client: { id: "a", displayName: "Avant Changement" },
+    });
+    const second = appointment({
+      local: "2026-10-25T02:30",
+      occurrence: "second",
+      durationMinutes: 30,
+      client: { id: "b", displayName: "Après Changement" },
+    });
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [first, second] })),
+    );
+    render(
+      <AppearanceProvider initial={{ ...defaultAppearance, style: "studio" }}>
+        <AgendaView today="2026-10-22" />
+      </AppearanceProvider>,
+    );
+    const before = await screen.findByRole("button", {
+      name: /Avant Changement/,
+    });
+    const after = screen.getByRole("button", { name: /Après Changement/ });
+    // Same wall clock, two real instants: never on top of each other.
+    expect(before.style.left).not.toBe(after.style.left);
+    expect(parseFloat(before.style.left)).toBeLessThan(
+      parseFloat(after.style.left),
+    );
+    expect(before.getAttribute("aria-label")).toMatch(/02:30/);
+  });
+
+  it("a visit across midnight is on both rows of the wall", async () => {
+    const night = appointment({
+      local: `${TODAY}T23:30`,
+      durationMinutes: 120,
+      client: { id: "n", displayName: "Lou Minuit" },
+    });
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [night] })),
+    );
+    renderStudio();
+    const tuesday = within(
+      await screen.findByRole("group", { name: /Journée du mardi 29/ }),
+    );
+    const wednesday = within(
+      screen.getByRole("group", { name: /Journée du mercredi 30/ }),
+    );
+    expect(tuesday.getByRole("button", { name: /Lou Minuit/ })).toBeTruthy();
+    expect(
+      wednesday.getAllByRole("button", { hidden: true }).length,
+    ).toBeGreaterThan(0);
+    // One booking in the week, not two.
+    expect(await screen.findByText(/· 1 rendez.vous/)).toBeTruthy();
+  });
+});
+
 describe("isoWeek", () => {
   it.each([
     ["2026-01-01", 1],

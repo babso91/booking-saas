@@ -425,3 +425,59 @@ export const sampleTrainingWeek: AgendaDto = {
     },
   ],
 };
+
+/** Fifteen visits a day, Monday to Saturday, some overlapping: a stress week. */
+export const sampleDenseWeek: AgendaDto = (() => {
+  const names = [
+    "Amel",
+    "Lucie",
+    "Sofia",
+    "Chloé",
+    "Inès",
+    "Camille",
+    "Sarah",
+    "Léa",
+    "Nadia",
+    "Julie",
+    "Manon",
+    "Yasmine",
+    "Emma",
+    "Clara",
+    "Zoé",
+  ];
+  const services = [
+    "Remplissage",
+    "Rehaussement de cils",
+    "Pose cil à cil",
+    "Teinture",
+    "Volume russe",
+  ];
+  const dense: AgendaAppointmentDto[] = [];
+  dates.slice(0, 6).forEach((date, day) => {
+    for (let index = 0; index < 15; index += 1) {
+      // Every 38 minutes from 9:00; every fifth one overlaps the previous.
+      const startMinutes = 9 * 60 + index * 38 - (index % 5 === 4 ? 25 : 0);
+      const start = `${pad(Math.floor(startMinutes / 60))}:${pad(startMinutes % 60)}`;
+      const endMinutes = startMinutes + 35 + (index % 3) * 10;
+      const end = `${pad(Math.floor(endMinutes / 60))}:${pad(endMinutes % 60)}`;
+      dense.push({
+        ...appointments[0]!,
+        id: `00000000-0000-4000-d000-${String(day * 100 + index).padStart(12, "0")}`,
+        status: "confirmed",
+        startsAt: sampleInstant(date, start),
+        endsAt: sampleInstant(date, end),
+        localStartsAt: `${date}T${start}`,
+        localEndsAt: `${date}T${end}`,
+        durationMinutes: endMinutes - startMinutes,
+        service: { id: `dense-${index % 5}`, name: services[index % 5]! },
+        client: {
+          id: `dense-${day}-${index}`,
+          displayName: `${names[index]} ${String.fromCharCode(65 + day)}.`,
+        },
+        internalNotes: null,
+        source: index % 4 === 0 ? "public" : "manual",
+      });
+    }
+  });
+  return { ...sampleWeek, appointments: dense, blocks: [] };
+})();

@@ -79,7 +79,7 @@ export function StudioDaySummary({
           <button
             type="button"
             onClick={() => onOpenAppointment(flow.next!.appointment)}
-            className="flex cursor-pointer flex-col items-start rounded-[14px] text-left focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature"
+            className="flex cursor-pointer flex-col items-start rounded-[14px] text-left focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             <span className="font-condensed text-[34px] leading-none font-black text-accent tabular-nums">
               {timeOf(flow.next.appointment.localStartsAt)}
