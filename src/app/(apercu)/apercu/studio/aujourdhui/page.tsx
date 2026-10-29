@@ -9,6 +9,8 @@ import {
   SAMPLE_TODAY,
   sampleBusyWeek,
   sampleInstant,
+  sampleNightWeek,
+  sampleTrainingWeek,
   sampleWeek,
 } from "@/features/dashboard/fixtures/sample-week";
 
@@ -16,13 +18,21 @@ export const metadata = { title: "Studio · Aujourd’hui" };
 
 // The real "Aujourd’hui" screen and Studio frame, on a fictional week.
 // ?jour=YYYY-MM-DD picks a day of that week (default Tuesday 27) and
-// ?heure=HH:MM the moment (default 14:05); ?jeu=charge a heavy Tuesday;
+// ?heure=HH:MM the moment (default 14:05); ?jeu=charge a heavy Tuesday, nuit a visit
+// across midnight, formation a partly closed Thursday;
 // ?apparence= takes a cookie value (e.g. atelier.dark.standard.f2512e.studio).
 export default async function StudioTodayPreview({
   searchParams,
 }: PageProps<"/apercu/studio/aujourdhui">) {
   const { heure, apparence, jour, jeu } = await searchParams;
-  const agenda = jeu === "charge" ? sampleBusyWeek : sampleWeek;
+  const agenda =
+    jeu === "charge"
+      ? sampleBusyWeek
+      : jeu === "nuit"
+        ? sampleNightWeek
+        : jeu === "formation"
+          ? sampleTrainingWeek
+          : sampleWeek;
   const date =
     typeof jour === "string" &&
     sampleWeek.workingHours.days.some((day) => day.date === jour)

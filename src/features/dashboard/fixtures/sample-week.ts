@@ -377,3 +377,51 @@ export const sampleBusyWeek: AgendaDto = {
     },
   ],
 };
+
+/** The sample week plus one visit across midnight, long names included. */
+export const sampleNightWeek: AgendaDto = {
+  ...sampleWeek,
+  appointments: [
+    ...sampleWeek.appointments,
+    {
+      ...appointments[0]!,
+      id: "00000000-0000-4000-c000-000000000001",
+      status: "confirmed",
+      startsAt: sampleInstant("2026-10-27", "23:30"),
+      endsAt: sampleInstant("2026-10-28", "01:30"),
+      localStartsAt: "2026-10-27T23:30",
+      localEndsAt: "2026-10-28T01:30",
+      durationMinutes: 120,
+      service: {
+        id: "service-night",
+        name: "Pose volume russe 4D avec dépose complète et soin kératine",
+      },
+      client: {
+        id: "client-night",
+        displayName: "Marie-Charlotte de La Rochefoucauld-Montbazon",
+      },
+      source: "manual",
+    },
+  ],
+};
+
+/** Thursday: open 9 h–19 h, closed 10 h–12 h for a training, nothing booked. */
+export const sampleTrainingWeek: AgendaDto = {
+  ...sampleWeek,
+  appointments: sampleWeek.appointments.filter(
+    (appointment) => !appointment.localStartsAt.startsWith("2026-10-29"),
+  ),
+  blocks: [
+    ...sampleWeek.blocks,
+    {
+      ...sampleWeek.blocks[0]!,
+      id: "00000000-0000-4000-c000-000000000002",
+      kind: "closed",
+      startsAt: sampleInstant("2026-10-29", "10:00"),
+      endsAt: sampleInstant("2026-10-29", "12:00"),
+      localStartsAt: "2026-10-29T10:00",
+      localEndsAt: "2026-10-29T12:00",
+      reason: "Formation",
+    },
+  ],
+};
