@@ -221,3 +221,21 @@ describe("her preference, as stored on the device", () => {
     expect(appearanceCss(defaultAppearance)).not.toContain("@media");
   });
 });
+
+describe("names that exist on every object are not ambiances (no 500)", () => {
+  it.each([
+    "constructor.dark.none.-.studio",
+    "toString.light.standard.-.classique",
+    "__proto__.light.standard.-.classique",
+    "hasOwnProperty.light.standard.-",
+    "lin.constructor.toString.-.__proto__",
+    "lin.valueOf.__proto__.-.constructor",
+  ])("%s falls back value by value, and renders", (raw) => {
+    const parsed = parseAppearance(raw);
+    expect(["atelier", "lin", "sauge"]).toContain(parsed.ambiance);
+    expect(["light", "dark", "system"]).toContain(parsed.mode);
+    expect(["standard", "discrete", "none"]).toContain(parsed.motion);
+    expect(["classique", "studio"]).toContain(parsed.style);
+    expect(() => appearanceCss(parsed)).not.toThrow();
+  });
+});

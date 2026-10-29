@@ -76,8 +76,9 @@ export function parseAppearance(raw: string | undefined | null): Appearance {
     style: styleIds.includes(style as StyleId)
       ? (style as StyleId)
       : defaultAppearance.style,
+    // Own keys only: "constructor", "__proto__"… exist on every object.
     ambiance:
-      ambiance && ambiance in ambiances
+      ambiance && Object.hasOwn(ambiances, ambiance)
         ? (ambiance as AmbianceId)
         : defaultAppearance.ambiance,
     mode: modes.includes(mode as ModePreference)
