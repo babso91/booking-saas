@@ -18,15 +18,20 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   fullWidth?: boolean;
 };
 
-const variants = {
+// Every state is drawn from the palette's tokens, never a fixed colour: a
+// hover tuned for ivory is unreadable on espresso. Checked in every style,
+// ambiance and mode by button-contrast.test.ts (4.5:1, text on background).
+// Disabled: a quiet ground, still legible (the reason it is off is said
+// around it, not hidden in a faint label).
+export const buttonVariants = {
   primary:
-    "bg-ink text-paper-raised shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] hover:bg-[#382d27] disabled:bg-ink/40 disabled:shadow-none",
+    "bg-ink text-paper-raised shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] hover:bg-[color-mix(in_srgb,var(--ink)_86%,var(--paper))] disabled:bg-sand disabled:text-ink-soft disabled:shadow-none",
   secondary:
-    "bg-paper-raised text-ink border border-line hover:border-line-strong hover:bg-white disabled:text-ink-muted",
+    "bg-paper-raised text-ink border border-line hover:border-line-strong hover:bg-[color-mix(in_srgb,var(--paper-raised)_94%,var(--ink))] disabled:text-ink-muted",
   ghost:
     "bg-transparent text-ink-soft hover:text-ink hover:bg-sand/60 disabled:text-ink-muted",
   danger:
-    "bg-danger text-paper-raised hover:bg-[#86342a] disabled:bg-danger/40 shadow-[0_10px_24px_-14px_color-mix(in_srgb,var(--danger)_60%,transparent)]",
+    "bg-danger text-paper-raised hover:bg-danger-strong disabled:bg-sand disabled:text-ink-soft disabled:shadow-none shadow-[0_10px_24px_-14px_color-mix(in_srgb,var(--danger)_60%,transparent)]",
 } as const;
 
 const sizes = {
@@ -82,7 +87,7 @@ export function Button({
         busy && "pointer-events-none",
         state === "success" && variant === "primary"
           ? "bg-success text-paper-raised"
-          : variants[variant],
+          : buttonVariants[variant],
         sizes[size],
         fullWidth && "w-full",
         className,

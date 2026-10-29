@@ -76,7 +76,7 @@ export function CheckEmail({
       <div className="flex w-full animate-rise flex-col gap-3 [animation-delay:140ms]">
         <Link
           href="/login"
-          className="inline-flex h-14 w-full items-center justify-center rounded-2xl bg-ink text-base font-medium text-paper-raised shadow-[0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] transition-[background-color,transform] duration-200 hover:bg-[#382d27] active:scale-[0.985]"
+          className="inline-flex h-14 w-full items-center justify-center rounded-2xl bg-ink text-base font-medium text-paper-raised shadow-[0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] transition-[background-color,transform] duration-200 hover:bg-[color-mix(in_srgb,var(--ink)_86%,var(--paper))] active:scale-[0.985]"
         >
           J’ai confirmé, me connecter
         </Link>
