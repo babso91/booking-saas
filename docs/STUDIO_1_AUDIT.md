@@ -197,3 +197,35 @@ C'est la première exécution authentifiée de bout en bout de Studio 1. Elle r�
 - Concrètement, une personne qui inspecte la page ou le réseau sur la session de la professionnelle peut les lire.
 - Les autorisations, elles, ne changent pas : seule une membre de l'entreprise reçoit ces données (RLS), exactement comme pour l'agenda, qui les reçoit aussi.
 - Pour les retirer du payload, il faudrait ne pas transmettre `internalNotes` à l'accueil et les charger à la demande. L'action existante `getAgendaAppointmentAction` (RLS) le permet sans nouvelle API, mais c'est un changement de contrat à coordonner. Rien n'a été ajouté sans cette coordination.
+
+## 11. Contre-audit de `fc24a56` : 0 BLOCKER, 1 IMPORTANT, 2 MINOR
+
+Passe strictement ciblée. Chaque défaut est reproduit sur l'ancien code, en vitest et dans Chromium, puis corrigé.
+
+| #   | Défaut                                                                                     | Cause                                                                                                                         | Correction                                                                                                                                                                                                                                                                                                                                                        | Reproduction (avant → après)                                                                                                                                                                                                                                                             |
+| --- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Une réservation du mardi 23 h 30 au mercredi 1 h 30 donnait « Cette semaine : 2 »          | Le compteur additionnait les visites **par jour**, et cette réservation est (à juste titre) sur deux jours                    | `weekVisits` : réservations **distinctes par identifiant**, non annulées, comptées dans la semaine où elles **commencent** (bornes réelles des jours PostgreSQL). Les vues quotidiennes et la répartition des minutes ne changent pas                                                                                                                             | vitest : 27 → 26. Semaine du changement d'heure : les deux 02:30 de l'heure répétée comptent pour 2, et dimanche 23 h 30 → lundi 1 h 30 compte pour 1. Frontière de semaine : présente le lundi suivant, mais non recomptée. Annulée : exclue. Chromium à 320, 390 et 1 440 px : 27 → 26 |
+| 2   | Fermeture partielle invisible sans rendez-vous (« Journée libre » à 11 h, fermé 10 h–12 h) | Seules les fermetures **complètes** étaient signalées, et la frise (qui montre les fermetures) n'apparaît qu'avec des visites | `closures` : les fermetures exceptionnelles qui couvrent une **partie** du jour, à l'heure murale. Le bloc couleur affiche « Fermeture partielle » et « Fermé de 10:00 à 12:00 · Formation. Le reste de la journée est libre. ». « Ta journée » le rappelle aussi, avec ou sans rendez-vous. Le temps réservable et le remplissage (déjà validés) ne changent pas | vitest : jour libre, fermé, partiellement fermé, partiellement fermé avec rendez-vous. Chromium : « Journée libre » → « Fermeture partielle »                                                                                                                                            |
+| 3   | « jusqu'à demain 01:30 » disparaissait sur mobile                                          | La mention était dans la même ligne tronquée que le nom de la prestation                                                      | La mention temporelle a **sa propre ligne**, jamais tronquée. Seul le nom de la prestation peut l'être                                                                                                                                                                                                                                                            | vitest : la mention n'est plus dans un élément `truncate`. Chromium à 320 et 390 px, avec un nom et une prestation très longs : mention entière, dans l'écran, sans défilement horizontal                                                                                                |
+
+**Les quatre cas de journée** :
+
+- **vraiment libre** : « Journée libre · Rien de prévu » ;
+- **entièrement fermée** : « Jour de fermeture · Repos », ou « Fermeture exceptionnelle » avec son motif ;
+- **partiellement fermée sans rendez-vous** : « Fermeture partielle », avec le créneau fermé et son motif ;
+- **avec rendez-vous et une fermeture partielle** : le bloc couleur garde le rendez-vous, et « Ta journée » affiche la fermeture, que la frise montre aussi.
+
+Les pauses (« blocked ») restent dans la frise et dans le temps réservable, mais ne déclenchent pas la mention « Fermeture partielle ». Un déjeuner n'est pas une fermeture.
+
+**Autres indicateurs vérifiés** :
+
+- « Aujourd'hui » et « Pris en ligne » comptent les visites **du jour** : une visite à cheval sur minuit compte une fois par jour, comme le demande la vue quotidienne.
+- Le remplissage répartit les minutes entre les jours, sans double compte.
+- Seul le compteur de la semaine additionnait des jours : c'est celui qui est corrigé.
+
+**Non-régression** :
+
+- les vérifications Chromium du premier audit passent toujours : les 8 rubriques atteignables, des boutons à 4,5:1 au moins dans tous les états, aucune erreur 500 avec un cookie piégé ;
+- états de journée (« Créneau en cours », « Jour de fermeture », « Journée terminée ») ;
+- axe-core 4.14 : 0 violation, nouveaux scénarios compris ;
+- aperçu protégé : nouveaux jeux fictifs `?jeu=nuit` et `?jeu=formation`.
