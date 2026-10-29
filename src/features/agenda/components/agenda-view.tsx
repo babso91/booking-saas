@@ -27,9 +27,15 @@ import type {
   AgendaBlockDto,
   AgendaDto,
 } from "@/features/agenda/data/agenda";
+import { useDashboardStyle } from "@/features/appearance/components/appearance-provider";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
+import {
+  StudioAgenda,
+  type StudioView,
+} from "@/features/dashboard/agenda/studio-agenda";
 import { cn } from "@/lib/cn";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
+import { addDaysToLocalDate } from "@/lib/time/local-date";
 
 import {
   dayNumber,
@@ -73,7 +79,10 @@ const DEFAULT_TIME = "09:00";
 
 /**
  * Professional agenda. Desktop and tablet (≥ 768 px) read one week, phones
- * one day: exactly the range on screen, in one aggregated request.
+ * one day: exactly the range on screen, in one aggregated request. In the
+ * Studio style, a computer can also show one day; the Studio presentation
+ * (StudioAgenda) is driven by this same controller — same reading, same
+ * "today", same panels and actions.
  * Writes are never applied optimistically: the server's answer updates the
  * open panel and the visible range is reloaded.
  *
@@ -100,7 +109,9 @@ export function AgendaView({
   today: string;
 }) {
   const wide = useMediaQuery("(min-width: 768px)");
-  const view: View = wide ? "week" : "day";
+  const studio = useDashboardStyle() === "studio";
+  const [studioView, setStudioView] = useState<StudioView>("week");
+  const view: View = wide ? (studio ? studioView : "week") : "day";
   const clock = useSyncExternalStore(subscribeClock, clockBucket, () => 0);
 
   const canonical = useCanonicalToday(initialToday, clock);
@@ -350,6 +361,163 @@ export function AgendaView({
                 : "Créneau bloqué"
               : "";
 
+  const banners = (
+    <>
+      {notice ? (
+        <div className="p-4 pb-0 sm:px-6 lg:px-8">
+          <Notice
+            tone="info"
+            action={
+              <TextAction onClick={() => setNotice(null)}>Compris</TextAction>
+            }
+          >
+            {notice}
+          </Notice>
+        </div>
+      ) : null}
+
+      {todayFailure ? (
+        <div className="p-4 pb-0 sm:px-6 lg:px-8">
+          <AgendaError
+            error={todayFailure.error}
+            subject="agenda"
+            action={
+              todayFailure.error.code === "network" ||
+              todayFailure.error.code === "internal" ? (
+                <TextAction onClick={todayFailure.retry}>Réessayer</TextAction>
+              ) : undefined
+            }
+          />
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="p-4 sm:px-6 lg:px-8">
+          <AgendaError
+            error={error}
+            subject="agenda"
+            action={
+              error.code === "network" || error.code === "internal" ? (
+                <TextAction onClick={reload}>Réessayer</TextAction>
+              ) : undefined
+            }
+          />
+        </div>
+      ) : null}
+    </>
+  );
+
+  const panels = (
+    <Sheet open={panel !== null} onClose={() => setPanel(null)} title={title}>
+      {panel?.kind === "appointment" ? (
+        <AppointmentDetails
+          key={`${panel.appointment.id}:${panel.appointment.version}`}
+          appointment={panel.appointment}
+          zone={zone}
+          onEdit={() => openEdit(panel.appointment)}
+          onUpdated={showAppointment}
+          onRefresh={() => refreshAppointment(panel.appointment, false)}
+        />
+      ) : null}
+      {panel?.kind === "createAppointment" ||
+      panel?.kind === "editAppointment" ? (
+        <AppointmentForm
+          key={
+            panel.kind === "editAppointment"
+              ? `${panel.appointment.id}:${panel.appointment.version}`
+              : "create"
+          }
+          mode={
+            panel.kind === "editAppointment"
+              ? { kind: "edit", appointment: panel.appointment }
+              : { kind: "create", date: panel.date, time: panel.time }
+          }
+          services={services ?? { status: "loading" }}
+          zone={zone}
+          onSaved={showAppointment}
+          onCancel={() =>
+            setPanel(
+              panel.kind === "editAppointment"
+                ? { kind: "appointment", appointment: panel.appointment }
+                : null,
+            )
+          }
+          onRefresh={
+            panel.kind === "editAppointment"
+              ? () => refreshAppointment(panel.appointment, true)
+              : undefined
+          }
+        />
+      ) : null}
+      {panel?.kind === "createBlock" || panel?.kind === "block" ? (
+        <BlockForm
+          key={
+            panel.kind === "block"
+              ? `${panel.block.id}:${panel.block.version}`
+              : "create"
+          }
+          mode={
+            panel.kind === "block"
+              ? { kind: "edit", block: panel.block }
+              : { kind: "create", date: panel.date, time: panel.time }
+          }
+          zone={zone}
+          onSaved={() => {
+            setPanel(null);
+            reload();
+          }}
+          onDeleted={() => {
+            setPanel(null);
+            reload();
+          }}
+          onCancel={() => setPanel(null)}
+          onRefresh={
+            panel.kind === "block" ? () => refreshBlock(panel.block) : undefined
+          }
+        />
+      ) : null}
+    </Sheet>
+  );
+
+  if (studio)
+    return (
+      <StudioAgenda
+        view={view}
+        wide={wide}
+        onView={(next) => {
+          // Her intention changed: like any navigation.
+          supersede();
+          setStudioView(next);
+        }}
+        days={range.days}
+        anchor={anchor}
+        today={today}
+        data={data}
+        nowMs={clock ? clock * 30_000 : null}
+        loading={loading || awaitingToday !== null}
+        includeCancelled={includeCancelled}
+        onIncludeCancelled={setIncludeCancelled}
+        onShift={(direction) =>
+          navigate(
+            direction === 7 || direction === -7
+              ? addDaysToLocalDate(anchor, direction)
+              : shiftAnchor(view, anchor, direction),
+          )
+        }
+        onToday={() => withToday(navigate)}
+        onSelectDay={navigate}
+        onNewAppointment={() => openCreateAppointment()}
+        onNewBlock={() => openCreateBlock()}
+        onOpenAppointment={(appointment) =>
+          setPanel({ kind: "appointment", appointment })
+        }
+        onOpenBlock={(block) => setPanel({ kind: "block", block })}
+        onCreateAt={(date, time) => openCreateAppointment(date, time)}
+        banners={banners}
+        panels={panels}
+      />
+    );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-col gap-3 border-b border-line bg-paper px-4 pt-3 pb-3 sm:px-6 lg:px-8 lg:pt-6">
@@ -437,49 +605,7 @@ export function AgendaView({
           </div>
         ) : null}
 
-        {notice ? (
-          <div className="p-4 pb-0 sm:px-6 lg:px-8">
-            <Notice
-              tone="info"
-              action={
-                <TextAction onClick={() => setNotice(null)}>Compris</TextAction>
-              }
-            >
-              {notice}
-            </Notice>
-          </div>
-        ) : null}
-
-        {todayFailure ? (
-          <div className="p-4 pb-0 sm:px-6 lg:px-8">
-            <AgendaError
-              error={todayFailure.error}
-              subject="agenda"
-              action={
-                todayFailure.error.code === "network" ||
-                todayFailure.error.code === "internal" ? (
-                  <TextAction onClick={todayFailure.retry}>
-                    Réessayer
-                  </TextAction>
-                ) : undefined
-              }
-            />
-          </div>
-        ) : null}
-
-        {error ? (
-          <div className="p-4 sm:px-6 lg:px-8">
-            <AgendaError
-              error={error}
-              subject="agenda"
-              action={
-                error.code === "network" || error.code === "internal" ? (
-                  <TextAction onClick={reload}>Réessayer</TextAction>
-                ) : undefined
-              }
-            />
-          </div>
-        ) : null}
+        {banners}
 
         <TimeGrid
           days={range.days}
@@ -538,77 +664,7 @@ export function AgendaView({
         </Button>
       </div>
 
-      <Sheet open={panel !== null} onClose={() => setPanel(null)} title={title}>
-        {panel?.kind === "appointment" ? (
-          <AppointmentDetails
-            key={`${panel.appointment.id}:${panel.appointment.version}`}
-            appointment={panel.appointment}
-            zone={zone}
-            onEdit={() => openEdit(panel.appointment)}
-            onUpdated={showAppointment}
-            onRefresh={() => refreshAppointment(panel.appointment, false)}
-          />
-        ) : null}
-        {panel?.kind === "createAppointment" ||
-        panel?.kind === "editAppointment" ? (
-          <AppointmentForm
-            key={
-              panel.kind === "editAppointment"
-                ? `${panel.appointment.id}:${panel.appointment.version}`
-                : "create"
-            }
-            mode={
-              panel.kind === "editAppointment"
-                ? { kind: "edit", appointment: panel.appointment }
-                : { kind: "create", date: panel.date, time: panel.time }
-            }
-            services={services ?? { status: "loading" }}
-            zone={zone}
-            onSaved={showAppointment}
-            onCancel={() =>
-              setPanel(
-                panel.kind === "editAppointment"
-                  ? { kind: "appointment", appointment: panel.appointment }
-                  : null,
-              )
-            }
-            onRefresh={
-              panel.kind === "editAppointment"
-                ? () => refreshAppointment(panel.appointment, true)
-                : undefined
-            }
-          />
-        ) : null}
-        {panel?.kind === "createBlock" || panel?.kind === "block" ? (
-          <BlockForm
-            key={
-              panel.kind === "block"
-                ? `${panel.block.id}:${panel.block.version}`
-                : "create"
-            }
-            mode={
-              panel.kind === "block"
-                ? { kind: "edit", block: panel.block }
-                : { kind: "create", date: panel.date, time: panel.time }
-            }
-            zone={zone}
-            onSaved={() => {
-              setPanel(null);
-              reload();
-            }}
-            onDeleted={() => {
-              setPanel(null);
-              reload();
-            }}
-            onCancel={() => setPanel(null)}
-            onRefresh={
-              panel.kind === "block"
-                ? () => refreshBlock(panel.block)
-                : undefined
-            }
-          />
-        ) : null}
-      </Sheet>
+      {panels}
     </div>
   );
 }
