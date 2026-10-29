@@ -39,7 +39,7 @@ export function SelectField({
           aria-describedby={describedBy || undefined}
           className={cn(
             "h-14 w-full cursor-pointer appearance-none rounded-2xl border bg-paper-raised pr-11 pl-4 text-[16px] text-ink transition-[border-color,box-shadow] duration-200",
-            "focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_rgba(151,73,58,0.12)] focus-visible:outline-none disabled:cursor-not-allowed disabled:bg-sand/40 disabled:opacity-70",
+            "focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)] focus-visible:outline-none disabled:cursor-not-allowed disabled:bg-sand/40 disabled:opacity-70",
             error ? "border-danger/70" : "border-line hover:border-line-strong",
             className,
           )}

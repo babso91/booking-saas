@@ -800,7 +800,7 @@ function Tabs({
             className={cn(
               "h-10 cursor-pointer rounded-xl text-[14.5px] transition-colors",
               selected
-                ? "bg-paper-raised font-semibold text-ink shadow-[0_1px_3px_rgba(35,28,24,0.12)]"
+                ? "bg-paper-raised font-semibold text-ink shadow-[0_1px_3px_rgb(var(--shadow-rgb)/0.12)]"
                 : "text-ink-soft hover:text-ink",
             )}
           >

@@ -1259,3 +1259,114 @@ describe("links with the customer profiles", () => {
     expect(link.textContent).toContain("Camille Roux");
   });
 });
+
+describe("a link to one appointment (?rdv=, from Aujourd’hui)", () => {
+  const wanted = appointment({ local: "2026-09-30T14:00" });
+
+  beforeEach(() => {
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [wanted] })),
+    );
+  });
+
+  it("opens its details once its day is read, as a tap on the grid would", async () => {
+    render(
+      <AgendaView
+        today={TODAY}
+        initialDate="2026-09-30"
+        initialAppointmentId={wanted.id}
+      />,
+    );
+    const details = within(await screen.findByRole("dialog"));
+    expect(details.getByText("Camille Roux")).toBeTruthy();
+    expect(actions.getAgendaAction).toHaveBeenCalledWith({
+      startDate: "2026-09-30",
+      endDate: "2026-09-30",
+      includeCancelled: false,
+    });
+  });
+
+  it("an id the agenda read does not hold opens nothing", async () => {
+    render(
+      <AgendaView
+        today={TODAY}
+        initialDate="2026-09-30"
+        initialAppointmentId="99999999-0000-4000-8000-000000000000"
+      />,
+    );
+    await screen.findByRole("button", { name: /Camille Roux/ });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a late answer never replaces what she has opened since (her draft is kept)", async () => {
+    const user = userEvent.setup();
+    let answer: (value: unknown) => void = () => {};
+    actions.getAgendaAction.mockImplementationOnce(
+      () => new Promise((done) => (answer = done)),
+    );
+    actions.searchAgendaClientsAction.mockResolvedValue(ok([]));
+    render(
+      <AgendaView
+        today={TODAY}
+        initialDate="2026-09-30"
+        initialAppointmentId={wanted.id}
+      />,
+    );
+    // The agenda is still reading; she starts a new appointment.
+    await user.click(
+      screen.getAllByRole("button", { name: /Nouveau rendez-vous/ })[0]!,
+    );
+    const form = within(panel());
+    await user.type(form.getByLabelText(/Note interne/), "Brouillon en cours");
+
+    answer(ok(agenda("2026-09-30", "2026-09-30", { appointments: [wanted] })));
+    await screen.findByRole("button", { name: /Camille Roux/ });
+
+    // Still her form, still her words: not the linked appointment's details.
+    expect(
+      within(panel()).getByRole("heading", { name: "Nouveau rendez-vous" }),
+    ).toBeTruthy();
+    expect(
+      (within(panel()).getByLabelText(/Note interne/) as HTMLTextAreaElement)
+        .value,
+    ).toBe("Brouillon en cours");
+  });
+
+  it("moving to another day before the answer drops the link too", async () => {
+    const user = userEvent.setup();
+    let answer: (value: unknown) => void = () => {};
+    actions.getAgendaAction.mockImplementationOnce(
+      () => new Promise((done) => (answer = done)),
+    );
+    render(
+      <AgendaView
+        today={TODAY}
+        initialDate="2026-09-30"
+        initialAppointmentId={wanted.id}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /Jour suivant/ }));
+    await user.click(screen.getByRole("button", { name: /Jour précédent/ }));
+    answer(ok(agenda("2026-09-30", "2026-09-30", { appointments: [wanted] })));
+    await screen.findByRole("button", { name: /Camille Roux/ });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens it only once: closing it and reloading the range keeps it closed", async () => {
+    const user = userEvent.setup();
+    render(
+      <AgendaView
+        today={TODAY}
+        initialDate="2026-09-30"
+        initialAppointmentId={wanted.id}
+      />,
+    );
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(screen.getByRole("button", { name: /jour suivant/i }));
+    await user.click(screen.getByRole("button", { name: /jour précédent/i }));
+    await screen.findByRole("button", { name: /Camille Roux/ });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});

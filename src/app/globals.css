@@ -19,12 +19,20 @@
   --accent: #97493a;
   --accent-strong: #7c3a2d;
   --accent-soft: #f2e2d8;
+  /* Her colour as a field, and what is written on it. */
+  --signature: #97493a;
+  --on-signature: #fffcf8;
   --success: #3d6a4c;
   --success-soft: #e2ece3;
+  --success-strong: #2c4f38;
   --danger: #9c3d2e;
   --danger-soft: #f7e3dc;
+  --danger-strong: #7a2f23;
   --warning: #8a5a1c;
   --warning-soft: #f6ead4;
+  --warning-strong: #6b4613;
+  /* Shadows' colour as "r g b" (each shadow sets its own alpha). */
+  --shadow-rgb: 35 28 24;
 
   --background: var(--paper);
   --foreground: var(--ink);
@@ -48,12 +56,17 @@
   --color-accent: var(--accent);
   --color-accent-strong: var(--accent-strong);
   --color-accent-soft: var(--accent-soft);
+  --color-signature: var(--signature);
+  --color-on-signature: var(--on-signature);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
+  --color-success-strong: var(--success-strong);
+  --color-danger-strong: var(--danger-strong);
+  --color-warning-strong: var(--warning-strong);
 
   --font-sans:
     var(--font-body), ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -350,4 +363,57 @@ input[type="search"]::-webkit-search-cancel-button {
   .draw-ring {
     stroke-dashoffset: 0;
   }
+}
+
+/*
+ * The professional area's animation preference (src/features/appearance):
+ * "discrete" keeps feedback (a field shaking on an error, a sheet sliding)
+ * but drops ambient motion and long entrances; "none" stops everything.
+ * The system's "reduce motion" (above) always applies on top.
+ */
+[data-motion="discrete"] .animate-float,
+[data-motion="discrete"] .animate-drift,
+[data-motion="discrete"] .grain::after {
+  animation: none !important;
+}
+[data-motion="discrete"] .animate-rise,
+[data-motion="discrete"] .animate-pop,
+[data-motion="discrete"] .animate-fade {
+  animation-duration: 160ms !important;
+}
+[data-motion="none"] *,
+[data-motion="none"] *::before,
+[data-motion="none"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/*
+ * Studio style (professional area). One family, Archivo, across its widths:
+ * the body in its normal width, every display title condensed and black.
+ * Components keep their classes; the style decides how they are set.
+ */
+[data-style="studio"] {
+  --font-sans: var(--font-studio), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-sans);
+}
+[data-style="studio"] .font-display {
+  font-family: var(--font-studio), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 900;
+  font-stretch: 62%;
+  font-variation-settings: "wdth" 62;
+  letter-spacing: -0.015em;
+  text-transform: uppercase;
+}
+.font-condensed {
+  font-family: var(--font-studio), ui-sans-serif, system-ui, sans-serif;
+  font-stretch: 62%;
+  font-variation-settings: "wdth" 62;
+}
+.font-expanded {
+  font-family: var(--font-studio), ui-sans-serif, system-ui, sans-serif;
+  font-stretch: 125%;
+  font-variation-settings: "wdth" 125;
 }

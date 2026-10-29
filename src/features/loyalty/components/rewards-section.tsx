@@ -180,7 +180,7 @@ export function RewardsSection({
                       </span>
                     ) : null}
                     {missingService ? (
-                      <span className="text-[13.5px] font-medium text-[#6b4613]">
+                      <span className="text-[13.5px] font-medium text-warning-strong">
                         Indisponible : la prestation offerte n’existe plus.
                         Choisis-en une autre pour la rendre disponible.
                       </span>

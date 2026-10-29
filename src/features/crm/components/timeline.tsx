@@ -305,7 +305,7 @@ const toneStyles: Record<
     icon: CheckIcon,
   },
   cancelled: {
-    pill: "bg-sand text-ink-muted",
+    pill: "bg-sand text-ink-soft",
     dot: "border-line-strong bg-paper-raised",
     icon: BanIcon,
   },

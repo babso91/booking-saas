@@ -86,9 +86,16 @@ const DEFAULT_TIME = "09:00";
 export function AgendaView({
   today: initialToday,
   initialDate,
+  initialAppointmentId,
 }: {
   /** Day to open on (a link from a customer profile); today otherwise. */
   initialDate?: string;
+  /**
+   * Appointment to open once the first range is read (a link from
+   * "Aujourd’hui"): its details panel, exactly as a tap on the grid opens
+   * it. Ignored if that range does not hold it.
+   */
+  initialAppointmentId?: string;
   /** The business's date today, from PostgreSQL. */
   today: string;
 }) {
@@ -111,6 +118,9 @@ export function AgendaView({
   const [awaitingToday, setAwaitingToday] = useState<number | null>(null);
   const intent = useRef(0);
   const alive = useRef(true);
+  // Opened once, from the first answer that comes back, and only if she has
+  // not done anything else meanwhile (see supersede).
+  const pendingAppointment = useRef(initialAppointmentId ?? null);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -132,7 +142,18 @@ export function AgendaView({
       if (!active) return;
       if (result.ok) {
         canonical.observe(observation, result.data);
-        setLoaded({ key, data: restrictToDays(result.data, range.days) });
+        const data = restrictToDays(result.data, range.days);
+        setLoaded({ key, data });
+        const wanted = pendingAppointment.current;
+        pendingAppointment.current = null;
+        const found = wanted
+          ? data.appointments.find((item) => item.id === wanted)
+          : undefined;
+        // Never over a panel she has opened meanwhile (a draft is kept).
+        if (found)
+          setPanelState(
+            (open) => open ?? { kind: "appointment", appointment: found },
+          );
       } else setFailed({ key, error: result.error });
     });
     return () => {
@@ -171,6 +192,9 @@ export function AgendaView({
    */
   function supersede() {
     intent.current += 1;
+    // Her intention changed: the appointment a link asked to open is no
+    // longer what she wants on screen.
+    pendingAppointment.current = null;
     setAwaitingToday(null);
     setTodayFailure(null);
   }
@@ -472,7 +496,7 @@ export function AgendaView({
 
         {empty && !loading ? (
           <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center p-6">
-            <div className="pointer-events-auto flex max-w-sm animate-rise flex-col items-center gap-3 rounded-3xl border border-line bg-paper-raised/95 px-6 py-7 text-center shadow-[0_24px_60px_-34px_rgba(35,28,24,0.45)]">
+            <div className="pointer-events-auto flex max-w-sm animate-rise flex-col items-center gap-3 rounded-3xl border border-line bg-paper-raised/95 px-6 py-7 text-center shadow-[0_24px_60px_-34px_rgb(var(--shadow-rgb)/0.45)]">
               <p className="font-display text-[28px] leading-tight text-ink">
                 {view === "week"
                   ? "Ta semaine est encore libre."

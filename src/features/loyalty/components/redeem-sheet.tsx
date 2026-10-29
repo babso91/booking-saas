@@ -238,7 +238,7 @@ export function RedeemSheet({
                     {rewardValueLabel({ ...reward, serviceName: null })}
                   </span>
                   {eligibility.eligible ? null : (
-                    <span className="text-[13px] font-medium text-[#6b4613]">
+                    <span className="text-[13px] font-medium text-warning-strong">
                       {eligibility.unavailableReason
                         ? unavailableCopy[eligibility.unavailableReason]
                         : `Il manque ${points(eligibility.missingPoints)}`}

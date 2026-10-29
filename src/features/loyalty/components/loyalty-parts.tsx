@@ -139,9 +139,9 @@ export function Badge({
     <span
       className={cn(
         "inline-flex h-6 shrink-0 items-center rounded-full px-2.5 text-[12px] font-semibold",
-        tone === "success" && "bg-success-soft text-[#2c4f38]",
+        tone === "success" && "bg-success-soft text-success-strong",
         tone === "muted" && "bg-sand text-ink-soft",
-        tone === "warning" && "bg-warning-soft text-[#6b4613]",
+        tone === "warning" && "bg-warning-soft text-warning-strong",
         tone === "neutral" && "bg-accent-soft text-ink",
       )}
     >

@@ -255,7 +255,9 @@ describe("booking confirmation", () => {
     expect(message.subject).toBe("Rendez-vous confirmé – Studio Mila Lashes");
     expect(message.text).toContain("Bonjour Léa,");
     expect(message.text).toContain("Prestation : Volume mixte");
-    expect(message.text).toMatch(/Date : \w+ \d{1,2} \w+ \d{4} à 10 h 30/u);
+    expect(message.text).toMatch(
+      /Date : \p{L}+ \d{1,2} \p{L}+ \d{4} à 10 h 30/u,
+    );
     expect(message.text).toContain("Durée : 1 h 30");
     expect(message.text).toMatch(/Prix : 85,00\s€/u);
     expect(message.text).toContain(`${APP_URL}/b/${business.slug}`);
@@ -1924,7 +1926,7 @@ describe("cancellation notices", () => {
     );
     expect(notice.text).toContain("Établissement : Studio Mila Lashes");
     expect(notice.text).toContain("Prestation : Volume mixte");
-    expect(notice.text).toMatch(/Date : \w+ \d{1,2} \w+ \d{4} à 10 h/u);
+    expect(notice.text).toMatch(/Date : \p{L}+ \d{1,2} \p{L}+ \d{4} à 10 h/u);
     expect(notice.text).toContain(`${APP_URL}/b/${business.slug}`);
 
     // Nothing more, however many runs.
