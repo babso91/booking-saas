@@ -50,7 +50,7 @@ Le style est porté par `data-style` sur l'enveloppe de l'espace et sur `<html>`
 
 **Calcul (pur, testé)** : `features/dashboard/client/today-model.ts`, appelé avec `todayModel(agenda, date, now)`.
 
-- **Visites du jour** : rendez-vous non annulés dont l'heure locale de début (`localStartsAt`, calculée par PostgreSQL) tombe à cette date, triés par instant.
+- **Visites du jour** : rendez-vous non annulés qui couvrent une partie de cette date civile, selon les bornes réelles du jour envoyées par PostgreSQL (journées de 23 h ou 25 h comprises). Une visite qui traverse minuit (23 h 30 → 1 h 30) figure sur les deux jours, marquée « depuis hier » ou « jusqu'à demain ». Triées par instant.
 - **État de chaque visite :**
   - `done` si elle est `completed` ou `no_show`, ou si elle est finie ;
   - `now` si elle a commencé et n'est pas finie ;
@@ -111,15 +111,15 @@ Invariants : mêmes rubriques, mêmes adresses, mêmes mots (`sections.ts`). Cha
 
 ## 6. États de la journée
 
-| Phase                 | Condition                         | Bloc couleur                                                                                                                  |
-| --------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `before`              | Aucune visite passée, une à venir | « Premier rendez-vous · HH:MM », cliente, « dans X », bouton ; puis la suivante                                               |
-| `during` (une visite) | Une visite en cours               | « En cours », cliente, prestation, barre d'avancement + temps restant, bouton ; « Ensuite »                                   |
-| `during` (plusieurs)  | Visites qui se chevauchent        | « En cours · N rendez‑vous » et **toutes** les clientes avec leur heure de fin. **Pas de barre unique**, qui serait trompeuse |
-| `between`             | Entre deux visites                | « Ensuite · HH:MM », « dans X », bouton ; « Puis »                                                                            |
-| `after`               | Toutes les visites sont passées   | « Journée terminée · N rendez‑vous »                                                                                          |
-| `free`                | Aucune visite                     | « Journée libre · Rien de prévu », ou « Jour de fermeture · Repos » si aucune ouverture ce jour-là                            |
-| Minuit passé          | `nowTime` absent                  | L'heure affiche « ··.·· » le temps de la relecture                                                                            |
+| Phase                 | Condition                         | Bloc couleur                                                                                                                                                                                                                                |
+| --------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `before`              | Aucune visite passée, une à venir | « Premier rendez-vous · HH:MM », cliente, « dans X », bouton ; puis la suivante                                                                                                                                                             |
+| `during` (une visite) | Un créneau commencé et pas fini   | « Créneau en cours », cliente, prestation, **avancement théorique** (« fin prévue dans X »), bouton ; « Ensuite ». Un créneau confirmé qui a commencé n'est pas une prestation dont on sait qu'elle a commencé : aucun statut n'est inventé |
+| `during` (plusieurs)  | Créneaux qui se chevauchent       | « Créneaux en cours · N » et **toutes** les clientes avec leur heure de fin. **Pas de barre unique**, qui serait trompeuse                                                                                                                  |
+| `between`             | Entre deux visites                | « Ensuite · HH:MM », « dans X », bouton ; « Puis »                                                                                                                                                                                          |
+| `after`               | Toutes les visites sont passées   | « Journée terminée · N rendez‑vous »                                                                                                                                                                                                        |
+| `free`                | Aucune visite                     | « Journée libre · Rien de prévu » ; « Jour de fermeture · Repos » sans horaires ce jour-là ; « Fermeture exceptionnelle » (avec son motif) quand ses fermetures couvrent toute l'ouverture                                                  |
+| Minuit passé          | `nowTime` absent                  | L'heure affiche « ··.·· » le temps de la relecture                                                                                                                                                                                          |
 
 Une visite `completed` ou `no_show` est rangée dans le passé, même avant son heure de fin. La liste distingue « Terminé », « Absente » et « Passé » (passée sans statut). Elle ne prétend jamais qu'une visite est terminée si ce n'est pas le cas.
 
@@ -127,7 +127,7 @@ Une visite `completed` ou `no_show` est rangée dans le passé, même avant son 
 
 ## 7. Tests et vérifications
 
-- **Unitaires et composants (vitest)** : 1 315 tests passent, dont :
+- **Unitaires et composants (vitest)** : la suite complète passe (chiffres à jour dans la PR), dont :
   - apparence : 600 couleurs signature aléatoires, chaque paire texte/surface à 4,5:1 au moins, cookie hérité, valeurs inconnues ;
   - modèle du jour : toutes les phases, annulations, absences, minuit, journée fermée, débordement de l'ouverture, chevauchements, remplissage, notes ;
   - `StudioToday` : liens directs, notes masquées puis affichées, aucun montant, journée chargée ;
@@ -153,7 +153,7 @@ Une visite `completed` ou `no_show` est rangée dans le passé, même avant son 
 
   Recommandation : un passage manuel sur staging (avec ton accord) ou un test e2e authentifié une fois Supabase disponible en CI.
 
-- **Visites qui traversent minuit.** Une visite commencée la veille et finissant aujourd'hui n'apparaît pas dans « Aujourd'hui », qui filtre sur la date locale de début. L'agenda, lui, l'affiche.
+- **Visites qui traversent minuit** : corrigé après l'audit, voir § 10.
 - **Heure de l'appareil.** « Maintenant » vient de l'horloge de l'appareil, convertie avec les décalages de PostgreSQL, comme la ligne « maintenant » de l'agenda. Un appareil mal réglé décale l'état « en cours ». Les décisions qui comptent (dates des actions) restent validées par PostgreSQL dans l'agenda.
 - **Préférences par appareil**, non synchronisées (voir § 4).
 - **En Studio, l'agenda garde sa grille actuelle**, habillée aux couleurs du Studio. Le planning mural est la PR suivante (Studio 2), sur les mêmes actions et protections.
@@ -166,3 +166,34 @@ Une visite `completed` ou `no_show` est rangée dans le passé, même avant son 
 3. **Isolation** : aucune nouvelle lecture. `/app/today` réutilise `getAgenda` et `readBusinessToday` avec le client RLS de la session.
 4. **Cookie** : lecture stricte, CSS généré uniquement à partir des valeurs validées.
 5. **Aperçus** : 404 en production sauf `DASHBOARD_PREVIEW=1`, données fictives uniquement.
+
+## 10. Corrections après l'audit Codex #28
+
+Audit de `0d08f5a` : 0 BLOCKER, 5 IMPORTANT, 2 MINOR. Un commit par correction, chacun avec un test qui échoue sur l'ancien code et passe sur le nouveau.
+
+| #   | Défaut                                                                       | Correction                                                                                                                                     | Reproduction                                                                                                                                                                                            |
+| --- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Une réponse tardive de `?rdv=` remplaçait un formulaire commencé entre-temps | Toute interaction (panneau ouvert, jour changé) annule l'ouverture en attente (`supersede`) ; les détails ne s'ouvrent que sur un panneau vide | `agenda-view.test.tsx` : brouillon saisi pendant la lecture, puis réponse → le formulaire et son texte restent                                                                                          |
+| 2   | Prestations inaccessible sur téléphone                                       | Prestations dans la feuille « Plus » sous 768 px ; dock plus serré sous 360 px                                                                 | `studio-shell.test.tsx` (chaque rubrique atteignable aux deux largeurs) ; Chromium : 8/8 rubriques visibles et cliquables à 320, 390, 768 et 1 440 px (avant : Prestations absente à 320 et 390)        |
+| 3   | Boutons illisibles au survol en sombre                                       | Survol, désactivé et succès dérivés des tokens, pour Studio **et** Classique (plus aucune couleur fixe)                                        | `button-contrast.test.ts` lit les classes de chaque variante : 4 états × 12 combinaisons style/ambiance/mode. Chromium (survol, focus, actif) : avant, 1,13 à 1,35:1 en sombre ; après, ≥ 4,5:1 partout |
+| 4   | Rendez-vous traversant minuit absent                                         | Bornes réelles du jour (PostgreSQL) ; présent les deux jours ; frise limitée au jour ; minutes comptées sur le jour où elles tombent           | `today-model.test.ts` et `studio-today.test.tsx` : 23 h 30 → 1 h 30, mardi 22 h et mercredi 0 h 30                                                                                                      |
+| 5   | Faux état « En cours »                                                       | « Créneau en cours », avancement « théorique », « fin prévue dans X » ; « Terminé » seulement si elle l'a marqué                               | `studio-today.test.tsx` : plus aucun « En cours » affirmé, libellés du bloc et de la liste                                                                                                              |
+| 6   | Fermeture exceptionnelle confondue avec une journée vide                     | `closure` : `weekly` ou `exceptional` (avec motif) ; remplissage mesuré sur le temps **réservable** (ouverture moins fermetures et pauses)     | `today-model.test.ts` : jeudi fermé (« Formation ») ≠ jour ouvert sans rendez-vous ; mardi = 600 − 75 min réservables                                                                                   |
+| 7   | Cookie `constructor`, `toString`, `__proto__` → erreur 500                   | `Object.hasOwn` au lieu de `in`                                                                                                                | `appearance.test.ts` (6 valeurs) ; Chromium : avant, 500 sur `toString…` et `hasOwnProperty…` ; après, 200                                                                                              |
+
+**E2E contre le vrai backend** (nouveau, exécuté par la CI avec Supabase) : `tests/e2e/studio-today.test.ts`.
+
+- Déconnectée, `/app/today` renvoie vers `/login`.
+- En Studio, la page affiche **son** créneau en cours, lu par sa propre lecture RLS. Ni le nom ni l'identifiant d'un rendez-vous d'une autre entreprise n'apparaissent, même dans le payload.
+- En Classique, `/app/today` renvoie vers `/app`.
+- Les cookies d'apparence hostiles ne provoquent jamais d'erreur 500, sur `/app`, `/app/today` et `/app/settings/appearance`.
+
+C'est la première exécution authentifiée de bout en bout de Studio 1. Elle réduit la limite du § 8.
+
+**CI** : les trois tests calendaires qui échouaient déjà sur `main` sont corrigés par le commit de #27 (`7462aaa`), reporté à l'identique (`git cherry-pick -x`) dans un commit séparé. Les quatre fichiers de tests ont un patch identique octet pour octet, et #27 n'est pas modifiée.
+
+**Confidentialité des notes : la différence exacte.** Les notes ne sont jamais _affichées_ dans les grandes zones, et leur liste n'est rendue qu'à la demande. Mais elles **sont présentes dans le payload React** : `getAgenda` renvoie `internalNotes`, et le DTO complet est passé au composant client.
+
+- Concrètement, une personne qui inspecte la page ou le réseau sur la session de la professionnelle peut les lire.
+- Les autorisations, elles, ne changent pas : seule une membre de l'entreprise reçoit ces données (RLS), exactement comme pour l'agenda, qui les reçoit aussi.
+- Pour les retirer du payload, il faudrait ne pas transmettre `internalNotes` à l'accueil et les charger à la demande. L'action existante `getAgendaAppointmentAction` (RLS) le permet sans nouvelle API, mais c'est un changement de contrat à coordonner. Rien n'a été ajouté sans cette coordination.
