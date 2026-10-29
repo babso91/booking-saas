@@ -9,6 +9,7 @@ import {
   ClockIcon,
   GiftIcon,
   PaletteIcon,
+  SparkIcon,
 } from "@/components/ui/icons";
 import { Sheet } from "@/components/ui/sheet";
 import { SignOutButton } from "@/features/auth/components/sign-out-button";
@@ -39,6 +40,13 @@ const more: {
   icon: typeof GiftIcon;
   phoneOnly?: boolean;
 }[] = [
+  // In the dock from md; on a phone, here.
+  {
+    section: "services",
+    label: "Prestations",
+    icon: SparkIcon,
+    phoneOnly: true,
+  },
   { section: "loyalty", label: "Fidélité", icon: GiftIcon, phoneOnly: true },
   { section: "hours", label: "Horaires", icon: ClockIcon },
   { section: "calendar", label: "Google Calendar", icon: CalendarSyncIcon },
@@ -94,7 +102,7 @@ export function StudioShell({
             href={sectionHref[item.section]}
             aria-current={current === item.section ? "page" : undefined}
             className={cn(
-              "h-11 items-center rounded-full px-3.5 text-[14.5px] font-bold whitespace-nowrap transition-colors focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature sm:px-4",
+              "h-11 items-center rounded-full px-2.5 text-[14px] font-bold whitespace-nowrap transition-colors min-[360px]:px-3.5 min-[360px]:text-[14.5px] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature sm:px-4",
               item.wide ? "hidden md:flex" : "flex",
               current === item.section
                 ? "bg-paper text-ink"
@@ -107,7 +115,7 @@ export function StudioShell({
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="flex h-11 cursor-pointer items-center rounded-full px-3.5 text-[14.5px] font-bold whitespace-nowrap text-paper/75 hover:text-paper focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature md:hidden"
+          className="flex h-11 cursor-pointer items-center rounded-full px-2.5 text-[14px] font-bold min-[360px]:px-3.5 min-[360px]:text-[14.5px] whitespace-nowrap text-paper/75 hover:text-paper focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-signature md:hidden"
         >
           Plus
         </button>

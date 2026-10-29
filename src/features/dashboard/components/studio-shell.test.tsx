@@ -77,6 +77,51 @@ describe("the frame follows her style", () => {
   });
 });
 
+describe("every room is reachable, on a phone as on a computer", () => {
+  // The dock shows some rooms only from md (768 px): "hidden md:flex";
+  // the sheet shows some only below it: "md:hidden". jsdom applies no CSS,
+  // so what each width shows is read from those classes.
+  const visible = (element: Element, wide: boolean) => {
+    const classes = element.className.split(/\s+/);
+    return wide ? !classes.includes("md:hidden") : !classes.includes("hidden");
+  };
+
+  it.each([false, true])("wide = %s", async (wide) => {
+    const user = userEvent.setup();
+    renderIn("studio", "today");
+    const dock = screen.getByRole("navigation", {
+      name: "Navigation principale",
+    });
+    const reachable = new Set(
+      within(dock)
+        .getAllByRole("link")
+        .filter((link) => visible(link, wide))
+        .map((link) => link.getAttribute("href")),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Atelier Maëlys : réglages et compte",
+      }),
+    );
+    within(screen.getByRole("dialog"))
+      .getAllByRole("link")
+      .filter((link) => visible(link, wide))
+      .forEach((link) => reachable.add(link.getAttribute("href")));
+    expect([...reachable].sort()).toEqual(
+      [
+        "/app",
+        "/app/clients",
+        "/app/loyalty",
+        "/app/services",
+        "/app/settings/appearance",
+        "/app/settings/calendar",
+        "/app/settings/hours",
+        "/app/today",
+      ].sort(),
+    );
+  });
+});
+
 describe("initialsOf", () => {
   it.each([
     ["Atelier Maëlys", "AM"],
