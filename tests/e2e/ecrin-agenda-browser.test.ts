@@ -184,7 +184,13 @@ describe("Écrin in a browser", () => {
     await vi.waitFor(async () => expect(await visitCount(businessId)).toBe(1), {
       timeout: 15_000,
     });
+    // The form gives way to the server's appointment, in its card.
+    await page
+      .getByRole("dialog")
+      .getByRole("heading", { name: "Rendez-vous", exact: true })
+      .waitFor();
     await page.keyboard.press("Escape");
+    await page.getByRole("dialog").waitFor({ state: "detached" });
     await page
       .getByRole("button", { name: /10:00, Eva Visite/ })
       .first()
