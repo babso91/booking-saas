@@ -103,10 +103,26 @@ Les résultats exacts au HEAD sont dans la description de la PR.
 
 ## 11. Synchronisation avec Studio 2
 
-Non faite : à réaliser quand Codex aura déclaré Studio 2 READY, par un merge sans réécriture d'historique. Une fusion d'essai jetable avec `2ee3795` passe sans conflit Git. À ce moment-là, en plus du merge :
+Studio 2 validé par Codex (`2ee3795`, READY) est intégré par un merge, sans réécriture d'historique. Git n'a signalé aucun conflit ; le résultat est compilé et testé.
 
-1. `AgendaView` : lire aussi la veille pour Écrin (`buffers` et `readRange` selon `designed`, pas `studio`). D'ici là, un tampon de la veille est ignoré dans le temps libre d'Écrin.
-2. `DaySays` : utiliser `flow.freeMinutes` au lieu d'additionner les éléments `free`.
-3. `ecrin-week.tsx` : dessiner le tampon après chaque visite, sans cible de clic.
-4. `ecrin-thread.tsx` : vérifier les lignes « Libre » courtes (seuil à 5 min) et le repère de l'heure sur une visite annulée.
-5. Ajouter `tests/e2e/ecrin-agenda-browser.test.ts` : isolation et réponses réseau, fiche, création, menu sur téléphone, changement de style, dans un navigateur connecté.
+| Adaptation            | Résultat                                                                                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lecture élargie       | `AgendaView` lit la veille pour Studio et Écrin (`designed`). Le Classique lit la même période qu'avant.                                                                        |
+| Temps libre du cadran | `DaySays` utilise `flow.freeMinutes` ; un intervalle de 4 min compte sans être proposé (testé).                                                                                 |
+| Semaine               | Tampon dessiné en queue pointillée sous la visite, distinct des pauses hachurées. Pas une cible de clic, aucun formulaire ne s'ouvre (testé). Une visite annulée ne garde rien. |
+| Fil                   | « Maintenant » suit l'état affiché, annulée ou non ; visite en cours, chevauchements et minuit testés.                                                                          |
+
+La validation serveur reste l'autorité finale : l'interface ne duplique aucune règle de réservation.
+
+## 12. Parcours navigateur avec session réelle
+
+Exécutés uniquement en CI (Supabase local et `next start` ; pas de Docker sur ce poste).
+
+- `tests/e2e/ecrin-agenda-browser.test.ts` : hydratation et vrais rendez-vous, fiche et retour du focus, accueil vers fiche, isolation entre établissements avec inspection des réponses réseau, création puis refus d'un chevauchement (page et base), brouillon protégé contre `?rdv=`, liens malformés, retour sur l'onglet, changement de style avec rechargement, cookies interdits, axe clair et sombre, téléphone à 320, 375 et 390 px.
+- `tests/e2e/ecrin-secondary-browser.test.ts` : Clientes (liste, ajout, fiche), Prestations, Fidélité, Horaires, Calendar, Apparence, sur ordinateur et téléphone, en clair et en sombre, avec axe sur les écrans et les panneaux. Aucune sauvegarde.
+
+`axe-core` devient une dépendance de développement explicite (même version que celle déjà présente dans l'arbre).
+
+## 13. Contrat d'apparence
+
+Les valeurs `classique`, `studio` et `ecrin` sont actives. `carnet` n'existe pas encore : un cookie qui la porte retombe sur `classique`, sans erreur (testé), et l'ajouter à `styleIds` suffira le moment venu. Le format du cookie ne change pas. La PR #31 n'est pas intégrée.

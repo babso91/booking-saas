@@ -15,6 +15,7 @@ import {
   openSegments,
   placeAppointments,
   placeBlocks,
+  segmentOn,
   timeAt,
   yOf,
 } from "@/features/agenda/client/layout";
@@ -81,6 +82,22 @@ export function EcrinWeek({
           workingDays.find((day) => day.date === date),
           date,
         ),
+        // The buffer after each visit: held, so not free.
+        held: appointments.flatMap((appointment) =>
+          appointment.status === "cancelled" || !appointment.bufferMinutes
+            ? []
+            : (segmentOn(
+                axis,
+                {
+                  startsAt: appointment.endsAt,
+                  endsAt: new Date(
+                    Date.parse(appointment.endsAt) +
+                      appointment.bufferMinutes * 60_000,
+                  ).toISOString(),
+                },
+                date,
+              )?.pieces.map((piece) => ({ id: appointment.id, piece })) ?? []),
+        ),
         count: data ? distinctBookings(data, [date], true) : 0,
         model: data ? todayModel(data, date, nowMs ?? 0) : null,
       })),
@@ -100,6 +117,8 @@ export function EcrinWeek({
         tops.push(segment.top);
         bottoms.push(segment.bottom);
       }
+    for (const column of columns)
+      for (const { piece } of column.held) bottoms.push(piece.bottom);
     const first = tops.length ? Math.min(...tops) : 9 * 60;
     const last = bottoms.length ? Math.max(...bottoms) : 19 * 60;
     const marks = axis.marks.map((mark) => mark.y);
@@ -279,6 +298,22 @@ export function EcrinWeek({
                     hatch,
                   )}
                   style={{ top: y(gap.top), height: h(gap.top, gap.bottom) }}
+                />
+              ))}
+
+              {/* A thin dotted tail under the visit: held, not a pause, and
+                  not a click target (free time is what is left). */}
+              {column.held.map(({ id, piece }) => (
+                <span
+                  key={`${id}:${piece.top}`}
+                  aria-hidden="true"
+                  data-buffer=""
+                  title="Temps gardé après le rendez-vous"
+                  className="absolute inset-x-1 z-[7] cursor-default rounded-b-[12px] border-x border-b border-dashed border-line-strong bg-paper"
+                  style={{
+                    top: y(piece.top),
+                    height: `${((piece.bottom - piece.top) / span) * 100}%`,
+                  }}
                 />
               ))}
 

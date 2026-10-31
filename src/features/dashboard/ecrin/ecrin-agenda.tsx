@@ -324,11 +324,7 @@ function DaySays({ props }: { props: StudioAgendaProps }) {
       ? item.visits.filter((visit) => visit.appointment.status !== "cancelled")
       : [],
   );
-  const free = flow.items.reduce(
-    (total, item) =>
-      item.kind === "free" && item.bookable ? total + item.minutes : total,
-    0,
-  );
+  const free = flow.freeMinutes;
   return (
     <>
       <p className="font-engraved text-[11px] tracking-[0.2em] text-ink-soft uppercase">

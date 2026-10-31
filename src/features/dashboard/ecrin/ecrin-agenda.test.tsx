@@ -132,7 +132,7 @@ describe("Écrin agenda — computer", () => {
     renderEcrin();
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenCalledWith({
-        startDate: "2026-09-28",
+        startDate: "2026-09-27",
         endDate: "2026-10-04",
         includeCancelled: false,
       }),
@@ -176,7 +176,7 @@ describe("Écrin agenda — computer", () => {
     );
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith({
-        startDate: "2026-09-30",
+        startDate: "2026-09-29",
         endDate: "2026-09-30",
         includeCancelled: false,
       }),
@@ -187,7 +187,7 @@ describe("Écrin agenda — computer", () => {
     await user.click(screen.getByRole("button", { name: "Semaine" }));
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith({
-        startDate: "2026-09-28",
+        startDate: "2026-09-27",
         endDate: "2026-10-04",
         includeCancelled: false,
       }),
@@ -364,7 +364,7 @@ describe("Écrin agenda — computer", () => {
     await user.click(screen.getByRole("checkbox", { name: /annulés/ }));
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith({
-        startDate: "2026-09-28",
+        startDate: "2026-09-27",
         endDate: "2026-10-04",
         includeCancelled: true,
       }),
@@ -372,13 +372,13 @@ describe("Écrin agenda — computer", () => {
     await user.click(screen.getByRole("button", { name: "Semaine suivante" }));
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith(
-        expect.objectContaining({ startDate: "2026-10-05" }),
+        expect.objectContaining({ startDate: "2026-10-04" }),
       ),
     );
     await user.click(screen.getByRole("button", { name: "Aujourd’hui" }));
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith(
-        expect.objectContaining({ startDate: "2026-09-28" }),
+        expect.objectContaining({ startDate: "2026-09-27" }),
       ),
     );
   });
@@ -392,7 +392,7 @@ describe("Écrin agenda — phone", () => {
     renderEcrin();
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenCalledWith({
-        startDate: TODAY,
+        startDate: "2026-09-28",
         endDate: TODAY,
         includeCancelled: false,
       }),
@@ -421,7 +421,7 @@ describe("Écrin agenda — phone", () => {
     await user.click(screen.getByRole("checkbox", { name: /annulés/ }));
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith({
-        startDate: TODAY,
+        startDate: "2026-09-28",
         endDate: TODAY,
         includeCancelled: true,
       }),
@@ -444,7 +444,7 @@ describe("Écrin agenda — phone", () => {
     await user.click(screen.getByRole("button", { name: "Semaine suivante" }));
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith(
-        expect.objectContaining({ startDate: "2026-10-06" }),
+        expect.objectContaining({ startDate: "2026-10-05" }),
       ),
     );
     await user.click(
@@ -452,13 +452,13 @@ describe("Écrin agenda — phone", () => {
     );
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith(
-        expect.objectContaining({ startDate: "2026-10-08" }),
+        expect.objectContaining({ startDate: "2026-10-07" }),
       ),
     );
     await user.click(screen.getByRole("button", { name: "Aujourd’hui" }));
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith(
-        expect.objectContaining({ startDate: TODAY }),
+        expect.objectContaining({ startDate: "2026-09-28" }),
       ),
     );
   });
@@ -598,5 +598,158 @@ describe("Écrin agenda — hard cases", () => {
     await waitFor(() =>
       expect(actions.getAgendaAction.mock.calls.length).toBe(reads + 1),
     );
+  });
+});
+
+describe("Écrin agenda — buffers", () => {
+  const withBuffer = (
+    local: string,
+    name: string,
+    durationMinutes: number,
+  ) => ({
+    ...appointment({
+      local,
+      durationMinutes,
+      client: { id: name, displayName: name },
+    }),
+    bufferMinutes: 60,
+  });
+
+  const readWith = (...visits: ReturnType<typeof withBuffer>[]) =>
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: visits })),
+    );
+
+  it("week: drawn after the visit, not a target; a click there proposes nothing", async () => {
+    useViewport(true);
+    const user = userEvent.setup();
+    readWith(withBuffer(`${TODAY}T10:00`, "Tina Tampon", 60));
+    renderEcrin();
+    await screen.findByRole("button", { name: /Tina Tampon/ });
+    const held = document.querySelector("[data-buffer]") as HTMLElement;
+    expect(held).not.toBeNull();
+    expect(held.tagName).toBe("SPAN");
+    expect(held.getAttribute("aria-hidden")).toBe("true");
+    await user.click(held);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("week: a cancelled visit holds nothing", async () => {
+    useViewport(true);
+    readWith({
+      ...withBuffer(`${TODAY}T10:00`, "Clara Annule", 60),
+      status: "cancelled",
+    });
+    renderEcrin();
+    await screen.findByRole("button", { name: /Clara Annule/ });
+    expect(document.querySelector("[data-buffer]")).toBeNull();
+  });
+
+  it("day: the buffer of a visit over yesterday holds today's first hour, the visit stays out of it", async () => {
+    useViewport(false);
+    // Over yesterday at 23:30, kept until 00:30 — with a 10-hour buffer in
+    // the fixture, until 09:30 today, into her opening at 09:00.
+    const night = {
+      ...withBuffer("2026-09-28T23:00", "Nora Hier", 30),
+      bufferMinutes: 600,
+    };
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [night] })),
+    );
+    vi.setSystemTime(new Date("2026-09-29T06:00:00Z")); // 08:00 in Paris
+    renderEcrin();
+    const day = within(
+      await screen.findByRole("list", { name: "Déroulé de la journée" }),
+    );
+    expect(
+      await day.findByRole("button", {
+        name: /à partir de 09:30 : nouveau rendez-vous/,
+      }),
+    ).toBeTruthy();
+    expect(day.queryByRole("button", { name: /à partir de 09:00/ })).toBeNull();
+    expect(day.queryByRole("button", { name: /Nora Hier/ })).toBeNull();
+  });
+
+  it("first day of a week: the read reaches the week before", async () => {
+    useViewport(true);
+    renderEcrin({ initialDate: "2026-09-28" });
+    await waitFor(() =>
+      expect(actions.getAgendaAction).toHaveBeenCalledWith(
+        expect.objectContaining({ startDate: "2026-09-27" }),
+      ),
+    );
+  });
+
+  it("the dial counts all free time ahead, even a stretch too short to offer", async () => {
+    useViewport(true);
+    const user = userEvent.setup();
+    // 09:00–19:00 open at 08:00: two visits leave 4 minutes between them.
+    vi.setSystemTime(new Date("2026-09-29T06:00:00Z"));
+    readWith(
+      { ...withBuffer(`${TODAY}T09:00`, "Ana Un", 120), bufferMinutes: 0 },
+      { ...withBuffer(`${TODAY}T11:04`, "Bia Deux", 476), bufferMinutes: 0 },
+    );
+    renderEcrin();
+    await user.click(await screen.findByRole("button", { name: "Jour" }));
+    expect(await screen.findByText("4 min libres")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /à partir de 11:00/ }),
+    ).toBeNull();
+  });
+});
+
+describe("Écrin thread — now and what is going on", () => {
+  beforeEach(() => useViewport(false));
+
+  it("a cancelled visit at this hour: « now » has its own mark", async () => {
+    const cancelled = {
+      ...appointment({ local: `${TODAY}T09:30` }),
+      status: "cancelled" as const,
+    };
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [cancelled] })),
+    );
+    renderEcrin();
+    expect(
+      await screen.findByRole("listitem", { name: "Il est 10:00" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("a visit going on says it itself: no second mark, its progress", async () => {
+    const going = appointment({
+      local: `${TODAY}T09:30`,
+      durationMinutes: 60,
+    });
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [going] })),
+    );
+    renderEcrin();
+    expect(
+      await screen.findByRole("progressbar", {
+        name: "Avancement théorique du créneau",
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("listitem", { name: /^Il est/ })).toBeNull();
+  });
+
+  it("across midnight: own line on both days; overlaps together", async () => {
+    const night = appointment({
+      local: `${TODAY}T23:30`,
+      durationMinutes: 120,
+      client: { id: "n", displayName: "Lou Minuit" },
+    });
+    const other = appointment({
+      local: `${TODAY}T23:45`,
+      durationMinutes: 30,
+      client: { id: "o", displayName: "Eva Soir" },
+    });
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [night, other] })),
+    );
+    renderEcrin();
+    const capsule = await screen.findByRole("button", { name: /Lou Minuit/ });
+    expect(capsule.textContent).toMatch(/jusqu’à demain 01:30/);
+    expect(screen.getByText("En même temps · 2")).toBeTruthy();
   });
 });

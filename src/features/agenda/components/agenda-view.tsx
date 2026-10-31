@@ -117,8 +117,7 @@ export function AgendaView({
   const style = useDashboardStyle();
   // Studio and Écrin: other presentations of this same controller, where a
   // computer can also show one day.
-  const studio = style === "studio";
-  const designed = studio || style === "ecrin";
+  const designed = style !== "classique";
   const [studioView, setStudioView] = useState<StudioView>("week");
   const view: View = wide ? (designed ? studioView : "week") : "day";
   const clock = useSyncExternalStore(subscribeClock, clockBucket, () => 0);
@@ -152,9 +151,10 @@ export function AgendaView({
   const key = `${range.startDate}:${range.endDate}:${includeCancelled}:${reloadToken}`;
   const rangeKey = `${range.startDate}:${range.endDate}:${includeCancelled}`;
 
-  // Studio shows free time, which a buffer from the day before can hold.
+  // Studio and Écrin show free time, which a buffer from the day before can
+  // hold.
   const readRange = (days: string[]) =>
-    studio ? agendaRangeWithBuffers(days) : agendaRequestRange(days);
+    designed ? agendaRangeWithBuffers(days) : agendaRequestRange(days);
 
   useEffect(() => {
     if (wide === null) return;
@@ -167,7 +167,7 @@ export function AgendaView({
       if (result.ok) {
         canonical.observe(observation, result.data);
         const data = restrictToDays(result.data, range.days, {
-          buffers: studio,
+          buffers: designed,
         });
         setLoaded({ key, data });
         const wanted = pendingAppointment.current;
@@ -345,7 +345,7 @@ export function AgendaView({
     );
     if (!result.ok) return result.error;
     canonical.observe(observation, result.data);
-    const data = restrictToDays(result.data, range.days, { buffers: studio });
+    const data = restrictToDays(result.data, range.days, { buffers: designed });
     setLoaded({ key, data });
     const fresh = data.blocks.find((item) => item.id === block.id);
     if (fresh) {
