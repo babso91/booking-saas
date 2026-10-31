@@ -4,6 +4,7 @@ import type {
   AgendaDayDto,
   AgendaDto,
 } from "@/features/agenda/data/agenda";
+import { addDaysToLocalDate } from "@/lib/time/local-date";
 
 import { dayBounds, transitionWithin, wallOf, type Zone } from "./zone";
 
@@ -83,8 +84,27 @@ export function agendaRequestRange(days: string[]) {
   return { startDate: days[0]!, endDate: days[days.length - 1]! };
 }
 
-/** The agenda restricted to the real interval of the visible days. */
-export function restrictToDays(data: AgendaDto, days: string[]): AgendaDto {
+/**
+ * The range to read when free time matters: one day more before the first.
+ * A visit over then may still hold the first hours through its buffer
+ * (240 minutes at most), though it overlaps no visible day.
+ */
+export function agendaRangeWithBuffers(days: string[]) {
+  return {
+    startDate: addDaysToLocalDate(days[0]!, -1),
+    endDate: days[days.length - 1]!,
+  };
+}
+
+/**
+ * The agenda restricted to the real interval of the visible days. With
+ * `buffers`, also the visits over before them whose buffer reaches them.
+ */
+export function restrictToDays(
+  data: AgendaDto,
+  days: string[],
+  { buffers = false }: { buffers?: boolean } = {},
+): AgendaDto {
   const visible = data.workingHours.days.filter((day) =>
     days.includes(day.date),
   );
@@ -102,7 +122,13 @@ export function restrictToDays(data: AgendaDto, days: string[]): AgendaDto {
     Date.parse(item.startsAt) < endMs && Date.parse(item.endsAt) > startMs;
   return {
     ...data,
-    appointments: data.appointments.filter(inside),
+    appointments: data.appointments.filter((appointment) =>
+      buffers
+        ? Date.parse(appointment.startsAt) < endMs &&
+          Date.parse(appointment.endsAt) + appointment.bufferMinutes * 60_000 >
+            startMs
+        : inside(appointment),
+    ),
     blocks: data.blocks.filter(inside),
     workingHours: { ...data.workingHours, days: visible },
   };

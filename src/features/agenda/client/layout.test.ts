@@ -11,6 +11,8 @@ import {
   intlZone,
 } from "../../../../tests/support/zone-fixture";
 import {
+  agendaRangeWithBuffers,
+  agendaRequestRange,
   allDayBlocks,
   buildAxis,
   coversWholeDay,
@@ -804,5 +806,44 @@ describe("restrictToDays — the extra day requested is never shown", () => {
     expect(visible.workingHours.days.map((day) => day.date)).toEqual([
       "2026-11-01",
     ]);
+  });
+});
+
+describe("restrictToDays with buffers", () => {
+  const days = ["2026-09-28"];
+  const read = (bufferMinutes: number) =>
+    agenda("2026-09-27", "2026-09-28", {
+      appointments: [
+        appointment({
+          local: "2026-09-27T23:00",
+          durationMinutes: 50,
+          bufferMinutes,
+        }),
+      ],
+    });
+
+  it("reads one day more before the first", () => {
+    expect(agendaRangeWithBuffers(["2027-01-01", "2027-01-02"])).toEqual({
+      startDate: "2026-12-31",
+      endDate: "2027-01-02",
+    });
+    // What the Classique agenda reads does not move.
+    expect(agendaRequestRange(days)).toEqual({
+      startDate: "2026-09-28",
+      endDate: "2026-09-28",
+    });
+  });
+
+  it("keeps a visit over before the days only if its buffer reaches them", () => {
+    expect(
+      restrictToDays(read(30), days, { buffers: true }).appointments,
+    ).toHaveLength(1);
+    expect(
+      restrictToDays(read(10), days, { buffers: true }).appointments,
+    ).toHaveLength(0);
+  });
+
+  it("by default, as before: only what overlaps the days", () => {
+    expect(restrictToDays(read(30), days).appointments).toHaveLength(0);
   });
 });

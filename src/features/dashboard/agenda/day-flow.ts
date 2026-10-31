@@ -5,6 +5,8 @@ import type {
   AgendaDto,
 } from "@/features/agenda/data/agenda";
 
+import { visitLookOf } from "./visit-look";
+
 // The Studio day, as a chronological flow rather than a scale drawing: her
 // visits in order (taller when longer), visits that overlap side by side,
 // her pauses and closures where they fall, the free time between them
@@ -15,8 +17,11 @@ import type {
 // a slot's state is its time and her own statuses, never a guess.
 
 const MINUTE = 60_000;
-/** Free time shorter than this is not offered (nor shown). */
-export const MIN_FREE_MINUTES = 15;
+/**
+ * Free time shorter than this is not offered (nor shown): the shortest
+ * service there can be. It is still counted (DayFlow.freeMinutes).
+ */
+export const MIN_FREE_MINUTES = 5;
 
 export type VisitTiming = "past" | "now" | "ahead";
 
@@ -64,6 +69,8 @@ export type DayFlow = {
   count: number;
   /** No opening that day, or her "closed" exceptions cover all of it. */
   closed: boolean;
+  /** All the free time still ahead, however short each stretch is. */
+  freeMinutes: number;
 };
 
 type Interval = { start: number; end: number };
@@ -191,26 +198,35 @@ export function dayFlow(
   }
 
   // Free time: her opening, minus what holds time (visits not cancelled,
-  // pauses, closures). Offered only when still ahead.
+  // with the buffer they froze: the database's occupied window, [start,
+  // end + buffer), real minutes; pauses, closures). Offered only when still
+  // ahead. A visit over before this day may still hold its first minutes.
   const opening = union(
     (day?.openRanges ?? []).map((range) =>
       clip(Date.parse(range.startsAt), Date.parse(range.endsAt)),
     ),
   );
   const taken = union([
-    ...visits
-      .filter((visit) => live(visit.appointment))
-      .map((v) => clip(v.start, v.end)),
+    ...data.appointments.filter(live).flatMap((appointment) => {
+      const start = Date.parse(appointment.startsAt);
+      const end =
+        Date.parse(appointment.endsAt) + appointment.bufferMinutes * MINUTE;
+      return start < bounds.end && end > bounds.start ? [clip(start, end)] : [];
+    }),
     ...blocks.map((block) =>
       clip(Date.parse(block.startsAt), Date.parse(block.endsAt)),
     ),
   ]);
+  let freeTotal = 0;
   for (const free of subtract(opening, taken)) {
     // What is still ahead of a free stretch already begun is its bookable part.
     const start =
       now !== null && free.start < now && now < free.end
         ? Math.ceil(now / (5 * MINUTE)) * 5 * MINUTE
         : free.start;
+    if (start >= free.end) continue;
+    const bookable = now === null || start >= now;
+    if (bookable) freeTotal += free.end - start;
     const minutes = Math.round((free.end - start) / MINUTE);
     if (minutes < MIN_FREE_MINUTES) continue;
     items.push({
@@ -219,7 +235,7 @@ export function dayFlow(
       end: free.end,
       minutes,
       time: clock(zone, start),
-      bookable: now === null || start >= now,
+      bookable,
     });
   }
 
@@ -228,12 +244,15 @@ export function dayFlow(
   items.sort((a, b) => a.start - b.start || rank[a.kind] - rank[b.kind]);
 
   // Now: between the items before it and after it — unless a visit is
-  // going on, which says it itself (inside its row).
+  // shown as going on, which says it itself (inside its row). A cancelled,
+  // completed or no-show one says no such thing.
   if (now !== null && now >= bounds.start && now < bounds.end) {
     const during = items.some(
       (item) =>
         item.kind === "visits" &&
-        item.visits.some((visit) => visit.timing === "now"),
+        item.visits.some(
+          (visit) => visitLookOf(visit.appointment, now) === "now",
+        ),
     );
     if (!during) {
       const at = items.findIndex((item) => item.start >= now);
@@ -278,6 +297,7 @@ export function dayFlow(
     next,
     count: visits.length,
     closed: openMinutes === 0 || subtract(opening, closings).length === 0,
+    freeMinutes: Math.round(freeTotal / MINUTE),
   };
 }
 
