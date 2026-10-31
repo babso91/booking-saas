@@ -55,6 +55,8 @@ jobs:
       - run: npm run test:db
       # Sign-up → confirmation email → /auth/callback against `next start`.
       - run: npm run build
+      # The Studio agenda scenarios drive a real browser.
+      - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - name: Stop local Supabase
         if: always()
