@@ -54,12 +54,7 @@ jobs:
       - run: npm run test:upgrade
       - run: npm run test:db
       # Sign-up → confirmation email → /auth/callback against `next start`.
-      # The same public origin as `next start` in the end-to-end setup: unset
-      # at build time, the browser and the server disagree on her booking
-      # host (hydration error in the Classique frame).
       - run: npm run build
-        env:
-          NEXT_PUBLIC_APP_URL: http://localhost:3000
       # The Studio agenda scenarios drive a real browser.
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e

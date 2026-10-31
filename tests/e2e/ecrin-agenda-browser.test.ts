@@ -377,6 +377,27 @@ describe("Écrin in a browser", () => {
     await page.context().close();
   });
 
+  // CI builds without NEXT_PUBLIC_APP_URL and starts with it: the case that
+  // made the server and the browser write different hosts.
+  it.each(["classique", "studio", "ecrin"])(
+    "%s hydrates on the booking host of the running server",
+    async (style) => {
+      const { browser } = await professionalWithVisit("Yuna", "Lise");
+      const { page, errors } = await signedInPage(browser, {
+        appearance: look(style),
+      });
+      await page.goto(`${APP}/app/settings/appearance`);
+      await hydrated(page.locator("label", { hasText: "Écrin" }).first());
+      if (style === "classique")
+        await page
+          .getByText(/^localhost:3000\/b\/studio-/)
+          .first()
+          .waitFor({ state: "attached" });
+      expect(errors).toEqual([]);
+      await page.context().close();
+    },
+  );
+
   it.each([
     look("constructor"),
     look("__proto__"),

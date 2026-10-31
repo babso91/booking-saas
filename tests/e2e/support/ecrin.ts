@@ -6,7 +6,7 @@ import {
   type Locator,
   type Page,
 } from "playwright";
-import { afterAll, beforeAll, expect } from "vitest";
+import { afterAll, beforeAll, expect, vi } from "vitest";
 
 import { APP, type Browser } from "./studio";
 
@@ -58,16 +58,15 @@ export async function signedInPage(browser: Browser, options: Options = {}) {
 
 /** Waits until React answers on this element: a click now really counts. */
 export async function hydrated(locator: Locator) {
-  await locator.waitFor();
-  await locator.evaluate(
-    (element) =>
-      new Promise<void>((done) => {
-        const check = () =>
-          Object.keys(element).some((key) => key.startsWith("__reactProps"))
-            ? done()
-            : setTimeout(check, 25);
-        check();
-      }),
+  // Found again on each try: hydration may replace the element.
+  await vi.waitFor(
+    async () =>
+      expect(
+        await locator.evaluate((element) =>
+          Object.keys(element).some((key) => key.startsWith("__reactProps")),
+        ),
+      ).toBe(true),
+    { timeout: 15_000, interval: 50 },
   );
   return locator;
 }

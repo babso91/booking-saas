@@ -1,5 +1,5 @@
+import { BookingHost } from "@/components/shared/booking-host";
 import { TextField } from "@/components/ui/field";
-import { bookingHost } from "@/lib/brand";
 
 import { initials } from "../../draft";
 import { StepHeader } from "../step-header";
@@ -46,7 +46,8 @@ export function IdentityStep({
             {name || "Ton activité"}
           </span>
           <span className="truncate text-[13px] text-ink-muted">
-            {bookingHost()}/b/
+            <BookingHost />
+            /b/
             <span className="text-ink-soft">{draft.slug || "…"}</span>
           </span>
         </span>

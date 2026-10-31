@@ -7,6 +7,9 @@ import {
   Marcellus,
 } from "next/font/google";
 
+import { BookingHostProvider } from "@/components/shared/booking-host";
+import { bookingHost } from "@/lib/brand";
+
 import "./globals.css";
 
 const body = Hanken_Grotesk({
@@ -71,7 +74,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="fr"
       className={`${body.variable} ${serif.variable} ${studio.variable} ${engraved.variable} ${ecrinSans.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">{children}</body>
+      <body className="flex min-h-full flex-col">
+        <BookingHostProvider host={bookingHost()}>
+          {children}
+        </BookingHostProvider>
+      </body>
     </html>
   );
 }

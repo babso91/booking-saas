@@ -1,10 +1,10 @@
+import { BookingHost } from "@/components/shared/booking-host";
 import {
   CalendarIcon,
   ClockIcon,
   LockIcon,
   PinIcon,
 } from "@/components/ui/icons";
-import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 import { initials, type OnboardingDraft } from "../draft";
@@ -47,7 +47,8 @@ export function BookingPreview({
         >
           <LockIcon size={12} />
           <span className="truncate">
-            {bookingHost()}/b/
+            <BookingHost />
+            /b/
             <span
               className={cn(
                 "font-semibold",

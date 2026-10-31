@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
+import { BookingHost } from "@/components/shared/booking-host";
 import {
   CalendarSyncIcon,
   ChevronRightIcon,
@@ -13,7 +14,6 @@ import {
 } from "@/components/ui/icons";
 import { Sheet } from "@/components/ui/sheet";
 import { SignOutButton } from "@/features/auth/components/sign-out-button";
-import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 import type { DashboardSection } from "../sections";
@@ -152,7 +152,8 @@ export function StudioShell({
               </span>
             </span>
             <span className="break-all text-ink-soft">
-              {bookingHost()}/b/{business.slug}
+              <BookingHost />
+              /b/{business.slug}
             </span>
           </p>
           <SignOutButton />

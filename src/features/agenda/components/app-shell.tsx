@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
+import { BookingHost } from "@/components/shared/booking-host";
 import { BrandMark } from "@/components/shared/brand-mark";
 import {
   CalendarIcon,
@@ -21,7 +22,6 @@ import { SignOutButton } from "@/features/auth/components/sign-out-button";
 import { StudioShell } from "@/features/dashboard/components/studio-shell";
 import { EcrinShell } from "@/features/dashboard/ecrin/ecrin-shell";
 import type { DashboardSection } from "@/features/dashboard/sections";
-import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 type Business = { name: string; slug: string };
@@ -270,7 +270,8 @@ function PublicLink({ slug }: { slug: string }) {
         </span>
       </span>
       <span className="break-all text-ink-soft">
-        {bookingHost()}/b/{slug}
+        <BookingHost />
+        /b/{slug}
       </span>
     </p>
   );
