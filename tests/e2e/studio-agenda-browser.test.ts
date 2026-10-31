@@ -91,6 +91,9 @@ describe("Studio 2 in a browser", () => {
       }
     }
 
+    // Checked: what is still in flight no longer matters.
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+
     // Control: the same link to her own visit does open its card.
     await page.goto(`${APP}/app?date=${parisDate()}&rdv=${mine.appointmentId}`);
     await page.getByRole("dialog").waitFor();
