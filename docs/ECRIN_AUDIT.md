@@ -126,3 +126,8 @@ Exécutés uniquement en CI (Supabase local et `next start` ; pas de Docker sur 
 ## 13. Contrat d'apparence
 
 Les valeurs `classique`, `studio` et `ecrin` sont actives. `carnet` n'existe pas encore : un cookie qui la porte retombe sur `classique`, sans erreur (testé), et l'ajouter à `styleIds` suffira le moment venu. Le format du cookie ne change pas. La PR #31 n'est pas intégrée.
+
+## 14. Ce que les parcours réels ont révélé
+
+- **Fiche partagée** : `AppointmentDetails` avait une liste de définitions invalide (`dl > div > div > dt`), tous styles confondus. Chaque ligne a désormais sa propre `dl`, sans changement visuel.
+- **Erreur d'hydratation React #418 sur le cadre Classique** : `next build` sans `NEXT_PUBLIC_APP_URL`, puis `next start` avec cette variable. Le serveur et le navigateur n'écrivent pas le même hôte de réservation. Reproduit localement sur un build de production ; Écrin et Studio n'affichent cet hôte que dans une feuille fermée. La CI construit maintenant avec la même origine. **Point de vigilance hors de cette PR** : tout déploiement doit fournir cette variable dès le build.

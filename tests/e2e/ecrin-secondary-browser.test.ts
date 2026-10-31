@@ -65,7 +65,7 @@ describe.each(VARIANTS)(
       await arrive("/app/clients", "Clientes");
       const client = await hydrated(
         page
-          .getByRole("list", { name: "Liste des clientes" })
+          .getByRole("region", { name: "Liste des clientes" })
           .getByRole("link", { name: /Camille Visite/ }),
       );
       await expectAccessible(page, "clients");

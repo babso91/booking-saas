@@ -90,6 +90,18 @@ const axePath = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
 
 /** axe-core (WCAG 2.1 AA, contrast included) on the page as it stands. */
 export async function expectAccessible(page: Page, what: string) {
+  // Measured at rest: a panel still sliding in blends its colours.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter(
+          (animation) =>
+            animation.effect?.getComputedTiming().iterations !== Infinity,
+        )
+        .map((animation) => animation.finished.catch(() => undefined)),
+    ),
+  );
   await page.addScriptTag({ path: axePath });
   const violations = await page.evaluate(async () => {
     const { axe } = window as unknown as {

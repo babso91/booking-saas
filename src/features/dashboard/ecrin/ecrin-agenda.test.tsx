@@ -670,6 +670,49 @@ describe("Écrin agenda — buffers", () => {
     expect(day.queryByRole("button", { name: /Nora Hier/ })).toBeNull();
   });
 
+  it("first day of a week: a buffer from Sunday holds Monday's first hour", async () => {
+    useViewport(false);
+    const sunday = {
+      ...withBuffer("2026-09-27T23:00", "Sia Dimanche", 30),
+      bufferMinutes: 600,
+    };
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [sunday] })),
+    );
+    vi.setSystemTime(new Date("2026-09-28T06:00:00Z")); // Monday, 08:00
+    renderEcrin({}, "2026-09-28");
+    expect(
+      await screen.findByRole("button", {
+        name: /à partir de 09:30 : nouveau rendez-vous/,
+      }),
+    ).toBeTruthy();
+  });
+
+  it("week: a buffer across midnight is drawn on both days", async () => {
+    useViewport(true);
+    readWith(withBuffer(`${TODAY}T23:30`, "Lou Minuit", 15));
+    renderEcrin();
+    await screen.findByRole("button", { name: /Lou Minuit/ });
+    for (const day of [/Journée du mardi 29/, /Journée du mercredi 30/])
+      expect(
+        screen.getByRole("group", { name: day }).querySelector("[data-buffer]"),
+      ).not.toBeNull();
+  });
+
+  it("the autumn change: a buffer runs in real minutes, drawn once", async () => {
+    useViewport(true);
+    vi.setSystemTime(new Date("2026-10-22T08:00:00Z"));
+    actions.getAgendaTodayAction.mockImplementation(async () =>
+      ok(businessToday()),
+    );
+    readWith(withBuffer("2026-10-25T01:30", "Ava Automne", 30));
+    renderEcrin({}, "2026-10-22");
+    const day = await screen.findByRole("group", {
+      name: /Journée du dimanche 25/,
+    });
+    expect(day.querySelector("[data-buffer]")).not.toBeNull();
+  });
+
   it("first day of a week: the read reaches the week before", async () => {
     useViewport(true);
     renderEcrin({ initialDate: "2026-09-28" });

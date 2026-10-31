@@ -166,20 +166,18 @@ describe("Écrin in a browser", () => {
       await vi.waitFor(async () =>
         expect(await service.isDisabled()).toBe(false),
       );
-      await service.selectOption({ label: await serviceLabel() });
+      const value = await service
+        .locator("option", { hasText: "Rehaussement de cils" })
+        .first()
+        .getAttribute("value");
+      await service.selectOption(value!);
+      await form.getByLabel("Date").fill(FUTURE);
       await form.getByLabel("Heure").fill(time);
       await form.getByLabel("Rechercher une cliente").fill("Eva");
       await form.getByRole("button", { name: /Eva Visite/ }).click();
       await form.getByRole("button", { name: "Créer le rendez-vous" }).click();
       return form;
     };
-    const serviceLabel = () =>
-      page
-        .getByRole("dialog")
-        .getByLabel("Prestation")
-        .locator("option", { hasText: "Rehaussement de cils" })
-        .first()
-        .innerText();
 
     await book("10:00");
     await vi.waitFor(async () => expect(await visitCount(businessId)).toBe(1), {
@@ -215,7 +213,8 @@ describe("Écrin in a browser", () => {
     await page.route(
       (url) => url.pathname === "/app",
       async (route) => {
-        if (route.request().method() === "POST") await gate;
+        // Only the agenda's read: her form needs the other answers.
+        if (route.request().postData()?.includes("startDate")) await gate;
         await route.continue();
       },
     );
