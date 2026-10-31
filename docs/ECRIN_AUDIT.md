@@ -1,10 +1,10 @@
 # Écrin : dossier d'audit (le cadran)
 
-Branche `feat/dashboard-ecrin`, partie du HEAD Studio 2 `5da19de` (PR #29, en audit). La PR Écrin est **empilée sur `feat/dashboard-studio-2`** : son diff ne contient que l'Écrin.
+Branche `feat/dashboard-ecrin`, synchronisée avec Studio 2 `2ee3795` (PR #29, déclarée READY par Codex). Écrin n'est pas déclaré READY : ce dossier prépare son audit. La PR Écrin est **empilée sur `feat/dashboard-studio-2`** : son diff ne contient que l'Écrin.
 
 Plan d'ensemble : `docs/DASHBOARD_EXPERIENCE.md`. Dossiers précédents : `docs/STUDIO_1_AUDIT.md`, `docs/STUDIO_2_AUDIT.md`.
 
-**Hors périmètre** : aucune migration, aucune nouvelle action serveur, aucune route API, aucune dépendance npm. Deux polices Google chargées par `next/font` (Marcellus, Jost), sans préchargement. Le style Carnet n'est pas commencé.
+**Hors périmètre** : aucune migration, aucune nouvelle action serveur, aucune route API, aucune dépendance de production (`axe-core` en développement seulement). Deux polices Google chargées par `next/font` (Marcellus, Jost), sans préchargement. Le style Carnet n'est pas commencé.
 
 ---
 
@@ -26,7 +26,7 @@ Le placement réutilise `features/agenda/client/layout.ts` (axe, bandes du chang
 | `ecrin-thread.tsx`                    | Jour en fil de perles                                                                |
 | `looks.ts`                            | Traduction des états de rendez-vous en matières Écrin                                |
 
-Classique et Studio ne changent pas de code, à quelques lignes de routage près (`app-shell.tsx`, `today/page.tsx`, `agenda-view.tsx`). Les fichiers de Studio ne sont pas modifiés, pour que les corrections de l'audit de #29 s'intègrent sans conflit.
+Classique et Studio ne changent pas de code, à quelques lignes de routage près (`app-shell.tsx`, `today/page.tsx`, `agenda-view.tsx`). Exceptions, détaillées au § 15 : la fiche partagée et l'hôte de réservation, qui touche une ligne de `studio-shell.tsx`.
 
 ## 2. Ce qui différencie l'Écrin de Studio
 
@@ -60,7 +60,7 @@ Même cookie et même contrat : `ambiance.mode.motion.accent.style`, avec une no
 
 Clientes, Prestations, Fidélité, Horaires, Calendar, Apparence, fiches et formulaires gardent leurs composants. Sous `[data-style="ecrin"]`, ils reçoivent la gravure, le Jost, des angles plus doux (jetons `--radius-*`), le fond et la palette.
 
-**Limite connue** : ces écrans lisent le serveur. Hors Apparence, je ne les ai vus localement que dans leur état d'erreur, sans leurs données (pas de Supabase local). Leur réponse HTTP avec le cookie Écrin dépend de la CI (`/app`, `/app/today`) ; les autres routes n'y sont pas parcourues. Les boutons primaires partagés restent encre, comme en Studio : la pierre marque le temps présent et le geste de création de l'agenda, l'encre marque les validations. C'est un choix de hiérarchie, conservé pour ne pas toucher au composant commun de tous les styles.
+Ces écrans sont parcourus en CI avec de vraies données et une vraie session (§ 12). Les boutons primaires partagés restent encre, comme en Studio : la pierre marque le temps présent et le geste de création de l'agenda, l'encre marque les validations. C'est un choix de hiérarchie, conservé pour ne pas toucher au composant commun de tous les styles.
 
 ## 6. Encaissement futur
 
@@ -76,7 +76,7 @@ Rien n'est simulé : ni bouton, ni montant, ni mutation. La place naturelle du g
 - `tests/e2e/ecrin-agenda.test.ts` : backend réel en CI uniquement (pas de Docker en local).
 - Chromium + axe-core 4.14 (WCAG 2.1 AA) sur `/apercu/ecrin/{agenda,aujourdhui}` : 6 teintes dont des pierres difficiles, 6 scénarios, largeurs 320, 375, 390 et 1440.
 
-Les résultats exacts au HEAD sont dans la description de la PR.
+Les résultats exacts sont au § 15.
 
 ## 9. Points à regarder en priorité
 
@@ -99,7 +99,7 @@ Les résultats exacts au HEAD sont dans la description de la PR.
 
 **Vérifications après hydratation** (Chromium sur les aperçus) : valeurs hostiles, allers-retours Écrin, Studio, Classique sans reste d'enveloppe ni de police, menu d'options dans l'écran, fiche, retour à aujourd'hui, fin de journée accessible au-dessus des commandes du pouce, à 320, 375 et 390 px.
 
-**Limite** : tant que le navigateur connecté au vrai backend n'est pas disponible sur cette branche (Playwright arrive avec Studio 2), l'isolation et la lecture après hydratation avec session restent à prouver par un e2e navigateur Écrin. Les e2e actuels d'Écrin lisent le HTML de la première réponse ; ils ne suffisent pas à eux seuls à prouver l'isolation.
+**Levée depuis** : l'isolation et la lecture après hydratation avec session, d'abord non prouvées, le sont par les e2e navigateur du § 12.
 
 ## 11. Synchronisation avec Studio 2
 
@@ -130,4 +130,67 @@ Les valeurs `classique`, `studio` et `ecrin` sont actives. `carnet` n'existe pas
 ## 14. Ce que les parcours réels ont révélé
 
 - **Fiche partagée** : `AppointmentDetails` avait une liste de définitions invalide (`dl > div > div > dt`), tous styles confondus. Chaque ligne a désormais sa propre `dl`, sans changement visuel.
-- **Erreur d'hydratation React #418 sur le cadre Classique** : `next build` sans `NEXT_PUBLIC_APP_URL`, puis `next start` avec cette variable. Le serveur et le navigateur n'écrivent pas le même hôte de réservation. Reproduit localement sur un build de production ; Écrin et Studio n'affichent cet hôte que dans une feuille fermée. La CI construit maintenant avec la même origine. **Point de vigilance hors de cette PR** : tout déploiement doit fournir cette variable dès le build.
+- **Erreur d'hydratation React #418 sur le cadre Classique** : analysée et corrigée au § 16.
+
+## 15. Résultats
+
+**CI sur `ce2635b`** (run `41252389518`), les deux jobs verts, avec le passage répété temporaire. Le HEAD final ne diffère de ce commit que par le retrait de cette étape et par la documentation ; la CI de ce HEAD est à lire sur la PR.
+
+| Contrôle                                 | Résultat                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------- |
+| Format, lint, types, build               | verts ; 1 avertissement antérieur (`client-hub.ts`)                 |
+| Tests unitaires et de composants (local) | 1508 sur 1508                                                       |
+| Montée de version (`test:upgrade`)       | 52 sur 52 (12 fichiers)                                             |
+| PostgreSQL (`test:db`)                   | 990 sur 990 (27 fichiers)                                           |
+| E2E (`test:e2e`)                         | 51 sur 51 (8 fichiers)                                              |
+| `ecrin-agenda-browser.test.ts`, répété   | 5 passages sur 5, 21 sur 21 à chacun, serveur neuf à chaque passage |
+
+**Stabilité.** Les trois échecs e2e successifs venaient des tests : champ date non renseigné et filtre trop large, actions serveur exécutées l'une après l'autre, Échap envoyé avant l'ouverture de la fiche. Aucun n'était un défaut applicatif ni une course de l'application. `hydrated()` recherche désormais l'élément à chaque essai. Six passages verts (suite normale comprise) montrent une stabilité sur un même environnement, pas une absence absolue de course. Le test de création ne dépend pas du jour de la semaine : l'onboarding ne crée aucun horaire.
+
+**Modifications de ce qui est partagé.**
+
+| Fichier                                                                  | Changement                                              | Styles touchés                                |
+| ------------------------------------------------------------------------ | ------------------------------------------------------- | --------------------------------------------- |
+| `src/app/layout.tsx`                                                     | Polices Écrin, fournisseur de l'hôte                    | tous                                          |
+| `agenda-view.tsx`                                                        | `designed` remplace `studio`, délégation                | Studio, Écrin ; Classique lit la même période |
+| `app-shell.tsx`, `today/page.tsx`                                        | Routage vers Écrin, hôte                                | tous                                          |
+| `appointment-details.tsx`                                                | Balisage `dl` valide, sans changement visuel            | tous                                          |
+| `studio-shell.tsx`, trois composants d'onboarding                        | Hôte lu via `BookingHost`                               | Studio, onboarding                            |
+| `appearance.ts`, `appearance-settings.tsx`, `palettes.ts`, `globals.css` | Valeur `ecrin`, sous `[data-style="ecrin"]` pour le CSS | tous pour le réglage                          |
+
+`ci.yml` ne diffère plus de la base.
+
+**Limites résiduelles.**
+
+- Pas de Docker sur ce poste : les parcours avec backend ne tournent qu'en CI, sur Chromium seulement.
+- L'axe utilisé ne couvre pas la règle expérimentale `label-content-name-mismatch` : le monogramme d'Écrin, comme celui de Studio, enfreint WCAG 2.5.3. Suivi dans `docs/TRANSVERSAL_FOLLOWUPS.md`, avec `periodLabel` et la distinction entre temps libre et temps réservable, qu'Écrin affiche aussi (`X libres`).
+- Les notes internes restent dans la charge React, comme en Studio (§ 9).
+- `bookingUrl` (`lib/brand.ts`) n'a aucun appelant. Elle porte le même piège si quelqu'un l'appelle côté navigateur.
+
+## 16. `NEXT_PUBLIC_APP_URL` et l'erreur #418
+
+**Cause.** Next.js n'intègre une variable `NEXT_PUBLIC_` au code que si elle existe au build. Absente au build, elle manque au navigateur (`booking.app`), alors que le serveur la lit au démarrage. Le défaut touchait aussi l'onboarding, et laissait `booking.app` affiché après la reprise de React.
+
+**Correction.** `src/app/layout.tsx` transmet l'hôte lu par le serveur, via `components/shared/booking-host.tsx`. Le réglage ajouté dans `ci.yml` est retiré : la CI construit sans la variable et démarre avec, ce qui rejoue le cas d'échec à chaque exécution. Un test unitaire d'hydratation et un cas e2e par style complètent la protection.
+
+Mesure sur de vrais builds de production, en cadre Classique :
+
+| Au build    | À l'exécution | Avant                       | Après                  |
+| ----------- | ------------- | --------------------------- | ---------------------- |
+| absente     | présente      | #418, `booking.app` affiché | sans erreur, hôte réel |
+| présente    | différente    | sans erreur, hôte du build  | identique              |
+| présente    | absente       | sans erreur, hôte du build  | identique              |
+| même valeur | même valeur   | sans erreur                 | identique              |
+
+**Risque restant.** Une valeur présente au build l'emporte aussi sur le serveur : une image construite avec la mauvaise origine l'affiche sans erreur, et le code serveur (redirections d'authentification, liens des emails) lit la même valeur intégrée. Le dépôt ne contient aucune configuration de déploiement : la cohérence en staging et en production n'est donc pas vérifiée ici. Aucun environnement n'a été modifié.
+
+## 17. Points à auditer en priorité
+
+1. `agenda-view.tsx` : lecture élargie pour Studio et Écrin, Classique inchangé ; `restrictToDays` avec tampons.
+2. `ecrin-week.tsx` : tampons (frontières de semaine, minuit, changement d'heure), non cliquables, comptés une fois ; clic sur créneau libre.
+3. `dayFlow.freeMinutes` dans le cadran, et son libellé.
+4. Isolation entre établissements après hydratation : suffisance de `forbidden` et de la capture réseau.
+5. `booking-host.tsx` et `layout.tsx` : pages statiques, onboarding, absence de lecture d'environnement côté navigateur.
+6. Protection du brouillon face à `?rdv=` : les deux scénarios à lecture retenue.
+7. Fiche partagée et écrans secondaires : non-régression Classique et Studio, contraste du mode sombre.
+8. Contrat d'apparence : compatibilité avec la PR #31 et les valeurs `classique`, `studio`, `ecrin`, `carnet`.

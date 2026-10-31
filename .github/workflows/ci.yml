@@ -58,18 +58,6 @@ jobs:
       # The Studio agenda scenarios drive a real browser.
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
-      # TEMPORARY, reverted before the audit: stability proof of the sensitive
-      # Écrin scenarios, each pass on its own fresh server.
-      - name: Repeat the Écrin browser scenarios
-        run: |
-          failed=0
-          for pass in 1 2 3 4 5; do
-            echo "::group::pass $pass"
-            npx vitest run --config vitest.e2e.config.mts tests/e2e/ecrin-agenda-browser.test.ts || failed=$((failed + 1))
-            echo "::endgroup::"
-          done
-          echo "failed passes: $failed of 5"
-          test "$failed" -eq 0
       - name: Stop local Supabase
         if: always()
         run: npx supabase stop --no-backup
