@@ -239,6 +239,15 @@ export const sampleWeek: AgendaDto = {
   },
 };
 
+/** The same week, each visit keeping 30 minutes free after it. */
+export const sampleBufferWeek: AgendaDto = {
+  ...sampleWeek,
+  appointments: sampleWeek.appointments.map((appointment) => ({
+    ...appointment,
+    bufferMinutes: 30,
+  })),
+};
+
 /** A moment of that Tuesday, as an instant (ms). */
 export const sampleNow = (time: string) =>
   Date.parse(sampleInstant(SAMPLE_TODAY, time));

@@ -47,11 +47,6 @@ export function StudioDaySummary({
         MINUTE,
     0,
   );
-  const free = flow.items.reduce(
-    (total, item) =>
-      item.kind === "free" && item.bookable ? total + item.minutes : total,
-    0,
-  );
   const held = flow.items.flatMap((item) =>
     item.kind === "block" ? [item.block] : [],
   );
@@ -66,7 +61,7 @@ export function StudioDaySummary({
         <Figure label="Réservé" value={formatDuration(Math.round(booked))} />
         <Figure
           label={nowMs !== null && flow.next ? "Libre, à venir" : "Libre"}
-          value={formatDuration(free)}
+          value={formatDuration(flow.freeMinutes)}
         />
         <Figure label="Statut" value={flow.closed ? "Fermé" : "Ouvert"} />
       </dl>

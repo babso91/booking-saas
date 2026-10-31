@@ -48,7 +48,11 @@ import {
   visibleRange,
   type AgendaView as View,
 } from "../client/dates";
-import { agendaRequestRange, restrictToDays } from "../client/layout";
+import {
+  agendaRangeWithBuffers,
+  agendaRequestRange,
+  restrictToDays,
+} from "../client/layout";
 import { useCanonicalToday } from "../client/use-canonical-today";
 import { zoneOf } from "../client/zone";
 import { AgendaError, TextAction } from "./agenda-error";
@@ -148,17 +152,23 @@ export function AgendaView({
   const key = `${range.startDate}:${range.endDate}:${includeCancelled}:${reloadToken}`;
   const rangeKey = `${range.startDate}:${range.endDate}:${includeCancelled}`;
 
+  // Studio shows free time, which a buffer from the day before can hold.
+  const readRange = (days: string[]) =>
+    studio ? agendaRangeWithBuffers(days) : agendaRequestRange(days);
+
   useEffect(() => {
     if (wide === null) return;
     let active = true;
     const observation = canonical.begin();
     callAction(() =>
-      getAgendaAction({ ...agendaRequestRange(range.days), includeCancelled }),
+      getAgendaAction({ ...readRange(range.days), includeCancelled }),
     ).then((result) => {
       if (!active) return;
       if (result.ok) {
         canonical.observe(observation, result.data);
-        const data = restrictToDays(result.data, range.days);
+        const data = restrictToDays(result.data, range.days, {
+          buffers: studio,
+        });
         setLoaded({ key, data });
         const wanted = pendingAppointment.current;
         pendingAppointment.current = null;
@@ -331,11 +341,11 @@ export function AgendaView({
   async function refreshBlock(block: AgendaBlockDto) {
     const observation = canonical.begin();
     const result = await callAction(() =>
-      getAgendaAction({ ...agendaRequestRange(range.days), includeCancelled }),
+      getAgendaAction({ ...readRange(range.days), includeCancelled }),
     );
     if (!result.ok) return result.error;
     canonical.observe(observation, result.data);
-    const data = restrictToDays(result.data, range.days);
+    const data = restrictToDays(result.data, range.days, { buffers: studio });
     setLoaded({ key, data });
     const fresh = data.blocks.find((item) => item.id === block.id);
     if (fresh) {

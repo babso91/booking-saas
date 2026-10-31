@@ -7,6 +7,7 @@ import { AppearanceProvider } from "@/features/appearance/components/appearance-
 import { StudioAgendaPreview } from "@/features/dashboard/agenda/studio-agenda-preview";
 import {
   SAMPLE_TODAY,
+  sampleBufferWeek,
   sampleBusyWeek,
   sampleDenseWeek,
   sampleInstant,
@@ -19,7 +20,7 @@ export const metadata = { title: "Studio · Agenda" };
 
 // The real Studio agenda components on a fictional week (no database).
 // ?vue=jour|semaine, ?jour=YYYY-MM-DD, ?heure=HH:MM (default 14:05),
-// ?jeu=charge|nuit|formation|dense, ?apparence=<cookie value>.
+// ?jeu=charge|nuit|formation|dense|tampon, ?apparence=<cookie value>.
 export default async function StudioAgendaPreviewPage({
   searchParams,
 }: PageProps<"/apercu/studio/agenda">) {
@@ -33,7 +34,9 @@ export default async function StudioAgendaPreviewPage({
           ? sampleTrainingWeek
           : jeu === "dense"
             ? sampleDenseWeek
-            : sampleWeek;
+            : jeu === "tampon"
+              ? sampleBufferWeek
+              : sampleWeek;
   const date =
     typeof jour === "string" &&
     week.workingHours.days.some((day) => day.date === jour)

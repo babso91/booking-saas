@@ -121,5 +121,10 @@ export async function professionalWithVisit(name: string, client: string) {
     [businessId, customer.rows[0]!.id, service.rows[0]!.id],
   );
 
-  return { browser, businessId, appointmentId: visit.rows[0]!.id };
+  return {
+    browser,
+    businessId,
+    appointmentId: visit.rows[0]!.id,
+    clientEmail: `${slug}@client.test.local`,
+  };
 }

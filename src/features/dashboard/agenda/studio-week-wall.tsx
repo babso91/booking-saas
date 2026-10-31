@@ -15,6 +15,7 @@ import {
   openSegments,
   placeAppointments,
   placeBlocks,
+  segmentOn,
   timeAt,
   yOf,
 } from "@/features/agenda/client/layout";
@@ -84,6 +85,23 @@ export function StudioWeekWall({
             axis,
             workingDays.find((day) => day.date === date),
             date,
+          ),
+          // The buffer after each visit that holds time: not free.
+          held: appointments.flatMap((appointment) =>
+            appointment.status === "cancelled" || !appointment.bufferMinutes
+              ? []
+              : (segmentOn(
+                  axis,
+                  {
+                    startsAt: appointment.endsAt,
+                    endsAt: new Date(
+                      Date.parse(appointment.endsAt) +
+                        appointment.bufferMinutes * 60_000,
+                    ).toISOString(),
+                  },
+                  date,
+                )?.pieces.map((piece) => ({ id: appointment.id, piece })) ??
+                []),
           ),
           count: data ? distinctBookings(data, [date], true) : 0,
         };
@@ -272,6 +290,24 @@ export function StudioWeekWall({
                       hatch,
                     )}
                     style={{ left: x(gap.top), width: w(gap.top, gap.bottom) }}
+                  />
+                ))}
+
+                {/* Not a click target: free time is what is left. */}
+                {row.held.map(({ id, piece }) => (
+                  <span
+                    key={`${id}:${piece.top}`}
+                    aria-hidden="true"
+                    data-buffer=""
+                    title="Temps gardé après le rendez-vous"
+                    className={cn(
+                      "absolute inset-y-0 z-[6] cursor-default bg-sand",
+                      hatch,
+                    )}
+                    style={{
+                      left: x(piece.top),
+                      width: w(piece.top, piece.bottom),
+                    }}
                   />
                 ))}
 
