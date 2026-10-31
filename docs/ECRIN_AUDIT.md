@@ -60,7 +60,7 @@ Même cookie et même contrat : `ambiance.mode.motion.accent.style`, avec une no
 
 Clientes, Prestations, Fidélité, Horaires, Calendar, Apparence, fiches et formulaires gardent leurs composants. Sous `[data-style="ecrin"]`, ils reçoivent la gravure, le Jost, des angles plus doux (jetons `--radius-*`), le fond et la palette.
 
-**Limite connue** : ces écrans lisent le serveur. Hors Apparence, je ne les ai vus localement que dans leur état d'erreur, sans leurs données (pas de Supabase local). Leur réponse HTTP avec le cookie Écrin dépend de la CI (`/app`, `/app/today`) ; les autres routes n'y sont pas parcourues. Les boutons primaires partagés restent encre, alors que le bouton « Nouveau rendez-vous » de l'agenda porte la pierre : décision assumée pour ne pas modifier le composant partagé.
+**Limite connue** : ces écrans lisent le serveur. Hors Apparence, je ne les ai vus localement que dans leur état d'erreur, sans leurs données (pas de Supabase local). Leur réponse HTTP avec le cookie Écrin dépend de la CI (`/app`, `/app/today`) ; les autres routes n'y sont pas parcourues. Les boutons primaires partagés restent encre, comme en Studio : la pierre marque le temps présent et le geste de création de l'agenda, l'encre marque les validations. C'est un choix de hiérarchie, conservé pour ne pas toucher au composant commun de tous les styles.
 
 ## 6. Encaissement futur
 
@@ -85,3 +85,28 @@ Les résultats exacts au HEAD sont dans la description de la PR.
 3. `dial.ts` : journées très longues ou à cheval sur minuit.
 4. Dépendance à #29 : toute correction de l'audit de Studio 2 sur `today-model`, `day-flow` ou `AgendaView` s'applique aussi à l'Écrin, à reporter par intégration de la branche.
 5. Comme pour Studio, les notes internes restent présentes dans la charge React de la page, même masquées à l'écran.
+
+## 10. Stabilisation avant audit
+
+**Échec e2e sur `ac3f5ac`.** Le HTML en échec portait `data-style="ecrin"` : aucune fuite entre styles. Le cookie fautif, `x.y.z.w.ecrin`, a un style valide et `parseAppearance` lit chaque champ séparément. L'assertion était fausse. Le test vérifie désormais :
+
+- le `data-style` réellement écrit et la classe `ecrin-ground` de l'enveloppe ;
+- six valeurs interdites (`constructor`, `__proto__`, `ECRIN`, espace encodé, `carnet`, injection HTML), qui donnent toutes `classique`.
+
+**Échec de typecheck sur `6a62be6`.** La CI compile la PR fusionnée avec sa base, déjà passée à Studio 2 `2ee3795`. Cette base utilise la variable `studio` dans `AgendaView`, que j'avais renommée. Git ne voyait aucun conflit. La variable est rétablie.
+
+**Boutons primaires** : voir § 5.
+
+**Vérifications après hydratation** (Chromium sur les aperçus) : valeurs hostiles, allers-retours Écrin, Studio, Classique sans reste d'enveloppe ni de police, menu d'options dans l'écran, fiche, retour à aujourd'hui, fin de journée accessible au-dessus des commandes du pouce, à 320, 375 et 390 px.
+
+**Limite** : tant que le navigateur connecté au vrai backend n'est pas disponible sur cette branche (Playwright arrive avec Studio 2), l'isolation et la lecture après hydratation avec session restent à prouver par un e2e navigateur Écrin. Les e2e actuels d'Écrin lisent le HTML de la première réponse ; ils ne suffisent pas à eux seuls à prouver l'isolation.
+
+## 11. Synchronisation avec Studio 2
+
+Non faite : à réaliser quand Codex aura déclaré Studio 2 READY, par un merge sans réécriture d'historique. Une fusion d'essai jetable avec `2ee3795` passe sans conflit Git. À ce moment-là, en plus du merge :
+
+1. `AgendaView` : lire aussi la veille pour Écrin (`buffers` et `readRange` selon `designed`, pas `studio`). D'ici là, un tampon de la veille est ignoré dans le temps libre d'Écrin.
+2. `DaySays` : utiliser `flow.freeMinutes` au lieu d'additionner les éléments `free`.
+3. `ecrin-week.tsx` : dessiner le tampon après chaque visite, sans cible de clic.
+4. `ecrin-thread.tsx` : vérifier les lignes « Libre » courtes (seuil à 5 min) et le repère de l'heure sur une visite annulée.
+5. Ajouter `tests/e2e/ecrin-agenda-browser.test.ts` : isolation et réponses réseau, fiche, création, menu sur téléphone, changement de style, dans un navigateur connecté.

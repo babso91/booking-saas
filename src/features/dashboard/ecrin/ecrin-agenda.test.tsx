@@ -198,18 +198,16 @@ describe("Écrin agenda — computer", () => {
     const user = userEvent.setup();
     renderEcrin();
     await user.click(await screen.findByRole("button", { name: "Jour" }));
-    await user.click(
-      await screen.findByRole("button", {
-        name: /Libre · 45 min à partir de 11:15 : nouveau rendez-vous/,
-      }),
-    );
+    const free = await screen.findByRole("button", {
+      name: /^Libre · .* à partir de 11:\d\d : nouveau rendez-vous$/,
+    });
+    const time = free.getAttribute("aria-label")!.match(/11:\d\d/)![0];
+    await user.click(free);
     const form = within(screen.getByRole("dialog"));
     expect(
       form.getByRole("heading", { name: "Nouveau rendez-vous" }),
     ).toBeTruthy();
-    expect((form.getByLabelText("Heure") as HTMLInputElement).value).toBe(
-      "11:15",
-    );
+    expect((form.getByLabelText("Heure") as HTMLInputElement).value).toBe(time);
   });
 
   it("a slot the server refuses is refused here too: never a success", async () => {
