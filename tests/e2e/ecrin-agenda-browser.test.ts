@@ -1,3 +1,4 @@
+import type { Page } from "playwright";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -200,30 +201,37 @@ describe("Écrin in a browser", () => {
     await page.context().close();
   });
 
-  it("a link's card never opens over a form she started: her draft stays", async () => {
-    const { browser, appointmentId } = await professionalWithVisit(
-      "Mila",
-      "Iris",
-    );
-    const { page } = await signedInPage(browser);
-
-    // The agenda's read is held until she has typed.
+  // Next.js runs server actions one at a time: while the agenda's read is
+  // held, every later action waits behind it, in the page as in real life.
+  const holdAgendaRead = async (page: Page) => {
     let release = () => {};
     const gate = new Promise<void>((done) => (release = done));
     await page.route(
       (url) => url.pathname === "/app",
       async (route) => {
-        // Only the agenda's read: her form needs the other answers.
         if (route.request().postData()?.includes("startDate")) await gate;
         await route.continue();
       },
     );
+    return release;
+  };
+
+  it("phone: a link's card never opens over a form she started; her draft stays", async () => {
+    const { browser, appointmentId } = await professionalWithVisit(
+      "Mila",
+      "Iris",
+    );
+    const { page } = await signedInPage(browser, {
+      width: 390,
+      height: 800,
+      phone: true,
+    });
+    const release = await holdAgendaRead(page);
     await page.goto(`${APP}/app?date=${parisDate()}&rdv=${appointmentId}`);
     await (
-      await hydrated(
-        page.getByRole("button", { name: /Nouveau rendez-vous/ }).first(),
-      )
+      await hydrated(page.getByRole("button", { name: "Nouveau rendez-vous" }))
     ).click();
+    // One day on screen: the form needs no answer to open.
     const form = page.getByRole("dialog");
     await form.getByLabel(/Note interne/).fill("Brouillon");
     release();
@@ -234,13 +242,34 @@ describe("Écrin in a browser", () => {
       .waitFor({ state: "attached" });
     await page.waitForLoadState("networkidle");
     expect(await page.getByRole("dialog").count()).toBe(1);
-    await page
-      .getByRole("dialog")
-      .getByRole("heading", { name: "Nouveau rendez-vous" })
-      .waitFor();
+    await form.getByRole("heading", { name: "Nouveau rendez-vous" }).waitFor();
     expect(await form.getByLabel(/Note interne/).inputValue()).toBe(
       "Brouillon",
     );
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await page.context().close();
+  });
+
+  it("computer: asking for a form during the read wins over the link's card", async () => {
+    const { browser, appointmentId } = await professionalWithVisit(
+      "Dina",
+      "Noa",
+    );
+    const { page } = await signedInPage(browser);
+    const release = await holdAgendaRead(page);
+    await page.goto(`${APP}/app?date=${parisDate()}&rdv=${appointmentId}`);
+    await (
+      await hydrated(
+        page.getByRole("button", { name: /Nouveau rendez-vous/ }).first(),
+      )
+    ).click();
+    release();
+
+    const form = page.getByRole("dialog");
+    await form.getByRole("heading", { name: "Nouveau rendez-vous" }).waitFor();
+    await page.waitForLoadState("networkidle");
+    expect(await page.getByRole("dialog").count()).toBe(1);
+    expect(await form.innerText()).not.toContain("Noa Visite");
     await page.unrouteAll({ behavior: "ignoreErrors" });
     await page.context().close();
   });
