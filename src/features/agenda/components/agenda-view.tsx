@@ -113,7 +113,8 @@ export function AgendaView({
   const style = useDashboardStyle();
   // Studio and Écrin: other presentations of this same controller, where a
   // computer can also show one day.
-  const designed = style !== "classique";
+  const studio = style === "studio";
+  const designed = studio || style === "ecrin";
   const [studioView, setStudioView] = useState<StudioView>("week");
   const view: View = wide ? (designed ? studioView : "week") : "day";
   const clock = useSyncExternalStore(subscribeClock, clockBucket, () => 0);

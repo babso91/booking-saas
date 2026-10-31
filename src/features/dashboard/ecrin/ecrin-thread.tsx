@@ -230,7 +230,10 @@ function Item({
   }
 
   const { visits } = item;
-  const going = visits.some((visit) => visit.timing === "now");
+  // What is shown as going on: a cancelled or completed visit is not.
+  const going = visits.some(
+    (visit) => visitLookOf(visit.appointment, nowMs) === "now",
+  );
   const isNext = visits.some(
     (visit) => visit.appointment.id === next?.appointment.id,
   );

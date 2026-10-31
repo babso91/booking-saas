@@ -129,6 +129,17 @@ const randomColors = (count: number, seed = 11) => {
 };
 
 describe("the Écrin style", () => {
+  it.each([
+    "atelier.light.standard.-.constructor",
+    "atelier.light.standard.-.__proto__",
+    "atelier.light.standard.-.ECRIN",
+    "atelier.light.standard.-.ecrin ",
+    "atelier.light.standard.-.carnet",
+    "ecrin",
+  ])("an unauthorised style never applies (%s)", (raw) => {
+    expect(parseAppearance(raw).style).toBe(defaultAppearance.style);
+  });
+
   it.each(["light", "dark"] as Mode[])(
     "%s: every text the screens use reads on its surface (4.5:1)",
     (mode) => {

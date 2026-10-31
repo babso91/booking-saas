@@ -79,7 +79,9 @@ export function EcrinAgenda(props: StudioAgendaProps) {
       : `${capitalize(formatWeekdayLong(anchor))} ${dayNumber(anchor)}`;
   const subtitle =
     view === "week"
-      ? days[0]!.slice(0, 4)
+      ? days[0]!.slice(0, 4) === days[days.length - 1]!.slice(0, 4)
+        ? days[0]!.slice(0, 4)
+        : `${days[0]!.slice(0, 4)} – ${days[days.length - 1]!.slice(0, 4)}`
       : formatFullDate(anchor).split(" ").slice(2).join(" ");
 
   return (
@@ -441,7 +443,7 @@ function Options({
       {open ? (
         <div
           id="ecrin-agenda-options"
-          className="ecrin-object ecrin-appear absolute top-12 right-0 z-50 flex w-64 flex-col gap-1 rounded-[22px] p-2"
+          className="ecrin-object ecrin-appear absolute top-12 right-0 z-50 flex w-64 max-w-[calc(100vw-2rem)] flex-col gap-1 rounded-[22px] p-2"
         >
           <button
             type="button"

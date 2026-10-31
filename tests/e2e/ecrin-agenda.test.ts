@@ -10,6 +10,10 @@ const ECRIN = "atelier.light.standard.-.ecrin";
 const STUDIO = "atelier.light.standard.-.studio";
 const CLASSIQUE = "atelier.light.standard.-.classique";
 
+/** The style really applied: the one value the server wrote on the page. */
+const activeStyle = (html: string) =>
+  [...html.matchAll(/data-style="([^"]*)"/g)].map((match) => match[1]);
+
 const parisDate = () =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris" }).format(
     new Date(),
@@ -72,18 +76,28 @@ describe("Écrin against the real backend", () => {
     for (const cookie of [
       "atelier.light.standard.-.constructor",
       "atelier.light.standard.-.__proto__",
+      "atelier.light.standard.-.ECRIN",
+      "atelier.light.standard.-.ecrin%20",
+      "atelier.light.standard.-.carnet",
+      'atelier.light.standard.-."><script>alert(1)</script>',
     ]) {
-      browser.cookies.set("dash_appearance", cookie);
+      browser.cookies.set("dash_appearance", encodeURIComponent(cookie));
       const response = await browser.get("/app");
       expect(response.status, cookie).toBe(200);
-      expect(response.html).not.toContain("ecrin-ground");
+      // No style outside the allowed list: the default, and its frame.
+      expect(new Set(activeStyle(response.html)), cookie).toEqual(
+        new Set(["classique"]),
+      );
+      expect(response.html, cookie).not.toContain("ecrin-ground");
+      expect(response.html, cookie).not.toContain("<script>alert");
     }
     // Each field is read alone: a valid style stays, the rest falls back to
     // the defaults.
     browser.cookies.set("dash_appearance", "x.y.z.w.ecrin");
     const partial = await browser.get("/app");
     expect(partial.status).toBe(200);
-    expect(partial.html).toContain('data-style="ecrin"');
+    expect(new Set(activeStyle(partial.html))).toEqual(new Set(["ecrin"]));
+    expect(partial.html).toContain("ecrin-ground");
 
     browser.cookies.set("dash_appearance", ECRIN);
     for (const query of ["rdv=not-a-uuid", "date=2026-02-30", "date=hier"]) {

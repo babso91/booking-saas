@@ -255,6 +255,110 @@ describe("Écrin agenda — computer", () => {
     expect(actions.createAppointmentAction).toHaveBeenCalledTimes(1);
   });
 
+  it("creates through the agenda's action, once, with the form's values", async () => {
+    const user = userEvent.setup();
+    actions.searchAgendaClientsAction.mockResolvedValue(
+      ok([
+        {
+          id: "20000000-0000-4000-8000-00000000000a",
+          displayName: "Camille Roux",
+          email: null,
+          phone: null,
+        },
+      ]),
+    );
+    actions.createAppointmentAction.mockResolvedValue(
+      ok({
+        appointment: appointment({ local: `${TODAY}T14:30` }),
+        created: true,
+      }),
+    );
+    renderEcrin();
+    await screen.findByRole("button", { name: /Camille Roux/ });
+    await user.click(
+      screen.getByRole("button", { name: /Nouveau rendez-vous/ }),
+    );
+    const form = within(await screen.findByRole("dialog"));
+    await waitFor(() =>
+      expect(
+        (form.getByLabelText("Prestation") as HTMLSelectElement).disabled,
+      ).toBe(false),
+    );
+    await user.selectOptions(form.getByLabelText("Prestation"), SERVICE_A);
+    fireEvent.change(form.getByLabelText("Heure"), {
+      target: { value: "14:30" },
+    });
+    await user.type(form.getByLabelText("Rechercher une cliente"), "cam");
+    await user.click(await form.findByRole("button", { name: /Camille Roux/ }));
+    await user.click(
+      form.getByRole("button", { name: "Créer le rendez-vous" }),
+    );
+    await waitFor(() =>
+      expect(actions.createAppointmentAction).toHaveBeenCalledTimes(1),
+    );
+    expect(actions.createAppointmentAction.mock.calls[0]![0]).toMatchObject({
+      date: TODAY,
+      time: "14:30",
+      serviceId: SERVICE_A,
+    });
+  });
+
+  it("the card changes a status through the agenda's action", async () => {
+    const user = userEvent.setup();
+    actions.setAppointmentStatusAction.mockResolvedValue(
+      ok({ ...camille, status: "completed" }),
+    );
+    renderEcrin();
+    await user.click(
+      await screen.findByRole("button", { name: /Camille Roux/ }),
+    );
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Marquer terminé",
+      }),
+    );
+    // She confirms first: nothing changes before that.
+    expect(actions.setAppointmentStatusAction).not.toHaveBeenCalled();
+    const dialogs = screen.getAllByRole("dialog");
+    await user.click(
+      within(dialogs[dialogs.length - 1]!).getByRole("button", {
+        name: "Marquer terminé",
+      }),
+    );
+    await waitFor(() =>
+      expect(actions.setAppointmentStatusAction).toHaveBeenCalledTimes(1),
+    );
+    expect(actions.setAppointmentStatusAction.mock.calls[0]![0]).toMatchObject({
+      status: "completed",
+    });
+  });
+
+  it("a week across New Year says both years", async () => {
+    vi.setSystemTime(new Date("2026-12-29T09:00:00Z"));
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate)),
+    );
+    renderEcrin({}, "2026-12-29");
+    expect(await screen.findByText(/^2026 – 2027 · /)).toBeTruthy();
+  });
+
+  it("the spring change: a visit after the missing hour is drawn, counted once", async () => {
+    vi.setSystemTime(new Date("2027-03-26T09:00:00Z"));
+    const after = appointment({
+      local: "2027-03-28T03:30",
+      durationMinutes: 30,
+      client: { id: "s", displayName: "Printemps Visite" },
+    });
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: [after] })),
+    );
+    renderEcrin({}, "2027-03-26");
+    expect(
+      await screen.findByRole("button", { name: /Printemps Visite/ }),
+    ).toBeTruthy();
+    expect(await screen.findByText(/· 1 rendez.vous/)).toBeTruthy();
+  });
+
   it("« Annulés » reads the week again with them; arrows and today move it", async () => {
     const user = userEvent.setup();
     renderEcrin();
