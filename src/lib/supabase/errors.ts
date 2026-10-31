@@ -43,6 +43,7 @@ const domainMessages: Record<string, AppErrorCode> = {
   invalid_starts_at: "validation_error",
   invalid_hours: "validation_error",
   invalid_service_order: "validation_error",
+  invalid_preferences: "validation_error",
   calendar_not_connected: "calendar_not_connected",
   calendar_not_found: "calendar_not_found",
   calendar_not_selectable: "calendar_not_selectable",

@@ -461,6 +461,25 @@ isOneToOne: false
       referencedColumns: ["id","business_id"]
     }
                   ]
+                },"member_preferences": {
+                  Row: {
+                    "accent": string | null,"ambiance": string,"business_id": string,"color_mode": string,"created_at": string,"motion": string,"style": string,"updated_at": string,"user_id": string,"version": number
+                  }
+                  Insert: {
+                    "accent"?: string | null,"ambiance"?: string,"business_id": string,"color_mode"?: string,"created_at"?: string,"motion"?: string,"style"?: string,"updated_at"?: string,"user_id": string,"version"?: number
+                  }
+                  Update: {
+                    "accent"?: string | null,"ambiance"?: string,"business_id"?: string,"color_mode"?: string,"created_at"?: string,"motion"?: string,"style"?: string,"updated_at"?: string,"user_id"?: string,"version"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "member_preferences_business_id_user_id_fkey"
+      columns: ["business_id","user_id"]
+isOneToOne: true
+      referencedRelation: "business_members"
+      referencedColumns: ["business_id","user_id"]
+    }
+                  ]
                 },"profiles": {
                   Row: {
                     "created_at": string,"first_name": string | null,"id": string,"last_name": string | null,"updated_at": string
@@ -975,6 +994,11 @@ isOneToOne: false
         isOneToOne: false
         isSetofReturn: true
       } },
+"save_member_preferences":
+{ Args: { "p_business_id": string,"p_changes": Json,"p_expected_version": number }; Returns: {
+              "accent": string,"ambiance": string,"color_mode": string,"motion": string,"status": string,"style": string,"updated_at": string,"version": number
+            }[]
+                           },
 "search_clients":
 { Args: { "p_business_id": string,"p_limit"?: number,"p_query": string }; Returns: {
               "email": string,"first_name": string,"id": string,"last_name": string,"phone": string
