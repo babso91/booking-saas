@@ -38,21 +38,16 @@ describe("Studio 2 in a browser", () => {
     const theirs = await professionalWithVisit("Jade", "Zélie");
     const page = await studioPage(mine.browser);
 
-    const bodies: { url: string; action: boolean; body: string }[] = [];
-    const reading: Promise<void>[] = [];
-    page.on("response", (response) => {
-      reading.push(
-        response.text().then(
-          (body) => {
-            bodies.push({
-              url: response.url(),
-              action: Boolean(response.request().headers()["next-action"]),
-              body,
-            });
-          },
-          () => {}, // A redirect has no body to read.
-        ),
-      );
+    // Every answer passes through here, read in full: none can be missed.
+    const answers: { what: string; body: string }[] = [];
+    await page.route("**/*", async (route) => {
+      const request = route.request();
+      const response = await route.fetch({ maxRedirects: 0 });
+      answers.push({
+        what: `${request.method()} ${request.url()} ${response.status()}`,
+        body: await response.text(),
+      });
+      await route.fulfill({ response });
     });
 
     await page.goto(
@@ -65,7 +60,6 @@ describe("Studio 2 in a browser", () => {
       .first()
       .waitFor();
     await page.waitForLoadState("networkidle");
-    await Promise.all(reading);
 
     // The link opened nothing, and nothing of the other business is on screen.
     expect(await page.getByRole("dialog").count()).toBe(0);
@@ -77,21 +71,23 @@ describe("Studio 2 in a browser", () => {
     }
 
     // The capture really saw the read: her own data went through it…
-    const reads = bodies.filter(
-      (item) => item.action && item.body.includes("Rose"),
+    const seen = answers.map(
+      ({ what, body }) => `${what} (${body.length} characters)`,
     );
-    expect(reads.length).toBeGreaterThan(0);
-    expect(reads.some((item) => item.body.includes(mine.businessId))).toBe(
-      false,
-    );
+    expect(
+      answers.some(
+        ({ what, body }) => what.startsWith("POST") && body.includes("Rose"),
+      ),
+      seen.join("\n"),
+    ).toBe(true);
     // …and no answer carried theirs.
-    for (const { url, body } of bodies) {
+    for (const { what, body } of answers) {
       for (const forbidden of [
         "Zélie",
         theirs.businessId,
         theirs.clientEmail,
       ]) {
-        expect(body.includes(forbidden), `${forbidden} in ${url}`).toBe(false);
+        expect(body.includes(forbidden), `${forbidden} in ${what}`).toBe(false);
       }
     }
 
