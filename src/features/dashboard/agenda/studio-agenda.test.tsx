@@ -14,7 +14,7 @@ import {
   businessToday,
   services,
 } from "../../../../tests/support/agenda-fixtures";
-import { isoWeek } from "./studio-agenda";
+import { isoWeek, weekSpan } from "./studio-agenda";
 
 // The Studio agenda is the agenda: AgendaView (its reading, its "today"
 // checked with PostgreSQL, its panels and actions), drawn by StudioAgenda.
@@ -619,6 +619,39 @@ describe("Studio agenda — the summary (ST2-003)", () => {
     await within(summary).findByText("10 min");
     expect(
       screen.getByRole("button", { name: /Libre · 10 min à partir de 11:50/ }),
+    ).toBeTruthy();
+  });
+});
+
+describe("weekSpan (ST2-005)", () => {
+  const week = (first: string) => {
+    const start = Date.parse(`${first}T00:00:00Z`);
+    return Array.from({ length: 7 }, (_, index) =>
+      new Date(start + index * 86_400_000).toISOString().slice(0, 10),
+    );
+  };
+
+  it.each([
+    ["2026-12-28", "28 déc. 2026 – 3 janv. 2027"],
+    ["2027-12-27", "27 déc. 2027 – 2 janv. 2028"],
+    ["2029-12-31", "31 déc. 2029 – 6 janv. 2030"],
+    ["2021-12-27", "27 déc. 2021 – 2 janv. 2022"],
+    ["2026-09-28", "28 sept. – 4 oct. 2026"],
+    ["2027-01-04", "4 janv. – 10 janv. 2027"],
+    ["2026-12-21", "21 déc. – 27 déc. 2026"],
+  ])("%s → %s", (first, label) => {
+    expect(weekSpan(week(first))).toBe(label);
+  });
+
+  it("the header says both years on the week of New Year", async () => {
+    useViewport(true);
+    vi.setSystemTime(new Date("2026-12-30T08:00:00Z"));
+    actions.getAgendaTodayAction.mockImplementation(async () =>
+      ok(businessToday()),
+    );
+    renderStudio({ today: "2026-12-30" });
+    expect(
+      await screen.findByText(/28 déc\. 2026 – 3 janv\. 2027/),
     ).toBeTruthy();
   });
 });

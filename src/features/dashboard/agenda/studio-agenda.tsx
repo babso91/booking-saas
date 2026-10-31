@@ -85,6 +85,16 @@ export function isoWeek(date: string) {
   return Math.ceil(((value.getTime() - yearStart) / 86_400_000 + 1) / 7);
 }
 
+/** The dates of a week, with both years when it crosses New Year. */
+export function weekSpan(days: string[]) {
+  const first = days[0]!;
+  const last = days[days.length - 1]!;
+  const [from, to] = [first.slice(0, 4), last.slice(0, 4)];
+  return from === to
+    ? `${formatDayMonth(first)} – ${formatDayMonth(last)} ${to}`
+    : `${formatDayMonth(first)} ${from} – ${formatDayMonth(last)} ${to}`;
+}
+
 const capitalize = (value: string) =>
   value.charAt(0).toUpperCase() + value.slice(1);
 
@@ -147,7 +157,7 @@ export function StudioAgenda(props: StudioAgendaProps) {
             </h1>
             <p className="mt-1.5 text-[14px] text-ink-soft">
               {view === "week"
-                ? `${formatDayMonth(days[0]!)} – ${formatDayMonth(days[days.length - 1]!)} ${days[0]!.slice(0, 4)}`
+                ? weekSpan(days)
                 : capitalize(
                     formatFullDate(anchor).split(" ").slice(2).join(" "),
                   )}
@@ -181,8 +191,9 @@ export function StudioAgenda(props: StudioAgendaProps) {
             </div>
           ) : (
             // Phone: the least above her day. Back to today when away from
-            // it; the rest in one menu.
-            <div className="flex items-center gap-1.5 self-start pt-1">
+            // it; the rest in one menu. Held to the right edge even on a
+            // line of its own: the menu opens leftwards from there.
+            <div className="ml-auto flex items-center gap-1.5 self-start pt-1">
               {onToday ? null : (
                 <button
                   type="button"
@@ -467,7 +478,7 @@ function Options({
       {open ? (
         <div
           id="agenda-options"
-          className="absolute top-12 right-0 z-50 flex w-64 flex-col gap-1 rounded-[20px] bg-paper-raised p-2 shadow-[0_24px_48px_-20px_rgb(var(--shadow-rgb)/0.6),0_0_0_1px_var(--line)]"
+          className="absolute top-12 right-0 z-50 flex w-64 max-w-[calc(100vw-2rem)] flex-col gap-1 rounded-[20px] bg-paper-raised p-2 shadow-[0_24px_48px_-20px_rgb(var(--shadow-rgb)/0.6),0_0_0_1px_var(--line)]"
         >
           <button
             type="button"
