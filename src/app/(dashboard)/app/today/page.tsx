@@ -11,6 +11,7 @@ import {
 } from "@/features/appearance/appearance";
 import { requireReadyBusiness } from "@/features/auth/data/guards";
 import { StudioToday } from "@/features/dashboard/components/studio-today";
+import { EcrinToday } from "@/features/dashboard/ecrin/ecrin-today";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { readBusinessToday } from "@/lib/time/business-time";
 import { addDaysToLocalDate } from "@/lib/time/local-date";
@@ -19,7 +20,7 @@ export const metadata: Metadata = {
   title: "Aujourd’hui",
 };
 
-// "Aujourd’hui": her day at a glance. Part of the Studio style for now; in
+// "Aujourd’hui": her day at a glance, in the Studio and Écrin styles; in
 // Classique, the agenda is her home and this address leads there.
 export default async function TodayPage() {
   // Also checked here: the layout guard does not stop the page from being
@@ -28,7 +29,7 @@ export default async function TodayPage() {
   const appearance = parseAppearance(
     (await cookies()).get(APPEARANCE_COOKIE)?.value,
   );
-  if (appearance.style !== "studio") redirect("/app");
+  if (appearance.style === "classique") redirect("/app");
 
   // Today and now, from the calendar authority (PostgreSQL); then the week
   // around it, read exactly as the agenda reads it (RLS: members only).
@@ -50,11 +51,19 @@ export default async function TodayPage() {
       business={{ name: business.name, slug: business.slug }}
       current="today"
     >
-      <StudioToday
-        agenda={agenda}
-        date={today.date}
-        serverNow={Date.parse(today.now)}
-      />
+      {appearance.style === "ecrin" ? (
+        <EcrinToday
+          agenda={agenda}
+          date={today.date}
+          serverNow={Date.parse(today.now)}
+        />
+      ) : (
+        <StudioToday
+          agenda={agenda}
+          date={today.date}
+          serverNow={Date.parse(today.now)}
+        />
+      )}
     </AppShell>
   );
 }

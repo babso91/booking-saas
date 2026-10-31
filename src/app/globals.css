@@ -417,3 +417,94 @@ input[type="search"]::-webkit-search-cancel-button {
   font-stretch: 125%;
   font-variation-settings: "wdth" 125;
 }
+
+/*
+ * Écrin style (professional area). Engraved lettering (Marcellus) for what
+ * is named, a light geometric sans (Jost) for what is said; surfaces are
+ * satin rather than flat. Components keep their classes.
+ */
+[data-style="ecrin"] {
+  --font-sans: var(--font-ecrin), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-sans);
+  /* Shared screens keep their classes; here every corner is softer. */
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.625rem;
+}
+[data-style="ecrin"] .font-display {
+  font-family: var(--font-engraved), ui-serif, Georgia, serif;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+.font-engraved {
+  font-family: var(--font-engraved), ui-serif, Georgia, serif;
+  font-weight: 400;
+}
+/* A satin object: light from above, a hairline edge, a soft cast shadow. */
+.ecrin-object {
+  background: linear-gradient(180deg, var(--paper-raised), var(--paper));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 45%, transparent),
+    0 0 0 1px var(--line),
+    0 1px 2px rgb(var(--shadow-rgb) / 0.06),
+    0 12px 28px -16px rgb(var(--shadow-rgb) / 0.32);
+}
+.ecrin-press {
+  transition:
+    transform 180ms var(--ease-out-soft),
+    box-shadow 180ms var(--ease-out-soft);
+}
+.ecrin-press:hover {
+  transform: translateY(-1px);
+}
+.ecrin-press:active {
+  transform: scale(0.985);
+}
+.ecrin-ground {
+  background:
+    radial-gradient(110% 70% at 18% 0%, var(--paper-raised), transparent 62%),
+    radial-gradient(90% 70% at 100% 100%, var(--sand), transparent 70%),
+    var(--paper);
+}
+.ecrin-appear {
+  animation: ecrin-appear 420ms var(--ease-out-soft) both;
+}
+@keyframes ecrin-appear {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.ecrin-arc {
+  animation: ecrin-arc 520ms var(--ease-out-soft) both;
+}
+@keyframes ecrin-arc {
+  from {
+    opacity: 0;
+  }
+}
+.ecrin-hand {
+  transition: transform 700ms var(--ease-out-soft);
+}
+[data-motion="discrete"] .ecrin-appear,
+[data-motion="discrete"] .ecrin-arc {
+  animation-duration: 160ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ecrin-appear,
+  .ecrin-arc {
+    animation: none;
+  }
+  .ecrin-press,
+  .ecrin-hand {
+    transition: none;
+  }
+  .ecrin-press:hover,
+  .ecrin-press:active {
+    transform: none;
+  }
+}
+[data-motion="none"] .ecrin-press:hover,
+[data-motion="none"] .ecrin-press:active {
+  transform: none;
+}

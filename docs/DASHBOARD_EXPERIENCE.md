@@ -185,3 +185,5 @@ Le BOFiP définit un système de caisse comme un outil qui mémorise et enregist
 | 9   | Catalogue unifié                            | Catégories et options (backend), puis interface commune au dashboard et au Studio                                                                                                                                                                                                                             | Migration                                        | Claude Cloud, puis Claude Code            |
 
 Chaque PR est auditée avant fusion. Les PR 1 et 2 forment la PR « Studio 1 » (branche `feat/dashboard-studio-1`) ; son dossier d'audit : `docs/STUDIO_1_AUDIT.md`.
+
+**Écrin** (branche `feat/dashboard-ecrin`, empilée sur Studio 2) : accueil, agenda, navigation et apparence sur le même moteur ; dossier d'audit : `docs/ECRIN_AUDIT.md`.

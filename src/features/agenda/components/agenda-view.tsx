@@ -33,6 +33,7 @@ import {
   StudioAgenda,
   type StudioView,
 } from "@/features/dashboard/agenda/studio-agenda";
+import { EcrinAgenda } from "@/features/dashboard/ecrin/ecrin-agenda";
 import { cn } from "@/lib/cn";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
 import { addDaysToLocalDate } from "@/lib/time/local-date";
@@ -109,9 +110,12 @@ export function AgendaView({
   today: string;
 }) {
   const wide = useMediaQuery("(min-width: 768px)");
-  const studio = useDashboardStyle() === "studio";
+  const style = useDashboardStyle();
+  // Studio and Écrin: other presentations of this same controller, where a
+  // computer can also show one day.
+  const designed = style !== "classique";
   const [studioView, setStudioView] = useState<StudioView>("week");
-  const view: View = wide ? (studio ? studioView : "week") : "day";
+  const view: View = wide ? (designed ? studioView : "week") : "day";
   const clock = useSyncExternalStore(subscribeClock, clockBucket, () => 0);
 
   const canonical = useCanonicalToday(initialToday, clock);
@@ -479,9 +483,10 @@ export function AgendaView({
     </Sheet>
   );
 
-  if (studio)
+  if (designed) {
+    const Presentation = style === "ecrin" ? EcrinAgenda : StudioAgenda;
     return (
-      <StudioAgenda
+      <Presentation
         view={view}
         wide={wide}
         onView={(next) => {
@@ -518,6 +523,7 @@ export function AgendaView({
         onRefresh={reload}
       />
     );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

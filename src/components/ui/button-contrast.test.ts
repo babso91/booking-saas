@@ -78,7 +78,7 @@ function resolve(classes: string, state: State, palette: Palette) {
   return { bg: pick("bg"), text: pick("text") };
 }
 
-const looks = (["classique", "studio"] as StyleId[]).flatMap((style) =>
+const looks = (["classique", "studio", "ecrin"] as StyleId[]).flatMap((style) =>
   (Object.keys(ambiances) as AmbianceId[]).flatMap((ambiance) =>
     (["light", "dark"] as Mode[]).map((mode) => ({ style, ambiance, mode })),
   ),

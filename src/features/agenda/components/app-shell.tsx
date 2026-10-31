@@ -19,6 +19,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { useDashboardStyle } from "@/features/appearance/components/appearance-provider";
 import { SignOutButton } from "@/features/auth/components/sign-out-button";
 import { StudioShell } from "@/features/dashboard/components/studio-shell";
+import { EcrinShell } from "@/features/dashboard/ecrin/ecrin-shell";
 import type { DashboardSection } from "@/features/dashboard/sections";
 import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
@@ -58,6 +59,13 @@ export function AppShell({
 
   const [accountOpen, setAccountOpen] = useState(false);
   const style = useDashboardStyle();
+
+  if (style === "ecrin")
+    return (
+      <EcrinShell business={business} current={current}>
+        {children}
+      </EcrinShell>
+    );
 
   if (style === "studio")
     return (

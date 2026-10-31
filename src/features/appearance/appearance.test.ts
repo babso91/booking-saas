@@ -11,7 +11,9 @@ import {
 } from "./appearance";
 import {
   ambiances,
+  ecrinPalettes,
   signaturePresets,
+  stonePresets,
   studioPalettes,
   type AmbianceId,
   type Mode,
@@ -125,6 +127,50 @@ const randomColors = (count: number, seed = 11) => {
   }
   return colors;
 };
+
+describe("the Écrin style", () => {
+  it.each(["light", "dark"] as Mode[])(
+    "%s: every text the screens use reads on its surface (4.5:1)",
+    (mode) => {
+      expect(unreadable(ecrinPalettes[mode])).toEqual([]);
+      expect(unreadable(paletteFor("ecrin", "atelier", mode, null))).toEqual(
+        [],
+      );
+    },
+  );
+
+  it.each(["light", "dark"] as Mode[])(
+    "%s: any stone is a field her text reads on, and stays readable as text",
+    (mode) => {
+      for (const color of [
+        ...stonePresets.map((preset) => preset.color),
+        ...randomColors(300),
+      ]) {
+        const palette = paletteFor("ecrin", "atelier", mode, color);
+        expect(
+          contrast(palette.onSignature, palette.signature),
+          color,
+        ).toBeGreaterThanOrEqual(4.5);
+        expect(unreadable(palette), color).toEqual([]);
+      }
+    },
+  );
+
+  it("is a value of the same cookie, and reversible", () => {
+    const ecrin = { ...defaultAppearance, style: "ecrin" as const };
+    expect(serializeAppearance(ecrin)).toBe("atelier.light.standard.-.ecrin");
+    expect(parseAppearance(serializeAppearance(ecrin))).toEqual(ecrin);
+    expect(parseAppearance("atelier.light.standard.-.classique").style).toBe(
+      "classique",
+    );
+  });
+
+  it("does not depend on the ambiance (Écrin brings its own neutrals)", () => {
+    expect(paletteFor("ecrin", "sauge", "light", null).paper).toBe(
+      paletteFor("ecrin", "atelier", "light", null).paper,
+    );
+  });
+});
 
 describe("the Studio style", () => {
   it.each(["light", "dark"] as Mode[])(

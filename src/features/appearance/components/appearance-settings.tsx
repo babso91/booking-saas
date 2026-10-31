@@ -20,8 +20,10 @@ import {
 import {
   accentPresets,
   ambiances,
+  ecrinPalettes,
   signaturePresets,
   STUDIO_SIGNATURE,
+  stonePresets,
   styles,
   studioPalettes,
   type AmbianceId,
@@ -54,7 +56,12 @@ export function AppearanceSettings() {
           ),
       );
   const studio = appearance.style === "studio";
-  const presets = studio ? signaturePresets : accentPresets;
+  const ecrin = appearance.style === "ecrin";
+  const presets = studio
+    ? signaturePresets
+    : ecrin
+      ? stonePresets
+      : accentPresets;
   const own = defaultAccent(appearance.style, appearance.ambiance);
 
   return (
@@ -75,7 +82,7 @@ export function AppearanceSettings() {
           legend="Style"
           description="La mise en scène de tout ton espace. Les rubriques et les mots restent les mêmes."
         >
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             {(Object.keys(styles) as StyleId[]).map((id) => (
               <Choice
                 key={id}
@@ -99,7 +106,7 @@ export function AppearanceSettings() {
           </div>
         </Group>
 
-        {studio ? null : (
+        {studio || ecrin ? null : (
           <Group legend="Ambiance">
             <div className="grid gap-3 sm:grid-cols-3">
               {(Object.keys(ambiances) as AmbianceId[]).map((id) => (
@@ -147,11 +154,19 @@ export function AppearanceSettings() {
         </Group>
 
         <Group
-          legend={studio ? "Ta couleur signature" : "Couleur d’accent"}
+          legend={
+            studio
+              ? "Ta couleur signature"
+              : ecrin
+                ? "Ta pierre"
+                : "Couleur d’accent"
+          }
           description={
             studio
               ? "Elle remplit le bloc « maintenant », marque l’heure et tes repères."
-              : "Elle souligne les liens, les repères et l’heure actuelle dans ton agenda."
+              : ecrin
+                ? "Elle colore l’aiguille du cadran, le créneau en cours et tes repères."
+                : "Elle souligne les liens, les repères et l’heure actuelle dans ton agenda."
           }
         >
           <div className="flex flex-wrap gap-2">
@@ -169,7 +184,11 @@ export function AppearanceSettings() {
                     background: own,
                   }}
                 />
-                {studio ? "Cobalt, celle du Studio" : "Celle de l’ambiance"}
+                {studio
+                  ? "Cobalt, celle du Studio"
+                  : ecrin
+                    ? "Améthyste, celle de l’Écrin"
+                    : "Celle de l’ambiance"}
               </span>
             </Choice>
             {presets
@@ -334,6 +353,47 @@ function Choice({
 
 /** A thumbnail of each style: its ground, its big moment, its type. */
 function StyleSwatch({ id }: { id: StyleId }) {
+  if (id === "ecrin") {
+    const palette = ecrinPalettes.light;
+    return (
+      <span
+        aria-hidden="true"
+        className="grid h-20 place-items-center rounded-xl border"
+        style={{ background: palette.paper, borderColor: palette.line }}
+      >
+        <svg viewBox="0 0 64 64" className="size-16">
+          <circle
+            cx="32"
+            cy="32"
+            r="30"
+            fill={palette.paperRaised}
+            stroke={palette.line}
+          />
+          <path
+            d="M14.7 42 A20 20 0 0 1 19 16.8"
+            fill="none"
+            stroke={palette.inkMuted}
+            strokeWidth="5"
+            strokeLinecap="round"
+          />
+          <path
+            d="M26 12.9 A20 20 0 0 1 41 14.1"
+            fill="none"
+            stroke={palette.accent}
+            strokeWidth="5"
+            strokeLinecap="round"
+          />
+          <path
+            d="M47 18.8 A20 20 0 0 1 49.3 42"
+            fill="none"
+            stroke={palette.ink}
+            strokeWidth="5"
+            strokeLinecap="round"
+          />
+        </svg>
+      </span>
+    );
+  }
   if (id === "studio") {
     const palette = studioPalettes.light;
     return (

@@ -215,7 +215,7 @@ export const accentPresets = [
 // The components still only know the semantic tokens; a style brings its
 // own neutrals and how big moments are set.
 
-export type StyleId = "classique" | "studio";
+export type StyleId = "classique" | "studio" | "ecrin";
 
 export const styles: Record<StyleId, { name: string; line: string }> = {
   classique: {
@@ -225,6 +225,10 @@ export const styles: Record<StyleId, { name: string; line: string }> = {
   studio: {
     name: "Studio",
     line: "Graphique et direct : ta journée comme une affiche, ta couleur en grand.",
+  },
+  ecrin: {
+    name: "Écrin",
+    line: "Délicat et tactile : ta journée sur un cadran, des matières douces.",
   },
 };
 
@@ -291,3 +295,68 @@ export const signaturePresets = [
 ] as const;
 
 export const STUDIO_SIGNATURE = signaturePresets[0].color;
+
+/**
+ * Écrin's neutrals: lavender, lilac, a warm-free grey. Its accent is the
+ * amethyst of the ring and the hand; another colour can replace it.
+ */
+export const ecrinPalettes: Record<Mode, Palette> = {
+  light: {
+    paper: "#F3F0F6",
+    paperRaised: "#FCFAFD",
+    sand: "#E8E3EE",
+    sandDeep: "#DCD5E4",
+    line: "#DAD3E1",
+    lineStrong: "#B8AEC4",
+    ink: "#26212D",
+    inkSoft: "#544D5E",
+    inkMuted: "#686172",
+    accent: "#6B4F96",
+    accentStrong: "#533A7A",
+    accentSoft: "#E9E1F3",
+    success: "#2F6A52",
+    successSoft: "#DEEBE5",
+    successStrong: "#214E3C",
+    danger: "#A0384A",
+    dangerSoft: "#F6E0E4",
+    dangerStrong: "#7B2838",
+    warning: "#85581A",
+    warningSoft: "#F3E8D3",
+    warningStrong: "#664312",
+    shadowRgb: "38 30 50",
+  },
+  dark: {
+    paper: "#141118",
+    paperRaised: "#1E1A23",
+    sand: "#28232E",
+    sandDeep: "#332D3A",
+    line: "#38323F",
+    lineStrong: "#564E60",
+    ink: "#F1ECF5",
+    inkSoft: "#CAC2D2",
+    inkMuted: "#A89FB1",
+    accent: "#C7AEEA",
+    accentStrong: "#DDCCF5",
+    accentSoft: "#33284A",
+    success: "#86C8AC",
+    successSoft: "#18271F",
+    successStrong: "#AFDFCA",
+    danger: "#F09AAA",
+    dangerSoft: "#3A1B22",
+    dangerStrong: "#F7BEC9",
+    warning: "#E2AE63",
+    warningSoft: "#302516",
+    warningStrong: "#F0CD97",
+    shadowRgb: "0 0 0",
+  },
+};
+
+/** Écrin's stones, in one tap (any colour is also possible). */
+export const stonePresets = [
+  { name: "Lilas", color: "#A78BD4" },
+  { name: "Poudre", color: "#B46A6C" },
+  { name: "Jade", color: "#3F7A6A" },
+  { name: "Saphir", color: "#2F3A66" },
+  { name: "Prune", color: "#7A3E66" },
+  { name: "Champagne", color: "#A8894F" },
+] as const;

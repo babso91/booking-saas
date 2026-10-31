@@ -1,5 +1,11 @@
 import type { Metadata, Viewport } from "next";
-import { Archivo, Hanken_Grotesk, Instrument_Serif } from "next/font/google";
+import {
+  Archivo,
+  Hanken_Grotesk,
+  Instrument_Serif,
+  Jost,
+  Marcellus,
+} from "next/font/google";
 
 import "./globals.css";
 
@@ -27,6 +33,22 @@ const studio = Archivo({
   preload: false,
 });
 
+// The professional area's Écrin style: engraved lettering and a light sans.
+// Not preloaded either.
+const engraved = Marcellus({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-engraved",
+  display: "swap",
+  preload: false,
+});
+const ecrinSans = Jost({
+  subsets: ["latin"],
+  variable: "--font-ecrin",
+  display: "swap",
+  preload: false,
+});
+
 export const metadata: Metadata = {
   title: {
     default: "Booking SaaS",
@@ -47,7 +69,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="fr"
-      className={`${body.variable} ${serif.variable} ${studio.variable} h-full antialiased`}
+      className={`${body.variable} ${serif.variable} ${studio.variable} ${engraved.variable} ${ecrinSans.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">{children}</body>
     </html>

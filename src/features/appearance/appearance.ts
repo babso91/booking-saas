@@ -2,6 +2,7 @@ import { contrast, isHexColor, mix, readableTone } from "@/lib/color/contrast";
 
 import {
   ambiances,
+  ecrinPalettes,
   STUDIO_SIGNATURE,
   studioPalettes,
   type AmbianceId,
@@ -12,7 +13,8 @@ import {
 
 // A professional's appearance preferences for her area: its style, the
 // ambiance (Classique), light or dark (or the system's), her accent — her
-// signature colour in Studio — and the animations she wants. Core.
+// signature colour in Studio, her stone in Écrin — and the animations she
+// wants. Core.
 //
 // Stored for now on the device, in a cookie the server reads (so the first
 // paint is already hers: no flash, no script): `dash_appearance`. It holds
@@ -50,7 +52,7 @@ export const defaultAppearance: Appearance = {
   motion: "standard",
 };
 
-const styleIds: StyleId[] = ["classique", "studio"];
+const styleIds: StyleId[] = ["classique", "studio", "ecrin"];
 const modes: ModePreference[] = ["light", "dark", "system"];
 const motions: MotionPreference[] = ["standard", "discrete", "none"];
 
@@ -98,7 +100,9 @@ export function basePalette(
   ambiance: AmbianceId,
   mode: Mode,
 ): Palette {
-  return style === "studio" ? studioPalettes[mode] : ambiances[ambiance][mode];
+  if (style === "studio") return studioPalettes[mode];
+  if (style === "ecrin") return ecrinPalettes[mode];
+  return ambiances[ambiance][mode];
 }
 
 /** The colour she has unless she picks one. */
@@ -106,7 +110,10 @@ export const defaultAccent = (
   style: StyleId,
   ambiance: AmbianceId,
   mode: Mode = "light",
-) => (style === "studio" ? STUDIO_SIGNATURE : ambiances[ambiance][mode].accent);
+) =>
+  style === "studio"
+    ? STUDIO_SIGNATURE
+    : basePalette(style, ambiance, mode).accent;
 
 /**
  * The palette of a style (and ambiance) in a mode, with her accent if she
