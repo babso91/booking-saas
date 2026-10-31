@@ -25,7 +25,7 @@ import {
 // A professional's personal preferences (public.member_preferences), through
 // PostgREST with real Supabase Auth sessions: the path a browser, or an
 // attacker with her own account, takes. Two professionals, two businesses,
-// and a third member (staff) in A's business. Every UUID is known to all.
+// and a third member (admin) in A's business. Every UUID is known to all.
 
 const admin = createClient<Database>(env.apiUrl, env.serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -58,15 +58,51 @@ async function signIn(account: Account): Promise<AppSupabaseClient> {
 
 type Changes = Record<string, unknown>;
 
+async function membershipOf(businessId: string, userId: string) {
+  const { rows } = await db.query<{ id: string }>(
+    "select id from public.business_members where business_id = $1 and user_id = $2",
+    [businessId, userId],
+  );
+  return rows[0]?.id ?? null;
+}
+
+async function incarnationOf(businessId: string, userId: string) {
+  const { rows } = await db.query<{ incarnation: string }>(
+    "select incarnation from public.member_preferences where business_id = $1 and user_id = $2",
+    [businessId, userId],
+  );
+  return rows[0]?.incarnation ?? null;
+}
+
+/**
+ * save_member_preferences as a device calls it: for the caller's
+ * membership, and (unless given) the row's current incarnation as the
+ * expected one, so that `expectedVersion` alone says what the device read.
+ */
 async function save(
   client: AppSupabaseClient,
   businessId: string,
   expectedVersion: number,
   changes: Changes,
+  overrides: { membershipId?: string; incarnation?: string | null } = {},
 ) {
+  const userId = (await client.auth.getSession()).data.session?.user.id;
+  const membershipId =
+    overrides.membershipId ??
+    (userId ? await membershipOf(businessId, userId) : null) ??
+    randomUUID();
+  const incarnation =
+    "incarnation" in overrides
+      ? overrides.incarnation
+      : expectedVersion === 0
+        ? null
+        : ((userId ? await incarnationOf(businessId, userId) : null) ??
+          randomUUID());
   return client
     .rpc("save_member_preferences", {
       p_business_id: businessId,
+      p_membership_id: membershipId,
+      p_expected_incarnation: incarnation as string,
       p_expected_version: expectedVersion,
       p_changes: changes as never,
     })
@@ -145,21 +181,29 @@ describe("defaults and the closed lists", () => {
     });
   });
 
-  it("has exactly the app's closed lists", async () => {
-    const { rows } = await db.query(
-      "select pg_get_functiondef('private.member_preferences_valid'::regproc) as body",
-    );
-    const body = rows[0].body as string;
-    const list = (parameter: string) =>
-      [
-        ...new RegExp(`${parameter} in \\(([^)]*)\\)`)
-          .exec(body)![1]!
-          .matchAll(/'([^']*)'/g),
-      ].map((match) => match[1]);
-    expect(list("p_style")).toEqual([...preferenceStyles]);
-    expect(list("p_ambiance")).toEqual([...preferenceAmbiances]);
-    expect(list("p_color_mode")).toEqual([...preferenceModes]);
-    expect(list("p_motion")).toEqual([...preferenceMotions]);
+  it("has exactly the app's closed lists (one domain per field)", async () => {
+    const list = async (domain: string) => {
+      const { rows } = await db.query(
+        `select pg_get_constraintdef(c.oid) as def
+         from pg_constraint c where c.contypid = $1::regtype`,
+        [`public.${domain}`],
+      );
+      return [...(rows[0].def as string).matchAll(/'([^']*)'/g)].map(
+        (match) => match[1],
+      );
+    };
+    expect(await list("member_preference_style")).toEqual([
+      ...preferenceStyles,
+    ]);
+    expect(await list("member_preference_ambiance")).toEqual([
+      ...preferenceAmbiances,
+    ]);
+    expect(await list("member_preference_color_mode")).toEqual([
+      ...preferenceModes,
+    ]);
+    expect(await list("member_preference_motion")).toEqual([
+      ...preferenceMotions,
+    ]);
   });
 
   it.each([
@@ -179,7 +223,7 @@ describe("defaults and the closed lists", () => {
          select business_id, user_id, $2 from public.business_members where business_id = $1`,
         [business.id, value],
       ),
-    ).rejects.toThrow(/member_preferences_values/);
+    ).rejects.toThrow(/member_preference_/);
   });
 });
 
@@ -353,14 +397,70 @@ describe("isolation between accounts", () => {
     expect(writing.error).not.toBeNull();
   });
 
-  it("the service role (the app's server key) has no business here either", async () => {
-    const before = await row(businessB.id, bruno.userId);
+  it("the API roles: anon has nothing, authenticated only SELECT (RLS); the service role keeps its administrative rights", async () => {
+    const { rows } = await db.query(
+      `select grantee, string_agg(privilege_type, ',' order by privilege_type) as privileges
+       from information_schema.role_table_grants
+       where table_schema = 'public' and table_name = 'member_preferences'
+         and grantee in ('anon', 'authenticated', 'service_role')
+       group by grantee order by grantee`,
+    );
+    expect(rows).toEqual([
+      { grantee: "authenticated", privileges: "SELECT" },
+      {
+        grantee: "service_role",
+        privileges: "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE",
+      },
+    ]);
+    const bypass = await db.query(
+      "select rolbypassrls from pg_roles where rolname = 'service_role'",
+    );
+    expect(bypass.rows[0].rolbypassrls).toBe(true);
+  });
+
+  it("the service role reads and writes rows directly (administration), still under the table's rules; the RPC refuses it (no user)", async () => {
     const service = bookingClient();
-    const writing = await save(service, businessB.id, before.version, {
+    const all = await service
+      .from("member_preferences")
+      .select("user_id")
+      .in("business_id", [businessA.id, businessB.id]);
+    expect(all.error).toBeNull();
+    expect(new Set(all.data!.map((r) => r.user_id))).toContain(bruno.userId);
+    expect(new Set(all.data!.map((r) => r.user_id))).toContain(alice.userId);
+
+    const before = await row(businessB.id, bruno.userId);
+    const incarnation = await incarnationOf(businessB.id, bruno.userId);
+    // Its direct write is a real write: version moved by the trigger, the
+    // version and incarnation it sends are ignored.
+    const update = await service
+      .from("member_preferences")
+      .update({ motion: "discrete", version: 999, incarnation: randomUUID() })
+      .eq("business_id", businessB.id)
+      .eq("user_id", bruno.userId);
+    expect(update.error).toBeNull();
+    expect(await row(businessB.id, bruno.userId)).toEqual({
+      ...before,
+      motion: "discrete",
+      version: before.version + 1,
+    });
+    expect(await incarnationOf(businessB.id, bruno.userId)).toBe(incarnation);
+    // Never outside the closed lists, never for a non-member.
+    const invalid = await service
+      .from("member_preferences")
+      .update({ style: "minimal" })
+      .eq("business_id", businessB.id);
+    expect(invalid.error?.code).toBe("23514");
+    const stranger = await service.from("member_preferences").insert({
+      business_id: businessB.id,
+      user_id: alice.userId,
+    });
+    expect(stranger.error?.code).toBe("23503");
+    // The RPC acts for a signed-in member only.
+    const rpc = await save(service, businessB.id, before.version + 1, {
       style: "studio",
     });
-    expect(writing.error).not.toBeNull();
-    expect(await row(businessB.id, bruno.userId)).toEqual(before);
+    expect(rpc.error?.message).toBe("unauthenticated");
+    expect((await row(businessB.id, bruno.userId)).style).toBe(before.style);
   });
 
   it("a member removed from the business loses her preferences there, and can no longer save", async () => {
@@ -433,27 +533,37 @@ describe("validation and injection", () => {
     ["a string", "studio"],
     ["null", null],
   ])("refuses a patch that is %s", async (_label, changes) => {
-    const result = await aliceLaptop
-      .rpc("save_member_preferences", {
-        p_business_id: businessA.id,
-        p_expected_version: 0,
-        p_changes: changes as never,
-      })
-      .single();
+    const result = await save(aliceLaptop, businessA.id, 0, changes as never);
     expect(result.error?.message).toBe("invalid_preferences");
   });
 
-  it("refuses a missing or negative version", async () => {
-    for (const version of [-1, null]) {
-      const result = await aliceLaptop
-        .rpc("save_member_preferences", {
-          p_business_id: businessA.id,
-          p_expected_version: version as never,
-          p_changes: { style: "studio" },
-        })
-        .single();
+  it("refuses a missing or negative version, or an incoherent expected state", async () => {
+    const incarnation = await incarnationOf(businessA.id, alice.userId);
+    for (const [version, expected] of [
+      [-1, incarnation],
+      [null, incarnation],
+      [0, incarnation],
+      [3, null],
+    ] as const) {
+      const result = await save(
+        aliceLaptop,
+        businessA.id,
+        version as never,
+        { style: "studio" },
+        { incarnation: expected },
+      );
       expect(result.error?.message).toBe("invalid_input");
     }
+    const noMembership = await aliceLaptop
+      .rpc("save_member_preferences", {
+        p_business_id: businessA.id,
+        p_membership_id: null as never,
+        p_expected_incarnation: null as never,
+        p_expected_version: 0,
+        p_changes: { style: "studio" },
+      })
+      .single();
+    expect(noMembership.error?.message).toBe("invalid_input");
   });
 
   it("the table refuses invalid values on every path, the service role's too", async () => {
@@ -463,7 +573,7 @@ describe("validation and injection", () => {
          where business_id = $1 and user_id = $2`,
         [businessA.id, alice.userId],
       ),
-    ).rejects.toThrow(/member_preferences_values/);
+    ).rejects.toThrow(/member_preference_accent/);
   });
 });
 
@@ -573,5 +683,207 @@ describe("version and concurrency", () => {
       ambiance: "sauge",
       version: before.version + 2,
     });
+  });
+});
+
+describe("reading, through read_member_preferences", () => {
+  it("answers her membership and her row, or the defaults (no incarnation, version 0)", async () => {
+    const reader = await createAccount("pref-reader");
+    const business = await createBusiness(reader.userId);
+    const client = await signIn(reader);
+    const empty = await client
+      .rpc("read_member_preferences", { p_business_id: business.id })
+      .single();
+    expect(empty.data).toEqual({
+      membership_id: await membershipOf(business.id, reader.userId),
+      incarnation: null,
+      style: "classique",
+      ambiance: "atelier",
+      color_mode: "light",
+      accent: null,
+      motion: "standard",
+      version: 0,
+    });
+    await save(client, business.id, 0, { style: "studio" });
+    const saved = await client
+      .rpc("read_member_preferences", { p_business_id: business.id })
+      .single();
+    expect(saved.data).toMatchObject({
+      incarnation: await incarnationOf(business.id, reader.userId),
+      style: "studio",
+      version: 1,
+    });
+  });
+
+  it("a member without a row reads the defaults, never another member's row of the same business", async () => {
+    const newcomer = await createAccount("pref-newcomer");
+    await db.query(
+      `insert into public.business_members (business_id, user_id, role)
+       values ($1, $2, 'admin')`,
+      [businessA.id, newcomer.userId],
+    );
+    expect(await row(businessA.id, alice.userId)).not.toBeNull();
+    const client = await signIn(newcomer);
+    const read = await client
+      .rpc("read_member_preferences", { p_business_id: businessA.id })
+      .single();
+    expect(read.data).toMatchObject({
+      membership_id: await membershipOf(businessA.id, newcomer.userId),
+      incarnation: null,
+      style: "classique",
+      accent: null,
+      version: 0,
+    });
+  });
+
+  it("refuses another business, the anonymous key and the service role", async () => {
+    const other = await aliceLaptop
+      .rpc("read_member_preferences", { p_business_id: businessB.id })
+      .single();
+    expect(other.error?.message).toBe("forbidden");
+    const anon = await anonClient()
+      .rpc("read_member_preferences", { p_business_id: businessB.id })
+      .single();
+    expect(anon.error).not.toBeNull();
+    const service = await bookingClient()
+      .rpc("read_member_preferences", { p_business_id: businessB.id })
+      .single();
+    expect(service.error).not.toBeNull();
+  });
+});
+
+describe("contexts and incarnations", () => {
+  it("a save for another membership than hers (stale page) is context_changed, and writes nothing", async () => {
+    const before = await row(businessA.id, alice.userId);
+    const result = await save(
+      aliceLaptop,
+      businessA.id,
+      before.version,
+      { style: "carnet" },
+      { membershipId: randomUUID() },
+    );
+    expect(result.error?.message).toBe("context_changed");
+    expect(await row(businessA.id, alice.userId)).toEqual(before);
+  });
+
+  it("the incarnation is fixed for a row's life, and new when the row is created again", async () => {
+    const owner = await createAccount("pref-inc");
+    const business = await createBusiness(owner.userId);
+    const client = await signIn(owner);
+    const first = await save(client, business.id, 0, { style: "studio" });
+    const incarnation = first.data!.incarnation;
+    expect(incarnation).toMatch(/^[0-9a-f-]{36}$/);
+    const second = await save(client, business.id, 1, { style: "ecrin" });
+    expect(second.data).toMatchObject({ incarnation, version: 2 });
+    await expect(
+      db.query(
+        "update public.member_preferences set incarnation = gen_random_uuid() where business_id = $1",
+        [business.id],
+      ),
+    ).resolves.toBeTruthy();
+    expect(await incarnationOf(business.id, owner.userId)).toBe(incarnation);
+
+    // An administrator deletes the row; a device still at version 2 of the
+    // old incarnation is stale (not applied on the new state), then saves.
+    await db.query(
+      "delete from public.member_preferences where business_id = $1",
+      [business.id],
+    );
+    const stale = await save(
+      client,
+      business.id,
+      2,
+      { motion: "none" },
+      { incarnation },
+    );
+    expect(stale.data).toMatchObject({
+      status: "stale",
+      incarnation: null,
+      version: 0,
+    });
+    const recreated = await save(client, business.id, 0, { motion: "none" });
+    expect(recreated.data).toMatchObject({ status: "saved", version: 1 });
+    expect(recreated.data!.incarnation).not.toBe(incarnation);
+    // The old incarnation at the new row's version is stale too.
+    const crossed = await save(
+      client,
+      business.id,
+      1,
+      { motion: "discrete" },
+      { incarnation },
+    );
+    expect(crossed.data).toMatchObject({ status: "stale", version: 1 });
+  });
+
+  it("leaving and joining again, three times: a new context each time; the old one writes nothing; saving works from version 0", async () => {
+    const member = await createAccount("pref-rejoin");
+    const business = await createBusiness(
+      (await createAccount("pref-rejoin-owner")).userId,
+    );
+    const client = await signIn(member);
+    const memberships: string[] = [];
+    const incarnations: string[] = [];
+    let previous: { membershipId: string; incarnation: string } | null = null;
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await db.query(
+        `insert into public.business_members (business_id, user_id, role)
+         values ($1, $2, 'admin')`,
+        [business.id, member.userId],
+      );
+      const read = await client
+        .rpc("read_member_preferences", { p_business_id: business.id })
+        .single();
+      expect(read.data).toMatchObject({ incarnation: null, version: 0 });
+      memberships.push(read.data!.membership_id);
+
+      if (previous) {
+        // A device still in the previous membership: refused.
+        const old = await save(
+          client,
+          business.id,
+          3,
+          { style: "carnet" },
+          {
+            membershipId: previous.membershipId,
+            incarnation: previous.incarnation,
+          },
+        );
+        expect(old.error?.message).toBe("context_changed");
+        // The new membership, but the old row's state: stale, not applied.
+        const crossed = await save(
+          client,
+          business.id,
+          3,
+          { style: "carnet" },
+          {
+            incarnation: previous.incarnation,
+          },
+        );
+        expect(crossed.data).toMatchObject({ status: "stale", version: 0 });
+      }
+      expect(await row(business.id, member.userId)).toBeNull();
+
+      let version = 0;
+      for (const accent of ["#000001", "#000002", "#000003"]) {
+        const saved = await save(client, business.id, version, { accent });
+        expect(saved.data).toMatchObject({
+          status: "saved",
+          version: version + 1,
+          membership_id: read.data!.membership_id,
+        });
+        version = saved.data!.version;
+      }
+      const incarnation = (await incarnationOf(business.id, member.userId))!;
+      incarnations.push(incarnation);
+      previous = { membershipId: read.data!.membership_id, incarnation };
+
+      await db.query(
+        "delete from public.business_members where business_id = $1 and user_id = $2",
+        [business.id, member.userId],
+      );
+      expect(await row(business.id, member.userId)).toBeNull();
+    }
+    expect(new Set(memberships).size).toBe(3);
+    expect(new Set(incarnations).size).toBe(3);
   });
 });

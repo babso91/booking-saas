@@ -11,6 +11,26 @@ import {
   toDatabaseChanges,
 } from "./model";
 
+const CONTEXT = {
+  businessId: "11111111-1111-4111-8111-111111111111",
+  membershipId: "22222222-2222-4222-8222-222222222222",
+};
+const ROW = "33333333-3333-4333-8333-333333333333";
+const at = (version: number) => ({
+  incarnation: version === 0 ? null : ROW,
+  version,
+});
+/** A save input, with `expected` given as a version (0: no row). */
+const save = (version: unknown, changes: unknown, extra: object = {}) => ({
+  context: CONTEXT,
+  expected:
+    typeof version === "number" && Number.isInteger(version) && version >= 0
+      ? at(version)
+      : { incarnation: ROW, version },
+  changes,
+  ...extra,
+});
+
 describe("preferences model", () => {
   it("has the defaults Studio 1 renders without a cookie", () => {
     // src/features/appearance/appearance.ts (#28): defaultAppearance.
@@ -37,49 +57,26 @@ describe("preferences model", () => {
   });
 
   it("stores an accent in capitals, whatever case she typed", () => {
-    expect(
-      savePreferencesSchema.parse({
-        expectedVersion: 2,
-        changes: { accent: "#97493a" },
-      }),
-    ).toEqual({ expectedVersion: 2, changes: { accent: "#97493A" } });
+    expect(savePreferencesSchema.parse(save(2, { accent: "#97493a" }))).toEqual(
+      save(2, { accent: "#97493A" }),
+    );
   });
 
   it.each([
-    ["no change", { expectedVersion: 0, changes: {} }],
-    ["an unknown field", { expectedVersion: 0, changes: { theme: "dark" } }],
-    [
-      "a business id",
-      { expectedVersion: 0, changes: { style: "studio" }, businessId: "x" },
-    ],
-    [
-      "a user id in the changes",
-      { expectedVersion: 0, changes: { userId: "x" } },
-    ],
-    [
-      "a negative version",
-      { expectedVersion: -1, changes: { style: "studio" } },
-    ],
-    [
-      "a fractional version",
-      { expectedVersion: 1.5, changes: { style: "studio" } },
-    ],
-    [
-      "a version as text",
-      { expectedVersion: "1", changes: { style: "studio" } },
-    ],
-    ["an unknown style", { expectedVersion: 0, changes: { style: "minimal" } }],
-    ["a short accent", { expectedVersion: 0, changes: { accent: "#FFF" } }],
-    ["a named colour", { expectedVersion: 0, changes: { accent: "red" } }],
-    [
-      "CSS in an accent",
-      { expectedVersion: 0, changes: { accent: "#000000;x" } },
-    ],
+    ["no change", save(0, {})],
+    ["an unknown field", save(0, { theme: "dark" })],
+    ["a business id", save(0, { style: "studio" }, { businessId: "x" })],
+    ["a user id in the changes", save(0, { userId: "x" })],
+    ["a negative version", save(-1, { style: "studio" })],
+    ["a fractional version", save(1.5, { style: "studio" })],
+    ["a version as text", save("1", { style: "studio" })],
+    ["an unknown style", save(0, { style: "minimal" })],
+    ["a short accent", save(0, { accent: "#FFF" })],
+    ["a named colour", save(0, { accent: "red" })],
+    ["CSS in an accent", save(0, { accent: "#000000;x" })],
     [
       "a prototype key",
-      JSON.parse(
-        '{"expectedVersion":0,"changes":{"__proto__":{"style":"studio"}}}',
-      ),
+      save(0, JSON.parse('{"__proto__":{"style":"studio"}}')),
     ],
   ])("refuses %s", (_label, input) => {
     expect(savePreferencesSchema.safeParse(input).success).toBe(false);
@@ -88,14 +85,63 @@ describe("preferences model", () => {
   it("an import carries a whole appearance, nothing else", () => {
     expect(
       importDeviceAppearanceSchema.safeParse({
+        context: CONTEXT,
         appearance: { ...defaultAppearancePreferences, style: "studio" },
       }).success,
     ).toBe(true);
     expect(
       importDeviceAppearanceSchema.safeParse({
+        context: CONTEXT,
         appearance: { style: "studio" },
       }).success,
     ).toBe(false);
+    expect(
+      importDeviceAppearanceSchema.safeParse({
+        appearance: { ...defaultAppearancePreferences, style: "studio" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    ["no context", { expected: at(0), changes: { style: "studio" } }],
+    [
+      "a context without membership",
+      save(
+        0,
+        { style: "studio" },
+        { context: { businessId: CONTEXT.businessId } },
+      ),
+    ],
+    [
+      "a context with a user id",
+      save(0, { style: "studio" }, { context: { ...CONTEXT, userId: ROW } }),
+    ],
+    [
+      "a row id with version 0",
+      {
+        context: CONTEXT,
+        expected: { incarnation: ROW, version: 0 },
+        changes: { style: "studio" },
+      },
+    ],
+    [
+      "no row id with version 3",
+      {
+        context: CONTEXT,
+        expected: { incarnation: null, version: 3 },
+        changes: { style: "studio" },
+      },
+    ],
+    [
+      "a row id that is not a uuid",
+      {
+        context: CONTEXT,
+        expected: { incarnation: "x", version: 1 },
+        changes: { style: "studio" },
+      },
+    ],
+  ])("refuses a save with %s", (_label, input) => {
+    expect(savePreferencesSchema.safeParse(input).success).toBe(false);
   });
 
   it("names the database's fields in a patch, and only the changed ones", () => {
@@ -114,6 +160,7 @@ describe("preferences model", () => {
   it("a row with a value this build does not know reads as the default for that field", () => {
     expect(
       fromDatabaseRow({
+        incarnation: ROW,
         style: "aurore",
         ambiance: "lin",
         color_mode: "dark",
@@ -129,6 +176,7 @@ describe("preferences model", () => {
         accent: null,
         motion: "standard",
       },
+      incarnation: ROW,
       version: 7,
     });
   });

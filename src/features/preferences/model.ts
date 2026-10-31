@@ -34,10 +34,39 @@ export type AppearancePreferences = {
   motion: PreferenceMotion;
 };
 
-/** Her preferences as the account holds them; version 0: none saved yet. */
+/**
+ * Her preferences as the account holds them. `incarnation` is the row's
+ * own id (null: no row yet, the defaults); `version` counts its changes
+ * (0: no row). Versions are only comparable within one incarnation.
+ */
 export type MemberPreferences = {
   appearance: AppearancePreferences;
+  incarnation: string | null;
   version: number;
+};
+
+/**
+ * Whose preferences: her membership of a business (business_members.id).
+ * Leaving and joining again is another membership, so another context.
+ */
+export type PreferenceContext = {
+  userId: string;
+  businessId: string;
+  membershipId: string;
+};
+
+export function sameContext(a: PreferenceContext, b: PreferenceContext) {
+  return (
+    a.userId === b.userId &&
+    a.businessId === b.businessId &&
+    a.membershipId === b.membershipId
+  );
+}
+
+/** The account's answer: its preferences, and for whom (the server says). */
+export type PreferencesSnapshot = {
+  context: PreferenceContext;
+  preferences: MemberPreferences;
 };
 
 /** What she has before saving anything (the table's defaults). */
@@ -51,6 +80,7 @@ export const defaultAppearancePreferences: AppearancePreferences = {
 
 export const noMemberPreferences: MemberPreferences = {
   appearance: defaultAppearancePreferences,
+  incarnation: null,
   version: 0,
 };
 
@@ -79,16 +109,32 @@ export const appearanceChangesSchema = appearancePreferencesSchema
 
 export type AppearanceChanges = Partial<AppearancePreferences>;
 
+/** The context the device synchronises: refused if it is not the session's. */
+const contextSchema = z
+  .object({ businessId: z.uuid(), membershipId: z.uuid() })
+  .strict();
+
+/** The state her device read: no row (null, 0), or a row's (id, version ≥ 1). */
+const expectedSchema = z
+  .object({
+    incarnation: z.uuid().nullable(),
+    version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict()
+  .refine((value) => (value.incarnation === null) === (value.version === 0), {
+    message: "État attendu incohérent.",
+  });
+
 export const savePreferencesSchema = z
   .object({
-    /** The version her device last read (0: none saved yet). */
-    expectedVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    context: contextSchema,
+    expected: expectedSchema,
     changes: appearanceChangesSchema,
   })
   .strict();
 
 export const importDeviceAppearanceSchema = z
-  .object({ appearance: appearancePreferencesSchema })
+  .object({ context: contextSchema, appearance: appearancePreferencesSchema })
   .strict();
 
 /** The database's names for the fields (save_member_preferences's patch). */
@@ -103,6 +149,7 @@ export function toDatabaseChanges(changes: AppearanceChanges) {
 }
 
 export type PreferencesRow = {
+  incarnation: string | null;
   style: string;
   ambiance: string;
   color_mode: string;
@@ -141,6 +188,7 @@ export function fromDatabaseRow(row: PreferencesRow): MemberPreferences {
         defaultAppearancePreferences.motion,
       ),
     },
+    incarnation: row.incarnation,
     version: row.version,
   };
 }

@@ -122,7 +122,7 @@ async function read(db: Queryable, request: ExportRequest) {
     [request.businessId],
   );
   const preferences = await db.query<PreferencesRow>(
-    `select style, ambiance, color_mode, accent, motion, version
+    `select incarnation, style, ambiance, color_mode, accent, motion, version
      from public.member_preferences
      where business_id = $1 and user_id = $2`,
     [request.businessId, request.userId],

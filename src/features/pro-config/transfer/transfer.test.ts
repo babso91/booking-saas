@@ -198,6 +198,44 @@ describe("transfer format", () => {
     expect(() => sealProConfig(raw as ProConfigPayload)).toThrow();
   });
 
+  it.each([
+    ["09:00–24:00", "09:00", "24:00"],
+    ["00:00–24:00 (the whole day)", "00:00", "24:00"],
+    ["00:00–23:59", "00:00", "23:59"],
+  ])("accepts hours %s", (_label, startsAt, endsAt) => {
+    const document = sealProConfig(
+      payload({ hours: [{ weekday: 1, startsAt, endsAt }] }),
+    );
+    expect(openProConfig(JSON.parse(JSON.stringify(document))).ok).toBe(true);
+  });
+
+  it.each([
+    ["24:00 as a start", "24:00", "24:00"],
+    ["24:01 as an end", "09:00", "24:01"],
+    ["25:00 as an end", "09:00", "25:00"],
+    ["24:30 as an end", "09:00", "24:30"],
+    ["an end before its start", "10:00", "09:00"],
+    ["an empty range", "10:00", "10:00"],
+    ["H:MM", "9:00", "12:00"],
+  ])("refuses hours with %s", (_label, startsAt, endsAt) => {
+    expect(() =>
+      sealProConfig(payload({ hours: [{ weekday: 1, startsAt, endsAt }] })),
+    ).toThrow();
+  });
+
+  it("refuses a range starting before another one ends at 24:00", () => {
+    expect(() =>
+      sealProConfig(
+        payload({
+          hours: [
+            { weekday: 5, startsAt: "18:00", endsAt: "24:00" },
+            { weekday: 5, startsAt: "23:00", endsAt: "23:30" },
+          ],
+        }),
+      ),
+    ).toThrow();
+  });
+
   it("refuses what is not a document", () => {
     for (const raw of [null, "x", [], 42]) {
       expect(openProConfig(raw)).toEqual({ ok: false, reason: "invalid" });
@@ -244,6 +282,35 @@ describe("import plan (dry run)", () => {
 
     const again = planImport(source, applied.destination, applied.links);
     expect(planIsEmpty(again)).toBe(true);
+  });
+
+  it("the simulated destination is a valid sealed document: it opens, and its plan is empty", () => {
+    const source = sealProConfig(
+      payload({
+        hours: [
+          { weekday: 5, startsAt: "09:00", endsAt: "12:00" },
+          { weekday: 5, startsAt: "18:00", endsAt: "24:00" },
+          { weekday: 6, startsAt: "00:00", endsAt: "24:00" },
+        ],
+      }),
+    );
+    const plan = planImport(source, freshProduction(), {});
+    const applied = applyToSnapshot(freshProduction(), {}, plan, (sourceId) =>
+      sourceId.replace(/^./, "9"),
+    );
+    const opened = openProConfig(
+      JSON.parse(JSON.stringify(applied.destination)),
+    );
+    expect(opened.ok).toBe(true);
+    expect(applied.destination.hours).toEqual(source.hours);
+    const again = planImport(
+      source,
+      (opened as { document: ProConfigDocument }).document,
+      applied.links,
+    );
+    expect(planIsEmpty(again)).toBe(true);
+    // Only the destination's own: its environment, business and member.
+    expect(applied.destination.source).toEqual(freshProduction().source);
   });
 
   it("a later export with a changed price updates the linked service, and creates only the new one", () => {

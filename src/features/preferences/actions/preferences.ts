@@ -6,7 +6,7 @@ import { z } from "zod";
 import { runBusinessAction } from "@/features/businesses/actions/run-business-action";
 import {
   deviceCacheOwner,
-  getMemberPreferences,
+  readMemberPreferences,
   saveMemberPreferences,
   type SavePreferencesResult,
 } from "@/features/preferences/data/preferences";
@@ -19,27 +19,30 @@ import {
   defaultAppearancePreferences,
   importDeviceAppearanceSchema,
   savePreferencesSchema,
-  type MemberPreferences,
+  type PreferencesSnapshot,
 } from "@/features/preferences/model";
+import { AppException } from "@/lib/errors";
 
 // Her preferences, for the appearance engine (docs/MEMBER_PREFERENCES_CONTRACT.md).
 // The business is the one her session resolves to (runBusinessAction);
 // nothing sent by the browser chooses whose preferences are read or
-// written. Each answer also refreshes this device's cache of them.
+// written. A write names the context the page synchronises (business and
+// membership): if the session is no longer in it, nothing is written
+// (`context_changed`). Every answer says which context it is for, and
+// refreshes this device's cache of it.
 
 /**
  * One year; presentation only, for the professional area. Written only when
  * it changes: setting a cookie refreshes the route.
  */
-async function rememberOnDevice(
-  userId: string,
-  businessId: string,
-  preferences: MemberPreferences,
-) {
+async function rememberOnDevice(snapshot: PreferencesSnapshot) {
   const cookieStore = await cookies();
   const value = serializeDeviceCache(
-    deviceCacheOwner(userId, businessId),
-    preferences,
+    deviceCacheOwner(snapshot.context.userId, snapshot.context.businessId),
+    {
+      membershipId: snapshot.context.membershipId,
+      preferences: snapshot.preferences,
+    },
   );
   if (cookieStore.get(DEVICE_CACHE_COOKIE)?.value === value) return;
   cookieStore.set(DEVICE_CACHE_COOKIE, value, {
@@ -51,27 +54,31 @@ async function rememberOnDevice(
   });
 }
 
-/** Her preferences as her account holds them (version 0: none yet). */
+/** The page's context must be the session's business. */
+function sameBusiness(sessionBusinessId: string, pageBusinessId: string) {
+  if (sessionBusinessId !== pageBusinessId) {
+    throw new AppException("context_changed");
+  }
+}
+
+/** Her preferences as her account holds them, and for which context. */
 export async function getMyPreferencesAction() {
   return runBusinessAction(
     z.undefined(),
     undefined,
-    async ({ client, businessId, userId }) => {
-      const preferences = await getMemberPreferences(
-        client,
-        businessId,
-        userId,
-      );
-      await rememberOnDevice(userId, businessId, preferences);
-      return preferences;
+    async ({ client, businessId, userId }): Promise<PreferencesSnapshot> => {
+      const snapshot = await readMemberPreferences(client, userId, businessId);
+      await rememberOnDevice(snapshot);
+      return snapshot;
     },
   );
 }
 
 /**
- * Saves the fields she changed (`changes`), based on the version her device
- * read (`expectedVersion`). `stale`: another device saved first, nothing was
- * written; the answer carries the account's state to apply them on again.
+ * Saves the fields she changed (`changes`), for the page's context
+ * (`context`), based on the state her device read (`expected`). `stale`:
+ * not that state any more, nothing was written; the answer carries the
+ * account's state to apply them on again.
  */
 export async function saveMyPreferencesAction(input: unknown) {
   return runBusinessAction(
@@ -81,13 +88,14 @@ export async function saveMyPreferencesAction(input: unknown) {
       { client, businessId, userId },
       data,
     ): Promise<SavePreferencesResult> => {
+      sameBusiness(businessId, data.context.businessId);
       const result = await saveMemberPreferences(
         client,
-        businessId,
-        data.expectedVersion,
+        { userId, businessId, membershipId: data.context.membershipId },
+        data.expected,
         data.changes,
       );
-      await rememberOnDevice(userId, businessId, result.preferences);
+      await rememberOnDevice(result);
       return result;
     },
   );
@@ -96,7 +104,7 @@ export async function saveMyPreferencesAction(input: unknown) {
 /**
  * Keeps the appearance this device had before her account did (Studio 1's
  * cookie), once she has said so. Only while her account has no preferences
- * yet: `stale` if it has some (they are kept, nothing is written).
+ * (no row): `stale` otherwise (they are kept, nothing is written).
  */
 export async function importDeviceAppearanceAction(input: unknown) {
   return runBusinessAction(
@@ -106,22 +114,35 @@ export async function importDeviceAppearanceAction(input: unknown) {
       { client, businessId, userId },
       data,
     ): Promise<SavePreferencesResult> => {
+      sameBusiness(businessId, data.context.businessId);
+      const context = {
+        userId,
+        businessId,
+        membershipId: data.context.membershipId,
+      };
       const changes = changesBetween(
         defaultAppearancePreferences,
         data.appearance,
       );
-      const result =
-        Object.keys(changes).length === 0
-          ? {
-              status: "unchanged" as const,
-              preferences: await getMemberPreferences(
-                client,
-                businessId,
-                userId,
-              ),
-            }
-          : await saveMemberPreferences(client, businessId, 0, changes);
-      await rememberOnDevice(userId, businessId, result.preferences);
+      if (Object.keys(changes).length === 0) {
+        const snapshot = await readMemberPreferences(
+          client,
+          userId,
+          businessId,
+        );
+        if (snapshot.context.membershipId !== context.membershipId) {
+          throw new AppException("context_changed");
+        }
+        await rememberOnDevice(snapshot);
+        return { status: "unchanged", ...snapshot };
+      }
+      const result = await saveMemberPreferences(
+        client,
+        context,
+        { incarnation: null, version: 0 },
+        changes,
+      );
+      await rememberOnDevice(result);
       return result;
     },
   );

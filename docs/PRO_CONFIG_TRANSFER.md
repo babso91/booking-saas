@@ -32,15 +32,15 @@ Cette PR livre le format et un prototype testé en local uniquement :
 
 ## 2. Ce qui voyage (format `booking.professional-config`, version 1)
 
-| Section             | Contenu                                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------------------- |
-| `business`          | nom, description, téléphone, adresse, fuseau, politique d'annulation (**jamais le slug**, voir § 3) |
-| `settings`          | devise, pas des créneaux, battement, délais de réservation, réactivation                            |
-| `services`          | prestations, chacune avec son identifiant d'origine (`sourceId`) pour le lien                       |
-| `hours`             | semaine type                                                                                        |
-| `memberPreferences` | ses préférences d'apparence                                                                         |
-| `assets`            | logo **déclaré**, jamais transporté en v1 (`transferred: false`)                                    |
-| `excluded`          | ce qui est resté : prestations exclues (ids), **nombre** de clientes et de rendez-vous              |
+| Section             | Contenu                                                                                                        |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `business`          | nom, description, téléphone, adresse, fuseau, politique d'annulation (**jamais le slug**, voir § 3)            |
+| `settings`          | devise, pas des créneaux, battement, délais de réservation, réactivation                                       |
+| `services`          | prestations, chacune avec son identifiant d'origine (`sourceId`) pour le lien                                  |
+| `hours`             | semaine type, heures locales `HH:MM` ; `24:00` seulement comme fin de plage (minuit), comme dans l'application |
+| `memberPreferences` | ses préférences d'apparence                                                                                    |
+| `assets`            | logo **déclaré**, jamais transporté en v1 (`transferred: false`)                                               |
+| `excluded`          | ce qui est resté : prestations exclues (ids), **nombre** de clientes et de rendez-vous                         |
 
 **Ne voyagent pas, par construction :**
 
@@ -53,7 +53,28 @@ Les clientes et les rendez-vous sont seulement **comptés**, pour que l'opérate
 
 **Prestations de test.** L'opérateur les repère sur le dry-run et les exclut nommément (`excludeServiceIds`). Elles apparaissent dans `excluded.services`.
 
-**Intégrité.** Le document est scellé par un SHA-256 de son JSON canonique (clés triées). Un document modifié à la main après l'export est refusé (`checksum_mismatch`).
+**Empreinte (SHA-256) : ce qu'elle garantit, et ce qu'elle ne garantit pas.**
+
+Le document porte le SHA-256 de son JSON canonique (clés triées).
+
+- **Elle détecte** une modification ou une corruption faite **sans recalculer l'empreinte** : édition à la main, troncature, erreur de copie. Un tel document est refusé (`checksum_mismatch`).
+- **Elle ne garantit pas** :
+  - l'**authenticité** du document : l'empreinte n'utilise aucune clé, donc quiconque modifie le document peut aussi la recalculer, et le document modifié passe ;
+  - l'**origine** : rien ne prouve qu'il vient de l'export de staging, ni de quel opérateur ;
+  - la **réalité du consentement** : `consent.reference` n'est qu'une référence déclarée, que le document ne prouve pas.
+
+**Contrôles nécessaires avant tout transfert réel** (hors de ce prototype, qui reste un dry-run) :
+
+1. **Opérateur authentifié et autorisé** : un compte nominatif, avec un rôle d'opérateur limité aux transferts, et chaque action journalisée (qui, quand, quel document).
+2. **Origine validée** :
+   - l'export est produit par l'outil opérateur lui-même, avec un accès en lecture seule à staging ;
+   - il est transmis par un canal maîtrisé, jamais par une pièce jointe libre ;
+   - de préférence, il est **signé**, avec un HMAC-SHA-256 ou une signature asymétrique (Ed25519), dont la clé est conservée dans un coffre (jamais dans le dépôt, jamais côté navigateur) ;
+   - l'import vérifie la signature avant toute autre lecture.
+3. **Consentement vérifié** : la référence doit correspondre à un accord archivé (date, périmètre, identité confirmée par un code envoyé à son adresse), contrôlé par l'opérateur avant l'application.
+4. **Rejeu limité** : document à usage unique (identifiant enregistré à l'application), et durée de validité courte depuis `exportedAt`.
+
+Ce prototype n'implémente pas de signature : il n'applique rien, et la signature n'aurait de sens qu'avec la gestion de clés de l'outil opérateur (§ 6).
 
 ## 3. Plan d'import (dry-run)
 
@@ -69,7 +90,11 @@ Les clientes et les rendez-vous sont seulement **comptés**, pour que l'opérate
 - **Slug :** jamais changé. Celui de production, choisi à l'onboarding, est gardé, et une différence est signalée.
 - **Refus bloquants :** même environnement ; autre devise (un prix n'est jamais converti) ; lien vers une prestation disparue ; liens non bijectifs.
 
-`applyToSnapshot` montre l'effet d'un plan sur l'export de destination. `planIsEmpty` doit être vrai pour le plan suivant : c'est la vérification après import.
+`applyToSnapshot` montre l'effet d'un plan sur l'export de destination :
+
+- il renvoie un **document valide et re-scellé**, que `openProConfig` ouvre comme n'importe quel export ;
+- un plan qui produirait un document invalide (des horaires qui se chevauchent, par exemple) lève une erreur ;
+- `planIsEmpty` doit être vrai pour le plan suivant : c'est la vérification après import (testé : simulation, ouverture, nouveau plan vide).
 
 ## 4. Procédure prévue pour une professionnelle pilote
 
@@ -99,6 +124,7 @@ Le format v1 déclare le logo sans le transporter. La version suivante :
   - Les liens doivent être conservés dans une table privée de la destination (`private.config_transfer_links`).
   - Application en une transaction par section, journalisée.
 - **Un outil opérateur** (ligne de commande), avec la confirmation du point 3 et un mode `--dry-run` par défaut.
+- **La signature des documents** et les contrôles d'origine, de consentement et de rejeu (§ 2, « Empreinte »).
 - Les sections fidélité (programme, récompenses) et `business_branding`, dans une version 2 du format.
 
 Rien de tout cela ne doit être exécuté contre staging ou la production sans une procédure validée explicitement.

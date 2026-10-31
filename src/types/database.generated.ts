@@ -463,13 +463,13 @@ isOneToOne: false
                   ]
                 },"member_preferences": {
                   Row: {
-                    "accent": string | null,"ambiance": string,"business_id": string,"color_mode": string,"created_at": string,"motion": string,"style": string,"updated_at": string,"user_id": string,"version": number
+                    "accent": string | null,"ambiance": string,"business_id": string,"color_mode": string,"created_at": string,"incarnation": string,"motion": string,"style": string,"updated_at": string,"user_id": string,"version": number
                   }
                   Insert: {
-                    "accent"?: string | null,"ambiance"?: string,"business_id": string,"color_mode"?: string,"created_at"?: string,"motion"?: string,"style"?: string,"updated_at"?: string,"user_id": string,"version"?: number
+                    "accent"?: string | null,"ambiance"?: string,"business_id": string,"color_mode"?: string,"created_at"?: string,"incarnation"?: string,"motion"?: string,"style"?: string,"updated_at"?: string,"user_id": string,"version"?: number
                   }
                   Update: {
-                    "accent"?: string | null,"ambiance"?: string,"business_id"?: string,"color_mode"?: string,"created_at"?: string,"motion"?: string,"style"?: string,"updated_at"?: string,"user_id"?: string,"version"?: number
+                    "accent"?: string | null,"ambiance"?: string,"business_id"?: string,"color_mode"?: string,"created_at"?: string,"incarnation"?: string,"motion"?: string,"style"?: string,"updated_at"?: string,"user_id"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -975,6 +975,11 @@ isOneToOne: false
 "loyalty_update_reward":
 { Args: { "p_active": boolean,"p_business_id": string,"p_description": string,"p_expected_version": number,"p_name": string,"p_points_required": number,"p_reward_id": string,"p_reward_value": number,"p_service_id": string }; Returns: number
                            },
+"read_member_preferences":
+{ Args: { "p_business_id": string }; Returns: {
+              "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"style": string,"version": number
+            }[]
+                           },
 "reorder_services":
 { Args: { "p_business_id": string,"p_service_ids": (string)[] }; Returns: undefined
                            },
@@ -995,8 +1000,8 @@ isOneToOne: false
         isSetofReturn: true
       } },
 "save_member_preferences":
-{ Args: { "p_business_id": string,"p_changes": Json,"p_expected_version": number }; Returns: {
-              "accent": string,"ambiance": string,"color_mode": string,"motion": string,"status": string,"style": string,"updated_at": string,"version": number
+{ Args: { "p_business_id": string,"p_changes": Json,"p_expected_incarnation": string,"p_expected_version": number,"p_membership_id": string }; Returns: {
+              "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"status": string,"style": string,"version": number
             }[]
                            },
 "search_clients":

@@ -7,7 +7,10 @@ import { appearancePreferencesSchema } from "@/features/preferences/model";
 // The configuration of ONE professional, as it may move from one
 // environment to another (staging → production for the pilots), with her
 // consent, by an operator: docs/PRO_CONFIG_TRANSFER.md. Versioned, closed
-// (any unknown field is refused), and sealed by a checksum.
+// (any unknown field is refused), and sealed by a checksum (SHA-256, no
+// key): it detects a document changed without recomputing it, never who
+// wrote it. It is no proof of origin, authenticity or consent; a real
+// transfer needs a signature and the operator's checks (the document).
 //
 // What it holds, by allowlist: the business's public profile, its booking
 // settings, its services, its weekly hours and her own preferences. Nothing
@@ -20,7 +23,10 @@ export const PRO_CONFIG_FORMAT = "booking.professional-config";
 export const PRO_CONFIG_FORMAT_VERSION = 1;
 
 const uuid = z.uuid();
-const time = z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/);
+// Local wall-clock times, as the business's hours (availability schemas):
+// 24:00 closes a range at midnight, so it may end a range, never start one.
+const startTime = z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/);
+const endTime = z.string().regex(/^(?:([01][0-9]|2[0-3]):[0-5][0-9]|24:00)$/);
 const text = (max: number) => z.string().min(1).max(max);
 
 export const proConfigServiceSchema = z
@@ -39,8 +45,8 @@ export const proConfigServiceSchema = z
 export const proConfigHoursSchema = z
   .object({
     weekday: z.number().int().min(0).max(6),
-    startsAt: time,
-    endsAt: time,
+    startsAt: startTime,
+    endsAt: endTime,
   })
   .strict()
   .refine((range) => range.startsAt < range.endsAt, {

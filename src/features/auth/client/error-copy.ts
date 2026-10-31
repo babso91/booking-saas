@@ -283,6 +283,11 @@ export const errorCopy: Record<
     message:
       "Ajoute l’adresse email de ta cliente avant de lui ouvrir l’espace client.",
   },
+  context_changed: {
+    title: "Session changée",
+    message:
+      "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {

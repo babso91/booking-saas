@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 
 import {
   deviceCacheOwner,
-  getMemberPreferences,
+  readMemberPreferences,
 } from "@/features/preferences/data/preferences";
 import {
   DEVICE_CACHE_COOKIE,
@@ -17,16 +17,24 @@ import {
   noMemberPreferences,
   sameAppearance,
   type AppearancePreferences,
-  type MemberPreferences,
+  type PreferencesSnapshot,
 } from "@/features/preferences/model";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export type AreaPreferences = {
-  preferences: MemberPreferences;
+  /**
+   * Her preferences and their context (her membership), to render the area
+   * and to start the device's sync state (initialSyncState). Null when the
+   * account could not be read: render `preferences`, save nothing until a
+   * read gives a context.
+   */
+  snapshot: PreferencesSnapshot | null;
+  /** What to render now. */
+  appearance: AppearancePreferences;
   /**
    * account: read from her account (the truth);
    * device:  the account could not be read, this device's cache of HER
-   *          preferences is shown (saving waits for the account);
+   *          preferences is shown;
    * default: neither: the defaults.
    */
   source: "account" | "device" | "default";
@@ -50,19 +58,20 @@ export async function loadAreaPreferences(member: {
   const cookieStore = await cookies();
   try {
     const client = await createServerSupabaseClient();
-    const preferences = await getMemberPreferences(
+    const snapshot = await readMemberPreferences(
       client,
-      member.businessId,
       member.userId,
+      member.businessId,
     );
     const offer =
-      preferences.version === 0
+      snapshot.preferences.version === 0
         ? parseLegacyAppearanceCookie(
             cookieStore.get(LEGACY_APPEARANCE_COOKIE)?.value,
           )
         : null;
     return {
-      preferences,
+      snapshot,
+      appearance: snapshot.preferences.appearance,
       source: "account",
       deviceAppearanceOffer:
         offer && !sameAppearance(offer, defaultAppearancePreferences)
@@ -75,12 +84,11 @@ export async function loadAreaPreferences(member: {
       cookieStore.get(DEVICE_CACHE_COOKIE)?.value,
       deviceCacheOwner(member.userId, member.businessId),
     );
-    return cached
-      ? { preferences: cached, source: "device", deviceAppearanceOffer: null }
-      : {
-          preferences: noMemberPreferences,
-          source: "default",
-          deviceAppearanceOffer: null,
-        };
+    return {
+      snapshot: null,
+      appearance: (cached?.preferences ?? noMemberPreferences).appearance,
+      source: cached ? "device" : "default",
+      deviceAppearanceOffer: null,
+    };
   }
 }

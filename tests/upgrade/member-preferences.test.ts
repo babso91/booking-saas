@@ -53,9 +53,15 @@ describe("upgrade to member preferences", () => {
   it("an existing member reads the defaults (nothing), then saves hers", async () => {
     const empty = await owner.client.from("member_preferences").select("*");
     expect(empty.data).toEqual([]);
+    const { data: read } = await owner.client
+      .rpc("read_member_preferences", { p_business_id: business.id })
+      .single();
+    expect(read).toMatchObject({ incarnation: null, version: 0 });
     const saved = await owner.client
       .rpc("save_member_preferences", {
         p_business_id: business.id,
+        p_membership_id: read!.membership_id,
+        p_expected_incarnation: null as never,
         p_expected_version: 0,
         p_changes: { style: "studio" },
       })

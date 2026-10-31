@@ -100,6 +100,8 @@ export const appErrorMessages = {
   client_hub_not_found: "Élément introuvable dans votre espace client.",
   client_hub_email_required:
     "Cette fiche cliente n’a pas d’adresse email : ajoutez-la avant d’ouvrir l’espace client.",
+  context_changed:
+    "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -215,6 +217,7 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_unavailable: 503,
   client_hub_not_found: 404,
   client_hub_email_required: 409,
+  context_changed: 409,
   internal: 500,
 };
 

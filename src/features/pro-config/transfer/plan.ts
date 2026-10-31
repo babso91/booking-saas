@@ -1,13 +1,19 @@
 import { sameAppearance } from "@/features/preferences/model";
 
-import type { ProConfigDocument, ProConfigPayload } from "./format";
+import {
+  sealProConfig,
+  type ProConfigDocument,
+  type ProConfigPayload,
+} from "./format";
 
 // The dry run of a transfer: what importing `source` into `destination`
 // would do, computed from two exports (the destination's read by the same
 // exporter, in its own environment). Pure: it writes nothing. Applying a
 // plan is a later, separately validated step (docs/PRO_CONFIG_TRANSFER.md);
-// `applyToSnapshot` shows its effect on a snapshot, so that the plan of an
-// applied plan can be checked to be empty (idempotence).
+// `applyToSnapshot` shows its effect on a snapshot: the document the
+// destination's export would then be (validated and sealed again, so it
+// opens like any export), whose plan can be checked to be empty
+// (idempotence).
 //
 // Identifiers are never copied: a source service is linked to the
 // destination service created for it (`links`, kept by the destination);
@@ -183,8 +189,10 @@ export function planIsEmpty(plan: ImportPlan) {
 }
 
 /**
- * The destination as it would be once the plan is applied, and the links
- * it would keep. `newId` names the services it would create.
+ * The destination as it would be once the plan is applied: a valid, sealed
+ * document (it opens with openProConfig; an applied plan that broke a rule
+ * of the format throws), and the links it would keep. `newId` names the
+ * services it would create.
  */
 export function applyToSnapshot(
   destination: ProConfigDocument,
@@ -193,7 +201,9 @@ export function applyToSnapshot(
   newId: (sourceId: string) => string,
 ): { destination: ProConfigDocument; links: ServiceLinks } {
   if (plan.refusals.length > 0) throw new Error("refused plan");
-  const next = structuredClone(destination);
+  const next: Partial<ProConfigDocument> & ProConfigPayload =
+    structuredClone(destination);
+  delete next.checksum;
   const nextLinks = { ...links };
   for (const change of plan.business) {
     (next.business as Record<string, unknown>)[change.field] = change.to;
@@ -219,7 +229,7 @@ export function applyToSnapshot(
   if (plan.memberPreferences.action === "set") {
     next.memberPreferences = { appearance: plan.memberPreferences.appearance };
   }
-  return { destination: next, links: nextLinks };
+  return { destination: sealProConfig(next), links: nextLinks };
 }
 
 function differences<T extends object>(

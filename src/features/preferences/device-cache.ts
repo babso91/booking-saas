@@ -26,17 +26,25 @@ import {
 export const DEVICE_CACHE_COOKIE = "dash_pref";
 export const LEGACY_APPEARANCE_COOKIE = "dash_appearance";
 
-/** "1.<owner>.<version>.<style>.<ambiance>.<mode>.<motion>.<accent|->". */
-const CACHE_FORMAT = "1";
+/**
+ * "2.<owner>.<membership>.<incarnation|->.<version>.<style>.<ambiance>.
+ * <mode>.<motion>.<accent|->" (format 1, before incarnations, is ignored).
+ */
+const CACHE_FORMAT = "2";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export function serializeDeviceCache(
-  owner: string,
-  preferences: MemberPreferences,
-) {
-  const { appearance, version } = preferences;
+export type DeviceCache = {
+  membershipId: string;
+  preferences: MemberPreferences;
+};
+
+export function serializeDeviceCache(owner: string, cache: DeviceCache) {
+  const { appearance, incarnation, version } = cache.preferences;
   return [
     CACHE_FORMAT,
     owner,
+    cache.membershipId,
+    incarnation ?? "-",
     String(version),
     appearance.style,
     appearance.ambiance,
@@ -54,16 +62,54 @@ export function serializeDeviceCache(
 export function parseDeviceCache(
   raw: string | undefined | null,
   owner: string,
-): MemberPreferences | null {
-  if (!raw || raw.length > 200) return null;
+): DeviceCache | null {
+  if (!raw || raw.length > 300) return null;
   const parts = raw.split(".");
-  if (parts.length !== 8) return null;
-  const [format, cachedOwner, version, style, ambiance, mode, motion, accent] =
-    parts as [string, string, string, string, string, string, string, string];
+  if (parts.length !== 10) return null;
+  const [
+    format,
+    cachedOwner,
+    membershipId,
+    incarnation,
+    version,
+    style,
+    ambiance,
+    mode,
+    motion,
+    accent,
+  ] = parts as [
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
   if (format !== CACHE_FORMAT || cachedOwner !== owner) return null;
+  if (!UUID.test(membershipId)) return null;
   if (!/^(0|[1-9][0-9]{0,14})$/.test(version)) return null;
+  if (
+    incarnation === "-"
+      ? version !== "0"
+      : !UUID.test(incarnation) || version === "0"
+  ) {
+    return null;
+  }
   const appearance = strictAppearance(style, ambiance, mode, motion, accent);
-  return appearance ? { appearance, version: Number(version) } : null;
+  return appearance
+    ? {
+        membershipId,
+        preferences: {
+          appearance,
+          incarnation: incarnation === "-" ? null : incarnation,
+          version: Number(version),
+        },
+      }
+    : null;
 }
 
 /**

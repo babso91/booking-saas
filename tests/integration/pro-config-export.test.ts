@@ -89,9 +89,16 @@ beforeAll(async () => {
   await setWeeklyHours(staging.id, [
     [2, "09:00", "12:30"],
     [2, "14:00", "19:00"],
+    [5, "18:00", "24:00"],
+    [6, "00:00", "24:00"],
   ]);
+  const { data: context } = await izabela.client
+    .rpc("read_member_preferences", { p_business_id: staging.id })
+    .single();
   await izabela.client.rpc("save_member_preferences", {
     p_business_id: staging.id,
+    p_membership_id: context!.membership_id,
+    p_expected_incarnation: null as never,
     p_expected_version: 0,
     p_changes: { style: "ecrin", accent: "#2F6F5E" },
   });
@@ -128,6 +135,8 @@ describe("export of a professional's configuration", () => {
     expect(document.hours).toEqual([
       { weekday: 2, startsAt: "09:00", endsAt: "12:30" },
       { weekday: 2, startsAt: "14:00", endsAt: "19:00" },
+      { weekday: 5, startsAt: "18:00", endsAt: "24:00" },
+      { weekday: 6, startsAt: "00:00", endsAt: "24:00" },
     ]);
     expect(document.memberPreferences?.appearance).toMatchObject({
       style: "ecrin",
@@ -157,9 +166,14 @@ describe("export of a professional's configuration", () => {
     expect(plan.refusals).toEqual([]);
     expect(plan.services).toHaveLength(1);
     expect(plan.memberPreferences.action).toBe("set");
+    expect(plan.hours).toMatchObject({ action: "replace" });
     const applied = applyToSnapshot(destination, {}, plan, () =>
       crypto.randomUUID(),
     );
+    expect(
+      openProConfig(JSON.parse(JSON.stringify(applied.destination))).ok,
+    ).toBe(true);
+    expect(applied.destination.hours).toEqual(source.hours);
     expect(
       planIsEmpty(planImport(source, applied.destination, applied.links)),
     ).toBe(true);
