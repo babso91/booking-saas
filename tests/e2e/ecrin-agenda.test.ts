@@ -72,13 +72,19 @@ describe("Écrin against the real backend", () => {
     for (const cookie of [
       "atelier.light.standard.-.constructor",
       "atelier.light.standard.-.__proto__",
-      "x.y.z.w.ecrin",
     ]) {
       browser.cookies.set("dash_appearance", cookie);
       const response = await browser.get("/app");
       expect(response.status, cookie).toBe(200);
       expect(response.html).not.toContain("ecrin-ground");
     }
+    // Each field is read alone: a valid style stays, the rest falls back to
+    // the defaults.
+    browser.cookies.set("dash_appearance", "x.y.z.w.ecrin");
+    const partial = await browser.get("/app");
+    expect(partial.status).toBe(200);
+    expect(partial.html).toContain('data-style="ecrin"');
+
     browser.cookies.set("dash_appearance", ECRIN);
     for (const query of ["rdv=not-a-uuid", "date=2026-02-30", "date=hier"]) {
       expect((await browser.get(`/app?${query}`)).status, query).toBe(200);
