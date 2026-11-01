@@ -4,14 +4,14 @@ Issues du rapport final de Studio 2 et de l'audit d'Écrin. Elles sont traitées
 
 ## État
 
-| Sujet                                 | État                                     |
-| ------------------------------------- | ---------------------------------------- |
-| 1. Noms accessibles (WCAG 2.5.3)      | Résolu                                   |
-| 2. Focus du menu d'options            | Résolu, en Écrin et en Studio            |
-| 3. Chevauchements                     | Résolu, en Écrin et en Studio            |
-| 4. Année de `periodLabel`             | Résolu                                   |
-| 5. Temps libre : les libellés         | Résolu                                   |
-| 5 bis. Faisabilité dans le formulaire | **À traiter : décision produit requise** |
+| Sujet                                 | État                                         |
+| ------------------------------------- | -------------------------------------------- |
+| 1. Noms accessibles (WCAG 2.5.3)      | Résolu                                       |
+| 2. Focus du menu d'options            | Résolu, en Écrin et en Studio                |
+| 3. Chevauchements                     | Résolu, en Écrin et en Studio                |
+| 4. Année de `periodLabel`             | Résolu                                       |
+| 5. Temps libre : les libellés         | Résolu                                       |
+| 5 bis. Faisabilité dans le formulaire | Décision : pas de nouvel appel dans cette PR |
 
 ## 1. Noms accessibles
 
@@ -27,9 +27,18 @@ Issues du rapport final de Studio 2 et de l'audit d'Écrin. Elles sont traitées
 | Lignes de temps libre                              | Violation réelle                                                                           | Corrigé    |
 | Bouton `⋯` (résultat « incomplet », non violation) | Faux positif démontrable : un glyphe sans mot à prononcer, WCAG 2.5.3 ne vise que le texte | Conservé   |
 
-**Correction.** Ces boutons n'ont plus d'`aria-label`. Leur nom vient de leur contenu, complété par du texte réservé aux lecteurs d'écran : `AM, Atelier Maëlys : réglages et compte`. Le nom suit donc ce qui est réellement affiché, y compris quand une requête de conteneur montre les initiales ou le prénom. Le rendu visuel ne change pas.
+**Correction.**
+
+- **Monogramme** : texte fixe, donc `aria-label` exact, `AM, Atelier Maëlys : réglages et compte`.
+- **Autres boutons et lignes de Clientes** : plus d'`aria-label`. Leur nom vient de leur contenu, complété par du texte réservé aux lecteurs d'écran. Il suit donc ce qui est réellement affiché, y compris quand une largeur montre les initiales ou le prénom. Le rendu visuel ne change pas.
+
+Chromium calcule ces noms avec une espace devant la virgule du complément (`26 LU , lundi…`), car ce texte est positionné en absolu. C'est sans effet à l'écoute, mais c'est ce qui rendait le premier monogramme différent du nom attendu : le premier run CI l'a révélé.
 
 **Résultat.** Sur les mêmes pages : 0 violation, 1 résultat « incomplet » (le `⋯`). La règle est activée dans `expectAccessible`, donc dans tous les e2e axe, sans désactiver aucune règle.
+
+**Portée exacte de ce zéro.** Mesuré : la règle axe ne s'applique qu'aux éléments qui ont un `aria-label`. Un nom issu du contenu en sort. Ces éléments respectent le critère par construction, car leur nom contient leur texte ; ce n'est pas axe qui le prouve. Seul le monogramme reste contrôlé par axe, et son nom exact par un e2e.
+
+**Clientes.** La ligne annonçait une phrase (`Zoé, pas encore venue`) sans le texte affiché (`Aucun contact`, colonnes). Son nom est maintenant son contenu, complété par ce que les colonnes disaient sans mot : `Dernière le`, `Prochain rendez-vous :`. Les initiales de l'avatar restent décoratives (`aria-hidden`) : le prénom suffit à la nommer.
 
 Les cartes du Classique (`time-grid.tsx`) reçoivent la même correction. Elles n'étaient pas visibles sur les aperçus : seule la CI les contrôle.
 
@@ -68,18 +77,48 @@ Le titre porte `tabIndex={-1}` : il reste hors de l'ordre de tabulation.
 - « Indisponible » désigne un blocage posé par la professionnelle.
 - `bookableMinutes` sert seulement à calculer un taux de remplissage. Le nom est imprécis, mais il n'est pas affiché.
 
-**Serveur.** `schedule_conflict` et le message de refus ne changent pas. Un e2e prouve la frontière : prestation de 60 + 15 min refusée à 10:50 et acceptée à 10:45, avant un rendez-vous à 12:00.
+**Serveur.** `schedule_conflict` et le message de refus ne changent pas. Un e2e prouve la frontière : prestation de 60 min, tampon de 15 min, refusée à 10:50 et acceptée à 10:45, avant un rendez-vous à 12:00.
 
-### 5 bis. Faisabilité dans le formulaire : décision requise
+**Le tampon n'appartient pas à la prestation.** C'est un réglage de l'établissement (`business_settings.buffer_minutes`), figé sur chaque rendez-vous à sa création. Notre premier constat parlait à tort du tampon « de la prestation », et la première fixture visait une colonne qui n'existe pas.
+
+### 5 bis. Faisabilité dans le formulaire : décision prise
 
 Annoncer dans le formulaire si une prestation tient, tampon compris, avant l'envoi.
 
 **Existant.** Le formulaire de l'agenda n'interroge aucune disponibilité. Les disponibilités publiques suivent des règles propres à la réservation en ligne (préavis, horizon) et ne répondent donc pas à la question d'une professionnelle qui place elle-même un rendez-vous. Le seul verdict exact pour elle est aujourd'hui le refus à l'envoi.
 
-**Recommandation.** Garder le comportement actuel pour l'instant : le refus est exact, le texte protège le brouillon et les libellés ne promettent plus rien. Si des professionnelles s'en plaignent, ajouter un appel serveur en lecture dédié, qui réutilise la contrainte existante. Cela demande une validation produit et une PR à part. Ne jamais recalculer cette règle dans le navigateur.
+**Décision de la direction produit.** Pas de nouvel appel serveur dans cette PR. Les libellés restent exacts et la validation finale reste côté serveur. Le sujet sera réévalué avec les professionnelles pilotes. Ne jamais recalculer cette règle dans le navigateur.
+
+## Preuve que les tests détectent les défauts
+
+Les tests ont été écrits après les correctifs. Chaque ancien comportement a donc été remis, un à la fois, puis retiré.
+
+| Ancien comportement remis                   | Détecté par                                                   |
+| ------------------------------------------- | ------------------------------------------------------------- |
+| Anciens agendas Écrin (`cd3eb8d`)           | Chromium : focus sur `BODY` après Échap, le défaut de l'audit |
+| Échap sans retour du focus                  | Chromium, Écrin et Studio : `BODY`                            |
+| Échap qui ramène toujours le focus          | Chromium, Écrin et Studio : focus volé après tabulation       |
+| Clic extérieur sans restauration            | Chromium, Écrin et Studio : `BODY`                            |
+| Clic extérieur qui ramène toujours le focus | Chromium, Écrin et Studio : focus volé                        |
+| Option sans déplacement préalable du focus  | Chromium, Écrin et Studio : `BODY`                            |
+| Élargissement sans destination              | Chromium, Écrin et Studio : `BODY`                            |
+| « Aujourd’hui » sans destination (Écrin)    | Chromium : `BODY`                                             |
+| Ancien nom du monogramme, Studio puis Écrin | Composants : 6 échecs chacun                                  |
+| Ancienne année de `periodLabel`             | Unitaire : 1 échec                                            |
+| Taille du groupe au lieu des chevauchements | Unitaires : 3 échecs                                          |
+| Frontière comptée comme chevauchement       | Unitaire : 1 échec                                            |
+| Plages non comptées                         | Unitaire : 1 échec                                            |
+| « Libre » remis (Écrin)                     | Composants : 2 échecs                                         |
+
+Ces contrôles de focus tournent à 390 px sur les aperçus. Avec vraie session, les mêmes scénarios sont dans `tests/e2e/consolidation-browser.test.ts`. La fixture du tampon prouve sa frontière par construction : sans le réglage, 10:50 serait acceptée et le test échouerait.
 
 ## Limites
 
 - Les parcours avec backend ne tournent qu'en CI. En local, les scénarios de focus et l'inventaire axe tournent sur les aperçus Chromium.
 - L'audition réelle avec une commande vocale n'a pas été réalisée : la correspondance est vérifiée par le nom accessible et par axe.
 - Le nom d'un rendez-vous répète volontairement une partie du texte visible (`Amel 09:30, 09:30, Amel Kaci…`), pour conserver le nom complet quand seul le prénom est affiché. C'est un peu plus long à l'écoute.
+- Le bouton « Copier » annonce `Copier l’email` tandis que son texte devient brièvement `Copié`, et les récompenses affichent brièvement `Un instant…`.
+
+## À traiter hors de cette PR
+
+- `client-loyalty.tsx:636` : `Marquer « X » comme utilisée`, pour un texte visible `Marquer comme utilisée`. Violation trouvée à la relecture, sur un écran que les e2e n'ouvrent pas. Elle n'est pas corrigée ici, faute d'échec démontré. Correction proposée : `Marquer comme utilisée « X »`.

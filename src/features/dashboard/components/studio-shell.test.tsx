@@ -58,9 +58,7 @@ describe("the frame follows her style", () => {
     const monogram = screen.getByRole("button", {
       name: "AM, Atelier Maëlys : réglages et compte",
     });
-    expect(monogram.textContent).toBe(
-      "AM, Atelier Maëlys : réglages et compte",
-    );
+    expect(monogram.textContent).toBe("AM");
     // She is in a room of the sheet: the monogram says so.
     expect(monogram.getAttribute("aria-current")).toBe("page");
 
@@ -154,6 +152,6 @@ describe("the monogram (WCAG 2.5.3): what she sees is in what she can say", () =
     const monogram = screen.getByRole("button", {
       name: `${initials}, ${name} : réglages et compte`,
     });
-    expect(monogram.getAttribute("aria-label")).toBeNull();
+    expect(monogram.textContent).toBe(initials);
   });
 });

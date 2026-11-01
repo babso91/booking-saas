@@ -249,8 +249,13 @@ describe("free time and the server", () => {
     const { browser, businessId } = await professionalWithVisit("Tess", "Mona");
     const { rows } = await db.query<{ id: string }>(
       `insert into public.services
-         (business_id, name, duration_minutes, price_cents, buffer_minutes)
-       values ($1, 'Soin avec tampon', 60, 5000, 15) returning id`,
+         (business_id, name, duration_minutes, price_cents)
+       values ($1, 'Soin avec tampon', 60, 5000) returning id`,
+      [businessId],
+    );
+    // The buffer is the business's setting, frozen on each appointment.
+    await db.query(
+      "update public.business_settings set buffer_minutes = 15 where business_id = $1",
       [businessId],
     );
     // What ends her free time: a visit at 12:00.

@@ -80,13 +80,11 @@ export function StudioShell({
         <button
           type="button"
           onClick={() => setOpen(true)}
+          aria-label={`${initialsOf(business.name)}, ${business.name} : réglages et compte`}
           aria-current={inMore ? "page" : undefined}
           className="font-expanded grid size-11 shrink-0 cursor-pointer place-items-center rounded-full bg-ink text-[13px] font-extrabold text-paper focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-accent"
         >
           {initialsOf(business.name)}
-          <span className="sr-only">
-            , {business.name} : réglages et compte
-          </span>
         </button>
       </header>
 
