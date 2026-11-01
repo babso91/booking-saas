@@ -13,7 +13,7 @@ import { dayFlow } from "./day-flow";
 
 // Beside the day, on a computer: what the day holds, at a glance. Only
 // what the agenda read says: visits (not cancelled), the time they take,
-// the free time still bookable, the next one, her pauses and closures.
+// the free time still ahead, the next one, her pauses and closures.
 
 const MINUTE = 60_000;
 
@@ -60,7 +60,7 @@ export function StudioDaySummary({
         <Figure label="Rendez-vous" value={String(visits.length)} />
         <Figure label="Réservé" value={formatDuration(Math.round(booked))} />
         <Figure
-          label={nowMs !== null && flow.next ? "Libre, à venir" : "Libre"}
+          label={`Temps libre${nowMs !== null && flow.next ? ", à venir" : ""}${flow.freeStretches > 1 ? ` · ${flow.freeStretches} plages` : ""}`}
           value={formatDuration(flow.freeMinutes)}
         />
         <Figure label="Statut" value={flow.closed ? "Fermé" : "Ouvert"} />

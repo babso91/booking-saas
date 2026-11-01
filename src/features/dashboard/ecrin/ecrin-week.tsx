@@ -175,7 +175,6 @@ export function EcrinWeek({
               key={column.date}
               type="button"
               onClick={() => onOpenDay(column.date)}
-              aria-label={`Voir le ${formatFullDate(column.date)} en détail`}
               className={cn(
                 "ecrin-press flex min-w-0 cursor-pointer items-center justify-center gap-2 rounded-[20px] px-1 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                 isToday ? "bg-accent-soft" : "bg-paper/80",
@@ -204,6 +203,9 @@ export function EcrinWeek({
                 <span className="text-[11.5px] text-ink-soft">
                   {column.count} rdv
                 </span>
+              </span>
+              <span className="sr-only">
+                , voir le {formatFullDate(column.date)} en détail
               </span>
             </button>
           );
@@ -386,11 +388,6 @@ export function EcrinWeek({
                         tabIndex={part === 0 ? undefined : -1}
                         aria-hidden={part === 0 ? undefined : true}
                         onClick={() => onOpenAppointment(appointment)}
-                        aria-label={
-                          part === 0
-                            ? `${start}, ${appointment.client.displayName}, ${appointment.service.name}, ${formatDuration(appointment.durationMinutes)}, ${ecrinLookLabel[lookId]}`
-                            : undefined
-                        }
                         className={cn(
                           "@container ecrin-press absolute z-20 flex cursor-pointer flex-col justify-center overflow-hidden rounded-[14px] px-2 text-left hover:z-30 focus-visible:z-30 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
                           ecrinLookClass[lookId],
@@ -426,6 +423,12 @@ export function EcrinWeek({
                                 {appointment.service.name}
                               </span>
                             ) : null}
+                            <span className="sr-only">
+                              , {start}, {appointment.client.displayName},{" "}
+                              {appointment.service.name},{" "}
+                              {formatDuration(appointment.durationMinutes)},{" "}
+                              {ecrinLookLabel[lookId]}
+                            </span>
                           </>
                         ) : null}
                       </button>

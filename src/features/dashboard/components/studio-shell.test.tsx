@@ -56,9 +56,11 @@ describe("the frame follows her style", () => {
     const user = userEvent.setup();
     renderIn("studio", "hours");
     const monogram = screen.getByRole("button", {
-      name: "Atelier Maëlys : réglages et compte",
+      name: "AM, Atelier Maëlys : réglages et compte",
     });
-    expect(monogram.textContent).toBe("AM");
+    expect(monogram.textContent).toBe(
+      "AM, Atelier Maëlys : réglages et compte",
+    );
     // She is in a room of the sheet: the monogram says so.
     expect(monogram.getAttribute("aria-current")).toBe("page");
 
@@ -100,7 +102,7 @@ describe("every room is reachable, on a phone as on a computer", () => {
     );
     await user.click(
       screen.getByRole("button", {
-        name: "Atelier Maëlys : réglages et compte",
+        name: "AM, Atelier Maëlys : réglages et compte",
       }),
     );
     within(screen.getByRole("dialog"))
@@ -132,5 +134,26 @@ describe("initialsOf", () => {
     ["Éclat — Paris", "ÉP"],
   ])("%s → %s", (name, initials) => {
     expect(initialsOf(name)).toBe(initials);
+  });
+});
+
+describe("the monogram (WCAG 2.5.3): what she sees is in what she can say", () => {
+  it.each([
+    ["Ly", "LY"],
+    ["Atelier Maëlys", "AM"],
+    ["Institut de beauté Marie-Alexandrine de la Tour d’Auvergne", "ID"],
+  ])("%s", (name, initials) => {
+    render(
+      <AppearanceProvider initial={{ ...defaultAppearance, style: "studio" }}>
+        <AppShell business={{ name, slug: "x" }}>
+          <p>contenu</p>
+        </AppShell>
+      </AppearanceProvider>,
+    );
+    expect(initialsOf(name)).toBe(initials);
+    const monogram = screen.getByRole("button", {
+      name: `${initials}, ${name} : réglages et compte`,
+    });
+    expect(monogram.getAttribute("aria-label")).toBeNull();
   });
 });

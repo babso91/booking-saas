@@ -60,9 +60,7 @@ describe("Écrin in a browser", () => {
     await page.keyboard.press("Escape");
     await card.waitFor({ state: "detached" });
     expect(
-      await page.evaluate(() =>
-        document.activeElement?.getAttribute("aria-label"),
-      ),
+      await page.evaluate(() => document.activeElement?.textContent),
     ).toContain("Inès Visite");
     expect(errors).toEqual([]);
     await page.context().close();
@@ -243,7 +241,7 @@ describe("Écrin in a browser", () => {
     release();
 
     await page
-      .locator('[aria-label*="Iris Visite"]')
+      .locator("button", { hasText: "Iris Visite" })
       .first()
       .waitFor({ state: "attached" });
     await page.waitForLoadState("networkidle");

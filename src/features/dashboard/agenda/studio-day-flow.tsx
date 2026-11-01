@@ -13,7 +13,12 @@ import type {
 } from "@/features/agenda/data/agenda";
 import { cn } from "@/lib/cn";
 
-import { dayFlow, type FlowItem, type FlowVisit } from "./day-flow";
+import {
+  dayFlow,
+  overlappingVisits,
+  type FlowItem,
+  type FlowVisit,
+} from "./day-flow";
 import { hatch, visitLookOf, visitLooks } from "./visit-look";
 
 // The Studio day: her visits in order, taller when longer, overlaps side by
@@ -155,17 +160,19 @@ function Row({
   }
 
   if (item.kind === "free") {
-    const label = `Libre · ${formatDuration(item.minutes)}`;
-    return item.bookable ? (
+    const label = `Temps libre · ${formatDuration(item.minutes)}`;
+    return item.ahead ? (
       <li>
         <button
           type="button"
           onClick={() => onCreateAt(date, item.time)}
-          aria-label={`${label} à partir de ${item.time} : nouveau rendez-vous`}
           className="group flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-[16px] border-[1.5px] border-dashed border-line-strong px-4 text-left text-[14px] font-bold text-ink-soft transition-colors hover:border-ink hover:bg-paper-raised hover:text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           <span className="w-12 shrink-0 tabular-nums">{item.time}</span>
           <span className="flex-1">{label}</span>
+          <span className="sr-only">
+            , à partir de {item.time} : proposer un rendez-vous ici
+          </span>
           <span
             aria-hidden="true"
             className="grid size-8 place-items-center rounded-full bg-ink text-[18px] leading-none text-paper transition-transform group-hover:scale-105"
@@ -210,12 +217,13 @@ function Row({
 
   const { visits } = item;
   const together = visits.length > 1;
+  const overlapping = overlappingVisits(visits);
   const sideBySide = together && visits.length <= (roomy ? 3 : 2);
   return (
     <li className="flex flex-col gap-1.5">
-      {together ? (
+      {overlapping > 1 ? (
         <p className="font-expanded px-1 text-[11.5px] font-bold tracking-[0.08em] text-ink-soft uppercase">
-          En même temps · {visits.length}
+          {overlapping} rendez-vous qui se chevauchent
         </p>
       ) : null}
       <div
@@ -286,7 +294,6 @@ function VisitCard({
       type="button"
       onClick={onOpen}
       data-focus={lookId === "now" || isNext ? "" : undefined}
-      aria-label={`${start} à ${end}, ${appointment.client.displayName}, ${appointment.service.name}, ${look.label}${isNext ? ", prochain rendez-vous" : ""}`}
       className={cn(
         "relative flex w-full cursor-pointer flex-col justify-between gap-2 overflow-hidden rounded-[18px] p-3.5 text-left transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-[0_14px_28px_-16px_rgb(var(--shadow-rgb)/0.6)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent active:translate-y-0 motion-reduce:transition-none",
         roomy && "p-4",
@@ -354,6 +361,9 @@ function VisitCard({
             fin prévue dans {formatDuration(minutesUntil(visit.end, nowMs!))}
           </span>
         </span>
+      ) : null}
+      {isNext ? (
+        <span className="sr-only">, {look.label}, prochain rendez-vous</span>
       ) : null}
     </button>
   );

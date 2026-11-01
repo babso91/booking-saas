@@ -171,7 +171,7 @@ describe("Écrin agenda — computer", () => {
     renderEcrin();
     await user.click(
       await screen.findByRole("button", {
-        name: "Voir le mercredi 30 septembre 2026 en détail",
+        name: /voir le mercredi 30 septembre 2026 en détail/,
       }),
     );
     await waitFor(() =>
@@ -199,9 +199,9 @@ describe("Écrin agenda — computer", () => {
     renderEcrin();
     await user.click(await screen.findByRole("button", { name: "Jour" }));
     const free = await screen.findByRole("button", {
-      name: /^Libre · .* à partir de 11:\d\d : nouveau rendez-vous$/,
+      name: /^Temps libre · .*à partir de 11:\d\d : proposer un rendez-vous ici$/,
     });
-    const time = free.getAttribute("aria-label")!.match(/11:\d\d/)![0];
+    const time = free.textContent!.match(/11:\d\d/)![0];
     await user.click(free);
     const form = within(screen.getByRole("dialog"));
     expect(
@@ -448,7 +448,7 @@ describe("Écrin agenda — phone", () => {
       ),
     );
     await user.click(
-      screen.getByRole("button", { name: "jeudi 8 octobre 2026" }),
+      screen.getByRole("button", { name: /jeudi 8 octobre 2026/ }),
     );
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith(
@@ -663,7 +663,7 @@ describe("Écrin agenda — buffers", () => {
     );
     expect(
       await day.findByRole("button", {
-        name: /à partir de 09:30 : nouveau rendez-vous/,
+        name: /à partir de 09:30 : proposer un rendez-vous ici/,
       }),
     ).toBeTruthy();
     expect(day.queryByRole("button", { name: /à partir de 09:00/ })).toBeNull();
@@ -683,7 +683,7 @@ describe("Écrin agenda — buffers", () => {
     renderEcrin({}, "2026-09-28");
     expect(
       await screen.findByRole("button", {
-        name: /à partir de 09:30 : nouveau rendez-vous/,
+        name: /à partir de 09:30 : proposer un rendez-vous ici/,
       }),
     ).toBeTruthy();
   });
@@ -734,7 +734,7 @@ describe("Écrin agenda — buffers", () => {
     );
     renderEcrin();
     await user.click(await screen.findByRole("button", { name: "Jour" }));
-    expect(await screen.findByText("4 min libres")).toBeTruthy();
+    expect(await screen.findByText("4 min de temps libre")).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: /à partir de 11:00/ }),
     ).toBeNull();
@@ -793,6 +793,64 @@ describe("Écrin thread — now and what is going on", () => {
     renderEcrin();
     const capsule = await screen.findByRole("button", { name: /Lou Minuit/ });
     expect(capsule.textContent).toMatch(/jusqu’à demain 01:30/);
-    expect(screen.getByText("En même temps · 2")).toBeTruthy();
+    expect(screen.getByText("2 rendez-vous qui se chevauchent")).toBeTruthy();
+  });
+});
+
+describe("Écrin thread — words that promise nothing false", () => {
+  beforeEach(() => useViewport(false));
+  const visit = (
+    local: string,
+    name: string,
+    minutes: number,
+    status?: string,
+  ) => ({
+    ...appointment({
+      local,
+      durationMinutes: minutes,
+      client: { id: name, displayName: name },
+    }),
+    ...(status ? { status: status as "cancelled" } : {}),
+  });
+  const read = (...appointments: ReturnType<typeof visit>[]) =>
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments })),
+    );
+
+  it("three in a chain are not said to be at the same time", async () => {
+    read(
+      visit(`${TODAY}T11:00`, "Ana", 60),
+      visit(`${TODAY}T11:30`, "Bia", 60),
+      visit(`${TODAY}T12:15`, "Cléa", 60),
+    );
+    renderEcrin();
+    expect(
+      await screen.findByText("3 rendez-vous qui se chevauchent"),
+    ).toBeTruthy();
+    expect(screen.queryByText(/En même temps/)).toBeNull();
+  });
+
+  it("a cancelled visit alone beside one kept: nothing overlaps", async () => {
+    read(
+      visit(`${TODAY}T11:00`, "Ana", 60),
+      visit(`${TODAY}T11:15`, "Bia", 30, "cancelled"),
+    );
+    renderEcrin();
+    await screen.findByRole("button", { name: /Ana/ });
+    expect(screen.queryByText(/qui se chevauchent/)).toBeNull();
+  });
+
+  it("free time proposes, it does not promise: never « réservable » or « disponible »", async () => {
+    read(visit(`${TODAY}T11:00`, "Ana", 60));
+    renderEcrin();
+    await screen.findByRole("button", { name: /Ana/ });
+    const list = screen.getByRole("list", { name: "Déroulé de la journée" });
+    expect(list.textContent).toMatch(/Temps libre · /);
+    expect(list.textContent).not.toMatch(/réservable|disponible/i);
+    expect(
+      within(list).getAllByRole("button", {
+        name: /proposer un rendez-vous ici$/,
+      }).length,
+    ).toBeGreaterThan(0);
   });
 });

@@ -257,7 +257,7 @@ describe("rendering", () => {
     renderAgenda();
 
     const card = await screen.findByRole("button", {
-      name: "10:00, Camille Roux, Rehaussement de cils, Confirmé",
+      name: /10:00, Camille Roux, Rehaussement de cils, Confirmé$/,
     });
     await user.click(card);
     const details = within(panel());

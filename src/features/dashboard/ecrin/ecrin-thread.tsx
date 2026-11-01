@@ -13,7 +13,12 @@ import type {
 } from "@/features/agenda/data/agenda";
 import { cn } from "@/lib/cn";
 
-import { dayFlow, type FlowItem, type FlowVisit } from "../agenda/day-flow";
+import {
+  dayFlow,
+  overlappingVisits,
+  type FlowItem,
+  type FlowVisit,
+} from "../agenda/day-flow";
 import { hatch, visitLookOf } from "../agenda/visit-look";
 import { ecrinLookClass, ecrinLookLabel } from "./looks";
 
@@ -178,17 +183,21 @@ function Item({
     );
 
   if (item.kind === "free") {
-    const label = `Libre · ${formatDuration(item.minutes)}`;
+    const label = `Temps libre · ${formatDuration(item.minutes)}`;
     return (
       <Row hour={item.time} pearl="hollow">
-        {item.bookable ? (
+        {item.ahead ? (
           <button
             type="button"
             onClick={() => onCreateAt(date, item.time)}
-            aria-label={`${label} à partir de ${item.time} : nouveau rendez-vous`}
             className="group flex min-h-12 w-full cursor-pointer items-center justify-between gap-3 rounded-[22px] px-4 text-left text-[14.5px] text-ink-soft transition-colors hover:bg-paper-raised hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
-            {label}
+            <span>
+              {label}
+              <span className="sr-only">
+                , à partir de {item.time} : proposer un rendez-vous ici
+              </span>
+            </span>
             <span
               aria-hidden="true"
               className="ecrin-object grid size-9 place-items-center rounded-full text-[18px] leading-none text-ink transition-transform group-hover:scale-105"
@@ -230,6 +239,7 @@ function Item({
   }
 
   const { visits } = item;
+  const overlapping = overlappingVisits(visits);
   // What is shown as going on: a cancelled or completed visit is not.
   const going = visits.some(
     (visit) => visitLookOf(visit.appointment, nowMs) === "now",
@@ -249,9 +259,9 @@ function Item({
       focus={going || isNext}
     >
       <div className="flex flex-col gap-2">
-        {visits.length > 1 ? (
+        {overlapping > 1 ? (
           <p className="font-engraved px-1 pt-1 text-[11.5px] tracking-[0.16em] text-ink-soft uppercase">
-            En même temps · {visits.length}
+            {overlapping} rendez-vous qui se chevauchent
           </p>
         ) : null}
         {visits.map((visit) => (
@@ -305,7 +315,6 @@ function VisitCapsule({
     <button
       type="button"
       onClick={onOpen}
-      aria-label={`${start} à ${end}, ${appointment.client.displayName}, ${appointment.service.name}, ${ecrinLookLabel[lookId]}${isNext ? ", prochain rendez-vous" : ""}`}
       className={cn(
         "ecrin-press flex w-full cursor-pointer flex-col justify-center gap-0.5 rounded-[24px] px-5 py-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         ecrinLookClass[lookId],
@@ -361,6 +370,11 @@ function VisitCapsule({
           <span className="text-[12.5px]">
             fin prévue dans {formatDuration(minutesUntil(visit.end, nowMs!))}
           </span>
+        </span>
+      ) : null}
+      {isNext ? (
+        <span className="sr-only">
+          , {ecrinLookLabel[lookId]}, prochain rendez-vous
         </span>
       ) : null}
     </button>

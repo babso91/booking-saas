@@ -4,8 +4,8 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   type ReactNode,
+  type RefObject,
   type TouchEvent,
 } from "react";
 
@@ -28,6 +28,7 @@ import { cn } from "@/lib/cn";
 
 import { dayFlow, distinctBookings } from "../agenda/day-flow";
 import type { StudioAgendaProps } from "../agenda/studio-agenda";
+import { useOptionsMenu } from "../agenda/use-options-menu";
 import { todayModel } from "../client/today-model";
 import { EcrinDial } from "./ecrin-dial";
 import { EcrinThread } from "./ecrin-thread";
@@ -48,6 +49,7 @@ export function EcrinAgenda(props: StudioAgendaProps) {
   const { view, wide, days, anchor, today, data, nowMs, loading } = props;
   const count = data ? distinctBookings(data, days) : null;
   const isOnToday = today !== null && days.includes(today);
+  const heading = useRef<HTMLHeadingElement>(null);
 
   // Back to the tab after a while: bookings may have come meanwhile.
   const refresh = useRef(props.onRefresh);
@@ -98,7 +100,9 @@ export function EcrinAgenda(props: StudioAgendaProps) {
           ) : null}
           <div className="min-w-0">
             <h1
-              className="font-engraved text-[clamp(26px,7.4vw,42px)] leading-[1.05] tracking-[0.01em] text-ink"
+              ref={heading}
+              tabIndex={-1}
+              className="font-engraved text-[clamp(26px,7.4vw,42px)] leading-[1.05] tracking-[0.01em] text-ink outline-none"
               aria-live="polite"
             >
               {title}
@@ -182,7 +186,11 @@ export function EcrinAgenda(props: StudioAgendaProps) {
             {isOnToday ? null : (
               <button
                 type="button"
-                onClick={props.onToday}
+                onClick={() => {
+                  // This button goes away once on today: focus stays near.
+                  heading.current?.focus({ preventScroll: true });
+                  props.onToday();
+                }}
                 data-on-today={false}
                 className="ecrin-object h-11 cursor-pointer rounded-full px-3.5 text-[13.5px] text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
@@ -193,6 +201,7 @@ export function EcrinAgenda(props: StudioAgendaProps) {
               includeCancelled={props.includeCancelled}
               onIncludeCancelled={props.onIncludeCancelled}
               onNewBlock={props.onNewBlock}
+              fallback={heading}
             />
           </div>
         )}
@@ -338,7 +347,10 @@ function DaySays({ props }: { props: StudioAgendaProps }) {
       </p>
       {free > 0 ? (
         <p className="text-[13.5px] text-accent">
-          {formatDuration(free)} libres
+          {formatDuration(free)} de temps libre
+          {flow.freeStretches > 1 ? (
+            <span className="block">en {flow.freeStretches} plages</span>
+          ) : null}
         </p>
       ) : null}
     </>
@@ -400,38 +412,23 @@ function Options({
   includeCancelled,
   onIncludeCancelled,
   onNewBlock,
+  fallback,
 }: {
   includeCancelled: boolean;
   onIncludeCancelled: (value: boolean) => void;
   onNewBlock: () => void;
+  fallback: RefObject<HTMLElement | null>;
 }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: Event) => {
-      if (
-        event instanceof KeyboardEvent
-          ? event.key === "Escape"
-          : !root.current?.contains(event.target as Node)
-      )
-        setOpen(false);
-    };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", close);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", close);
-    };
-  }, [open]);
+  const { open, root, trigger, toggle, leaveFor } = useOptionsMenu(fallback);
   return (
     <div ref={root} className="relative">
       <button
+        ref={trigger}
         type="button"
         aria-expanded={open}
         aria-controls="ecrin-agenda-options"
         aria-label="Options de l’agenda"
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         className="ecrin-object grid size-11 cursor-pointer place-items-center rounded-full text-[20px] leading-none text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
         ⋯
@@ -443,10 +440,7 @@ function Options({
         >
           <button
             type="button"
-            onClick={() => {
-              setOpen(false);
-              onNewBlock();
-            }}
+            onClick={() => leaveFor(onNewBlock)}
             className="flex min-h-12 cursor-pointer items-center rounded-[16px] px-3 text-left text-[15px] text-ink hover:bg-sand focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
           >
             Bloquer un créneau
@@ -491,7 +485,6 @@ function DayStrip({
             type="button"
             onClick={() => onSelect(date)}
             aria-pressed={selected}
-            aria-label={formatFullDate(date)}
             className="group flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
           >
             <span
@@ -513,6 +506,7 @@ function DayStrip({
                 </span>
               </span>
             </span>
+            <span className="sr-only">, {formatFullDate(date)}</span>
           </button>
         );
       })}

@@ -14,7 +14,12 @@ import {
   sampleTrainingWeek,
   sampleWeek,
 } from "../fixtures/sample-week";
-import { dayFlow, distinctBookings } from "./day-flow";
+import {
+  dayFlow,
+  distinctBookings,
+  overlappingVisits,
+  type FlowVisit,
+} from "./day-flow";
 
 const at = (time: string, date = SAMPLE_TODAY) =>
   Date.parse(sampleInstant(date, time));
@@ -24,7 +29,7 @@ const kinds = (flow: ReturnType<typeof dayFlow>) =>
     item.kind === "visits"
       ? `visits:${item.visits.map((v) => v.appointment.client.displayName.split(" ")[0]).join("+")}`
       : item.kind === "free"
-        ? `free:${item.time}+${item.minutes}${item.bookable ? "" : "(past)"}`
+        ? `free:${item.time}+${item.minutes}${item.ahead ? "" : "(past)"}`
         : item.kind === "block"
           ? `block:${item.block.reason}`
           : `now:${item.time}`,
@@ -79,7 +84,7 @@ describe("dayFlow — a normal day", () => {
     expect(flow.items.find((item) => item.kind === "free")).toMatchObject({
       time: "09:00",
       minutes: 60,
-      bookable: true,
+      ahead: true,
     });
   });
 });
@@ -210,7 +215,7 @@ const before = (time: string) => m(time, "2026-10-25");
 const free = (flow: ReturnType<typeof dayFlow>) =>
   flow.items.flatMap((item) =>
     item.kind === "free"
-      ? [`${item.time}+${item.minutes}${item.bookable ? "" : "(past)"}`]
+      ? [`${item.time}+${item.minutes}${item.ahead ? "" : "(past)"}`]
       : [],
   );
 
@@ -498,5 +503,71 @@ describe("dayFlow — the « now » marker (ST2-004)", () => {
       now,
     );
     expect(nowItems(flow)).toBe(0);
+  });
+});
+
+describe("overlappingVisits — what the row can truthfully say", () => {
+  const visit = (start: number, end: number, status = "confirmed") =>
+    ({ start, end, appointment: { status } }) as unknown as FlowVisit;
+  const H = 3_600_000;
+
+  it("two, and three, really at the same time", () => {
+    expect(
+      overlappingVisits([visit(9 * H, 10 * H), visit(9 * H, 10 * H)]),
+    ).toBe(2);
+    expect(
+      overlappingVisits([
+        visit(9 * H, 11 * H),
+        visit(9 * H, 11 * H),
+        visit(10 * H, 12 * H),
+      ]),
+    ).toBe(3);
+  });
+
+  it("three in a chain: all three overlap another, though never all at once", () => {
+    expect(
+      overlappingVisits([
+        visit(9 * H, 11 * H),
+        visit(10 * H, 13 * H),
+        visit(12 * H, 14 * H),
+      ]),
+    ).toBe(3);
+  });
+
+  it("touching at the boundary is not overlapping", () => {
+    expect(
+      overlappingVisits([visit(9 * H, 10 * H), visit(10 * H, 11 * H)]),
+    ).toBe(0);
+  });
+
+  it("a cancelled visit overlaps nothing, nor does it link two others", () => {
+    expect(
+      overlappingVisits([
+        visit(9 * H, 10 * H),
+        visit(9 * H, 10 * H, "cancelled"),
+      ]),
+    ).toBe(0);
+    expect(
+      overlappingVisits([
+        visit(9 * H, 11 * H),
+        visit(10 * H, 13 * H, "cancelled"),
+        visit(12 * H, 14 * H),
+      ]),
+    ).toBe(0);
+  });
+
+  it("across midnight: real instants, on the row of each day", () => {
+    const tuesday = dayFlow(sampleNightWeek, SAMPLE_TODAY, at("22:00"));
+    const night = tuesday.items.at(-1)!;
+    expect(night.kind === "visits" && overlappingVisits(night.visits)).toBe(0);
+  });
+});
+
+describe("dayFlow — free time is cut into stretches", () => {
+  it("counts each stretch ahead, however short; past ones count for nothing", () => {
+    const flow = dayFlow(sampleWeek, SAMPLE_TODAY, at("14:05"));
+    // 14:45, 16:15, 17:15 (15 min each) and 18:30 (30 min), from the items.
+    expect(flow.freeMinutes).toBe(75);
+    expect(flow.freeStretches).toBe(4);
   });
 });

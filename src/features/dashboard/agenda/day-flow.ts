@@ -53,8 +53,8 @@ export type FlowItem =
       minutes: number;
       /** `HH:MM` of its start, her wall clock (to create there). */
       time: string;
-      /** Still ahead: she can book it. */
-      bookable: boolean;
+      /** Still ahead: she can try to create there; only the server can say yes. */
+      ahead: boolean;
     }
   | { kind: "now"; start: number; end: number; time: string };
 
@@ -69,11 +69,31 @@ export type DayFlow = {
   count: number;
   /** No opening that day, or her "closed" exceptions cover all of it. */
   closed: boolean;
-  /** All the free time still ahead, however short each stretch is. */
+  /**
+   * All the free time still ahead, however short each stretch is: time that
+   * nothing holds, not what a given service needs (its length and its own
+   * buffer must fit, and only the server decides).
+   */
   freeMinutes: number;
+  /** How many separate stretches that time is cut into. */
+  freeStretches: number;
 };
 
 type Interval = { start: number; end: number };
+
+/**
+ * How many visits of a row really overlap another one, cancelled ones aside
+ * (they hold no time): a row can gather visits through one cancelled.
+ */
+export function overlappingVisits(visits: FlowVisit[]) {
+  const held = visits.filter((visit) => live(visit.appointment));
+  return held.filter((visit) =>
+    held.some(
+      (other) =>
+        other !== visit && other.start < visit.end && visit.start < other.end,
+    ),
+  ).length;
+}
 
 const live = (appointment: AgendaAppointmentDto) =>
   appointment.status !== "cancelled";
@@ -218,15 +238,19 @@ export function dayFlow(
     ),
   ]);
   let freeTotal = 0;
+  let freeStretches = 0;
   for (const free of subtract(opening, taken)) {
-    // What is still ahead of a free stretch already begun is its bookable part.
+    // Only what is still ahead counts of a free stretch already begun.
     const start =
       now !== null && free.start < now && now < free.end
         ? Math.ceil(now / (5 * MINUTE)) * 5 * MINUTE
         : free.start;
     if (start >= free.end) continue;
-    const bookable = now === null || start >= now;
-    if (bookable) freeTotal += free.end - start;
+    const ahead = now === null || start >= now;
+    if (ahead) {
+      freeTotal += free.end - start;
+      freeStretches += 1;
+    }
     const minutes = Math.round((free.end - start) / MINUTE);
     if (minutes < MIN_FREE_MINUTES) continue;
     items.push({
@@ -235,7 +259,7 @@ export function dayFlow(
       end: free.end,
       minutes,
       time: clock(zone, start),
-      bookable,
+      ahead,
     });
   }
 
@@ -298,6 +322,7 @@ export function dayFlow(
     count: visits.length,
     closed: openMinutes === 0 || subtract(opening, closings).length === 0,
     freeMinutes: Math.round(freeTotal / MINUTE),
+    freeStretches,
   };
 }
 

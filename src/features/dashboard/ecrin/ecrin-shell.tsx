@@ -99,11 +99,13 @@ export function EcrinShell({
           <button
             type="button"
             onClick={() => setOpen(true)}
-            aria-label={`${business.name} : réglages et compte`}
             aria-current={inMore ? "page" : undefined}
             className="ecrin-object ecrin-press font-engraved grid size-11 shrink-0 cursor-pointer place-items-center rounded-full pl-[0.1em] text-[15px] tracking-[0.1em] text-ink focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-accent"
           >
             {initialsOf(business.name)}
+            <span className="sr-only">
+              , {business.name} : réglages et compte
+            </span>
           </button>
           <Link
             href={sectionHref.today}

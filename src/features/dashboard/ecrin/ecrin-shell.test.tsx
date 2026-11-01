@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { defaultAppearance } from "@/features/appearance/appearance";
 import { AppearanceProvider } from "@/features/appearance/components/appearance-provider";
+import { initialsOf } from "../sections";
 
 vi.mock(
   "next/navigation",
@@ -47,9 +48,11 @@ describe("the Écrin frame", () => {
   it("the monogram says when she is in a room of the sheet", () => {
     renderEcrin("hours");
     const monogram = screen.getByRole("button", {
-      name: "Atelier Maëlys : réglages et compte",
+      name: "AM, Atelier Maëlys : réglages et compte",
     });
-    expect(monogram.textContent).toBe("AM");
+    expect(monogram.textContent).toBe(
+      "AM, Atelier Maëlys : réglages et compte",
+    );
     expect(monogram.getAttribute("aria-current")).toBe("page");
   });
 
@@ -74,7 +77,7 @@ describe("the Écrin frame", () => {
       );
       await user.click(
         screen.getByRole("button", {
-          name: "Atelier Maëlys : réglages et compte",
+          name: "AM, Atelier Maëlys : réglages et compte",
         }),
       );
       const sheet = within(screen.getByRole("dialog"));
@@ -112,5 +115,26 @@ describe("Écrin focus", () => {
     expect(readFileSync(join(here, file), "utf8")).not.toMatch(
       /outline-signature|ring-signature/,
     );
+  });
+});
+
+describe("the monogram (WCAG 2.5.3): what she sees is in what she can say", () => {
+  it.each([
+    ["Ly", "LY"],
+    ["Atelier Maëlys", "AM"],
+    ["Institut de beauté Marie-Alexandrine de la Tour d’Auvergne", "ID"],
+  ])("%s", (name, initials) => {
+    render(
+      <AppearanceProvider initial={{ ...defaultAppearance, style: "ecrin" }}>
+        <AppShell business={{ name, slug: "x" }}>
+          <p>contenu</p>
+        </AppShell>
+      </AppearanceProvider>,
+    );
+    expect(initialsOf(name)).toBe(initials);
+    const monogram = screen.getByRole("button", {
+      name: `${initials}, ${name} : réglages et compte`,
+    });
+    expect(monogram.getAttribute("aria-label")).toBeNull();
   });
 });

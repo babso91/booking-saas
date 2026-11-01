@@ -89,8 +89,9 @@ export function periodLabel(view: AgendaView, range: VisibleRange) {
     const label = `${weekdayLong.format(calendarDate(range.startDate))} ${dayMonthLong.format(calendarDate(range.startDate))}`;
     return label.charAt(0).toUpperCase() + label.slice(1);
   }
-  const year = range.endDate.slice(0, 4);
-  return `${formatDayMonth(range.startDate)} – ${formatDayMonth(range.endDate)} ${year}`;
+  const from = range.startDate.slice(0, 4);
+  const to = range.endDate.slice(0, 4);
+  return `${formatDayMonth(range.startDate)}${from === to ? "" : ` ${from}`} – ${formatDayMonth(range.endDate)} ${to}`;
 }
 
 /** "1 h 15", "45 min". */

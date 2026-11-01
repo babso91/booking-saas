@@ -118,6 +118,8 @@ export async function expectAccessible(page: Page, what: string) {
     };
     const { violations } = await axe.run(document, {
       runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] },
+      // WCAG 2.5.3, outside those tags: what she sees is in what she can say.
+      rules: { "label-content-name-mismatch": { enabled: true } },
     });
     return violations.map(
       ({ id, nodes }) =>

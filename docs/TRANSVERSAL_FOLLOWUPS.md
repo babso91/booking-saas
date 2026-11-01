@@ -1,66 +1,85 @@
-# Corrections transversales à traiter dans une PR dédiée
+# Corrections transversales
 
-Issues du rapport final de Studio 2. Studio 2 reste READY : aucun de ces points n'est un défaut d'intégrité des données, et aucun n'est corrigé dans les PR #29 ou #30. Ils seront traités ensemble, une fois Studio 2 et Écrin stabilisés.
+Issues du rapport final de Studio 2 et de l'audit d'Écrin. Elles sont traitées sur `fix/dashboard-consolidation`, PR Draft basée sur `feat/dashboard-ecrin`. Aucune règle métier, migration, RPC ou action serveur n'est modifiée.
 
-## 1. Accessibilité : nom du monogramme (WCAG 2.5.3)
+## État
 
-**Cause.** Le bouton affiche les initiales (`AM`), alors que son `aria-label` vaut `Atelier Maëlys : réglages et compte`. Le texte visible n'est pas contenu dans le nom accessible. Une personne en commande vocale qui dit « cliquer AM » n'atteint pas le bouton. **Écrin a le même défaut**, puisque son monogramme reprend ce libellé.
+| Sujet                                 | État                                     |
+| ------------------------------------- | ---------------------------------------- |
+| 1. Noms accessibles (WCAG 2.5.3)      | Résolu                                   |
+| 2. Focus du menu d'options            | Résolu, en Écrin et en Studio            |
+| 3. Chevauchements                     | Résolu, en Écrin et en Studio            |
+| 4. Année de `periodLabel`             | Résolu                                   |
+| 5. Temps libre : les libellés         | Résolu                                   |
+| 5 bis. Faisabilité dans le formulaire | **À traiter : décision produit requise** |
 
-**Pourquoi nos contrôles ne l'ont pas vu.** Notre appel à axe se limite aux étiquettes `wcag2a`, `wcag2aa` et `wcag21aa`. La règle `label-content-name-mismatch` n'en fait pas partie : axe la range parmi ses règles expérimentales. Le « 0 violation » d'axe ne couvre donc pas ce critère.
+## 1. Noms accessibles
 
-**Correction proposée.** Commencer le nom par le texte visible : `` `${initialsOf(name)}, ${name} : réglages et compte` ``. Le rendu ne change pas.
+**Constat.** axe, avec la règle `label-content-name-mismatch` activée sur les aperçus Écrin et Studio (10 pages), a relevé 111 résultats.
 
-**Risque.** Faible. Le nom change pour les lecteurs d'écran, et les tests qui cherchent le bouton par son nom sont à adapter.
+| Élément                                            | Classement                                                                                 | Traitement |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------- |
+| Monogramme `AM`                                    | Violation réelle                                                                           | Corrigé    |
+| Perles et bande des jours (`26 LU`)                | Violation réelle                                                                           | Corrigé    |
+| Têtes de jour de la semaine (`26 LUN 4 rdv`)       | Violation réelle                                                                           | Corrigé    |
+| Rendez-vous de la semaine                          | Violation réelle : ordre différent, texte variable selon la largeur                        | Corrigé    |
+| Rendez-vous du jour                                | Violation réelle : `dans 55 min`, `note`, `en ligne` absents du nom                        | Corrigé    |
+| Lignes de temps libre                              | Violation réelle                                                                           | Corrigé    |
+| Bouton `⋯` (résultat « incomplet », non violation) | Faux positif démontrable : un glyphe sans mot à prononcer, WCAG 2.5.3 ne vise que le texte | Conservé   |
 
-**Fichiers.** `src/features/dashboard/components/studio-shell.tsx:83`, `src/features/dashboard/ecrin/ecrin-shell.tsx:102`, et leurs tests.
+**Correction.** Ces boutons n'ont plus d'`aria-label`. Leur nom vient de leur contenu, complété par du texte réservé aux lecteurs d'écran : `AM, Atelier Maëlys : réglages et compte`. Le nom suit donc ce qui est réellement affiché, y compris quand une requête de conteneur montre les initiales ou le prénom. Le rendu visuel ne change pas.
 
-**Tests.**
+**Résultat.** Sur les mêmes pages : 0 violation, 1 résultat « incomplet » (le `⋯`). La règle est activée dans `expectAccessible`, donc dans tous les e2e axe, sans désactiver aucune règle.
 
-- Tests de composant : le nom accessible contient le texte visible, dans les deux coquilles.
-- `tests/e2e/support/ecrin.ts` et les parcours Studio : activer explicitement cette règle axe. D'autres écrans peuvent alors remonter et seront à traiter dans la même PR.
+Les cartes du Classique (`time-grid.tsx`) reçoivent la même correction. Elles n'étaient pas visibles sur les aperçus : seule la CI les contrôle.
 
-## 2. Classique : année de `periodLabel` au Nouvel An
+## 2. Focus du menu d'options
 
-**Cause.** `periodLabel` (`src/features/agenda/client/dates.ts:87`) n'écrit que l'année de fin. La semaine du 28 décembre 2026 s'affiche donc `28 déc. – 3 janv. 2027`, ce qui laisse croire que le 28 décembre tombe en 2027.
+`useOptionsMenu` (`features/dashboard/agenda/use-options-menu.ts`) remplace le code dupliqué d'Écrin et de Studio, qui avaient le même défaut.
 
-**Correction proposée.** Écrire les deux années lorsqu'elles diffèrent : `28 déc. 2026 – 3 janv. 2027`. Le libellé reste le même dans tous les autres cas. Écrin le fait déjà dans son sous-titre.
+| Chemin de fermeture                       | Destination du focus                                |
+| ----------------------------------------- | --------------------------------------------------- |
+| Échap                                     | Le bouton d'options                                 |
+| Échap alors qu'elle a déjà quitté le menu | Inchangé                                            |
+| Clic sur un élément focalisable           | Cet élément                                         |
+| Clic sur un élément non focalisable       | Le bouton d'options                                 |
+| « Afficher les annulés »                  | Reste sur la case, le menu reste ouvert             |
+| « Bloquer un créneau »                    | Le panneau, puis le bouton à sa fermeture           |
+| Le bouton disparaît (écran élargi)        | Le titre de la page, si le focus était dans le menu |
+| « Aujourd’hui » disparaît sur téléphone   | Le titre de la page                                 |
 
-**Risque.** Très faible : ce texte n'est utilisé que dans l'en-tête de `agenda-view.tsx:548`. Le libellé est plus long, donc à vérifier à 320 px.
+Le titre porte `tabIndex={-1}` : il reste hors de l'ordre de tabulation.
 
-**Fichiers.** `src/features/agenda/client/dates.ts`, `src/features/agenda/client/dates.test.ts`.
+## 3. Chevauchements
 
-**Tests.**
+« En même temps · N » devient `N rendez-vous qui se chevauchent`, exact pour une chaîne, sans nouvel algorithme de simultanéité. `overlappingVisits` compte les rendez-vous non annulés qui en chevauchent réellement un autre : une annulation ne déclenche plus le libellé et ne relie plus deux rendez-vous. La présentation des groupes ne change pas.
 
-- Semaine à cheval sur deux années : les deux années sont écrites.
-- Semaine à cheval sur deux mois de la même année : une seule année.
-- Vue jour : inchangée.
-- À vérifier au passage : l'en-tête de Studio traite-t-il ce cas ?
+## 4. Année de `periodLabel`
 
-## 3. Disponibilités : temps libre brut et temps réservable
+`28 déc. 2026 – 3 janv. 2027` lorsque la semaine traverse deux années ; inchangé sinon. Studio et Écrin écrivaient déjà les deux années.
 
-**Ce qui est affiché aujourd'hui.** `freeMinutes` (`src/features/dashboard/agenda/day-flow.ts`) additionne tous les intervalles libres à venir, déjà nets des rendez-vous, de leurs tampons et des blocages. Il apparaît comme `Libre` ou `Libre, à venir` (`studio-day-summary.tsx:63`) et `X libres` (`ecrin-agenda.tsx:341`). Chaque intervalle d'au moins 5 min devient `Libre · X min` avec une action « nouveau rendez-vous » (`studio-day-flow.tsx:158`, `ecrin-thread.tsx:181`).
+## 5. Temps libre
 
-**Écart avec le serveur.** Un rendez-vous occupe sa durée **plus son propre tampon** (`ends_at + buffer_minutes_snapshot`, `20260927200100_scheduling_invariants.sql:111`). Une prestation de 60 min avec 15 min de tampon ne tient donc pas dans `Libre · 70 min`.
+**Libellés.** `Libre · 70 min` devient `Temps libre · 70 min`. L'action devient « proposer un rendez-vous ici » pour les lecteurs d'écran. Le total devient `1 h 40 de temps libre, en 3 plages` (Écrin) et `Temps libre · 3 plages` (Studio). Le champ `bookable` de `dayFlow`, qui voulait dire « à venir », devient `ahead`.
 
-**Le libellé peut-il tromper ? Oui, modérément.**
+**Inventaire sans changement.**
 
-- Le mot « Libre » est exact, mais le total ne dit rien de ce qu'on peut réserver : `30 min libres` peut être six morceaux de 5 min.
-- L'action sur un intervalle court suggère qu'un rendez-vous y tient. Le refus n'arrive qu'à l'envoi du formulaire.
-- **L'intégrité n'est pas en jeu** : le serveur refuse (`schedule_conflict`), sans double réservation. Le risque est une perte de temps, ou une promesse faite à une cliente avant de vérifier.
+- « Journée libre » et « Ta journée est libre » disent qu'il n'y a pas de rendez-vous, sans promettre de durée.
+- « Indisponible » désigne un blocage posé par la professionnelle.
+- `bookableMinutes` sert seulement à calculer un taux de remplissage. Le nom est imprécis, mais il n'est pas affiché.
 
-**Correction proposée.** Elle tient en trois gestes, sans dupliquer de règle de réservation côté interface :
+**Serveur.** `schedule_conflict` et le message de refus ne changent pas. Un e2e prouve la frontière : prestation de 60 + 15 min refusée à 10:50 et acceptée à 10:45, avant un rendez-vous à 12:00.
 
-1. Garder `freeMinutes` comme donnée brute et l'afficher comme `Temps libre`, jamais comme « disponible » ou « réservable ».
-2. Remplacer l'action sur l'intervalle par « Proposer un rendez-vous ici », sans promesse de faisabilité.
-3. Dans le formulaire, une fois la prestation choisie, annoncer si elle tient, tampon compris, à partir de la réponse du serveur. Si aucun appel existant ne répond à cette question pour un créneau donné, l'arbitrage (nouvel appel en lecture ou statu quo) revient à une décision produit.
+### 5 bis. Faisabilité dans le formulaire : décision requise
 
-**Risque.** Moyen. C'est le seul des trois points qui touche au formulaire partagé par les trois styles, et il peut demander un appel de plus par changement de prestation. Le relire avec le travail de disponibilités existant avant de commencer.
+Annoncer dans le formulaire si une prestation tient, tampon compris, avant l'envoi.
 
-**Fichiers.** `studio-day-summary.tsx`, `studio-day-flow.tsx`, `ecrin-agenda.tsx`, `ecrin-thread.tsx`, le formulaire de rendez-vous de `features/agenda`, et leurs tests.
+**Existant.** Le formulaire de l'agenda n'interroge aucune disponibilité. Les disponibilités publiques suivent des règles propres à la réservation en ligne (préavis, horizon) et ne répondent donc pas à la question d'une professionnelle qui place elle-même un rendez-vous. Le seul verdict exact pour elle est aujourd'hui le refus à l'envoi.
 
-**Tests.**
+**Recommandation.** Garder le comportement actuel pour l'instant : le refus est exact, le texte protège le brouillon et les libellés ne promettent plus rien. Si des professionnelles s'en plaignent, ajouter un appel serveur en lecture dédié, qui réutilise la contrainte existante. Cela demande une validation produit et une PR à part. Ne jamais recalculer cette règle dans le navigateur.
 
-- Intervalle de 70 min avec une prestation de 60 + 15 min : annoncée comme ne tenant pas, et refusée par le serveur (e2e).
-- Même prestation dans 75 min : acceptée, à la minute près.
-- Tampon précédent et changement d'heure : calcul identique à celui du serveur.
-- Total composé de petits morceaux : libellé non trompeur, en Studio comme en Écrin.
+## Limites
+
+- Les parcours avec backend ne tournent qu'en CI. En local, les scénarios de focus et l'inventaire axe tournent sur les aperçus Chromium.
+- L'audition réelle avec une commande vocale n'a pas été réalisée : la correspondance est vérifiée par le nom accessible et par axe.
+- Le nom d'un rendez-vous répète volontairement une partie du texte visible (`Amel 09:30, 09:30, Amel Kaci…`), pour conserver le nom complet quand seul le prénom est affiché. C'est un peu plus long à l'écoute.

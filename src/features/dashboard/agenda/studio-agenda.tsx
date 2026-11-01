@@ -3,8 +3,8 @@
 import {
   useEffect,
   useRef,
-  useState,
   type ReactNode,
+  type RefObject,
   type TouchEvent,
 } from "react";
 
@@ -33,6 +33,7 @@ import { distinctBookings } from "./day-flow";
 import { StudioDayFlow } from "./studio-day-flow";
 import { StudioDaySummary } from "./studio-day-summary";
 import { StudioWeekWall } from "./studio-week-wall";
+import { useOptionsMenu } from "./use-options-menu";
 
 // The Studio agenda: the same agenda (its reading, its "today" checked with
 // PostgreSQL, its cards, forms and actions: AgendaView), set as a poster. On
@@ -133,6 +134,7 @@ export function StudioAgenda(props: StudioAgendaProps) {
     return () => document.removeEventListener("visibilitychange", onChange);
   }, []);
   const onToday = today !== null && days.includes(today);
+  const heading = useRef<HTMLHeadingElement>(null);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -140,7 +142,9 @@ export function StudioAgenda(props: StudioAgendaProps) {
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
           <div className="min-w-0">
             <h1
-              className="font-condensed text-[clamp(38px,10.5vw,76px)] leading-[0.84] font-black tracking-[-0.025em] text-ink uppercase"
+              ref={heading}
+              tabIndex={-1}
+              className="font-condensed text-[clamp(38px,10.5vw,76px)] leading-[0.84] font-black tracking-[-0.025em] text-ink uppercase outline-none"
               aria-live="polite"
             >
               {view === "week" ? (
@@ -197,7 +201,11 @@ export function StudioAgenda(props: StudioAgendaProps) {
               {onToday ? null : (
                 <button
                   type="button"
-                  onClick={props.onToday}
+                  onClick={() => {
+                    // This button goes away once on today: focus stays near.
+                    heading.current?.focus({ preventScroll: true });
+                    props.onToday();
+                  }}
                   data-on-today={false}
                   className="h-11 cursor-pointer rounded-full px-3.5 text-[13.5px] font-bold text-ink shadow-[inset_0_0_0_2px_var(--ink)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
@@ -208,6 +216,7 @@ export function StudioAgenda(props: StudioAgendaProps) {
                 includeCancelled={props.includeCancelled}
                 onIncludeCancelled={props.onIncludeCancelled}
                 onNewBlock={props.onNewBlock}
+                fallback={heading}
               />
             </div>
           )}
@@ -439,38 +448,23 @@ function Options({
   includeCancelled,
   onIncludeCancelled,
   onNewBlock,
+  fallback,
 }: {
   includeCancelled: boolean;
   onIncludeCancelled: (value: boolean) => void;
   onNewBlock: () => void;
+  fallback: RefObject<HTMLElement | null>;
 }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: Event) => {
-      if (
-        event instanceof KeyboardEvent
-          ? event.key === "Escape"
-          : !root.current?.contains(event.target as Node)
-      )
-        setOpen(false);
-    };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", close);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", close);
-    };
-  }, [open]);
+  const { open, root, trigger, toggle, leaveFor } = useOptionsMenu(fallback);
   return (
     <div ref={root} className="relative">
       <button
+        ref={trigger}
         type="button"
         aria-expanded={open}
         aria-controls="agenda-options"
         aria-label="Options de l’agenda"
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         className="grid size-11 cursor-pointer place-items-center rounded-full bg-sand text-[20px] leading-none font-black text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
         ⋯
@@ -482,10 +476,7 @@ function Options({
         >
           <button
             type="button"
-            onClick={() => {
-              setOpen(false);
-              onNewBlock();
-            }}
+            onClick={() => leaveFor(onNewBlock)}
             className="flex min-h-12 cursor-pointer items-center rounded-[14px] px-3 text-left text-[15px] font-bold text-ink hover:bg-sand focus-visible:outline-3 focus-visible:outline-offset-[-3px] focus-visible:outline-accent"
           >
             Bloquer un créneau
@@ -557,7 +548,6 @@ function DayStrip({
             type="button"
             onClick={() => onSelect(date)}
             aria-pressed={selected}
-            aria-label={formatFullDate(date)}
             className={cn(
               "flex h-[60px] min-w-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-[14px] transition-colors focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent",
               selected ? "bg-ink text-paper" : "text-ink-soft hover:bg-sand",
@@ -579,6 +569,7 @@ function DayStrip({
             >
               {dayNumber(date)}
             </span>
+            <span className="sr-only">, {formatFullDate(date)}</span>
           </button>
         );
       })}

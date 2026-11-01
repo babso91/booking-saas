@@ -218,7 +218,6 @@ export function StudioWeekWall({
               <button
                 type="button"
                 onClick={() => onOpenDay(row.date)}
-                aria-label={`Voir le ${formatFullDate(row.date)} en détail`}
                 className="group flex cursor-pointer flex-col justify-center gap-0.5 pr-3 text-left focus-visible:outline-3 focus-visible:outline-offset-[-3px] focus-visible:outline-accent"
               >
                 <span
@@ -239,6 +238,9 @@ export function StudioWeekWall({
                       ? "Fermé"
                       : "Pas d’ouverture"
                     : `${row.count} rdv`}
+                </span>
+                <span className="sr-only">
+                  , voir le {formatFullDate(row.date)} en détail
                 </span>
               </button>
 
@@ -386,11 +388,6 @@ export function StudioWeekWall({
                           tabIndex={part === 0 ? undefined : -1}
                           aria-hidden={part === 0 ? undefined : true}
                           onClick={() => onOpenAppointment(appointment)}
-                          aria-label={
-                            part === 0
-                              ? `${start}, ${appointment.client.displayName}, ${appointment.service.name}, ${formatDuration(appointment.durationMinutes)}, ${look.label}`
-                              : undefined
-                          }
                           className={cn(
                             "@container absolute z-20 flex cursor-pointer flex-col justify-center overflow-hidden rounded-[11px] px-2 text-left transition-[transform,box-shadow] duration-150 hover:z-30 hover:-translate-y-px hover:shadow-[0_10px_22px_-12px_rgb(var(--shadow-rgb)/0.6)] focus-visible:z-30 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent active:translate-y-0 motion-reduce:transition-none",
                             look.className,
@@ -430,6 +427,12 @@ export function StudioWeekWall({
                                   </span>
                                 </span>
                               ) : null}
+                              <span className="sr-only">
+                                , {start}, {appointment.client.displayName},{" "}
+                                {appointment.service.name},{" "}
+                                {formatDuration(appointment.durationMinutes)},{" "}
+                                {look.label}
+                              </span>
                             </>
                           ) : null}
                         </button>

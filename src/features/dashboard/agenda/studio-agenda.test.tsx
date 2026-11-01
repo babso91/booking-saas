@@ -163,7 +163,7 @@ describe("Studio agenda — computer", () => {
     renderStudio();
     await user.click(
       await screen.findByRole("button", {
-        name: "Voir le mercredi 30 septembre 2026 en détail",
+        name: /voir le mercredi 30 septembre 2026 en détail/,
       }),
     );
     await waitFor(() =>
@@ -193,7 +193,7 @@ describe("Studio agenda — computer", () => {
     await user.click(
       await screen.findByRole("button", {
         // 10:00–11:15, its 10 minutes of buffer, then free until the 12:00 pause.
-        name: /Libre · 35 min à partir de 11:25 : nouveau rendez-vous/,
+        name: /Temps libre · 35 min.*à partir de 11:25 : proposer un rendez-vous ici/,
       }),
     );
     const form = within(screen.getByRole("dialog"));
@@ -285,7 +285,7 @@ describe("Studio agenda — phone", () => {
       }),
     );
     await user.click(
-      screen.getByRole("button", { name: "jeudi 8 octobre 2026" }),
+      screen.getByRole("button", { name: /jeudi 8 octobre 2026/ }),
     );
     await waitFor(() =>
       expect(actions.getAgendaAction).toHaveBeenLastCalledWith({
@@ -394,7 +394,7 @@ describe("Studio agenda — hard cases", () => {
     expect(parseFloat(before.style.left)).toBeLessThan(
       parseFloat(after.style.left),
     );
-    expect(before.getAttribute("aria-label")).toMatch(/02:30/);
+    expect(before.textContent).toMatch(/02:30/);
   });
 
   it("a visit across midnight is on both rows of the wall", async () => {
@@ -504,7 +504,7 @@ describe("Studio agenda — the buffer (ST2-002)", () => {
     );
     expect(
       await screen.findByRole("button", {
-        name: /Libre · 40 min à partir de 00:20/,
+        name: /Temps libre · 40 min.*à partir de 00:20/,
       }),
     ).toBeTruthy();
     // Her buffer holds time; her visit is not on this day.
@@ -561,7 +561,7 @@ describe("Studio agenda — the « now » marker (ST2-004)", () => {
       screen.getByRole("button", { name: "Options de l’agenda" }),
     );
     await user.click(screen.getByLabelText("Afficher les annulés"));
-    await screen.findByRole("button", { name: /Camille Roux.*Annulé/ });
+    await screen.findByRole("button", { name: /Annulé.*Camille Roux/ });
     expect(screen.getByLabelText("Il est 10:00")).toBeTruthy();
     // Nothing is said to be going on.
     expect(screen.queryByText("Créneau en cours")).toBeNull();
@@ -618,8 +618,39 @@ describe("Studio agenda — the summary (ST2-003)", () => {
     });
     await within(summary).findByText("10 min");
     expect(
-      screen.getByRole("button", { name: /Libre · 10 min à partir de 11:50/ }),
+      screen.getByRole("button", {
+        name: /Temps libre · 10 min.*à partir de 11:50/,
+      }),
     ).toBeTruthy();
+  });
+});
+
+describe("Studio day — words that promise nothing false", () => {
+  const visit = (local: string, name: string) =>
+    appointment({
+      local,
+      durationMinutes: 60,
+      client: { id: name, displayName: name },
+    });
+
+  it("three in a chain are not said to be at the same time; free time only proposes", async () => {
+    useViewport(false);
+    const visits = [
+      visit(`${TODAY}T11:00`, "Ana"),
+      visit(`${TODAY}T11:30`, "Bia"),
+      visit(`${TODAY}T12:15`, "Cléa"),
+    ];
+    actions.getAgendaAction.mockImplementation(async ({ startDate, endDate }) =>
+      ok(agenda(startDate, endDate, { appointments: visits })),
+    );
+    renderStudio();
+    expect(
+      await screen.findByText("3 rendez-vous qui se chevauchent"),
+    ).toBeTruthy();
+    expect(screen.queryByText(/En même temps/)).toBeNull();
+    const list = screen.getByRole("list", { name: "Déroulé de la journée" });
+    expect(list.textContent).toMatch(/Temps libre · /);
+    expect(list.textContent).not.toMatch(/réservable|disponible/i);
   });
 });
 

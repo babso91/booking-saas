@@ -55,6 +55,20 @@ describe("agenda dates", () => {
     expect(formatDuration(120)).toBe("2 h");
   });
 
+  it("a week across two years says both years; any other, one", () => {
+    const week = (date: string) =>
+      periodLabel("week", visibleRange("week", date));
+    expect(week("2026-12-30")).toBe("28 déc. 2026 – 3 janv. 2027");
+    expect(week("2027-01-02")).toBe("28 déc. 2026 – 3 janv. 2027");
+    expect(week("2026-09-30")).toBe("28 sept. – 4 oct. 2026");
+    expect(week("2026-10-14")).toBe("12 oct. – 18 oct. 2026");
+    // The last week of a year that ends on a Sunday stays in one year.
+    expect(week("2023-12-30")).toBe("25 déc. – 31 déc. 2023");
+    expect(periodLabel("day", visibleRange("day", "2027-01-01"))).toBe(
+      "Vendredi 1 janvier",
+    );
+  });
+
   it("converts wall-clock times to minutes and back", () => {
     expect(minutesOf("2026-09-30T14:45")).toBe(885);
     expect(timeFromMinutes(885)).toBe("14:45");
