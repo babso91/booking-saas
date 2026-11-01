@@ -55,7 +55,14 @@ jobs:
       - run: npm run test:db
       # Sign-up → confirmation email → /auth/callback against `next start`.
       - run: npm run build
-      # The Studio agenda scenarios drive a real browser.
+      # The Studio agenda scenarios drive a real browser. The browser build
+      # is cached per lockfile (it pins Playwright); the system packages are
+      # still installed on every run.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - name: Stop local Supabase

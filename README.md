@@ -32,19 +32,25 @@ Le seed de démonstration est intentionnellement désactivé dans cette étape d
 
 ## Scripts
 
-| Commande               | Usage                                                                                             |
-| ---------------------- | ------------------------------------------------------------------------------------------------- |
-| `npm run dev`          | serveur Next.js local                                                                             |
-| `npm run build`        | build de production                                                                               |
-| `npm run check`        | format, lint, types et tests                                                                      |
-| `npm run test`         | tests unitaires Vitest (sans base)                                                                |
-| `npm run test:db`      | tests d'intégration contre Supabase local                                                         |
-| `npm run test:upgrade` | upgrade d'une base peuplée : remise à un ancien schéma, données historiques, migrations suivantes |
-| `npm run test:e2e`     | parcours de confirmation email contre `next start`                                                |
-| `npm run db:start`     | démarre Supabase local                                                                            |
-| `npm run db:stop`      | arrête Supabase local                                                                             |
-| `npm run db:reset`     | rejoue les migrations locales                                                                     |
-| `npm run db:types`     | régénère les types TypeScript depuis le schéma local                                              |
+| Commande                | Usage                                                                                                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`           | serveur Next.js local                                                                                                                                                 |
+| `npm run build`         | build de production                                                                                                                                                   |
+| `npm run check`         | format, lint, types et tests                                                                                                                                          |
+| `npm run check:changed` | pendant le développement : format, lint et tests unitaires liés aux fichiers modifiés (`-- <base>`, par défaut `origin/main`) ; liste les tests qui demandent la base |
+| `npm run test`          | tests unitaires Vitest (sans base)                                                                                                                                    |
+| `npm run test:db`       | tests d'intégration contre Supabase local                                                                                                                             |
+| `npm run test:upgrade`  | upgrade d'une base peuplée : remise à un ancien schéma, données historiques, migrations suivantes                                                                     |
+| `npm run test:e2e`      | parcours de confirmation email contre `next start`                                                                                                                    |
+| `npm run db:start`      | démarre Supabase local                                                                                                                                                |
+| `npm run db:stop`       | arrête Supabase local                                                                                                                                                 |
+| `npm run db:reset`      | rejoue les migrations locales                                                                                                                                         |
+| `npm run db:types`      | régénère les types TypeScript depuis le schéma local                                                                                                                  |
+
+## Cycle de développement
+
+- **Pendant le développement :** `npm run check:changed` (ou le fichier de test concerné), typecheck quand des types bougent, Supabase local gardé démarré si son schéma est à jour. Toute modification de migration, RLS, RPC, Server Action ou règle de réservation fait lancer aussitôt les tests d'intégration concernés, sur une base au schéma à jour. Les tests d'upgrade, destructifs, restent isolés.
+- **À la fin d'une étape :** validation complète (format, lint, types, build, unitaires, `test:db`, `test:upgrade`, `test:e2e`), puis un seul push du jalon et CI verte.
 
 ## Tests de base de données
 
