@@ -57,6 +57,7 @@ Dépôt : [babso91/booking-saas](https://github.com/babso91/booking-saas). Branc
 | [#29](https://github.com/babso91/booking-saas/pull/29) | Studio 2 | `feat/dashboard-studio-1` | `2ee3795` | Open, Draft ; annoncé READY après Codex, **pas fusionné** |
 | [#30](https://github.com/babso91/booking-saas/pull/30) | Écrin | `feat/dashboard-studio-2` | `cd3eb8d` | Open, Draft ; CI GitHub success (run `41254546564`) ; **audit Codex : READY (0 BLOCKER, 0 IMPORTANT, 3 MINOR)** ; pas fusionnée |
 | [#31](https://github.com/babso91/booking-saas/pull/31) | Préférences professionnelles persistantes | `main` | `0d29cd4` | Open, Draft ; CI verte (run `41254917160`) ; **contre-audit Codex NOT READY (0 BLOCKER, 1 IMPORTANT, 1 MINOR)** ; nouvelles corrections Claude Cloud à demander |
+| [#33](https://github.com/babso91/booking-saas/pull/33) | Consolidation UX transverse | `feat/dashboard-ecrin` | `1d08db2` | Open, Draft ; CI run `41317607305` **failure** (9 E2E: 4 monogramme, 1 fixture SQL buffer, 4 axe Clients) ; corrections Claude UI avant audit Codex |
 
 **Conséquence** : chaîne UI = `main → #28 → #29 → #30`. La persistance #31 est **indépendante sur main** ; son branchement avec la chaîne UI doit être conçu/testé explicitement, pas supposé. Les HEAD doivent être revérifiés à chaque reprise.
 
@@ -105,7 +106,8 @@ Suivis transversaux identifiés : [TRANSVERSAL_FOLLOWUPS.md](https://github.com/
 
 1. **Écrin #30 : audit rendu READY**, trois MINOR à planifier en PR transversale ; ne pas les confondre avec des BLOCKER et ne pas autoriser pour autant un déploiement.
 2. **#31 : contre-audit reçu NOT READY.** Envoyer à Claude Cloud la correction de la perte d'intention sur réponse de lecture périmée et la précision documentaire SHA-256. Exiger un test qui reproduit le défaut avant fix, puis CI verte et nouveau contre-audit Codex.
-3. Préparer une **PR d'intégration UI ↔ préférences** après convergence des bases, avec tests de contexte et rendu sans flash.
+3. **#33 : demander à Claude UI de corriger les neuf échecs E2E** sur le HEAD `1d08db2` ; ne lancer Codex qu'après CI verte sur un nouveau HEAD. Les tests de focus menu (Studio/Écrin) passent déjà. Décision produit provisoire sur la faisabilité pré-soumission : conserver les libellés non trompeurs et la validation finale serveur, **pas de nouvelle API/RPC dans cette PR** ; réévaluer après tests pilotes.
+4. Préparer une **PR d'intégration UI ↔ préférences** après convergence des bases, avec tests de contexte et rendu sans flash.
 4. Ne pas confondre « READY » de l'audit et permission de merge. Vérifier la chaîne #28 → #29 → #30, les branches, les migrations nécessaires, staging, rollback et validation visuelle réelle.
 5. Mettre à jour ce document à chaque décision majeure, en inscrivant **date, auteur, source, statut, SHA, impact et prochaine action**. Garder les spécifications de détail dans leurs contrats d'origine ; le présent fichier est l'index stratégique, pas une copie géante.
 
