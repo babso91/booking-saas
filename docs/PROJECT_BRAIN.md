@@ -55,7 +55,7 @@ Dépôt : [babso91/booking-saas](https://github.com/babso91/booking-saas). Branc
 | [#27](https://github.com/babso91/booking-saas/pull/27) | Tests dates/DST/emails | `main` | `7462aaa` | Open ; correctif reporté sur #31 sous `5222ad3`, attention aux doublons |
 | [#28](https://github.com/babso91/booking-saas/pull/28) | Studio 1 | `main` | `e6c95bc` | Open, Draft ; déclaré audité dans les PR dépendantes |
 | [#29](https://github.com/babso91/booking-saas/pull/29) | Studio 2 | `feat/dashboard-studio-1` | `2ee3795` | Open, Draft ; annoncé READY après Codex, **pas fusionné** |
-| [#30](https://github.com/babso91/booking-saas/pull/30) | Écrin | `feat/dashboard-studio-2` | `cd3eb8d` | Open, Draft ; CI GitHub success (run `41254546564`) ; audit Codex attendu |
+| [#30](https://github.com/babso91/booking-saas/pull/30) | Écrin | `feat/dashboard-studio-2` | `cd3eb8d` | Open, Draft ; CI GitHub success (run `41254546564`) ; **audit Codex : READY (0 BLOCKER, 0 IMPORTANT, 3 MINOR)** ; pas fusionnée |
 | [#31](https://github.com/babso91/booking-saas/pull/31) | Préférences professionnelles persistantes | `main` | `0d29cd4` | Open, Draft ; corrections de l'audit poussées ; CI GitHub success (run `41254917160`) ; **contre-audit Codex attendu** |
 
 **Conséquence** : chaîne UI = `main → #28 → #29 → #30`. La persistance #31 est **indépendante sur main** ; son branchement avec la chaîne UI doit être conçu/testé explicitement, pas supposé. Les HEAD doivent être revérifiés à chaque reprise.
@@ -76,11 +76,11 @@ Rapport Claude sur `0d29cd4` : six constats Codex traités (réponses d'autres c
 
 **Contrat Claude UI**, à lire impérativement dans [MEMBER_PREFERENCES_CONTRACT.md §6](https://github.com/babso91/booking-saas/blob/0d29cd4/docs/MEMBER_PREFERENCES_CONTRACT.md) : `loadAreaPreferences` renvoie `snapshot` + `appearance`; requêtes d'écriture/import portent `context {businessId,membershipId}` et `expected {incarnation,version}` ; machine `initialSyncState`, `enterContext`, `nextSave`, `saveAnswered/saveFailed`, `startRead/readAnswered`. Ne pas brancher l'UI sur l'ancien contrat.
 
-## 6. Écrin #30 : points ouverts pour le rapport Codex à recevoir
+## 6. Écrin #30 : audit Codex reçu — READY avec 3 MINOR
 
-Dossier : [ECRIN_AUDIT.md](https://github.com/babso91/booking-saas/blob/feat/dashboard-ecrin/docs/ECRIN_AUDIT.md), surtout §§15–17. Dernier HEAD `cd3eb8d` (ne pas utiliser un SHA précédent). Vérifier le résultat de Codex pour ce **SHA précis**, et l'ensemble des régressions Studio/Classique.
+Dossier : [ECRIN_AUDIT.md](https://github.com/babso91/booking-saas/blob/feat/dashboard-ecrin/docs/ECRIN_AUDIT.md), surtout §§15–17. Codex a rendu **READY** pour le HEAD `cd3eb8d` (0 BLOCKER, 0 IMPORTANT, 3 MINOR), d'après le rapport transmis par l'utilisateur. Rapport complet local mentionné : `audit-artifacts/ecrin-cd3eb8d/REPORT.md` (non versé au dépôt et non relu ici). Aucun merge ni déploiement. GitHub confirme le HEAD et la CI finale verte.
 
-Axes prioritaires : isolation inter-établissement après hydratation ; `AgendaView` partagé ; tampon et frontières minuit/DST ; `freeMinutes` vs créneau effectivement réservable ; protection du brouillon face à `?rdv=` ; `booking-host.tsx` et `NEXT_PUBLIC_APP_URL` build/runtime ; accessibilité, fiches et écrans partagés ; compatibilité avec #31. Selon dossier, aucun paiement ni nouvelle migration dans #30.
+Résultats rapportés : isolation inter-établissement et contrôle positif discriminant, protection du brouillon `?rdv=`, tampons et cas minuit/DST, quatre configurations build/runtime d'URL, non-régression des styles et 2 601 tests verts. Le risque d'URL erronée intégrée au build reste une responsabilité de configuration avant déploiement. Trois MINOR : (1) texte visible du monogramme et nom accessible incohérents (et autres libellés à harmoniser), (2) focus perdu vers BODY après fermeture du menu Écrin par Échap sur mobile, (3) « En même temps · 3 » trompeur pour trois chevauchements en chaîne, également présent dans Studio. À corriger dans une **PR transversale ciblée**, sans rouvrir #30 sauf nouvelle preuve bloquante.
 
 Suivis transversaux identifiés : [TRANSVERSAL_FOLLOWUPS.md](https://github.com/babso91/booking-saas/blob/feat/dashboard-ecrin/docs/TRANSVERSAL_FOLLOWUPS.md) — nom accessible du monogramme WCAG 2.5.3, année aux semaines à cheval sur le Nouvel An, distinction entre temps libre brut et temps réservable. Éviter de déclarer « WCAG complet » sur la seule base de `axe 0 violation`.
 
@@ -95,8 +95,8 @@ Suivis transversaux identifiés : [TRANSVERSAL_FOLLOWUPS.md](https://github.com/
 
 ## 8. Prochaines actions
 
-1. Recevoir le **rapport Codex sur Écrin #30**, relever sévérité, reproductions, HEAD visé et verdict ; arbitrer corrections ou READY.
-2. Déclencher / lire le **contre-audit de #31 au HEAD `0d29cd4`**. Demander preuves, pas seulement nombre de tests.
+1. **Écrin #30 : audit rendu READY**, trois MINOR à planifier en PR transversale ; ne pas les confondre avec des BLOCKER et ne pas autoriser pour autant un déploiement.
+2. **Attendre le contre-audit Codex déjà lancé sur #31 au HEAD `0d29cd4`**. Examiner les preuves et décider READY ou corrections.
 3. Préparer une **PR d'intégration UI ↔ préférences** après convergence des bases, avec tests de contexte et rendu sans flash.
 4. Ne pas confondre « READY » de l'audit et permission de merge. Vérifier la chaîne #28 → #29 → #30, les branches, les migrations nécessaires, staging, rollback et validation visuelle réelle.
 5. Mettre à jour ce document à chaque décision majeure, en inscrivant **date, auteur, source, statut, SHA, impact et prochaine action**. Garder les spécifications de détail dans leurs contrats d'origine ; le présent fichier est l'index stratégique, pas une copie géante.
