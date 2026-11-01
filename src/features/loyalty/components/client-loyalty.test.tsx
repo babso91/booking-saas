@@ -494,7 +494,7 @@ describe("issued rewards", () => {
     const { onChanged } = await renderCard({ redemptions: [redemption()] });
     fireEvent.click(
       card().getByRole("button", {
-        name: "Marquer « Remise 5 € » comme utilisée",
+        name: "Marquer comme utilisée « Remise 5 € »",
       }),
     );
     expect(sheet().getByText(/Aucun paiement n’est enregistré/)).toBeTruthy();
@@ -530,6 +530,24 @@ describe("issued rewards", () => {
     expect(onChanged).toHaveBeenCalledTimes(1);
     expect(card().getByText("Utilisée")).toBeTruthy();
   });
+
+  it.each([
+    "Remise 5 €",
+    "Soin « Éclat » offert",
+    "Un très long nom de récompense pour les clientes les plus fidèles de l’atelier",
+  ])(
+    "says what is written on the button, then which reward: %s",
+    async (name) => {
+      await renderCard({
+        redemptions: [redemption({ reward: { ...redemption().reward, name } })],
+      });
+      const button = card().getByRole("button", {
+        name: `Marquer comme utilisée « ${name} »`,
+      });
+      expect(button.textContent).toBe("Marquer comme utilisée");
+      expect(button.getAttribute("aria-label")).toContain(button.textContent);
+    },
+  );
 
   it("cancels a reward with the points returned shown first", async () => {
     await renderCard({ redemptions: [redemption()] });

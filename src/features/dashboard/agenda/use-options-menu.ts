@@ -20,6 +20,7 @@ export function useOptionsMenu(fallback: RefObject<HTMLElement | null>) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const press = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -32,14 +33,25 @@ export function useOptionsMenu(fallback: RefObject<HTMLElement | null>) {
     const onPointerDown = (event: Event) => {
       if (root.current?.contains(event.target as Node)) return;
       setOpen(false);
-      // What she pressed takes the focus; if it cannot, nothing is lost.
-      const settle = () => {
-        document.removeEventListener("click", settle);
-        document.removeEventListener("pointercancel", settle);
-        if (lost()) trigger.current?.focus({ preventScroll: true });
-      };
-      document.addEventListener("click", settle);
-      document.addEventListener("pointercancel", settle);
+      // What she pressed takes the focus; if it cannot, nothing is lost. A
+      // press that ends without a click (she was scrolling) moves nothing.
+      const current = new AbortController();
+      press.current = current;
+      const { signal } = current;
+      const end = () => current.abort();
+      document.addEventListener(
+        "click",
+        () => {
+          end();
+          if (lost()) trigger.current?.focus({ preventScroll: true });
+        },
+        { signal },
+      );
+      document.addEventListener("pointercancel", end, {
+        signal,
+        capture: true,
+      });
+      document.addEventListener("pointerdown", end, { signal, capture: true });
     };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -48,6 +60,9 @@ export function useOptionsMenu(fallback: RefObject<HTMLElement | null>) {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [open]);
+
+  // That press outlives the menu's opening, not the menu.
+  useEffect(() => () => press.current?.abort(), []);
 
   // The menu goes away with its button (the screen widened): only a focus
   // that was inside moves, never one she has placed elsewhere.

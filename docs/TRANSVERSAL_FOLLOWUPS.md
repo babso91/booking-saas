@@ -42,6 +42,8 @@ Chromium calcule ces noms avec une espace devant la virgule du complément (`26 
 
 Les cartes du Classique (`time-grid.tsx`) reçoivent la même correction. Elles n'étaient pas visibles sur les aperçus : seule la CI les contrôle.
 
+**Fidélité (MINOR de l'audit Codex).** Le bouton d'une récompense émise s'appelle `Marquer comme utilisée « Remise 5 € »` : le texte visible reste une séquence continue et le nom de la récompense reste dynamique. Un test de composant le contrôle pour trois noms, dont un long. Aucun e2e n'ouvre cet écran avec axe.
+
 ## 2. Focus du menu d'options
 
 `useOptionsMenu` (`features/dashboard/agenda/use-options-menu.ts`) remplace le code dupliqué d'Écrin et de Studio, qui avaient le même défaut.
@@ -52,12 +54,15 @@ Les cartes du Classique (`time-grid.tsx`) reçoivent la même correction. Elles 
 | Échap alors qu'elle a déjà quitté le menu | Inchangé                                            |
 | Clic sur un élément focalisable           | Cet élément                                         |
 | Clic sur un élément non focalisable       | Le bouton d'options                                 |
+| Défilement tactile (`pointercancel`)      | Inchangé : elle faisait défiler la page             |
 | « Afficher les annulés »                  | Reste sur la case, le menu reste ouvert             |
 | « Bloquer un créneau »                    | Le panneau, puis le bouton à sa fermeture           |
 | Le bouton disparaît (écran élargi)        | Le titre de la page, si le focus était dans le menu |
 | « Aujourd’hui » disparaît sur téléphone   | Le titre de la page                                 |
 
 Le titre porte `tabIndex={-1}` : il reste hors de l'ordre de tabulation.
+
+**Geste en cours (MINOR de l'audit Codex).** Une pression extérieure ferme le menu, puis attend sa fin. Ses écouteurs temporaires partagent un `AbortController`. Ils sont retirés au `click`, au `pointercancel`, à la pression suivante si la précédente n'a jamais fini, et au démontage. Seul le `click` peut rendre le focus. Si le focus était sur une option au moment d'un défilement, il retombe donc sur la page : c'est le comportement demandé, aucun bouton ne le récupère.
 
 ## 3. Chevauchements
 
@@ -110,6 +115,21 @@ Les tests ont été écrits après les correctifs. Chaque ancien comportement a 
 | Plages non comptées                         | Unitaire : 1 échec                                            |
 | « Libre » remis (Écrin)                     | Composants : 2 échecs                                         |
 
+Le geste en cours et le bouton de récompense ont été reproduits avant correction, puis leurs anciens comportements remis un à un :
+
+| Reproduction ou ancien comportement remis     | Détecté par                                                   |
+| --------------------------------------------- | ------------------------------------------------------------- |
+| Hook audité, défilement tactile réel          | Chromium, Écrin et Studio : focus repris par le bouton        |
+| Hook audité, écouteurs                        | Composants : 8 échecs (4 tests, avec et sans Strict Mode)     |
+| Pas d'arrêt au démontage                      | Composants : 4 échecs                                         |
+| `pointercancel` non écouté                    | Composants : 4 échecs                                         |
+| `pointercancel` qui rend le focus             | Composants : 2 échecs                                         |
+| La pression suivante n'arrête pas la première | Composants : 2 échecs                                         |
+| Le `click` n'arrête pas le suivi              | Composants : 6 échecs                                         |
+| Le `click` ne rend jamais le focus            | Composants : 2 échecs                                         |
+| Le `click` rend toujours le focus             | Composants : 2 échecs                                         |
+| Ancien nom de la récompense                   | Composants : 4 échecs ; règle axe dans Chromium : 1 violation |
+
 Ces contrôles de focus tournent à 390 px sur les aperçus. Avec vraie session, les mêmes scénarios sont dans `tests/e2e/consolidation-browser.test.ts`. La fixture du tampon prouve sa frontière par construction : sans le réglage, 10:50 serait acceptée et le test échouerait.
 
 ## Limites
@@ -118,7 +138,5 @@ Ces contrôles de focus tournent à 390 px sur les aperçus. Avec vraie session,
 - L'audition réelle avec une commande vocale n'a pas été réalisée : la correspondance est vérifiée par le nom accessible et par axe.
 - Le nom d'un rendez-vous répète volontairement une partie du texte visible (`Amel 09:30, 09:30, Amel Kaci…`), pour conserver le nom complet quand seul le prénom est affiché. C'est un peu plus long à l'écoute.
 - Le bouton « Copier » annonce `Copier l’email` tandis que son texte devient brièvement `Copié`, et les récompenses affichent brièvement `Un instant…`.
-
-## À traiter hors de cette PR
-
-- `client-loyalty.tsx:636` : `Marquer « X » comme utilisée`, pour un texte visible `Marquer comme utilisée`. Violation trouvée à la relecture, sur un écran que les e2e n'ouvrent pas. Elle n'est pas corrigée ici, faute d'échec démontré. Correction proposée : `Marquer comme utilisée « X »`.
+- Le test du défilement tactile avec vraie session n'a pas pu tourner en local, seul son équivalent sur les aperçus (390 px, Chromium, CDP). Safari sur iPhone n'a pas été essayé : son enchaînement réel d'événements reste à observer.
+- Une pression qui finit sans `click` ni `pointercancel` (souris relâchée hors de la fenêtre) garde ses écouteurs jusqu'à la pression suivante ou au démontage. Ils ne peuvent rendre le focus que s'il est perdu.

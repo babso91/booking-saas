@@ -131,6 +131,43 @@ describe.each(["ecrin", "studio"])("the options menu — %s", (style) => {
     await page.context().close();
   });
 
+  it("a touch scroll outside closes it and takes no focus back", async () => {
+    const { page, cancelled } = await openMenu(390);
+    await page.setViewportSize({ width: 390, height: 420 });
+    await cancelled.focus();
+    await page.evaluate(() => {
+      document.addEventListener(
+        "pointercancel",
+        () => document.documentElement.setAttribute("data-cancelled", ""),
+        true,
+      );
+    });
+
+    const touch = await page.context().newCDPSession(page);
+    const point = (y: number) => [{ x: 40, y }];
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: point(390),
+    });
+    for (let step = 1; step <= 8; step += 1) {
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: point(390 - step * 30),
+      });
+      await page.waitForTimeout(16);
+    }
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await closed(page);
+
+    // Chromium did take it for a scroll: this test proves nothing otherwise.
+    await page.waitForSelector("html[data-cancelled]", { state: "attached" });
+    expect(await focused(page)).toBe("BODY");
+    await page.context().close();
+  });
+
   it("the button itself goes away (the screen widens): focus lands on the title", async () => {
     const { page, cancelled } = await openMenu(600, false);
     await cancelled.focus();
