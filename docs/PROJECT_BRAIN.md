@@ -56,17 +56,25 @@ Dépôt : [babso91/booking-saas](https://github.com/babso91/booking-saas). Branc
 | [#28](https://github.com/babso91/booking-saas/pull/28) | Studio 1 | `main` | `e6c95bc` | Open, Draft ; déclaré audité dans les PR dépendantes |
 | [#29](https://github.com/babso91/booking-saas/pull/29) | Studio 2 | `feat/dashboard-studio-1` | `2ee3795` | Open, Draft ; annoncé READY après Codex, **pas fusionné** |
 | [#30](https://github.com/babso91/booking-saas/pull/30) | Écrin | `feat/dashboard-studio-2` | `cd3eb8d` | Open, Draft ; CI GitHub success (run `41254546564`) ; **audit Codex : READY (0 BLOCKER, 0 IMPORTANT, 3 MINOR)** ; pas fusionnée |
-| [#31](https://github.com/babso91/booking-saas/pull/31) | Préférences professionnelles persistantes | `main` | `0d29cd4` | Open, Draft ; corrections de l'audit poussées ; CI GitHub success (run `41254917160`) ; **contre-audit Codex attendu** |
+| [#31](https://github.com/babso91/booking-saas/pull/31) | Préférences professionnelles persistantes | `main` | `0d29cd4` | Open, Draft ; CI verte (run `41254917160`) ; **contre-audit Codex NOT READY (0 BLOCKER, 1 IMPORTANT, 1 MINOR)** ; nouvelles corrections Claude Cloud à demander |
 
 **Conséquence** : chaîne UI = `main → #28 → #29 → #30`. La persistance #31 est **indépendante sur main** ; son branchement avec la chaîne UI doit être conçu/testé explicitement, pas supposé. Les HEAD doivent être revérifiés à chaque reprise.
 
-## 5. PR #31 : reprise après corrections de Claude Cloud
+## 5. PR #31 : contre-audit Codex reçu — NOT READY
 
 Rapport Claude sur `0d29cd4` : six constats Codex traités (réponses d'autres comptes, réintégration/version, `24:00` terminal, re-scellement d'un snapshot, limites du SHA-256, vrais droits `service_role`). Architecture déclarée : génération de contexte + membership + ticket de sauvegarde ; incarnation UUID de ligne + version par incarnation ; `context_changed` ; pause après 5 `stale` ; aucune persistance d'UI encore raccordée. Report de #27 conservé.
 
 **Tests rapportés, non réexécutés indépendamment ici** : 1 358 unitaires ; 1 068 tests PostgreSQL/Server Actions ; 54 upgrade ; 9 E2E ; mutations 18/18 (migration), 13/13 (état). GitHub CI du HEAD confirmée verte.
 
-**À mettre à l'épreuve par Codex avant READY :**
+**Contre-audit Codex (1er novembre, rapport transmis par l'utilisateur)** : six constats initiaux réévalués : réponses A/B FIXED ; incarnations/versions PARTIALLY FIXED ; `24:00` FIXED ; snapshot/checksum FIXED ; garanties SHA-256 PARTIALLY FIXED ; droits `service_role`/domaines FIXED. **0 BLOCKER, 1 IMPORTANT, 1 MINOR.** Les vérifications positives ci-dessous restent des garanties à conserver, mais ne constituent plus une liste d'audit en attente.
+
+**IMPORTANT reproduit avec vraies Server Actions et PostgreSQL :** une lecture R1 envoyée avant R2 peut voir une incarnation plus récente que R2 (R1 exécutée tardivement). Après sauvegarde Écrin, le choix local Classique fait pendant une sauvegarde d'accent reste pending, puis la réponse R2 de l'ancienne absence de ligne est adoptée selon la séquence d'envoi et `settle()` efface le pending Classique, pris à tort pour un état déjà confirmé. Une lecture fraîche rétablit Écrin : **le choix Classique n'a jamais été envoyé et est perdu**. Code à revoir : `src/features/preferences/client/preference-sync.ts` (`readAnswered`, `adopt`, `settle`). Correctif exigé : intentions locales explicites conservées jusqu'à un acquittement fiable propre au ticket/aux champs, pas effacées par une lecture tardive ; rebase CAS sur la bonne incarnation, sans régression multi-comptes, avec reproduction déterministe et test de non-régression.
+
+**MINOR :** commentaire inexact dans `src/features/pro-config/transfer/format.ts` près de `openProConfig` : une édition du document avec recalcul SHA-256 reste acceptée ; l'empreinte seule n'authentifie pas l'origine ou le consentement. Mettre le commentaire en cohérence avec le contrat, sans modifier inutilement le format.
+
+**Décision :** Claude Cloud doit corriger ces deux constats **dans #31 uniquement**, obtenir CI verte, puis Codex réalise un contre-audit ciblé sur le nouveau HEAD avant branchement UI. Pas de merge, staging ou déploiement.
+
+**Garanties déjà vérifiées à préserver :**
 - une réponse A ne s'affiche ni ne termine une écriture chez B, même avec requêtes/réponses dans un ordre adversarial ;
 - A → B → A, déconnexion/reconnexion, retrait puis réintégration répétée, recréation de ligne, faux échecs et base indisponible ;
 - `service_role` peut toujours écrire directement : tester les garanties réelles de table et les procédures autorisées ;
@@ -96,7 +104,7 @@ Suivis transversaux identifiés : [TRANSVERSAL_FOLLOWUPS.md](https://github.com/
 ## 8. Prochaines actions
 
 1. **Écrin #30 : audit rendu READY**, trois MINOR à planifier en PR transversale ; ne pas les confondre avec des BLOCKER et ne pas autoriser pour autant un déploiement.
-2. **Attendre le contre-audit Codex déjà lancé sur #31 au HEAD `0d29cd4`**. Examiner les preuves et décider READY ou corrections.
+2. **#31 : contre-audit reçu NOT READY.** Envoyer à Claude Cloud la correction de la perte d'intention sur réponse de lecture périmée et la précision documentaire SHA-256. Exiger un test qui reproduit le défaut avant fix, puis CI verte et nouveau contre-audit Codex.
 3. Préparer une **PR d'intégration UI ↔ préférences** après convergence des bases, avec tests de contexte et rendu sans flash.
 4. Ne pas confondre « READY » de l'audit et permission de merge. Vérifier la chaîne #28 → #29 → #30, les branches, les migrations nécessaires, staging, rollback et validation visuelle réelle.
 5. Mettre à jour ce document à chaque décision majeure, en inscrivant **date, auteur, source, statut, SHA, impact et prochaine action**. Garder les spécifications de détail dans leurs contrats d'origine ; le présent fichier est l'index stratégique, pas une copie géante.
