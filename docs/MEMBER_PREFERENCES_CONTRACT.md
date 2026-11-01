@@ -228,13 +228,14 @@ const appearance = renderableAppearance(area.appearance, [
 
 **Côté client : état observé et intentions.** Le fournisseur d'apparence pilote la machine d'état pure de `src/features/preferences/client/preference-sync.ts`. Elle sépare strictement deux choses, qui ne se déduisent jamais l'une de l'autre :
 
-| Champ de `SyncState`         | Ce que c'est                                                                                        | Qui le change                                                                                                                         |
-| ---------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `observed` (+ `observedSeq`) | le dernier état du compte vu ici (lecture ou réponse de sauvegarde)                                 | `readAnswered`, `saveAnswered`, seulement s'il est plus récent                                                                        |
-| `intents`                    | ses choix, champ par champ, chacun avec une **révision**, tant que le compte ne les a pas acquittés | `changeLocally` (ajoute ou remplace) ; `saveAnswered` `saved`/`unchanged` (retire **les révisions envoyées**) ; `enterContext` (vide) |
-| `inFlight`                   | la sauvegarde en cours : la requête et les révisions qu'elle transporte                             | `nextSave`, puis sa réponse ou son échec                                                                                              |
-| `paused`, `staleStreak`      | pause (`context_changed`, `conflict`) et compteur de `stale`                                        | réponses, échecs, lectures du même contexte                                                                                           |
-| `readAfter`                  | une lecture est due (l'appareil tient une réponse qu'il n'a pas pu ordonner)                        | levée par une lecture envoyée à partir de ce point                                                                                    |
+| Champ de `SyncState`         | Ce que c'est                                                                                              | Qui le change                                                                                                                         |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `observed` (+ `observedSeq`) | le dernier état du compte vu ici (lecture ou réponse de sauvegarde)                                       | `readAnswered`, `saveAnswered`, seulement s'il est plus récent                                                                        |
+| `intents`                    | ses choix, champ par champ, chacun avec une **révision**, tant que le compte ne les a pas acquittés       | `changeLocally` (ajoute ou remplace) ; `saveAnswered` `saved`/`unchanged` (retire **les révisions envoyées**) ; `enterContext` (vide) |
+| `inFlight`                   | la sauvegarde en cours : la requête et les révisions qu'elle transporte                                   | `nextSave`, puis sa réponse ou son échec                                                                                              |
+| `paused`, `staleStreak`      | pause (`context_changed`, `conflict`) et compteur de `stale`                                              | réponses, échecs, lectures du même contexte                                                                                           |
+| `readAfter`                  | barrière : une lecture de réconciliation est due (l'appareil tient une réponse qu'il n'a pas pu ordonner) | avancée à chaque nouvelle ambiguïté ; levée seulement par une lecture **envoyée après** la dernière                                   |
+| `readsInFlight`              | les lectures envoyées et pas encore réglées (numéros de requête)                                          | `startRead` (ajoute) ; `readAnswered`, `readFailed` (retirent)                                                                        |
 
 Ce qu'elle affiche : `displayedAppearance(state)`, soit `observed` plus les `intents`.
 
@@ -267,11 +268,30 @@ Dans les deux cas, cela ne change que ce qui est affiché pour les champs sans i
    - `context_changed`, `unauthenticated`, `forbidden` ou `no_business` : `saveFailed(state, ticket, "context_changed")`. La sauvegarde est en pause et les intentions conservées. Recharger la page (`router.refresh()`) : le layout donnera le contexte.
    - Toute autre erreur, ou pas de réponse : `saveFailed(state, ticket, "network")`, puis un nouvel essai avec délai croissant.
 5. Lectures :
-   - quand faire une lecture : au retour sur l'onglet (`visibilitychange`, `focus`), après une pause, et dès que `state.readAfter !== null` ;
-   - comment : `startRead(state)`, puis `getMyPreferencesAction()`, puis `readAnswered(state, ticket, data)` ;
+   - quand faire une lecture : au retour sur l'onglet (`visibilitychange`, `focus`), après une pause, et **dès que `readNeeded(state)` est vrai** (réconciliation, sans attendre un focus) ;
+   - comment : `startRead(state)`, puis `getMyPreferencesAction()`, puis `readAnswered(state, ticket, data)` si elle répond, ou `readFailed(state, ticket)` si elle échoue (réseau, `internal`, toute erreur) ;
    - une lecture répondue pour ce même contexte lève la pause, et les intentions repartent.
 6. Après `STALE_LIMIT` (5) réponses `stale` consécutives, la sauvegarde se met en pause (`paused: "conflict"`) jusqu'à la lecture suivante : jamais de boucle infinie.
 7. `unacknowledgedChanges(state)` donne ses choix pas encore acquittés : pour afficher « enregistrement… », ou avertir avant de quitter la page.
+
+**Lectures de réconciliation : ce que la machine garantit, ce que le pilote doit faire.**
+
+La machine pure garantit :
+
+- **Barrière qui avance.** Chaque réponse que l'appareil ne peut pas ordonner place `readAfter` au numéro de la **prochaine** requête. Seule une lecture envoyée après la dernière ambiguïté peut la lever : jamais une lecture déjà en route, qui a pu être servie avant, ni une lecture d'une autre génération.
+- **Déduplication décidable.** `readNeeded(state)` est vrai seulement si une barrière est posée **et** qu'aucune lecture en vol n'a été envoyée assez tard pour la lever. Tant qu'une telle lecture est en route, il est faux.
+- **Règlement des lectures.** `readAnswered` et `readFailed` retirent la lecture de `readsInFlight`, pour cette génération uniquement : une réponse ou un échec de l'ancien contexte ne règle jamais une lecture du nouveau, même à numéro égal. Après un échec, `readNeeded` redevient vrai : pas de blocage.
+- **Pas de boucle sur un compte stable.** Une lecture qui renvoie l'état observé ne pose aucune barrière (testé : au plus une lecture de réconciliation par ambiguïté).
+- **Intentions intactes.** Lectures, barrières et échecs ne touchent jamais `intents`.
+
+Le futur pilote React doit :
+
+1. **Dédupliquer** : ne lancer une lecture de réconciliation que si `readNeeded(state)` est vrai, après chaque transition (réponse, échec, rendu). Ne pas compter lui-même les lectures en vol : la machine le fait.
+2. **Suivre chaque lecture par son ticket** : garder le ticket rendu par `startRead`, et appeler exactement une fois `readAnswered(state, ticket, data)` ou `readFailed(state, ticket)` quand la promesse se règle, même si l'état a changé entre-temps (la machine ignore ce qui ne la concerne plus). Ne jamais réutiliser un ticket, ni appeler `readAnswered` pour une lecture dont la réponse n'est pas celle de ce ticket.
+3. **Appliquer un backoff** : après `readFailed` ou `saveFailed(…, "network")`, attendre avant le nouvel essai (par exemple 1 s, 2 s, 4 s… plafonné à 30 s, remis à zéro au premier succès). N'abandonner aucune intention : elles restent dans l'état tant qu'elles ne sont pas acquittées.
+4. **Rester dans son contexte** : au changement de contexte (`enterContext`), oublier les minuteries et promesses de l'ancien. Leurs réponses arrivées plus tard sont de toute façon ignorées.
+
+Événements à brancher : premier rendu et rendus du layout (`initialSyncState` ou `enterContext`) ; choix de la professionnelle (`changeLocally`, puis `nextSave`) ; règlement de chaque sauvegarde (`saveAnswered`, `saveFailed`) ; règlement de chaque lecture (`readAnswered`, `readFailed`) ; `visibilitychange` et `focus` (lecture) ; minuterie de backoff ; et, après chacun, `nextSave` et `readNeeded`.
 
 - Si `deviceAppearanceOffer` est présent, proposer l'import et ne rien importer sans son accord.
 - Si `source === "device"`, afficher discrètement que les préférences n'ont pas pu être synchronisées.
@@ -284,15 +304,15 @@ Dans les deux cas, cela ne change que ce qui est affiché pour les champs sans i
 
 **Migration depuis le contrat précédent (`0d29cd4`) :**
 
-| Avant                                     | Maintenant                                                                                    |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `state.confirmed`                         | `state.observed` : un état observé, plus une « confirmation »                                 |
-| `state.confirmedSeq`                      | `state.observedSeq`                                                                           |
-| `state.pending` (écart avec l'état connu) | `state.intents` (choix avec révisions) ; lire les valeurs avec `unacknowledgedChanges(state)` |
-| `state.inFlight` (la requête)             | `state.inFlight.request` (et `state.inFlight.revs`)                                           |
-| —                                         | `state.readAfter` : lancer une lecture quand il n'est pas `null`                              |
+| Avant                                     | Maintenant                                                                                                                             |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `state.confirmed`                         | `state.observed` : un état observé, plus une « confirmation »                                                                          |
+| `state.confirmedSeq`                      | `state.observedSeq`                                                                                                                    |
+| `state.pending` (écart avec l'état connu) | `state.intents` (choix avec révisions) ; lire les valeurs avec `unacknowledgedChanges(state)`                                          |
+| `state.inFlight` (la requête)             | `state.inFlight.request` (et `state.inFlight.revs`)                                                                                    |
+| —                                         | `state.readAfter`, `state.readsInFlight` ; lancer une lecture quand `readNeeded(state)` est vrai ; régler les échecs avec `readFailed` |
 
-Les fonctions et leurs signatures sont inchangées : `initialSyncState`, `enterContext`, `displayedAppearance`, `changeLocally`, `nextSave`, `startRead`, `saveAnswered`, `saveFailed`, `readAnswered`. `unacknowledgedChanges` est nouvelle.
+Les fonctions et leurs signatures sont inchangées : `initialSyncState`, `enterContext`, `displayedAppearance`, `changeLocally`, `nextSave`, `startRead`, `saveAnswered`, `saveFailed`, `readAnswered`. `unacknowledgedChanges`, `readNeeded` et `readFailed` sont nouvelles.
 
 **À noter :** poser un cookie dans une Server Action rafraîchit la route. Le layout relit alors le compte. Si le contexte n'a pas changé, ne pas appeler `enterContext` : le nouvel état passe par `readAnswered` ou les réponses de sauvegarde.
 
@@ -317,7 +337,7 @@ Contrat proposé pour une PR ultérieure, distinct des préférences :
 - **Fraîcheur entre incarnations :** l'ordre est celui d'envoi des requêtes, pas celui de leur traitement par le serveur.
   - Une lecture envoyée plus tard mais servie plus tôt peut montrer brièvement un état plus ancien **pour les champs sans intention**.
   - Les intentions ne sont jamais touchées.
-  - La lecture demandée par `readAfter`, ou la prochaine sauvegarde, corrige l'affichage (testé : jamais de blocage).
+  - La lecture de réconciliation (`readNeeded`), ou la prochaine sauvegarde, corrige l'affichage (testé : jamais de blocage, au plus une lecture par ambiguïté).
 - **Intentions égales à l'état du compte :** elles sont envoyées quand même, et acquittées par `unchanged`. Cela coûte un aller-retour, et c'est voulu : l'égalité avec un état observé n'est pas une preuve.
 - **Indisponibilité de la base :** la session ne peut pas être vérifiée et l'action répond `unauthenticated`. Le client ne distingue pas ce cas d'une vraie déconnexion : la sauvegarde se met en pause, sans rien perdre, jusqu'à une lecture réussie.
 - Les préférences d'affichage autres que l'apparence (widgets, image personnelle) ne sont pas encore modélisées (§ 5 et § 7).

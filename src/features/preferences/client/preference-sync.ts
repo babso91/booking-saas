@@ -44,6 +44,16 @@ import {
 // be shown for a moment: it changes no intent, and when the device holds
 // an answer it could not order, it asks for a read (`readAfter`).
 //
+// Reconciliation reads. Each answer that cannot be ordered moves the
+// barrier `readAfter` to the next request number: only a read sent after
+// the latest such answer can clear it, never one already on its way (it
+// may have been served before). The device keeps the reads it has sent
+// and not settled (`readsInFlight`): `readNeeded` says whether a new read
+// is due (a barrier no read in flight can clear), so that the driver never
+// sends two for one barrier, and `readFailed` settles one that got no
+// answer, so that the barrier asks for a read again (the driver waits
+// between attempts). A stable account raises no barrier: no read loop.
+//
 // A save sends every intent (one save at a time), based on the observed
 // state. Its answer:
 //   saved / unchanged  the intents it carried, at the revisions it carried,
@@ -106,9 +116,12 @@ export type SyncState = {
   paused: "context_changed" | "conflict" | null;
   /**
    * A read is due: the device holds an answer it could not order with what
-   * it observed. Cleared by a read sent from that point on (ticket.seq ≥).
+   * it observed. Only a read sent from that point on (ticket.seq ≥) clears
+   * it; each new such answer moves it forward.
    */
   readAfter: number | null;
+  /** Reads sent and not settled yet (answered or failed), by request number. */
+  readsInFlight: number[];
 };
 
 /** Enters a context (the page's first render of the area). */
@@ -128,6 +141,7 @@ export function initialSyncState(
     staleStreak: 0,
     paused: null,
     readAfter: null,
+    readsInFlight: [],
   };
 }
 
@@ -206,12 +220,36 @@ export function nextSave(state: SyncState): [SyncState, SaveRequest | null] {
   ];
 }
 
-/** A read to send (focus, another tab, readAfter): its ticket. */
+/** A read to send (focus, another tab, readNeeded): its ticket. */
 export function startRead(state: SyncState): [SyncState, Ticket] {
   return [
-    { ...state, nextSeq: state.nextSeq + 1 },
+    {
+      ...state,
+      nextSeq: state.nextSeq + 1,
+      readsInFlight: [...state.readsInFlight, state.nextSeq],
+    },
     { generation: state.generation, seq: state.nextSeq },
   ];
+}
+
+/**
+ * Whether a reconciliation read must be sent now: a barrier is up and no
+ * read in flight was sent late enough to clear it. False while one is on
+ * its way: the driver waits for it (answered or failed).
+ */
+export function readNeeded(state: SyncState): boolean {
+  const barrier = state.readAfter;
+  return barrier !== null && !state.readsInFlight.some((seq) => seq >= barrier);
+}
+
+/**
+ * A read got no answer (network, database away): settled, nothing else
+ * changes. If it was the one meant to clear the barrier, readNeeded asks
+ * for another; the driver waits before sending it.
+ */
+export function readFailed(state: SyncState, ticket: Ticket): SyncState {
+  if (ticket.generation !== state.generation) return state;
+  return { ...state, readsInFlight: settled(state, ticket.seq) };
 }
 
 /** The answer to a save. */
@@ -272,13 +310,18 @@ export function readAnswered(
   snapshot: PreferencesSnapshot,
 ): SyncState {
   if (ticket.generation !== state.generation) return state;
+  const readsInFlight = settled(state, ticket.seq);
   if (!sameContext(snapshot.context, state.context)) {
-    return { ...state, paused: "context_changed" };
+    return { ...state, readsInFlight, paused: "context_changed" };
   }
   // The server has just answered for this very context: whatever paused
   // saving (a refusal while signed out or while the database was away, an
   // answer for another context, too many stale answers) no longer holds.
-  const observed = observe(state, ticket.seq, snapshot.preferences);
+  const observed = observe(
+    { ...state, readsInFlight },
+    ticket.seq,
+    snapshot.preferences,
+  );
   return {
     ...observed,
     staleStreak: 0,
@@ -292,6 +335,10 @@ export function readAnswered(
 
 function sameTicket(a: Ticket, b: Ticket) {
   return a.generation === b.generation && a.seq === b.seq;
+}
+
+function settled(state: SyncState, seq: number) {
+  return state.readsInFlight.filter((pending) => pending !== seq);
 }
 
 function fields(intents: Intents) {
@@ -331,7 +378,9 @@ function observe(
     };
   }
   if (!sameIncarnation && !sameState(candidate, current)) {
-    return { ...state, readAfter: state.readAfter ?? state.nextSeq };
+    // A new ambiguity: only a read sent from now on settles it, never one
+    // already on its way (it may have been served before this answer).
+    return { ...state, readAfter: state.nextSeq };
   }
   return state;
 }

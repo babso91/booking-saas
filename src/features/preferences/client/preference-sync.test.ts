@@ -18,6 +18,8 @@ import {
   unacknowledgedChanges,
   nextSave,
   readAnswered,
+  readFailed,
+  readNeeded,
   saveAnswered,
   saveFailed,
   startRead,
@@ -580,6 +582,270 @@ describe("preference sync: a stale read never erases an intent", () => {
   });
 });
 
+/**
+ * The driver's reconciliation: reads while readNeeded says so (one at a
+ * time), as the provider does without waiting for a focus. Counts reads.
+ */
+function reconcile(
+  state: SyncState,
+  server: Server,
+  session: { userId: string; businessId: string },
+) {
+  let reads = 0;
+  while (readNeeded(state)) {
+    if (++reads > 10) throw new Error("read loop");
+    const [reading, ticket] = startRead(state);
+    state = readAnswered(reading, ticket, server.read(session));
+  }
+  return { state, reads };
+}
+
+/** Her other tab deletes nothing; an administrator deletes the row, her other tab recreates it. */
+function recreate(server: Server, accent: string) {
+  server.dropRow(server.read(A).context);
+  flush(
+    changeLocally(initialSyncState(server.read(A)), look({ accent })),
+    server,
+    A,
+  );
+}
+
+describe("preference sync: reconciliation reads (readAfter)", () => {
+  it("Codex: a save acknowledged during a read, then the row recreated; that read's answer never clears the new barrier", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    // A first barrier: an early read that cannot be ordered.
+    const [r0, early] = startRead(device);
+    device = flush(changeLocally(r0, look({ style: "studio" })), server, A);
+    recreate(server, "#000009");
+    device = readAnswered(device, early, server.read(A));
+    expect(readNeeded(device)).toBe(true);
+    // The reconciliation read R is sent, its answer delayed.
+    const [reading, r] = startRead(device);
+    expect(readNeeded(reading)).toBe(false);
+    // Meanwhile a save is acknowledged on the incarnation X it read…
+    device = changeLocally(reading, {
+      ...displayedAppearance(reading),
+      motion: "none",
+    });
+    device = flush(device, server, A);
+    const x = server.read(A).preferences.incarnation;
+    // …and the row is deleted and recreated: Y. R is served now: Y.
+    recreate(server, "#00000A");
+    const answerR = server.read(A);
+    expect(answerR.preferences.incarnation).not.toBe(x);
+    device = readAnswered(device, r, answerR);
+    // R was sent before the save's answer: it cannot settle that.
+    expect(device.readAfter).not.toBeNull();
+    expect(readNeeded(device)).toBe(true);
+    const done = reconcile(device, server, A);
+    expect(done.reads).toBe(1);
+    expect(displayedAppearance(done.state)).toEqual(
+      server.read(A).preferences.appearance,
+    );
+    expect(readNeeded(done.state)).toBe(false);
+  });
+
+  it("one read in flight, then a new ambiguity: the read in flight does not count, another is due", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = flush(
+      changeLocally(
+        initialSyncState(server.read(A)),
+        look({ style: "studio" }),
+      ),
+      server,
+      A,
+    );
+    const [r1s, r1] = startRead(device);
+    const old = server.read(A);
+    recreate(server, "#000001");
+    const [r2s, r2] = startRead(r1s);
+    device = readAnswered(r2s, r2, server.read(A));
+    // r1 (sent before r2) answers the old incarnation: an ambiguity.
+    device = readAnswered(device, r1, old);
+    expect(device.readAfter).toBe(device.nextSeq);
+    expect(readNeeded(device)).toBe(true);
+    const [r3s] = startRead(device);
+    expect(readNeeded(r3s)).toBe(false);
+  });
+
+  it("a read still on its way, sent before a new ambiguity, does not count for it: another read is due", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    const [s1, early] = startRead(device);
+    // A read (focus) is sent, its answer still on its way.
+    const [s2] = startRead(s1);
+    recreate(server, "#000001");
+    const [s3, later] = startRead(s2);
+    device = readAnswered(s3, later, server.read(A));
+    device = readAnswered(device, early, {
+      context: server.read(A).context,
+      preferences: noMemberPreferences,
+    });
+    expect(device.readsInFlight).toHaveLength(1);
+    expect(device.readsInFlight[0]!).toBeLessThan(device.readAfter!);
+    expect(readNeeded(device)).toBe(true);
+  });
+
+  it("two reads answered in reverse order: the older never clears the barrier the newer must clear", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    const [s1, early] = startRead(device);
+    recreate(server, "#000001");
+    const [s2, later] = startRead(s1);
+    device = readAnswered(s2, later, server.read(A));
+    // The early read, answered last, reports "no row": an ambiguity.
+    device = readAnswered(device, early, {
+      context: server.read(A).context,
+      preferences: noMemberPreferences,
+    });
+    expect(readNeeded(device)).toBe(true);
+    const [s3, first] = startRead(device);
+    const [s4, second] = startRead(s3);
+    const answer = server.read(A);
+    // Reversed answers; both were sent after the barrier: either clears it.
+    device = readAnswered(s4, second, answer);
+    expect(device.readAfter).toBeNull();
+    device = readAnswered(device, first, answer);
+    expect(device.readAfter).toBeNull();
+    expect(device.readsInFlight).toEqual([]);
+  });
+
+  it("two recreations in a row, a new ambiguity during the reconciliation: converges, a bounded number of reads", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = flush(
+      changeLocally(initialSyncState(server.read(A)), look({ style: "ecrin" })),
+      server,
+      A,
+    );
+    const [s1, stale1] = startRead(device);
+    const old1 = server.read(A);
+    recreate(server, "#000001");
+    const [s2, fresh] = startRead(s1);
+    device = readAnswered(s2, fresh, server.read(A));
+    device = readAnswered(device, stale1, old1);
+    expect(readNeeded(device)).toBe(true);
+    const [s3, reconciling] = startRead(device);
+    const old2 = server.read(A);
+    recreate(server, "#000002");
+    // A newer read first, then the reconciliation read's old answer.
+    const [s4, newer] = startRead(s3);
+    device = readAnswered(s4, newer, server.read(A));
+    device = readAnswered(device, reconciling, old2);
+    expect(readNeeded(device)).toBe(true);
+    const done = reconcile(device, server, A);
+    expect(done.reads).toBe(1);
+    expect(done.state.observed).toEqual(server.read(A).preferences);
+  });
+
+  it("a reconciliation read that fails: due again (the driver waits), then settles; never stuck", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    const [s1, early] = startRead(device);
+    recreate(server, "#000001");
+    const [s2, later] = startRead(s1);
+    device = readAnswered(s2, later, server.read(A));
+    device = readAnswered(device, early, {
+      context: server.read(A).context,
+      preferences: noMemberPreferences,
+    });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      expect(readNeeded(device)).toBe(true);
+      const [reading, ticket] = startRead(device);
+      expect(readNeeded(reading)).toBe(false);
+      device = readFailed(reading, ticket);
+    }
+    expect(device.readsInFlight).toEqual([]);
+    const done = reconcile(device, server, A);
+    expect(done.reads).toBe(1);
+    expect(readNeeded(done.state)).toBe(false);
+  });
+
+  it("a context change during the reconciliation: barrier and reads of the old context are gone, their answers ignored", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    server.join(B.userId, B.businessId);
+    let device = initialSyncState(server.read(A));
+    const [s1, early] = startRead(device);
+    recreate(server, "#000001");
+    const [s2, later] = startRead(s1);
+    device = readAnswered(s2, later, server.read(A));
+    device = readAnswered(device, early, {
+      context: server.read(A).context,
+      preferences: noMemberPreferences,
+    });
+    const [reading, ticket] = startRead(device);
+    const b = enterContext(reading, server.read(B));
+    expect(readNeeded(b)).toBe(false);
+    expect(b.readsInFlight).toEqual([]);
+    expect(readAnswered(b, ticket, server.read(A))).toEqual(b);
+    expect(readFailed(b, ticket)).toEqual(b);
+  });
+
+  it("an old context's read failure or answer never settles a read of the new context with the same number", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    server.join(B.userId, B.businessId);
+    const [a, oldTicket] = startRead(initialSyncState(server.read(A)));
+    // The new context numbers its requests from 1 again.
+    const [b, same] = startRead(enterContext(a, server.read(B)));
+    expect(same.seq).toBe(oldTicket.seq);
+    expect(b.readsInFlight).toEqual([same.seq]);
+    expect(readFailed(b, oldTicket)).toEqual(b);
+    expect(readAnswered(b, oldTicket, server.read(A))).toEqual(b);
+    expect(readFailed(b, same).readsInFlight).toEqual([]);
+  });
+
+  it("an intent unacknowledged through the whole sequence stays, then is saved", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    device = changeLocally(device, look({ style: "carnet" }));
+    const [s1, early] = startRead(device);
+    recreate(server, "#000001");
+    const [s2, later] = startRead(s1);
+    device = readAnswered(s2, later, server.read(A));
+    device = readAnswered(device, early, {
+      context: server.read(A).context,
+      preferences: noMemberPreferences,
+    });
+    const [reading, ticket] = startRead(device);
+    device = readFailed(reading, ticket);
+    recreate(server, "#000002");
+    device = reconcile(device, server, A).state;
+    expect(unacknowledgedChanges(device)).toEqual({ style: "carnet" });
+    device = flush(device, server, A);
+    expect(server.read(A).preferences.appearance).toMatchObject({
+      style: "carnet",
+      accent: "#000002",
+    });
+    expect(device.intents).toEqual({});
+  });
+
+  it("a stable account raises no barrier: reads never loop", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = flush(
+      changeLocally(
+        initialSyncState(server.read(A)),
+        look({ style: "studio" }),
+      ),
+      server,
+      A,
+    );
+    for (let index = 0; index < 5; index++) device = read(device, server, A);
+    expect(device.readAfter).toBeNull();
+    expect(readNeeded(device)).toBe(false);
+    expect(reconcile(device, server, A).reads).toBe(0);
+  });
+});
+
 describe("preference sync: contexts are isolated", () => {
   function switchedDuringSave() {
     const server = new Server();
@@ -996,7 +1262,24 @@ describe("preference sync: random interleavings", () => {
           // A read answer, possibly an old one, possibly out of order.
           const at = Math.floor(random() * reads[index]!.length);
           const { ticket, snapshot } = reads[index]!.splice(at, 1)[0]!;
-          step(index, readAnswered(device, ticket, snapshot));
+          const after =
+            random() < 0.2
+              ? readFailed(device, ticket)
+              : readAnswered(device, ticket, snapshot);
+          // A barrier is only ever cleared by a read sent after it.
+          if (device.readAfter !== null && after.readAfter === null) {
+            expect(ticket.generation).toBe(device.generation);
+            expect(ticket.seq).toBeGreaterThanOrEqual(device.readAfter);
+          }
+          // Each new ambiguity moves the barrier forward, never back.
+          if (
+            after.generation === device.generation &&
+            device.readAfter !== null &&
+            after.readAfter !== null
+          ) {
+            expect(after.readAfter).toBeGreaterThanOrEqual(device.readAfter);
+          }
+          step(index, after);
         } else if (roll < 0.93) {
           // This device signs out and the other account signs in, or back.
           sessions[index] = sessions[index] === A ? B : A;
@@ -1045,6 +1328,11 @@ describe("preference sync: random interleavings", () => {
           devices[index] = enterContext(devices[index]!, server.read(session));
         }
         devices[index] = read(devices[index]!, server, session);
+        // A stable account: no reconciliation read is due, none loops.
+        const settledDevice = reconcile(devices[index]!, server, session);
+        expect(settledDevice.reads).toBeLessThanOrEqual(1);
+        devices[index] = settledDevice.state;
+        expect(readNeeded(devices[index]!)).toBe(false);
         expect(displayedAppearance(devices[index]!)).toEqual(
           server.read(session).preferences.appearance,
         );

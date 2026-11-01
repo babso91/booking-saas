@@ -15,6 +15,7 @@ import {
   initialSyncState,
   nextSave,
   readAnswered,
+  readNeeded,
   saveAnswered,
   saveFailed,
   startRead,
@@ -498,6 +499,91 @@ describe("a stale read never erases her choice (Codex's interleaving, real actio
       motion: "none",
     });
     expect(page.intents).toEqual({});
+  });
+});
+
+describe("reconciliation reads (readAfter), real actions", () => {
+  it("Codex: a save acknowledged during a read, the row recreated; the read's answer does not clear the new barrier; the device converges by itself", async () => {
+    const pro = await createAccount("act-barrier");
+    const business = await createBusiness(pro.userId);
+    const laptopJar = new Device();
+    const otherJar = new Device();
+    device = otherJar;
+    await signInHere(pro);
+    device = laptopJar;
+    await signInHere(pro);
+    let page = await sync(
+      changeLocally(
+        await enterArea(pro, business.id),
+        look({ style: "studio" }),
+      ),
+    );
+    const recreate = async (accent: string) => {
+      await db.query(
+        "delete from public.member_preferences where business_id = $1",
+        [business.id],
+      );
+      device = otherJar;
+      await sync(
+        changeLocally(await enterArea(pro, business.id), look({ accent })),
+      );
+      device = laptopJar;
+    };
+    const execute = async () => {
+      const result = await getMyPreferencesAction();
+      if (!result.ok) throw new Error(result.error.code);
+      return result.data;
+    };
+
+    // A first barrier: an early read, executed before a recreation,
+    // answered after a later one.
+    const [s1, early] = startRead(page);
+    const earlyAnswer = await execute();
+    await recreate("#000001");
+    const [s2, later] = startRead(s1);
+    page = readAnswered(s2, later, await execute());
+    page = readAnswered(page, early, earlyAnswer);
+    expect(readNeeded(page)).toBe(true);
+
+    // The reconciliation read R is sent; it will be executed late.
+    const [reading, r] = startRead(page);
+    expect(readNeeded(reading)).toBe(false);
+    // A save is acknowledged meanwhile; she also has a choice pending.
+    page = await sync(
+      changeLocally(reading, {
+        ...displayedAppearance(reading),
+        motion: "none",
+      }),
+    );
+    page = changeLocally(page, {
+      ...displayedAppearance(page),
+      style: "carnet",
+    });
+    // The row is recreated, then R is executed and answers.
+    await recreate("#000002");
+    page = readAnswered(page, r, await execute());
+    expect(page.readAfter).not.toBeNull();
+    expect(readNeeded(page)).toBe(true);
+    expect(unacknowledgedChanges(page)).toEqual({ style: "carnet" });
+
+    // The driver reads as readNeeded says (no focus needed), then saves.
+    let reads = 0;
+    while (readNeeded(page)) {
+      reads += 1;
+      const [next, ticket] = startRead(page);
+      page = readAnswered(next, ticket, await execute());
+    }
+    expect(reads).toBe(1);
+    page = await sync(page);
+    const row = await rowOf(business.id, pro.userId);
+    expect(row).toMatchObject({ style: "carnet", accent: "#000002" });
+    expect(page.intents).toEqual({});
+    page = await readAgain(page);
+    expect(readNeeded(page)).toBe(false);
+    expect(displayedAppearance(page)).toMatchObject({
+      style: "carnet",
+      accent: "#000002",
+    });
   });
 });
 
