@@ -12,4 +12,5 @@ export const router = {
 
 export const nextNavigationMock = {
   useRouter: () => router,
+  usePathname: () => "/app",
 };

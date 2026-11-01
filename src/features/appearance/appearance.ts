@@ -16,11 +16,9 @@ import {
 // signature colour in Studio, her stone in Écrin — and the animations she
 // wants. Core.
 //
-// Stored for now on the device, in a cookie the server reads (so the first
-// paint is already hers: no flash, no script): `dash_appearance`. It holds
-// presentation only; every value is checked against a closed list when read,
-// anything else falls back to the default. Synced to her account later
-// (docs/DASHBOARD_EXPERIENCE.md).
+// Her account keeps them (docs/MEMBER_PREFERENCES_CONTRACT.md), so the first
+// paint is already hers on every device. `dash_appearance` is what a device
+// kept before that: read once, to offer it, and no longer written.
 
 export type ModePreference = Mode | "system";
 export type MotionPreference = "standard" | "discrete" | "none";
@@ -53,6 +51,8 @@ export const defaultAppearance: Appearance = {
 };
 
 const styleIds: StyleId[] = ["classique", "studio", "ecrin"];
+/** The styles this build can draw; another one is shown as Classique. */
+export const DELIVERED_STYLES = styleIds;
 const modes: ModePreference[] = ["light", "dark", "system"];
 const motions: MotionPreference[] = ["standard", "discrete", "none"];
 

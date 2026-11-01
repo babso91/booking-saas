@@ -1,14 +1,10 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { startOfWeek } from "@/features/agenda/client/dates";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { getAgenda } from "@/features/agenda/data/agenda";
-import {
-  APPEARANCE_COOKIE,
-  parseAppearance,
-} from "@/features/appearance/appearance";
+import { loadRenderedAppearance } from "@/features/appearance/server/area-appearance";
 import { requireReadyBusiness } from "@/features/auth/data/guards";
 import { StudioToday } from "@/features/dashboard/components/studio-today";
 import { EcrinToday } from "@/features/dashboard/ecrin/ecrin-today";
@@ -25,10 +21,11 @@ export const metadata: Metadata = {
 export default async function TodayPage() {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
-  const { business } = await requireReadyBusiness();
-  const appearance = parseAppearance(
-    (await cookies()).get(APPEARANCE_COOKIE)?.value,
-  );
+  const { user, business } = await requireReadyBusiness();
+  const appearance = await loadRenderedAppearance({
+    userId: user.id,
+    businessId: business.id,
+  });
   if (appearance.style === "classique") redirect("/app");
 
   // Today and now, from the calendar authority (PostgreSQL); then the week

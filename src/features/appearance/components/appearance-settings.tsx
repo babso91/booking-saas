@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { CalendarIcon, PlusIcon } from "@/components/ui/icons";
@@ -13,7 +13,6 @@ import {
   accentKeptAsIs,
   defaultAccent,
   defaultAppearance,
-  type Appearance,
   type ModePreference,
   type MotionPreference,
 } from "../appearance";
@@ -32,14 +31,36 @@ import {
 import { useAppearance } from "./appearance-provider";
 
 // "Apparence": her area, her way. Every choice applies at once to the whole
-// area (the preview below is made of the real components), and is kept on
-// this device. Readability is not hers to lose: an accent that would not
+// area (the preview below is made of the real components), and is kept on her
+// account: this page says where that stands. Readability is not hers to lose: an accent that would not
 // read is adjusted, and the panel says so.
 
+/**
+ * Each style has its own frame: choosing one mounts this page again. The
+ * focus stays on the style she chose, not on nothing.
+ */
+let styleToFocus: StyleId | null = null;
+
+const syncWords = {
+  saving: "Enregistrement…",
+  retrying:
+    "Pas encore enregistré sur ton compte. Ton choix reste appliqué ici, nouvel essai automatique.",
+  paused:
+    "Enregistrement en pause : ta session a peut-être changé. Ton choix reste appliqué ici.",
+};
+
 export function AppearanceSettings() {
-  const { appearance, setAppearance } = useAppearance();
-  const set = (patch: Partial<Appearance>) =>
-    setAppearance({ ...appearance, ...patch });
+  const { appearance, change: set, sync, savedHere, retry } = useAppearance();
+  const root = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (styleToFocus === null) return;
+    root.current
+      ?.querySelector<HTMLInputElement>(
+        `input[name="style"][value="${styleToFocus}"]`,
+      )
+      ?.focus({ preventScroll: true });
+    styleToFocus = null;
+  }, []);
   const adjusted =
     appearance.accent !== null &&
     (["light", "dark"] as const)
@@ -65,223 +86,259 @@ export function AppearanceSettings() {
   const own = defaultAccent(appearance.style, appearance.ambiance);
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <div ref={root} className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pt-6 pb-16 sm:px-6 lg:px-8 lg:pt-10">
         <header className="flex flex-col gap-2">
           <h1 className="font-display text-[34px] leading-none text-ink sm:text-[42px]">
             Apparence
           </h1>
           <p className="max-w-2xl text-[14.5px] leading-relaxed text-ink-soft">
-            Rends cet espace le tien. Tes choix s’appliquent tout de suite et
-            restent sur cet appareil ; ils te suivront bientôt sur tous tes
-            appareils.
+            Rends cet espace le tien. Tes choix s’appliquent tout de suite et te
+            suivent sur tous tes appareils, pour cet établissement. Ils ne
+            changent rien pour tes clientes ni pour ton équipe.
           </p>
         </header>
 
-        <Group
-          legend="Style"
-          description="La mise en scène de tout ton espace. Les rubriques et les mots restent les mêmes."
+        {sync === "unavailable" ? (
+          <Notice tone="offline">
+            <span className="flex flex-wrap items-center gap-3">
+              Ton compte ne répond pas pour l’instant : ton apparence s’affiche
+              mais ne peut pas être modifiée.
+              <Button size="md" variant="secondary" onClick={retry}>
+                Réessayer
+              </Button>
+            </span>
+          </Notice>
+        ) : null}
+        <div className="sticky top-2 z-10 -mb-8 h-0">
+          <p
+            role="status"
+            className="w-fit rounded-full border border-line bg-paper-raised px-3 py-1 text-[13px] text-ink-soft empty:hidden"
+          >
+            {sync === "saving" || sync === "retrying" || sync === "paused"
+              ? syncWords[sync]
+              : sync === "idle" && savedHere
+                ? "Enregistré sur ton compte."
+                : ""}
+          </p>
+        </div>
+        <fieldset
+          disabled={sync === "unavailable"}
+          className="contents min-w-0"
         >
-          <div className="grid gap-3 sm:grid-cols-3">
-            {(Object.keys(styles) as StyleId[]).map((id) => (
-              <Choice
-                key={id}
-                name="style"
-                checked={appearance.style === id}
-                onSelect={() =>
-                  // Her accent was picked for a style; the new one starts
-                  // from its own colour.
-                  set({ style: id, accent: null })
-                }
-              >
-                <StyleSwatch id={id} />
-                <span className="mt-3 block text-[15px] font-semibold text-ink">
-                  {styles[id].name}
-                </span>
-                <span className="block text-[13px] leading-snug text-ink-soft">
-                  {styles[id].line}
-                </span>
-              </Choice>
-            ))}
-          </div>
-        </Group>
-
-        {studio || ecrin ? null : (
-          <Group legend="Ambiance">
+          <Group
+            legend="Style"
+            description="La mise en scène de tout ton espace. Les rubriques et les mots restent les mêmes."
+          >
             <div className="grid gap-3 sm:grid-cols-3">
-              {(Object.keys(ambiances) as AmbianceId[]).map((id) => (
+              {(Object.keys(styles) as StyleId[]).map((id) => (
                 <Choice
                   key={id}
-                  name="ambiance"
-                  checked={appearance.ambiance === id}
-                  onSelect={() => set({ ambiance: id })}
+                  name="style"
+                  value={id}
+                  checked={appearance.style === id}
+                  onSelect={() => {
+                    styleToFocus = id;
+                    // Her accent was picked for a style; the new one starts
+                    // from its own colour.
+                    set({ style: id, accent: null });
+                  }}
                 >
-                  <AmbianceSwatch id={id} />
+                  <StyleSwatch id={id} />
                   <span className="mt-3 block text-[15px] font-semibold text-ink">
-                    {ambiances[id].name}
+                    {styles[id].name}
                   </span>
                   <span className="block text-[13px] leading-snug text-ink-soft">
-                    {ambiances[id].mood}
+                    {styles[id].line}
                   </span>
                 </Choice>
               ))}
             </div>
           </Group>
-        )}
 
-        <Group legend="Clair ou sombre">
-          <div className="grid grid-cols-3 gap-2">
-            {(
-              [
-                ["light", "Clair"],
-                ["dark", "Sombre"],
-                ["system", "Comme l’appareil"],
-              ] as [ModePreference, string][]
-            ).map(([mode, label]) => (
-              <Choice
-                key={mode}
-                name="mode"
-                compact
-                checked={appearance.mode === mode}
-                onSelect={() => set({ mode })}
-              >
-                <span className="text-[14px] font-medium text-ink">
-                  {label}
-                </span>
-              </Choice>
-            ))}
-          </div>
-        </Group>
+          {studio || ecrin ? null : (
+            <Group legend="Ambiance">
+              <div className="grid gap-3 sm:grid-cols-3">
+                {(Object.keys(ambiances) as AmbianceId[]).map((id) => (
+                  <Choice
+                    key={id}
+                    name="ambiance"
+                    checked={appearance.ambiance === id}
+                    onSelect={() => set({ ambiance: id })}
+                  >
+                    <AmbianceSwatch id={id} />
+                    <span className="mt-3 block text-[15px] font-semibold text-ink">
+                      {ambiances[id].name}
+                    </span>
+                    <span className="block text-[13px] leading-snug text-ink-soft">
+                      {ambiances[id].mood}
+                    </span>
+                  </Choice>
+                ))}
+              </div>
+            </Group>
+          )}
 
-        <Group
-          legend={
-            studio
-              ? "Ta couleur signature"
-              : ecrin
-                ? "Ta pierre"
-                : "Couleur d’accent"
-          }
-          description={
-            studio
-              ? "Elle remplit le bloc « maintenant », marque l’heure et tes repères."
-              : ecrin
-                ? "Elle colore l’aiguille du cadran, le créneau en cours et tes repères."
-                : "Elle souligne les liens, les repères et l’heure actuelle dans ton agenda."
-          }
-        >
-          <div className="flex flex-wrap gap-2">
-            <Choice
-              name="accent"
-              compact
-              checked={appearance.accent === null}
-              onSelect={() => set({ accent: null })}
-            >
-              <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
-                <span
-                  aria-hidden="true"
-                  className="size-4 rounded-full border border-line-strong"
-                  style={{
-                    background: own,
-                  }}
-                />
-                {studio
-                  ? "Cobalt, celle du Studio"
-                  : ecrin
-                    ? "Améthyste, celle de l’Écrin"
-                    : "Celle de l’ambiance"}
-              </span>
-            </Choice>
-            {presets
-              .filter((preset) => !studio || preset.color !== STUDIO_SIGNATURE)
-              .map((preset) => (
+          <Group legend="Clair ou sombre">
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  ["light", "Clair"],
+                  ["dark", "Sombre"],
+                  ["system", "Comme l’appareil"],
+                ] as [ModePreference, string][]
+              ).map(([mode, label]) => (
                 <Choice
-                  key={preset.color}
-                  name="accent"
+                  key={mode}
+                  name="mode"
                   compact
-                  checked={appearance.accent === preset.color}
-                  onSelect={() => set({ accent: preset.color })}
+                  checked={appearance.mode === mode}
+                  onSelect={() => set({ mode })}
                 >
-                  <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
-                    <span
-                      aria-hidden="true"
-                      className="size-4 rounded-full"
-                      style={{ background: preset.color }}
-                    />
-                    {preset.name}
+                  <span className="text-[14px] font-medium text-ink">
+                    {label}
                   </span>
                 </Choice>
               ))}
-          </div>
-          <label className="mt-3 flex min-h-12 w-fit cursor-pointer items-center gap-3 rounded-2xl border border-line bg-paper-raised px-3 text-[14px] font-medium text-ink">
-            <input
-              type="color"
-              value={appearance.accent ?? own}
-              onChange={(event) => {
-                const value = event.target.value.toUpperCase();
-                if (isHexColor(value)) set({ accent: value });
-              }}
-              className="size-9 cursor-pointer rounded-lg border border-line bg-transparent p-0.5"
-            />
-            Une autre couleur
-          </label>
-          {adjusted ? (
-            <p className="mt-2 text-[13px] text-ink-soft">
-              {studio
-                ? "Tes grands aplats gardent ta couleur ; dans le texte, elle est un peu plus soutenue pour rester lisible."
-                : "Ajustée pour rester lisible sur ton fond : la teinte est gardée, un peu plus soutenue."}
-            </p>
-          ) : null}
-        </Group>
+            </div>
+          </Group>
 
-        <Group
-          legend="Animations"
-          description="Si ton appareil demande moins d’animations, c’est toujours respecté."
-        >
-          <div className="grid gap-2 sm:grid-cols-3">
-            {(
-              [
-                ["standard", "Standard", "Des transitions douces et courtes."],
-                [
-                  "discrete",
-                  "Discrètes",
-                  "L’essentiel, sans effets d’ambiance.",
-                ],
-                ["none", "Aucune", "Tout s’affiche immédiatement."],
-              ] as [MotionPreference, string, string][]
-            ).map(([motion, label, hint]) => (
+          <Group
+            legend={
+              studio
+                ? "Ta couleur signature"
+                : ecrin
+                  ? "Ta pierre"
+                  : "Couleur d’accent"
+            }
+            description={
+              studio
+                ? "Elle remplit le bloc « maintenant », marque l’heure et tes repères."
+                : ecrin
+                  ? "Elle colore l’aiguille du cadran, le créneau en cours et tes repères."
+                  : "Elle souligne les liens, les repères et l’heure actuelle dans ton agenda."
+            }
+          >
+            <div className="flex flex-wrap gap-2">
               <Choice
-                key={motion}
-                name="motion"
-                checked={appearance.motion === motion}
-                onSelect={() => set({ motion })}
+                name="accent"
+                compact
+                checked={appearance.accent === null}
+                onSelect={() => set({ accent: null })}
               >
-                <span className="block text-[15px] font-semibold text-ink">
-                  {label}
-                </span>
-                <span className="block text-[13px] leading-snug text-ink-soft">
-                  {hint}
+                <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
+                  <span
+                    aria-hidden="true"
+                    className="size-4 rounded-full border border-line-strong"
+                    style={{
+                      background: own,
+                    }}
+                  />
+                  {studio
+                    ? "Cobalt, celle du Studio"
+                    : ecrin
+                      ? "Améthyste, celle de l’Écrin"
+                      : "Celle de l’ambiance"}
                 </span>
               </Choice>
-            ))}
-          </div>
-        </Group>
+              {presets
+                .filter(
+                  (preset) => !studio || preset.color !== STUDIO_SIGNATURE,
+                )
+                .map((preset) => (
+                  <Choice
+                    key={preset.color}
+                    name="accent"
+                    compact
+                    checked={appearance.accent === preset.color}
+                    onSelect={() => set({ accent: preset.color })}
+                  >
+                    <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
+                      <span
+                        aria-hidden="true"
+                        className="size-4 rounded-full"
+                        style={{ background: preset.color }}
+                      />
+                      {preset.name}
+                    </span>
+                  </Choice>
+                ))}
+            </div>
+            <label className="mt-3 flex min-h-12 w-fit cursor-pointer items-center gap-3 rounded-2xl border border-line bg-paper-raised px-3 text-[14px] font-medium text-ink">
+              <input
+                type="color"
+                value={appearance.accent ?? own}
+                onChange={(event) => {
+                  const value = event.target.value.toUpperCase();
+                  if (isHexColor(value)) set({ accent: value });
+                }}
+                className="size-9 cursor-pointer rounded-lg border border-line bg-transparent p-0.5"
+              />
+              Une autre couleur
+            </label>
+            {adjusted ? (
+              <p className="mt-2 text-[13px] text-ink-soft">
+                {studio
+                  ? "Tes grands aplats gardent ta couleur ; dans le texte, elle est un peu plus soutenue pour rester lisible."
+                  : "Ajustée pour rester lisible sur ton fond : la teinte est gardée, un peu plus soutenue."}
+              </p>
+            ) : null}
+          </Group>
 
-        <section aria-label="Aperçu" className="flex flex-col gap-3">
-          <h2 className="font-display text-[22px] leading-tight text-ink">
-            Aperçu
-          </h2>
-          <Preview />
-        </section>
-
-        <div>
-          <Button
-            variant="ghost"
-            size="md"
-            onClick={() => setAppearance(defaultAppearance)}
+          <Group
+            legend="Animations"
+            description="Si ton appareil demande moins d’animations, c’est toujours respecté."
           >
-            Revenir à l’apparence d’origine
-          </Button>
-        </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {(
+                [
+                  [
+                    "standard",
+                    "Standard",
+                    "Des transitions douces et courtes.",
+                  ],
+                  [
+                    "discrete",
+                    "Discrètes",
+                    "L’essentiel, sans effets d’ambiance.",
+                  ],
+                  ["none", "Aucune", "Tout s’affiche immédiatement."],
+                ] as [MotionPreference, string, string][]
+              ).map(([motion, label, hint]) => (
+                <Choice
+                  key={motion}
+                  name="motion"
+                  checked={appearance.motion === motion}
+                  onSelect={() => set({ motion })}
+                >
+                  <span className="block text-[15px] font-semibold text-ink">
+                    {label}
+                  </span>
+                  <span className="block text-[13px] leading-snug text-ink-soft">
+                    {hint}
+                  </span>
+                </Choice>
+              ))}
+            </div>
+          </Group>
+
+          <section aria-label="Aperçu" className="flex flex-col gap-3">
+            <h2 className="font-display text-[22px] leading-tight text-ink">
+              Aperçu
+            </h2>
+            <Preview />
+          </section>
+
+          <div>
+            <Button
+              variant="ghost"
+              size="md"
+              onClick={() => set(defaultAppearance)}
+            >
+              Revenir à l’apparence d’origine
+            </Button>
+          </div>
+        </fieldset>
       </div>
     </div>
   );
@@ -318,12 +375,14 @@ function Group({
 /** A radio as a card: the whole card is the target, the focus ring shows. */
 function Choice({
   name,
+  value,
   checked,
   onSelect,
   compact,
   children,
 }: {
   name: string;
+  value?: string;
   checked: boolean;
   onSelect: () => void;
   compact?: boolean;
@@ -342,6 +401,7 @@ function Choice({
       <input
         type="radio"
         name={name}
+        value={value}
         checked={checked}
         onChange={onSelect}
         className="sr-only"
