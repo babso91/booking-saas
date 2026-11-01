@@ -8,7 +8,7 @@ import {
 } from "playwright";
 import { afterAll, beforeAll, expect, vi } from "vitest";
 
-import { APP, type Browser } from "./studio";
+import { APP, wear, type Browser } from "./studio";
 
 // Shared by the Écrin browser tests: a real browser, signed in, in a style.
 
@@ -26,12 +26,18 @@ type Options = {
   width?: number;
   height?: number;
   phone?: boolean;
-  appearance?: string;
+  /** What her account holds (default: Écrin); null: nothing set up. */
+  appearance?: string | null;
+  /** The cookie an old version of the app left on this device. */
+  legacyCookie?: string;
 };
 
-/** A page signed in as this professional, with this appearance cookie. */
+/** A page signed in as this professional, whose account holds this look. */
 export async function signedInPage(browser: Browser, options: Options = {}) {
   const { width = 1280, height = 800, phone = false } = options;
+  const appearance =
+    options.appearance === undefined ? ECRIN : options.appearance;
+  if (appearance !== null) await wear(browser, appearance);
   const context = await chrome.newContext({
     viewport: { width, height },
     isMobile: phone,
@@ -39,16 +45,22 @@ export async function signedInPage(browser: Browser, options: Options = {}) {
   });
   const host = new URL(APP).hostname;
   await context.addCookies([
-    ...[...browser.cookies]
-      .filter(([name]) => name !== "dash_appearance")
-      .map(([name, value]) => ({ name, value, url: APP })),
-    // Where the app itself writes it: a second one at "/" would shadow it.
-    {
-      name: "dash_appearance",
-      value: encodeURIComponent(options.appearance ?? ECRIN),
-      domain: host,
-      path: "/app",
-    },
+    ...[...browser.cookies].map(([name, value]) => ({
+      name,
+      value,
+      url: APP,
+    })),
+    // Where the app itself wrote it: a second one at "/" would shadow it.
+    ...(options.legacyCookie === undefined
+      ? []
+      : [
+          {
+            name: "dash_appearance",
+            value: encodeURIComponent(options.legacyCookie),
+            domain: host,
+            path: "/app",
+          },
+        ]),
   ]);
   const page = await context.newPage();
   const errors: string[] = [];

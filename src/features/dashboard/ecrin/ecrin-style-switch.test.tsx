@@ -39,19 +39,19 @@ describe("changing style in the page", () => {
     expect(style()).toBe("ecrin");
     expect(frame()).not.toBeNull();
 
-    await user.click(screen.getByRole("radio", { name: /Studio/ }));
+    await user.click(screen.getByRole("radio", { name: /^Studio/ }));
     expect(style()).toBe("studio");
-    expect(document.activeElement).toBe(chosen(/Studio/));
+    expect(document.activeElement).toBe(chosen(/^Studio/));
     expect(frame()).toBeNull();
 
-    await user.click(screen.getByRole("radio", { name: /Classique/ }));
+    await user.click(screen.getByRole("radio", { name: /^Classique/ }));
     expect(style()).toBe("classique");
-    expect(document.activeElement).toBe(chosen(/Classique/));
+    expect(document.activeElement).toBe(chosen(/^Classique/));
     expect(frame()).toBeNull();
 
-    await user.click(screen.getByRole("radio", { name: /Écrin/ }));
+    await user.click(screen.getByRole("radio", { name: /^Écrin/ }));
     expect(style()).toBe("ecrin");
-    expect(document.activeElement).toBe(chosen(/Écrin/));
+    expect(document.activeElement).toBe(chosen(/^Écrin/));
     expect(frame()).not.toBeNull();
     // This device keeps nothing of its own any more.
     expect(document.cookie).not.toContain("dash_appearance");

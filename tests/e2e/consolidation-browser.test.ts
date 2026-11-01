@@ -133,26 +133,48 @@ describe.each(["ecrin", "studio"])("the options menu — %s", (style) => {
 
   it("a touch scroll outside closes it and takes no focus back", async () => {
     const { page, cancelled } = await openMenu(390);
-    await page.setViewportSize({ width: 390, height: 420 });
+    await page.setViewportSize({ width: 390, height: 560 });
     await cancelled.focus();
-    await page.evaluate(() => {
+    // The page's scrolling area, and where it stands: the finger starts in it.
+    const area = await page.evaluate(() => {
+      const element = [...document.querySelectorAll("*")]
+        .filter(
+          (candidate) =>
+            /auto|scroll/.test(getComputedStyle(candidate).overflowY) &&
+            candidate.scrollHeight > candidate.clientHeight + 100,
+        )
+        .sort((a, b) => b.clientHeight - a.clientHeight)[0]!;
+      element.setAttribute("data-scrolling-area", "");
       document.addEventListener(
         "pointercancel",
         () => document.documentElement.setAttribute("data-cancelled", ""),
         true,
       );
+      const { top, bottom } = element.getBoundingClientRect();
+      // Lowest point of the area that is the area: a bar may float over it.
+      let from = bottom - 10;
+      while (
+        from > top &&
+        !element.contains(document.elementFromPoint(40, from))
+      ) {
+        from -= 10;
+      }
+      return { top, from, scrollTop: element.scrollTop };
     });
 
     const touch = await page.context().newCDPSession(page);
     const point = (y: number) => [{ x: 40, y }];
+    const { from } = area;
+    const distance = from - area.top - 10;
+    expect(distance).toBeGreaterThan(100);
     await touch.send("Input.dispatchTouchEvent", {
       type: "touchStart",
-      touchPoints: point(390),
+      touchPoints: point(from),
     });
     for (let step = 1; step <= 8; step += 1) {
       await touch.send("Input.dispatchTouchEvent", {
         type: "touchMove",
-        touchPoints: point(390 - step * 30),
+        touchPoints: point(from - (distance * step) / 8),
       });
       await page.waitForTimeout(16);
     }
@@ -162,8 +184,14 @@ describe.each(["ecrin", "studio"])("the options menu — %s", (style) => {
     });
     await closed(page);
 
-    // Chromium did take it for a scroll: this test proves nothing otherwise.
+    // Chromium did take it for a scroll, and it scrolled: this test proves
+    // nothing otherwise.
     await page.waitForSelector("html[data-cancelled]", { state: "attached" });
+    await page.waitForFunction(
+      (before) =>
+        document.querySelector("[data-scrolling-area]")!.scrollTop !== before,
+      area.scrollTop,
+    );
     expect(await focused(page)).toBe("BODY");
     await page.context().close();
   });

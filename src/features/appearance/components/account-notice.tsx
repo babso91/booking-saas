@@ -15,7 +15,7 @@ import { ambiances, styles, type AmbianceId, type StyleId } from "../palettes";
 
 const SETTINGS = "/app/settings/appearance";
 const card =
-  "fixed right-4 bottom-[calc(env(safe-area-inset-bottom)+6rem)] left-4 z-40 flex flex-col gap-3 rounded-2xl border border-line bg-paper-raised p-4 shadow-lg sm:left-auto sm:w-96 lg:bottom-6";
+  "fixed right-4 bottom-[calc(env(safe-area-inset-bottom)+6rem)] left-4 z-40 flex flex-col gap-3 rounded-2xl border border-line bg-paper-raised p-4 shadow-lg sm:left-auto sm:w-80 lg:bottom-6";
 
 const modeNames = {
   light: "clair",

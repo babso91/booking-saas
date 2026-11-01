@@ -3,6 +3,7 @@ import type { ActionResult } from "@/lib/errors";
 import {
   sameContext,
   type AppearancePreferences,
+  type PreferenceContext,
   type PreferencesSnapshot,
 } from "../model";
 import {
@@ -44,13 +45,23 @@ export const LAST_RETRY_MS = 30_000;
 /** focus and visibilitychange come together when she returns to the tab. */
 const RETURN_GAP_MS = 1_000;
 
+/** What a page says of its context: the session says who she is. */
+type PageContext = Pick<PreferenceContext, "businessId" | "membershipId">;
+
+const pageContext = ({
+  businessId,
+  membershipId,
+}: PreferenceContext): PageContext => ({ businessId, membershipId });
+
 export type DriverActions = {
   read: () => Promise<ActionResult<PreferencesSnapshot>>;
-  save: (
-    input: Pick<SaveRequest, "context" | "expected" | "changes">,
-  ) => Promise<ActionResult<SaveAnswer>>;
+  save: (input: {
+    context: PageContext;
+    expected: SaveRequest["expected"];
+    changes: SaveRequest["changes"];
+  }) => Promise<ActionResult<SaveAnswer>>;
   importDevice: (input: {
-    context: SaveRequest["context"];
+    context: PageContext;
     appearance: AppearancePreferences;
   }) => Promise<ActionResult<SaveAnswer>>;
 };
@@ -200,7 +211,10 @@ export class PreferenceDriver {
     this.publish();
     return new Promise((resolve) => {
       this.settleOnce(
-        this.actions.importDevice({ context: state.context, appearance }),
+        this.actions.importDevice({
+          context: pageContext(state.context),
+          appearance,
+        }),
         (result) => {
           if (result.ok) {
             this.importing = "idle";
@@ -244,7 +258,7 @@ export class PreferenceDriver {
   private sendSave(request: SaveRequest) {
     const { ticket, context, expected, changes } = request;
     this.settleOnce(
-      this.actions.save({ context, expected, changes }),
+      this.actions.save({ context: pageContext(context), expected, changes }),
       (result) => {
         if (result.ok) {
           const before = this.state!.paused;

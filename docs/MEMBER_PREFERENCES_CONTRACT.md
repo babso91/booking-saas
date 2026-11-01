@@ -1,8 +1,6 @@
 # Préférences personnelles des professionnelles — contrat livré
 
-Ce document décrit le socle backend qui garde les préférences d'apparence de chaque professionnelle sur son compte. Il sert de passation à Claude UI pour brancher le moteur d'apparence de Studio 1 (PR #28, `src/features/appearance`) sur ce socle.
-
-Cette PR ne modifie pas l'interface : le moteur d'apparence n'est pas encore sur `main`. Le câblage est décrit au § 6.
+Ce document décrit le socle backend qui garde les préférences d'apparence de chaque professionnelle sur son compte, et son branchement au moteur d'apparence (`src/features/appearance`). Le contrat est au § 6, ce qui a été branché au § 6 bis.
 
 - **Migration :** `supabase/migrations/20261031090000_member_preferences.sql`.
 - **Code :** `src/features/preferences/`.
@@ -316,6 +314,21 @@ Les fonctions et leurs signatures sont inchangées : `initialSyncState`, `enterC
 
 **À noter :** poser un cookie dans une Server Action rafraîchit la route. Le layout relit alors le compte. Si le contexte n'a pas changé, ne pas appeler `enterContext` : le nouvel état passe par `readAnswered` ou les réponses de sauvegarde.
 
+## 6 bis. Branchement livré
+
+- **Pilote :** `src/features/preferences/client/preference-driver.ts`, sans React. Il envoie ce que la machine demande : un règlement par requête, délai maximal de 15 s, attente de 1 s à 30 s après un échec. Il ne décide de rien d'autre.
+- **Fournisseur :** `AccountAppearanceProvider`, dans le layout de `/app`. `AppearanceProvider` reste pour les aperçus : rien n'y est conservé.
+- **Contexte envoyé :** `{ businessId, membershipId }` seulement. Le schéma strict des actions refuse `userId`, que porte `PreferenceContext`.
+- **Styles livrés :** `DELIVERED_STYLES` (`classique`, `studio`, `ecrin`). Un compte en Carnet s'affiche en Classique. Un autre réglage n'envoie que ce champ, le style du compte reste Carnet.
+- **Ancien cookie :** `dash_appearance` n'est plus écrit. La proposition d'import s'affiche sur toutes les pages de `/app` : sinon, une professionnelle revenue à Classique sans explication n'irait jamais la chercher. Accepter ou refuser efface le cookie de cet appareil.
+- **Accepter l'ancien cookie :** l'action d'import, puis une lecture envoyée après elle. Passer par `changeLocally` réécrirait le choix par-dessus un compte qui en a déjà un.
+- **Lecture refusée (`unauthenticated`…) :** elle ne déclenche pas `router.refresh()`. Base absente, la lecture est refusée aussi, et le garde du layout enverrait la professionnelle vers la connexion. Seul un refus de sauvegarde rafraîchit, comme le demande le § 6.
+
+**Comportement de Next.js à connaître.**
+
+- Les Server Actions passent une à la fois : une sauvegarde attend la lecture en cours, et l'inverse.
+- Une navigation abandonne l'action en cours, et sa promesse ne se règle jamais (`app-router-instance.js`). Le délai maximal n'est donc pas une précaution : la sauvegarde repart après 15 s, et répond `unchanged` ou `stale` si elle avait déjà abouti.
+
 ## 7. Personnalisation de l'établissement (préparée, non livrée)
 
 Contrat proposé pour une PR ultérieure, distinct des préférences :
@@ -332,7 +345,8 @@ Contrat proposé pour une PR ultérieure, distinct des préférences :
 
 ## 8. Limites
 
-- L'interface n'est pas branchée : le moteur d'apparence est dans les PR #28 et #29.
+- **Style reçu d'un autre appareil :** chaque style a son propre cadre. Une lecture qui apporte un autre style remonte la page, et un formulaire en cours de saisie est perdu. C'est rare (changer de style ailleurs, puis revenir en pleine saisie), mais ce n'est pas traité.
+- **Base absente au rendu :** les réglages s'affichent désactivés jusqu'à une lecture réussie. Aucun choix n'est gardé en attente, faute de contexte à qui l'envoyer.
 - La synchronisation entre appareils se fait au rendu et au retour sur l'onglet, pas en temps réel (pas de Realtime).
 - **Fraîcheur entre incarnations :** l'ordre est celui d'envoi des requêtes, pas celui de leur traitement par le serveur.
   - Une lecture envoyée plus tard mais servie plus tôt peut montrer brièvement un état plus ancien **pour les champs sans intention**.

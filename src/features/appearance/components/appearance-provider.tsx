@@ -108,7 +108,13 @@ export function AppearanceProvider({
     [],
   );
   const value = useMemo(
-    () => ({ appearance, change, sync: null, savedHere: false, retry: () => undefined }),
+    () => ({
+      appearance,
+      change,
+      sync: null,
+      savedHere: false,
+      retry: () => undefined,
+    }),
     [appearance, change],
   );
   return <AppearanceFrame value={value}>{children}</AppearanceFrame>;
