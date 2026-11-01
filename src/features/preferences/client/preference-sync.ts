@@ -1,5 +1,4 @@
 import {
-  changesBetween,
   sameContext,
   type AppearanceChanges,
   type AppearancePreferences,
@@ -11,41 +10,56 @@ import {
 // How a device keeps her preferences in step with her account, as a pure
 // state machine (the appearance engine's provider drives it; tested in
 // preference-sync.test.ts). The account decides; the device shows her
-// choices at once and sends them.
+// choices at once and sends them until the account acknowledges them.
+//
+// Two things are kept apart, and never inferred from each other:
+//   * observed: the latest state of the account this device has seen (from
+//     a read or from a save's answer). Reads only ever change this;
+//   * intents: what she chose here, field by field, each with a revision.
+//     An intent leaves only when a save that carried that very revision is
+//     acknowledged (saved or unchanged, for its ticket). Never because the
+//     observed state happens to hold the same value: an observed state may
+//     be stale, and an equal value in it acknowledges nothing.
+// What she sees is observed + intents.
 //
 // Isolation. Every answer is matched against three things, and ignored
-// entirely (data, completion, failure) if one does not match:
+// entirely (data, acknowledgement, failure) if one does not match:
 //   * the generation: a number the device gives each context it enters.
 //     Entering a context (another account, another business, the same one
 //     again after leaving it, a new sign-in) starts a new generation;
 //     answers to requests of an earlier generation are dropped, whatever
-//     their content or version;
+//     their content or version. Her intents of the previous context are
+//     dropped too, deliberately: they were for that account;
 //   * the context the server answered for (her membership): an answer for
 //     another one means the session changed under this page; nothing of it
-//     is taken, and saving stops until the page enters the new context;
-//   * the request: a save's answer or failure ends that save only (its
+//     is taken, intents are kept, and saving pauses;
+//   * the request: a save's answer or failure concerns that save only (its
 //     ticket), never a later one.
 //
-// Freshness, within a context. The account's state is (incarnation,
+// Freshness of observed states, within a context. A state is (incarnation,
 // version). Within one incarnation, the higher version is the newer. Across
-// incarnations (the row was deleted and created again, or does not exist
-// any more), versions mean nothing: the answer to the request sent last is
-// the newer. An older state never replaces a newer one.
+// incarnations (the row was deleted and created again, or does not exist),
+// versions mean nothing: the answer to the request sent last is taken.
+// That order is the order of sending, not of serving, so a stale state may
+// be shown for a moment: it changes no intent, and when the device holds
+// an answer it could not order, it asks for a read (`readAfter`).
 //
-// What she sees is confirmed + inFlight + pending. A save is a patch of
-// her changes, based on the confirmed state. Its answer:
-//   saved / unchanged  what was sent is the account's; pending goes next;
-//   stale              nothing was written: what was sent goes back to
-//                      pending, sent again on the state the answer brought;
-//   failed (network)   the same, sent again later (the driver waits).
+// A save sends every intent (one save at a time), based on the observed
+// state. Its answer:
+//   saved / unchanged  the intents it carried, at the revisions it carried,
+//                      are acknowledged; newer ones are sent next;
+//   stale              nothing acknowledged; sent again on the state the
+//                      answer brought;
+//   failed (network)   nothing acknowledged; sent again later.
 // After STALE_LIMIT stale answers in a row, saving pauses ("conflict")
 // until a read brings the account's state again: never an endless loop.
 // A refusal for the context (signed out, another session, or the session
 // unreadable while the database is away: the server cannot tell) pauses it
-// too; a read answered for this same context resumes it, so nothing she
-// chose is lost once the account answers again.
+// too; a read answered for this same context resumes it.
 
 export const STALE_LIMIT = 5;
+
+type Field = keyof AppearancePreferences;
 
 /** Identifies a request: its context's generation, and its order. */
 export type Ticket = { generation: number; seq: number };
@@ -61,15 +75,27 @@ export type SaveAnswer = PreferencesSnapshot & {
   status: "saved" | "unchanged" | "stale";
 };
 
+/** Her choice for one field, and when she made it (a revision). */
+export type Intent<F extends Field = Field> = {
+  value: AppearancePreferences[F];
+  rev: number;
+};
+
+export type Intents = { [F in Field]?: Intent<F> };
+
 export type SyncState = {
   context: PreferenceContext;
   generation: number;
-  confirmed: MemberPreferences;
-  /** The request whose answer brought `confirmed` (0: the page's render). */
-  confirmedSeq: number;
+  /** The account's latest state seen here; never a confirmation of intents. */
+  observed: MemberPreferences;
+  /** The request whose answer brought `observed` (0: the page's render). */
+  observedSeq: number;
   nextSeq: number;
-  inFlight: SaveRequest | null;
-  pending: AppearanceChanges;
+  nextRev: number;
+  /** Her choices not acknowledged yet (sent or not). */
+  intents: Intents;
+  /** The save being sent, with the revisions it carries. */
+  inFlight: { request: SaveRequest; revs: { [F in Field]?: number } } | null;
   staleStreak: number;
   /**
    * context_changed: the session is not, or could not be shown to be, this
@@ -78,6 +104,11 @@ export type SyncState = {
    * paused; a read answered for this context resumes.
    */
   paused: "context_changed" | "conflict" | null;
+  /**
+   * A read is due: the device holds an answer it could not order with what
+   * it observed. Cleared by a read sent from that point on (ticket.seq ≥).
+   */
+  readAfter: number | null;
 };
 
 /** Enters a context (the page's first render of the area). */
@@ -88,20 +119,22 @@ export function initialSyncState(
   return {
     context: snapshot.context,
     generation,
-    confirmed: snapshot.preferences,
-    confirmedSeq: 0,
+    observed: snapshot.preferences,
+    observedSeq: 0,
     nextSeq: 1,
+    nextRev: 1,
+    intents: {},
     inFlight: null,
-    pending: {},
     staleStreak: 0,
     paused: null,
+    readAfter: null,
   };
 }
 
 /**
  * The page entered a context again (another account or business, the same
  * one after a new sign-in, or after leaving and joining again): a new
- * generation. Nothing of the previous one is kept, not even unsent choices
+ * generation. Nothing of the previous one is kept, not even her intents
  * (they were for that account), and its answers are ignored from now on.
  */
 export function enterContext(
@@ -111,44 +144,69 @@ export function enterContext(
   return initialSyncState(snapshot, state.generation + 1);
 }
 
-/** What the area shows: the account's state with her unconfirmed choices. */
+/** What the area shows: the account's state with her intents. */
 export function displayedAppearance(state: SyncState): AppearancePreferences {
-  return { ...base(state), ...state.pending };
+  const shown = { ...state.observed.appearance };
+  for (const field of fields(state.intents)) {
+    Object.assign(shown, { [field]: state.intents[field]!.value });
+  }
+  return shown;
 }
 
-/** She changed something here (shown at once, sent by nextSave). */
+/** Her choices not acknowledged by the account yet (sent or not). */
+export function unacknowledgedChanges(state: SyncState): AppearanceChanges {
+  const changes: AppearanceChanges = {};
+  for (const field of fields(state.intents)) {
+    Object.assign(changes, { [field]: state.intents[field]!.value });
+  }
+  return changes;
+}
+
+/**
+ * She changed something here: each field that differs from what she sees
+ * becomes an intent, at a new revision (shown at once, sent by nextSave).
+ */
 export function changeLocally(
   state: SyncState,
   next: AppearancePreferences,
 ): SyncState {
-  return { ...state, pending: changesBetween(base(state), next) };
+  const shown = displayedAppearance(state);
+  const intents: Intents = { ...state.intents };
+  let rev = state.nextRev;
+  for (const field of Object.keys(next) as Field[]) {
+    if (next[field] !== shown[field]) {
+      Object.assign(intents, { [field]: { value: next[field], rev } });
+      rev += 1;
+    }
+  }
+  return rev === state.nextRev ? state : { ...state, intents, nextRev: rev };
 }
 
 /** The save to send now, if any (one at a time; none while paused). */
 export function nextSave(state: SyncState): [SyncState, SaveRequest | null] {
-  if (
-    state.inFlight ||
-    state.paused ||
-    Object.keys(state.pending).length === 0
-  ) {
+  if (state.inFlight || state.paused || fields(state.intents).length === 0) {
     return [state, null];
+  }
+  const revs: { [F in Field]?: number } = {};
+  for (const field of fields(state.intents)) {
+    revs[field] = state.intents[field]!.rev;
   }
   const request: SaveRequest = {
     ticket: { generation: state.generation, seq: state.nextSeq },
     context: state.context,
     expected: {
-      incarnation: state.confirmed.incarnation,
-      version: state.confirmed.version,
+      incarnation: state.observed.incarnation,
+      version: state.observed.version,
     },
-    changes: state.pending,
+    changes: unacknowledgedChanges(state),
   };
   return [
-    { ...state, nextSeq: state.nextSeq + 1, inFlight: request, pending: {} },
+    { ...state, nextSeq: state.nextSeq + 1, inFlight: { request, revs } },
     request,
   ];
 }
 
-/** A read to send (focus, another tab): its ticket. */
+/** A read to send (focus, another tab, readAfter): its ticket. */
 export function startRead(state: SyncState): [SyncState, Ticket] {
   return [
     { ...state, nextSeq: state.nextSeq + 1 },
@@ -163,31 +221,35 @@ export function saveAnswered(
   answer: SaveAnswer,
 ): SyncState {
   const sent = state.inFlight;
-  if (!sent || !sameTicket(sent.ticket, ticket)) return state;
+  if (!sent || !sameTicket(sent.request.ticket, ticket)) return state;
   if (!sameContext(answer.context, state.context)) {
-    // Nothing of it is taken; her choice stays, unsent, for this context.
-    return settle({
-      ...state,
-      inFlight: null,
-      pending: { ...sent.changes, ...state.pending },
-      paused: "context_changed",
-    });
+    // Nothing of it is taken; her intents stay, for this context.
+    return { ...state, inFlight: null, paused: "context_changed" };
   }
-  const stale = answer.status === "stale";
-  const staleStreak = stale ? state.staleStreak + 1 : 0;
-  return settle({
-    ...adopt(state, ticket.seq, answer.preferences),
-    inFlight: null,
-    pending: stale ? { ...sent.changes, ...state.pending } : state.pending,
-    staleStreak,
-    paused: staleStreak >= STALE_LIMIT ? "conflict" : state.paused,
-  });
+  const observed = observe(state, ticket.seq, answer.preferences);
+  if (answer.status === "stale") {
+    const staleStreak = state.staleStreak + 1;
+    return {
+      ...observed,
+      inFlight: null,
+      staleStreak,
+      paused: staleStreak >= STALE_LIMIT ? "conflict" : state.paused,
+    };
+  }
+  // Acknowledged: exactly the intents this save carried, at the revisions
+  // it carried. One she changed again since is newer, and stays.
+  const intents: Intents = { ...state.intents };
+  for (const field of Object.keys(sent.revs) as Field[]) {
+    if (intents[field]?.rev === sent.revs[field]) delete intents[field];
+  }
+  return { ...observed, intents, inFlight: null, staleStreak: 0 };
 }
 
 /**
  * A save got no answer the device can use: `network` (no answer, the
  * database away…: sent again later) or `context_changed` (the session is
- * another context's: nothing more is sent from this one).
+ * another context's, or could not be shown to be this one: paused). Her
+ * intents stay either way.
  */
 export function saveFailed(
   state: SyncState,
@@ -195,16 +257,15 @@ export function saveFailed(
   reason: "network" | "context_changed",
 ): SyncState {
   const sent = state.inFlight;
-  if (!sent || !sameTicket(sent.ticket, ticket)) return state;
-  return settle({
+  if (!sent || !sameTicket(sent.request.ticket, ticket)) return state;
+  return {
     ...state,
     inFlight: null,
-    pending: { ...sent.changes, ...state.pending },
     paused: reason === "context_changed" ? "context_changed" : state.paused,
-  });
+  };
 }
 
-/** The answer to a read. */
+/** The answer to a read: the account's state, never an acknowledgement. */
 export function readAnswered(
   state: SyncState,
   ticket: Ticket,
@@ -217,46 +278,60 @@ export function readAnswered(
   // The server has just answered for this very context: whatever paused
   // saving (a refusal while signed out or while the database was away, an
   // answer for another context, too many stale answers) no longer holds.
-  return settle({
-    ...adopt(state, ticket.seq, snapshot.preferences),
+  const observed = observe(state, ticket.seq, snapshot.preferences);
+  return {
+    ...observed,
     staleStreak: 0,
     paused: null,
-  });
+    readAfter:
+      observed.readAfter !== null && ticket.seq >= observed.readAfter
+        ? null
+        : observed.readAfter,
+  };
 }
 
 function sameTicket(a: Ticket, b: Ticket) {
   return a.generation === b.generation && a.seq === b.seq;
 }
 
-function base(state: Pick<SyncState, "confirmed" | "inFlight">) {
-  return { ...state.confirmed.appearance, ...state.inFlight?.changes };
+function fields(intents: Intents) {
+  return Object.keys(intents) as Field[];
 }
 
-/** `candidate`, answered to request `seq`, if it is newer than confirmed. */
-function adopt(
+function sameState(a: MemberPreferences, b: MemberPreferences) {
+  return (
+    a.incarnation === b.incarnation &&
+    a.version === b.version &&
+    JSON.stringify(a.appearance) === JSON.stringify(b.appearance)
+  );
+}
+
+/**
+ * `candidate`, answered to request `seq`, replaces the observed state if it
+ * is newer. An answer that differs and cannot be ordered with it (another
+ * incarnation, sent earlier) asks for a read. Intents are never touched.
+ */
+function observe(
   state: SyncState,
   seq: number,
   candidate: MemberPreferences,
 ): SyncState {
-  const current = state.confirmed;
-  const newer =
+  const current = state.observed;
+  const sameIncarnation =
     candidate.incarnation !== null &&
-    candidate.incarnation === current.incarnation
-      ? candidate.version > current.version
-      : seq > state.confirmedSeq;
-  if (!newer) return state;
-  return {
-    ...state,
-    confirmed: candidate,
-    confirmedSeq: Math.max(seq, state.confirmedSeq),
-  };
-}
-
-/** Pending reduced to what confirmed + inFlight does not already have. */
-function settle(state: SyncState): SyncState {
-  const from = base(state);
-  return {
-    ...state,
-    pending: changesBetween(from, { ...from, ...state.pending }),
-  };
+    candidate.incarnation === current.incarnation;
+  const newer = sameIncarnation
+    ? candidate.version > current.version
+    : seq > state.observedSeq;
+  if (newer) {
+    return {
+      ...state,
+      observed: candidate,
+      observedSeq: Math.max(seq, state.observedSeq),
+    };
+  }
+  if (!sameIncarnation && !sameState(candidate, current)) {
+    return { ...state, readAfter: state.readAfter ?? state.nextSeq };
+  }
+  return state;
 }

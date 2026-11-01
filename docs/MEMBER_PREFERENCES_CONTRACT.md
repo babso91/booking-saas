@@ -172,7 +172,7 @@ La réponse contient toujours le contexte et l'état actuel du compte. Avec `sta
 | Changement de compte ou d'établissement   | nouveau contexte, nouvelle génération (`enterContext`) ; toute réponse de l'ancien est ignorée ; une requête de l'ancien exécutée sous la nouvelle session est refusée (`context_changed`) |
 | Départ puis retour dans l'établissement   | nouvelle appartenance, donc nouveau contexte ; la page restée ouverte n'écrit rien ; le nouveau rendu repart de la version 0, sans blocage                                                 |
 | Déconnexion puis reconnexion              | nouvelle génération, mêmes préférences ; déconnectée, rien n'est lisible ni écrit                                                                                                          |
-| Réponses concurrentes ou en désordre      | un état plus ancien ne remplace jamais un plus récent (§ 6)                                                                                                                                |
+| Réponses concurrentes ou en désordre      | un état plus ancien ne remplace jamais un plus récent (§ 6) ; une lecture, même périmée, n'efface jamais un choix non acquitté                                                             |
 | Écritures répétées                        | `unchanged`, version inchangée ; l'appareil n'envoie rien sans changement                                                                                                                  |
 | Erreur réseau                             | le changement reste en attente et est renvoyé ; un nouvel essai déjà appliqué donne `unchanged`                                                                                            |
 | Base absente                              | rendu depuis `dash_pref` (son compte) ou les défauts ; les écritures échouent, la synchronisation se met en pause, et reprend dès qu'une lecture répond pour ce contexte                   |
@@ -226,33 +226,73 @@ const appearance = renderableAppearance(area.appearance, [
   - `unauthenticated`, `no_business`, `validation_error` ;
   - `internal` : base absente ou réseau côté serveur.
 
-**Côté client : isolation des contextes.** Le fournisseur d'apparence pilote la machine d'état pure de `src/features/preferences/client/preference-sync.ts`. Chaque réponse est confrontée à trois choses, et ignorée **entièrement** (données, fin de sauvegarde, échec) si l'une ne correspond pas :
+**Côté client : état observé et intentions.** Le fournisseur d'apparence pilote la machine d'état pure de `src/features/preferences/client/preference-sync.ts`. Elle sépare strictement deux choses, qui ne se déduisent jamais l'une de l'autre :
+
+| Champ de `SyncState`         | Ce que c'est                                                                                        | Qui le change                                                                                                                         |
+| ---------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `observed` (+ `observedSeq`) | le dernier état du compte vu ici (lecture ou réponse de sauvegarde)                                 | `readAnswered`, `saveAnswered`, seulement s'il est plus récent                                                                        |
+| `intents`                    | ses choix, champ par champ, chacun avec une **révision**, tant que le compte ne les a pas acquittés | `changeLocally` (ajoute ou remplace) ; `saveAnswered` `saved`/`unchanged` (retire **les révisions envoyées**) ; `enterContext` (vide) |
+| `inFlight`                   | la sauvegarde en cours : la requête et les révisions qu'elle transporte                             | `nextSave`, puis sa réponse ou son échec                                                                                              |
+| `paused`, `staleStreak`      | pause (`context_changed`, `conflict`) et compteur de `stale`                                        | réponses, échecs, lectures du même contexte                                                                                           |
+| `readAfter`                  | une lecture est due (l'appareil tient une réponse qu'il n'a pas pu ordonner)                        | levée par une lecture envoyée à partir de ce point                                                                                    |
+
+Ce qu'elle affiche : `displayedAppearance(state)`, soit `observed` plus les `intents`.
+
+**Ce qui constitue une confirmation fiable.** Seule la réponse `saved` ou `unchanged` **à la sauvegarde qui a transporté une intention** (même ticket, même révision) l'acquitte et la retire.
+
+- **Jamais une lecture**, même si l'état lu contient la même valeur : un état lu peut être périmé, et l'égalité d'une valeur n'acquitte rien. C'est le défaut corrigé suite au contre-audit Codex.
+- **Jamais `stale`, ni un échec réseau** : les intentions restent, et repartent sur l'état reçu.
+- **Une intention modifiée après l'envoi** (révision plus récente) reste, même si l'ancienne révision est acquittée.
+
+**Isolation des contextes.** Chaque réponse est confrontée à trois choses, et ignorée **entièrement** (données, acquittement, échec) si l'une ne correspond pas :
 
 1. **La génération.** C'est un numéro que l'appareil donne à chaque contexte où il entre. Changement de compte, d'établissement, nouvelle connexion ou retour après un départ : nouvelle génération. Les réponses à des requêtes d'une génération précédente sont abandonnées, quelle que soit leur version.
-2. **Le contexte pour lequel le serveur a répondu** (son appartenance). Une réponse pour un autre contexte signifie que la session a changé sous la page : rien n'en est pris, et la sauvegarde se met en pause.
-3. **La requête (ticket).** La réponse ou l'échec d'une sauvegarde ne termine que celle-ci, jamais une plus récente.
+2. **Le contexte pour lequel le serveur a répondu** (son appartenance). Une réponse pour un autre contexte signifie que la session a changé sous la page : rien n'en est pris, les intentions restent, et la sauvegarde se met en pause.
+3. **La requête (ticket).** La réponse ou l'échec d'une sauvegarde ne concerne que celle-ci, jamais une plus récente.
 
-**Fraîcheur, dans un contexte :**
+**Fraîcheur de l'état observé, dans un contexte :**
 
 - dans une même incarnation, la version la plus haute l'emporte ;
-- entre incarnations différentes (ou sans ligne), c'est la réponse à la requête envoyée en dernier.
+- entre incarnations différentes (ou sans ligne), c'est la réponse à la requête envoyée en dernier ;
+- une réponse différente que l'appareil ne peut pas ordonner pose `readAfter` : faire une lecture.
+
+Dans les deux cas, cela ne change que ce qui est affiché pour les champs sans intention, jamais les intentions.
 
 **Étapes :**
 
 1. `initialSyncState(area.snapshot)` au premier rendu, puis `enterContext(state, area.snapshot)` à chaque rendu dont le contexte diffère, ou après une nouvelle connexion. Afficher `displayedAppearance(state)`. Si `area.snapshot` est `null`, afficher `area.appearance` et ne rien envoyer avant une lecture réussie.
-2. Au choix de la professionnelle : `changeLocally(state, next)` (appliqué tout de suite), puis `nextSave(state)` donne la requête à envoyer, une seule à la fois, avec son ticket.
-3. À la réponse : `saveAnswered(state, request.ticket, data)`, puis `nextSave` à nouveau. Avec `stale`, la même intention est renvoyée sur l'état reçu.
+2. Au choix de la professionnelle : `changeLocally(state, next)` (appliqué tout de suite ; chaque champ qui diffère de ce qu'elle voit devient une intention), puis `nextSave(state)` donne la requête à envoyer, une seule à la fois, avec son ticket. Elle transporte toutes les intentions.
+3. À la réponse : `saveAnswered(state, request.ticket, data)`, puis `nextSave` à nouveau. Les intentions plus récentes, ou non acquittées (`stale`), repartent.
 4. En cas d'erreur :
-   - `context_changed`, `unauthenticated`, `forbidden` ou `no_business` : `saveFailed(state, ticket, "context_changed")`. La sauvegarde est en pause et le choix conservé. Recharger la page (`router.refresh()`) : le layout donnera le nouveau contexte.
+   - `context_changed`, `unauthenticated`, `forbidden` ou `no_business` : `saveFailed(state, ticket, "context_changed")`. La sauvegarde est en pause et les intentions conservées. Recharger la page (`router.refresh()`) : le layout donnera le contexte.
    - Toute autre erreur, ou pas de réponse : `saveFailed(state, ticket, "network")`, puis un nouvel essai avec délai croissant.
-5. Au retour sur l'onglet (`visibilitychange`, `focus`), ou après une pause : `startRead(state)` puis `getMyPreferencesAction()`, puis `readAnswered(state, ticket, data)`. Une lecture répondue pour ce même contexte lève la pause, et le choix en attente part.
+5. Lectures :
+   - quand faire une lecture : au retour sur l'onglet (`visibilitychange`, `focus`), après une pause, et dès que `state.readAfter !== null` ;
+   - comment : `startRead(state)`, puis `getMyPreferencesAction()`, puis `readAnswered(state, ticket, data)` ;
+   - une lecture répondue pour ce même contexte lève la pause, et les intentions repartent.
 6. Après `STALE_LIMIT` (5) réponses `stale` consécutives, la sauvegarde se met en pause (`paused: "conflict"`) jusqu'à la lecture suivante : jamais de boucle infinie.
+7. `unacknowledgedChanges(state)` donne ses choix pas encore acquittés : pour afficher « enregistrement… », ou avertir avant de quitter la page.
 
 - Si `deviceAppearanceOffer` est présent, proposer l'import et ne rien importer sans son accord.
 - Si `source === "device"`, afficher discrètement que les préférences n'ont pas pu être synchronisées.
 - Le cookie `dash_appearance` peut cesser d'être écrit une fois le branchement fait. `dash_pref` est posé par le serveur.
 
-**Ce qui n'est pas conservé, volontairement :** au changement de contexte, les choix non envoyés de l'ancien contexte sont abandonnés. Ils appartenaient à l'autre compte, et ne sont jamais envoyés au nouveau.
+**Deux comportements à ne pas confondre :**
+
+- **Sortie de contexte** (`enterContext` : autre compte, autre établissement, nouvelle connexion, retour après un départ) : les intentions non acquittées de l'ancien contexte sont **abandonnées volontairement**. Elles appartenaient à l'autre compte, et ne sont jamais envoyées au nouveau. L'interface peut prévenir avant si `unacknowledgedChanges` n'est pas vide.
+- **Même contexte** : aucune lecture, périmée ou non, aucune réponse tardive, aucun `stale`, aucun échec ne fait disparaître une intention. Seul son acquittement le fait.
+
+**Migration depuis le contrat précédent (`0d29cd4`) :**
+
+| Avant                                     | Maintenant                                                                                    |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `state.confirmed`                         | `state.observed` : un état observé, plus une « confirmation »                                 |
+| `state.confirmedSeq`                      | `state.observedSeq`                                                                           |
+| `state.pending` (écart avec l'état connu) | `state.intents` (choix avec révisions) ; lire les valeurs avec `unacknowledgedChanges(state)` |
+| `state.inFlight` (la requête)             | `state.inFlight.request` (et `state.inFlight.revs`)                                           |
+| —                                         | `state.readAfter` : lancer une lecture quand il n'est pas `null`                              |
+
+Les fonctions et leurs signatures sont inchangées : `initialSyncState`, `enterContext`, `displayedAppearance`, `changeLocally`, `nextSave`, `startRead`, `saveAnswered`, `saveFailed`, `readAnswered`. `unacknowledgedChanges` est nouvelle.
 
 **À noter :** poser un cookie dans une Server Action rafraîchit la route. Le layout relit alors le compte. Si le contexte n'a pas changé, ne pas appeler `enterContext` : le nouvel état passe par `readAnswered` ou les réponses de sauvegarde.
 
@@ -274,6 +314,10 @@ Contrat proposé pour une PR ultérieure, distinct des préférences :
 
 - L'interface n'est pas branchée : le moteur d'apparence est dans les PR #28 et #29.
 - La synchronisation entre appareils se fait au rendu et au retour sur l'onglet, pas en temps réel (pas de Realtime).
-- **Fraîcheur entre incarnations :** l'ordre est celui d'envoi des requêtes, pas celui de leur traitement par le serveur. Une lecture envoyée plus tard mais servie plus tôt peut montrer brièvement un état plus ancien ; la prochaine lecture ou sauvegarde le corrige (testé : jamais de blocage).
+- **Fraîcheur entre incarnations :** l'ordre est celui d'envoi des requêtes, pas celui de leur traitement par le serveur.
+  - Une lecture envoyée plus tard mais servie plus tôt peut montrer brièvement un état plus ancien **pour les champs sans intention**.
+  - Les intentions ne sont jamais touchées.
+  - La lecture demandée par `readAfter`, ou la prochaine sauvegarde, corrige l'affichage (testé : jamais de blocage).
+- **Intentions égales à l'état du compte :** elles sont envoyées quand même, et acquittées par `unchanged`. Cela coûte un aller-retour, et c'est voulu : l'égalité avec un état observé n'est pas une preuve.
 - **Indisponibilité de la base :** la session ne peut pas être vérifiée et l'action répond `unauthenticated`. Le client ne distingue pas ce cas d'une vraie déconnexion : la sauvegarde se met en pause, sans rien perdre, jusqu'à une lecture réussie.
 - Les préférences d'affichage autres que l'apparence (widgets, image personnelle) ne sont pas encore modélisées (§ 5 et § 7).

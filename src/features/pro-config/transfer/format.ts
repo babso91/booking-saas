@@ -188,7 +188,7 @@ export function checksumOf(payload: ProConfigPayload) {
   return `sha256:${createHash("sha256").update(canonicalJson(payload)).digest("hex")}`;
 }
 
-/** Seals a payload (validated first). */
+/** Seals a payload (validated first): content checksum, not a signature. */
 export function sealProConfig(payload: ProConfigPayload): ProConfigDocument {
   const valid = payloadSchema.parse(payload);
   return { ...valid, checksum: checksumOf(valid) };
@@ -199,8 +199,12 @@ export type OpenResult =
   | { ok: false; reason: "invalid" | "checksum_mismatch"; issues?: string[] };
 
 /**
- * Reads a document strictly: its shape, then its checksum (a document
- * edited by hand after export is refused).
+ * Reads a document strictly: its shape, then that its checksum matches its
+ * content. A document changed without recomputing the checksum (by hand,
+ * truncated, corrupted) is refused; one changed AND given a recomputed
+ * checksum is accepted: the checksum has no key, so it proves neither who
+ * wrote the document, nor where it comes from, nor the consent it cites
+ * (docs/PRO_CONFIG_TRANSFER.md, « Empreinte »).
  */
 export function openProConfig(raw: unknown): OpenResult {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {

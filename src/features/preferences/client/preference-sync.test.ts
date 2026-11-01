@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultAppearancePreferences,
   noMemberPreferences,
+  sameContext,
   type AppearancePreferences,
   type MemberPreferences,
   type PreferenceContext,
@@ -14,6 +15,7 @@ import {
   displayedAppearance,
   enterContext,
   initialSyncState,
+  unacknowledgedChanges,
   nextSave,
   readAnswered,
   saveAnswered,
@@ -272,7 +274,7 @@ describe("preference sync: one context", () => {
     const answer = server.save(A, retry!);
     expect(answer).toMatchObject({ status: "unchanged" });
     device = answerSave(again, retry!, answer);
-    expect(device.confirmed.version).toBe(1);
+    expect(device.observed.version).toBe(1);
     expect(nextSave(device)[1]).toBeNull();
   });
 
@@ -297,7 +299,7 @@ describe("preference sync: one context", () => {
       },
     });
     expect(after).toEqual(s2);
-    expect(after.inFlight).toEqual(second);
+    expect(after.inFlight?.request).toEqual(second);
   });
 
   it("repeated identical writes send nothing", () => {
@@ -350,6 +352,234 @@ describe("preference sync: one context", () => {
   });
 });
 
+describe("preference sync: a stale read never erases an intent", () => {
+  /** Codex's interleaving, against the server: returns the device and the server. */
+  function codexInterleaving(order: "r1-then-r2" | "r2-then-r1") {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    const other = initialSyncState(server.read(A));
+    let device = initialSyncState(server.read(A));
+    // R1 is sent, its SQL delayed; R2 is sent and reads "no preferences"
+    // at once, its answer held.
+    const [s1, r1] = startRead(device);
+    const [s2, r2] = startRead(s1);
+    const r2Answer = server.read(A);
+    // Écrin is created (another tab of hers).
+    flush(changeLocally(other, look({ style: "ecrin" })), server, A);
+    // R1's SQL runs now: it reads Écrin.
+    const r1Answer = server.read(A);
+    device = s2;
+    const deliver = (state: SyncState, which: "r1" | "r2") =>
+      which === "r1"
+        ? readAnswered(state, r1, r1Answer)
+        : readAnswered(state, r2, r2Answer);
+    if (order === "r2-then-r1") device = deliver(device, "r2");
+    device = deliver(device, "r1");
+    if (order === "r2-then-r1") {
+      // R1, sent first, answers last: it cannot be ordered with R2 (another
+      // incarnation); the device asks for a read, as the driver does.
+      expect(device.readAfter).not.toBeNull();
+      device = read(device, server, A);
+    }
+    expect(displayedAppearance(device).style).toBe("ecrin");
+    // An accent save starts; meanwhile she picks Classique.
+    device = changeLocally(device, {
+      ...displayedAppearance(device),
+      accent: "#123456",
+    });
+    const [sending, accentSave] = nextSave(device);
+    device = changeLocally(sending, {
+      ...displayedAppearance(sending),
+      style: "classique",
+    });
+    expect(displayedAppearance(device).style).toBe("classique");
+    // R2's old answer arrives now (if not already).
+    if (order === "r1-then-r2") device = deliver(device, "r2");
+    expect(displayedAppearance(device).style).toBe("classique");
+    expect(unacknowledgedChanges(device)).toMatchObject({ style: "classique" });
+    // The accent save ends; then the device settles.
+    device = answerSave(device, accentSave!, server.save(A, accentSave!));
+    expect(unacknowledgedChanges(device)).toEqual({ style: "classique" });
+    const [next] = [nextSave(device)[1]];
+    expect(next?.changes).toMatchObject({ style: "classique" });
+    device = flush(device, server, A);
+    return { server, device };
+  }
+
+  it.each(["r1-then-r2", "r2-then-r1"] as const)(
+    "Codex's interleaving (%s): Classique is kept, sent, saved by the server, and shown",
+    (order) => {
+      const { server, device } = codexInterleaving(order);
+      expect(server.read(A).preferences.appearance).toMatchObject({
+        style: "classique",
+        accent: "#123456",
+      });
+      expect(device.intents).toEqual({});
+      const [reading, ticket] = startRead(device);
+      const fresh = readAnswered(reading, ticket, server.read(A));
+      expect(displayedAppearance(fresh)).toEqual(
+        server.read(A).preferences.appearance,
+      );
+    },
+  );
+
+  it("a read of an old incarnation during a save changes no intent", () => {
+    const server = new Server();
+    const context = server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    device = flush(changeLocally(device, look({ style: "studio" })), server, A);
+    const [reading, oldTicket] = startRead(device);
+    const old = server.read(A);
+    server.dropRow(context);
+    device = changeLocally(reading, look({ style: "studio", motion: "none" }));
+    const [sending, save] = nextSave(device);
+    device = changeLocally(sending, look({ style: "carnet", motion: "none" }));
+    device = readAnswered(device, oldTicket, old);
+    expect(unacknowledgedChanges(device)).toEqual({
+      style: "carnet",
+      motion: "none",
+    });
+    device = flush(answerSave(device, save!, server.save(A, save!)), server, A);
+    expect(server.read(A).preferences.appearance).toMatchObject({
+      style: "carnet",
+      motion: "none",
+    });
+  });
+
+  it.each([
+    ["equal to the stale state", "classique"],
+    ["different from the stale state", "carnet"],
+  ] as const)("a local choice %s survives the stale read", (_label, style) => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    const [reading, staleTicket] = startRead(device);
+    const stale = server.read(A);
+    flush(
+      changeLocally(initialSyncState(server.read(A)), look({ style: "ecrin" })),
+      server,
+      A,
+    );
+    device = read(reading, server, A);
+    device = changeLocally(device, look({ style }));
+    device = readAnswered(device, staleTicket, stale);
+    expect(unacknowledgedChanges(device)).toEqual({ style });
+    device = flush(device, server, A);
+    expect(server.read(A).preferences.appearance.style).toBe(style);
+  });
+
+  it("several successive choices of one field: an acknowledgement of an older one never removes the newer", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    device = changeLocally(device, look({ accent: "#000001" }));
+    const [sending, first] = nextSave(device);
+    device = changeLocally(sending, look({ accent: "#000002" }));
+    device = changeLocally(device, look({ accent: "#000003" }));
+    device = answerSave(device, first!, server.save(A, first!));
+    expect(unacknowledgedChanges(device)).toEqual({ accent: "#000003" });
+    device = flush(device, server, A);
+    expect(server.read(A).preferences.appearance.accent).toBe("#000003");
+    expect(server.writes).toHaveLength(2);
+  });
+
+  it("'unchanged' for an older choice never removes a newer one", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    device = changeLocally(device, look({ style: "studio" }));
+    const [sending, first] = nextSave(device);
+    // The account already has Studio (another device).
+    flush(
+      changeLocally(
+        initialSyncState(server.read(A)),
+        look({ style: "studio" }),
+      ),
+      server,
+      A,
+    );
+    device = changeLocally(sending, look({ style: "ecrin" }));
+    const answer = server.save(A, first!);
+    expect(answer).toMatchObject({ status: "unchanged" });
+    device = answerSave(device, first!, answer);
+    expect(unacknowledgedChanges(device)).toEqual({ style: "ecrin" });
+    device = flush(device, server, A);
+    expect(server.read(A).preferences.appearance.style).toBe("ecrin");
+  });
+
+  it("'stale' after a newer local choice: all her intents are sent again, the newest values", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    device = changeLocally(device, look({ accent: "#000001" }));
+    const [sending, first] = nextSave(device);
+    flush(
+      changeLocally(initialSyncState(server.read(A)), look({ mode: "dark" })),
+      server,
+      A,
+    );
+    device = changeLocally(
+      sending,
+      look({ accent: "#000001", style: "carnet" }),
+    );
+    const answer = server.save(A, first!);
+    expect(answer).toMatchObject({ status: "stale" });
+    device = answerSave(device, first!, answer);
+    const [, again] = nextSave(device);
+    expect(again?.changes).toEqual({ accent: "#000001", style: "carnet" });
+    expect(again?.expected).toEqual({
+      incarnation: server.read(A).preferences.incarnation,
+      version: server.read(A).preferences.version,
+    });
+    device = flush(device, server, A);
+    expect(server.read(A).preferences.appearance).toMatchObject({
+      mode: "dark",
+      accent: "#000001",
+      style: "carnet",
+    });
+  });
+
+  it("a fresh read after a successful save shows the account; nothing left to send", () => {
+    const server = new Server();
+    server.join(A.userId, A.businessId);
+    let device = flush(
+      changeLocally(
+        initialSyncState(server.read(A)),
+        look({ style: "studio" }),
+      ),
+      server,
+      A,
+    );
+    device = read(device, server, A);
+    expect(device.intents).toEqual({});
+    expect(displayedAppearance(device)).toEqual(
+      server.read(A).preferences.appearance,
+    );
+    expect(nextSave(device)[1]).toBeNull();
+  });
+
+  it("an answer it cannot order asks for a read, which settles what she sees", () => {
+    const server = new Server();
+    const context = server.join(A.userId, A.businessId);
+    let device = initialSyncState(server.read(A));
+    device = changeLocally(device, look({ style: "studio" }));
+    const [sending, save] = nextSave(device);
+    // A read sent after the save is served before it: no row.
+    const [reading, ticket] = startRead(sending);
+    const early = server.read(A);
+    const answer = server.save(A, save!);
+    device = readAnswered(reading, ticket, early);
+    device = answerSave(device, save!, answer);
+    // Saved, acknowledged; the observed state (sent later) wins for now.
+    expect(device.intents).toEqual({});
+    expect(device.readAfter).not.toBeNull();
+    device = read(device, server, A);
+    expect(device.readAfter).toBeNull();
+    expect(displayedAppearance(device).style).toBe("studio");
+    void context;
+  });
+});
+
 describe("preference sync: contexts are isolated", () => {
   function switchedDuringSave() {
     const server = new Server();
@@ -375,7 +605,7 @@ describe("preference sync: contexts are isolated", () => {
     const after = saveAnswered(sendingB, requestA.ticket, answerA);
     expect(after).toEqual(sendingB);
     expect(displayedAppearance(after)).toEqual(look({ motion: "none" }));
-    expect(after.inFlight).toEqual(requestB);
+    expect(after.inFlight?.request).toEqual(requestB);
   });
 
   it("A → B: A's late failure does not drop B's retry", () => {
@@ -462,7 +692,7 @@ describe("preference sync: contexts are isolated", () => {
     device = readAnswered(reading, ticket, server.read(B));
     expect(device.paused).toBe("context_changed");
     expect(displayedAppearance(device).style).toBe("studio");
-    expect(device.confirmed).toEqual(noMemberPreferences);
+    expect(device.observed).toEqual(noMemberPreferences);
     expect(nextSave(device)[1]).toBeNull();
   });
 
@@ -485,7 +715,7 @@ describe("preference sync: contexts are isolated", () => {
       status: "saved",
       ...server.read(B),
     });
-    expect(device.confirmed).toEqual(noMemberPreferences);
+    expect(device.observed).toEqual(noMemberPreferences);
     expect(device.paused).toBe("context_changed");
     expect(displayedAppearance(device).style).toBe("studio");
   });
@@ -503,7 +733,7 @@ describe("preference sync: contexts are isolated", () => {
     // The session now answers for B: still paused, nothing of B taken.
     device = read(device, server, B);
     expect(device.paused).toBe("context_changed");
-    expect(device.confirmed).toEqual(noMemberPreferences);
+    expect(device.observed).toEqual(noMemberPreferences);
     // It answers for A again: her choice is sent, to A.
     device = read(device, server, A);
     expect(device.paused).toBeNull();
@@ -539,7 +769,7 @@ describe("preference sync: leaving and joining again", () => {
         A,
       );
     }
-    expect(device.confirmed.version).toBe(3);
+    expect(device.observed.version).toBe(3);
 
     for (let cycle = 0; cycle < 3; cycle++) {
       server.leave(context);
@@ -554,7 +784,7 @@ describe("preference sync: leaving and joining again", () => {
       expect(device.paused).toBe("context_changed");
       // The page renders again: the new membership, no row (version 0).
       device = enterContext(device, server.read(A));
-      expect(device.confirmed).toEqual(noMemberPreferences);
+      expect(device.observed).toEqual(noMemberPreferences);
       device = flush(changeLocally(device, wanted), server, A);
       expect(server.read(A).preferences).toMatchObject({
         appearance: wanted,
@@ -590,7 +820,7 @@ describe("preference sync: leaving and joining again", () => {
       );
     }
     const phone = initialSyncState(server.read(A));
-    expect(laptop.confirmed.version).toBe(4);
+    expect(laptop.observed.version).toBe(4);
     server.dropRow(context);
     // The phone recreates it (version 1 of a new incarnation).
     const recreated = flush(
@@ -601,9 +831,9 @@ describe("preference sync: leaving and joining again", () => {
       server,
       A,
     );
-    expect(recreated.confirmed).toMatchObject({ version: 1 });
-    expect(recreated.confirmed.incarnation).not.toBe(
-      laptop.confirmed.incarnation,
+    expect(recreated.observed).toMatchObject({ version: 1 });
+    expect(recreated.observed.incarnation).not.toBe(
+      laptop.observed.incarnation,
     );
     // The laptop, still at version 4 of the old incarnation, changes the
     // style while it does not know: stale once, then saved.
@@ -617,23 +847,27 @@ describe("preference sync: leaving and joining again", () => {
       motion: "none",
     });
     expect(laptop.paused).toBeNull();
-    // A late read of the old incarnation (sent before) never comes back.
+    // A late read of the old incarnation (sent before) never comes back;
+    // the device, holding an answer it cannot order, asks for a read.
     const [reading, ticket] = startRead(laptop);
     const newest = readAnswered(reading, ticket, server.read(A));
-    expect(
-      readAnswered(
-        newest,
-        { generation: newest.generation, seq: 1 },
-        {
-          context: server.read(A).context,
-          preferences: {
-            appearance: look({ accent: "#000003" }),
-            incarnation: "00000000-0000-4000-8000-000000000099",
-            version: 4,
-          },
+    const late = readAnswered(
+      newest,
+      { generation: newest.generation, seq: 1 },
+      {
+        context: server.read(A).context,
+        preferences: {
+          appearance: look({ accent: "#000003" }),
+          incarnation: "00000000-0000-4000-8000-000000000099",
+          version: 4,
         },
-      ),
-    ).toEqual(newest);
+      },
+    );
+    expect(late.observed).toEqual(newest.observed);
+    expect(late.intents).toEqual(newest.intents);
+    expect(late.readAfter).toBe(newest.nextSeq);
+    const [again, fresh] = startRead(late);
+    expect(readAnswered(again, fresh, server.read(A)).readAfter).toBeNull();
   });
 
   it("a local change while she leaves and joins again is not sent to the new membership", () => {
@@ -649,13 +883,42 @@ describe("preference sync: leaving and joining again", () => {
   });
 });
 
+/**
+ * An intent may leave a device's state only if a save that carried that
+ * very revision was acknowledged (saved or unchanged), if a newer revision
+ * of the same field replaced it, or if the device entered a new context.
+ */
+function checkIntents(
+  before: SyncState,
+  after: SyncState,
+  how:
+    | {
+        kind: "acknowledged";
+        request: SaveRequest;
+        revs: Record<string, number>;
+      }
+    | { kind: "other" },
+) {
+  if (after.generation !== before.generation) return;
+  for (const [field, intent] of Object.entries(before.intents)) {
+    const now = after.intents[field as keyof typeof after.intents];
+    if (now?.rev === intent!.rev) continue;
+    if (now && now.rev > intent!.rev) continue;
+    expect(
+      how.kind === "acknowledged" && how.revs[field] === intent!.rev,
+      `intent ${field}@${intent!.rev} lost`,
+    ).toBe(true);
+  }
+}
+
 describe("preference sync: random interleavings", () => {
-  it("two devices and session changes: no answer crosses contexts, everything ends in step", () => {
+  it("two devices, stale and reordered reads, session changes: no answer crosses contexts, no intent is ever lost, everything ends in step", () => {
     let seed = 11;
     const random = () =>
       (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
-    const colours = ["#000001", "#000002", "#000003", "#000004"];
-    for (let run = 0; run < 300; run++) {
+    const colours = [null, "#000001", "#000002", "#000003"];
+    const styles = ["classique", "ecrin", "studio"] as const;
+    for (let run = 0; run < 400; run++) {
       const server = new Server();
       const contexts = [server.join(A.userId, A.businessId)];
       server.join(B.userId, B.businessId);
@@ -672,55 +935,83 @@ describe("preference sync: random interleavings", () => {
         ticket: ReturnType<typeof startRead>[1];
         snapshot: PreferencesSnapshot;
       }[][] = [[], []];
-      for (let step = 0; step < 40; step++) {
+      const step = (
+        index: number,
+        next: SyncState,
+        how: Parameters<typeof checkIntents>[2] = { kind: "other" },
+      ) => {
+        checkIntents(devices[index]!, next, how);
+        devices[index] = next;
+      };
+      for (let turn = 0; turn < 50; turn++) {
         const index = random() < 0.5 ? 0 : 1;
         const roll = random();
         const device = devices[index]!;
         if (roll < 0.3) {
-          devices[index] = changeLocally(device, {
-            ...displayedAppearance(device),
-            accent: colours[Math.floor(random() * colours.length)]!,
-          });
-        } else if (roll < 0.5 && !inFlight[index]) {
+          step(
+            index,
+            changeLocally(device, {
+              ...displayedAppearance(device),
+              ...(random() < 0.5
+                ? { accent: colours[Math.floor(random() * colours.length)]! }
+                : { style: styles[Math.floor(random() * styles.length)]! }),
+            }),
+          );
+        } else if (roll < 0.45 && !inFlight[index]) {
           const [state, request] = nextSave(device);
-          devices[index] = state;
+          step(index, state);
           if (request) inFlight[index] = { request, session: sessions[index]! };
-        } else if (roll < 0.7 && inFlight[index]) {
+        } else if (roll < 0.6 && inFlight[index]) {
           const { request, session } = inFlight[index]!;
           const answer = server.save(session, request);
-          devices[index] = answerSave(devices[index]!, request, answer);
-          inFlight[index] = null;
-        } else if (roll < 0.75 && inFlight[index]) {
-          devices[index] = saveFailed(
-            device,
-            inFlight[index]!.request.ticket,
-            "network",
+          const revs =
+            device.inFlight?.request === request ? device.inFlight.revs : {};
+          step(
+            index,
+            answerSave(device, request, answer),
+            answer !== "context_changed" && answer.status !== "stale"
+              ? {
+                  kind: "acknowledged",
+                  request,
+                  revs: revs as Record<string, number>,
+                }
+              : { kind: "other" },
           );
           inFlight[index] = null;
-        } else if (roll < 0.85) {
+        } else if (roll < 0.65 && inFlight[index]) {
+          step(
+            index,
+            saveFailed(device, inFlight[index]!.request.ticket, "network"),
+          );
+          inFlight[index] = null;
+        } else if (roll < 0.78) {
+          // A read whose answer is taken now, but may be delivered late.
           const [state, ticket] = startRead(device);
-          devices[index] = state;
+          step(index, state);
           reads[index]!.push({
             ticket,
             snapshot: server.read(sessions[index]!),
           });
-        } else if (roll < 0.92 && reads[index]!.length > 0) {
+        } else if (roll < 0.9 && reads[index]!.length > 0) {
           // A read answer, possibly an old one, possibly out of order.
           const at = Math.floor(random() * reads[index]!.length);
           const { ticket, snapshot } = reads[index]!.splice(at, 1)[0]!;
-          devices[index] = readAnswered(device, ticket, snapshot);
-        } else if (roll < 0.95) {
+          step(index, readAnswered(device, ticket, snapshot));
+        } else if (roll < 0.93) {
           // This device signs out and the other account signs in, or back.
           sessions[index] = sessions[index] === A ? B : A;
-          devices[index] = enterContext(device, server.read(sessions[index]!));
-        } else if (roll < 0.97 && sessions[index] === A) {
+          step(index, enterContext(device, server.read(sessions[index]!)));
+        } else if (roll < 0.95 && sessions[index] === A) {
           // She leaves the business and joins it again.
           server.leave(contexts[0]!);
           contexts[0] = server.join(A.userId, A.businessId);
+        } else if (roll < 0.97) {
+          // An administrator deletes the row (a new incarnation follows).
+          server.dropRow(server.read(sessions[index]!).context);
         }
         for (const state of devices) {
           // What a device shows comes from its own context, never another's.
-          const from = server.origin.get(state.confirmed);
+          const from = server.origin.get(state.observed);
           if (from) expect(from).toBe(state.context.membershipId);
         }
       }
@@ -733,14 +1024,29 @@ describe("preference sync: random interleavings", () => {
             server.save(session, request),
           );
         }
-        // The page reloads into its session's context, and settles.
-        devices[index] = enterContext(
-          devices[index]!,
-          server.read(sessions[index]!),
-        );
-        devices[index] = flush(devices[index]!, server, sessions[index]!);
+        const session = sessions[index]!;
+        if (
+          sameContext(devices[index]!.context, server.read(session).context)
+        ) {
+          // Still in its context: a read resumes it, and every intent it
+          // holds reaches the account.
+          const wanted = unacknowledgedChanges(devices[index]!);
+          devices[index] = flush(
+            read(devices[index]!, server, session),
+            server,
+            session,
+          );
+          expect(server.read(session).preferences.appearance).toMatchObject(
+            wanted,
+          );
+          expect(devices[index]!.intents).toEqual({});
+        } else {
+          // Its context is gone: the page reloads into the session's.
+          devices[index] = enterContext(devices[index]!, server.read(session));
+        }
+        devices[index] = read(devices[index]!, server, session);
         expect(displayedAppearance(devices[index]!)).toEqual(
-          server.read(sessions[index]!).preferences.appearance,
+          server.read(session).preferences.appearance,
         );
         expect(nextSave(devices[index]!)[1]).toBeNull();
       }

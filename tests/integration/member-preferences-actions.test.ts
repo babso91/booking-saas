@@ -18,6 +18,7 @@ import {
   saveAnswered,
   saveFailed,
   startRead,
+  unacknowledgedChanges,
   type SaveRequest,
   type SyncState,
 } from "@/features/preferences/client/preference-sync";
@@ -241,7 +242,7 @@ describe("preferences actions, on her devices", () => {
     laptop = await sync(
       changeLocally(laptop, look({ style: "ecrin", mode: "dark" })),
     );
-    expect(laptop.confirmed.version).toBe(1);
+    expect(laptop.observed.version).toBe(1);
 
     device = new Device();
     await signInHere(izabela);
@@ -256,7 +257,7 @@ describe("preferences actions, on her devices", () => {
         accent: "#2f6f5e",
       }),
     );
-    expect(phone.confirmed.appearance.accent).toBe("#2F6F5E");
+    expect(phone.observed.appearance.accent).toBe("#2F6F5E");
 
     device = laptopJar;
     laptop = await readAgain(laptop);
@@ -395,6 +396,111 @@ describe("preferences actions, on her devices", () => {
   });
 });
 
+describe("a stale read never erases her choice (Codex's interleaving, real actions)", () => {
+  async function codex(order: "r1-then-r2" | "r2-then-r1") {
+    const pro = await createAccount(`act-stale-${order}`);
+    const business = await createBusiness(pro.userId);
+    const laptopJar = new Device();
+    const otherJar = new Device();
+    device = otherJar;
+    await signInHere(pro);
+    const other = await enterArea(pro, business.id);
+    device = laptopJar;
+    await signInHere(pro);
+    let page = await enterArea(pro, business.id);
+
+    // R1 sent (its SQL will run late), R2 sent and executed now: no row.
+    const [s1, r1] = startRead(page);
+    const [s2, r2] = startRead(s1);
+    const r2Result = await getMyPreferencesAction();
+    // Écrin created from her other tab.
+    device = otherJar;
+    await sync(changeLocally(other, look({ style: "ecrin" })));
+    // R1's SQL runs now: Écrin.
+    device = laptopJar;
+    const r1Result = await getMyPreferencesAction();
+    if (!r1Result.ok || !r2Result.ok) throw new Error("read failed");
+    page = s2;
+    if (order === "r2-then-r1") {
+      page = readAnswered(page, r2, r2Result.data);
+      page = readAnswered(page, r1, r1Result.data);
+      expect(page.readAfter).not.toBeNull();
+      page = await readAgain(page);
+    } else {
+      page = readAnswered(page, r1, r1Result.data);
+    }
+    expect(displayedAppearance(page).style).toBe("ecrin");
+
+    // An accent save starts; she picks Classique while it is sent.
+    page = changeLocally(page, {
+      ...displayedAppearance(page),
+      accent: "#123456",
+    });
+    const [sending, accentSave] = nextSave(page);
+    const accentResult = sendSave(accentSave!);
+    page = changeLocally(sending, {
+      ...displayedAppearance(sending),
+      style: "classique",
+    });
+    if (order === "r1-then-r2") page = readAnswered(page, r2, r2Result.data);
+    expect(unacknowledgedChanges(page)).toMatchObject({ style: "classique" });
+    page = answer(page, accentSave!, await accentResult);
+    expect(unacknowledgedChanges(page)).toEqual({ style: "classique" });
+
+    // The device settles: Classique is sent and saved by PostgreSQL.
+    page = await sync(page);
+    page = await readAgain(page);
+    return { pro, business, page };
+  }
+
+  it.each(["r1-then-r2", "r2-then-r1"] as const)(
+    "%s: her Classique choice is kept, saved and shown",
+    async (order) => {
+      const { pro, business, page } = await codex(order);
+      expect(await rowOf(business.id, pro.userId)).toMatchObject({
+        style: "classique",
+        accent: "#123456",
+      });
+      expect(page.intents).toEqual({});
+      expect(displayedAppearance(page)).toMatchObject({
+        style: "classique",
+        accent: "#123456",
+      });
+    },
+  );
+
+  it("a read of the row before it was deleted and created again changes none of her choices", async () => {
+    const pro = await createAccount("act-stale-incarnation");
+    const business = await createBusiness(pro.userId);
+    device = new Device();
+    await signInHere(pro);
+    let page = await sync(
+      changeLocally(
+        await enterArea(pro, business.id),
+        look({ style: "studio" }),
+      ),
+    );
+    const [reading, oldTicket] = startRead(page);
+    const old = await getMyPreferencesAction();
+    await db.query(
+      "delete from public.member_preferences where business_id = $1",
+      [business.id],
+    );
+    page = changeLocally(reading, look({ style: "studio", motion: "none" }));
+    const [sending, save] = nextSave(page);
+    page = changeLocally(sending, look({ style: "carnet", motion: "none" }));
+    if (!old.ok) throw new Error("read failed");
+    page = readAnswered(page, oldTicket, old.data);
+    page = answer(page, save!, await sendSave(save!));
+    page = await sync(page);
+    expect(await rowOf(business.id, pro.userId)).toMatchObject({
+      style: "carnet",
+      motion: "none",
+    });
+    expect(page.intents).toEqual({});
+  });
+});
+
 describe("another account on the same device", () => {
   it("A → B: A's page saving after B signed in writes nothing (context_changed), and A's answer never reaches B's state", async () => {
     device = new Device();
@@ -505,7 +611,7 @@ describe("leaving the business and joining it again", () => {
         expect(await rowOf(business.id, member.userId)).toBeNull();
       }
       page = await enterArea(member, business.id, page);
-      expect(page.confirmed).toMatchObject({ incarnation: null, version: 0 });
+      expect(page.observed).toMatchObject({ incarnation: null, version: 0 });
       page = await sync(
         changeLocally(
           page,
@@ -540,10 +646,10 @@ describe("leaving the business and joining it again", () => {
       businessId: studioI.id,
     });
     expect(area).toMatchObject({ source: "device", snapshot: null });
-    expect(area.appearance).toEqual(page.confirmed.appearance);
+    expect(area.appearance).toEqual(page.observed.appearance);
 
     const motion =
-      page.confirmed.appearance.motion === "none" ? "discrete" : "none";
+      page.observed.appearance.motion === "none" ? "discrete" : "none";
     page = changeLocally(page, { ...displayedAppearance(page), motion });
     const [sending, request] = nextSave(page);
     const failed = await sendSave(request!);

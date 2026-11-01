@@ -236,6 +236,15 @@ describe("transfer format", () => {
     ).toThrow();
   });
 
+  it("LIMIT (documented): a document changed and given a recomputed checksum opens; the checksum proves no origin", () => {
+    const document = sealProConfig(payload());
+    const forged = reseal(document, {
+      consent: { reference: "INVENTÉ", grantedAt: document.consent.grantedAt },
+      services: [{ ...document.services[0]!, priceCents: 1 }],
+    });
+    expect(openProConfig(JSON.parse(JSON.stringify(forged))).ok).toBe(true);
+  });
+
   it("refuses what is not a document", () => {
     for (const raw of [null, "x", [], 42]) {
       expect(openProConfig(raw)).toEqual({ ok: false, reason: "invalid" });
