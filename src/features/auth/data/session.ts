@@ -1,5 +1,7 @@
 import "server-only";
 
+import { AppException } from "@/lib/errors";
+import { authFailureOf } from "@/lib/supabase/auth-errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
@@ -20,6 +22,8 @@ export type OnboardedBusiness = {
  * Server-side state of the current visitor. Derived from the Supabase Auth
  * server (getUser validates the session, it does not trust the cookie alone)
  * and from business_members read under RLS. Never from client state.
+ * Auth unreachable is not "unauthenticated": getSessionState throws
+ * AppException("auth_unavailable") instead (src/lib/supabase/auth-errors.ts).
  */
 export type SessionState =
   | { status: "unauthenticated" }
@@ -44,6 +48,9 @@ export async function getSessionState(
 ): Promise<SessionState> {
   const { data, error } = await client.auth.getUser();
 
+  if (error && authFailureOf(error) === "unavailable") {
+    throw new AppException("auth_unavailable", { cause: error });
+  }
   if (error || !data.user) {
     return { status: "unauthenticated" };
   }

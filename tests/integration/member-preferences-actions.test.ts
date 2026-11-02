@@ -741,12 +741,15 @@ describe("leaving the business and joining it again", () => {
     const failed = await sendSave(request!);
     expect(failed.ok).toBe(false);
     page = answer(sending, request!, failed);
-    // The session cannot be read either: saving pauses, her choice is kept.
+    // Auth cannot be reached either: a temporary error, not a sign-out.
+    // Her choice is kept, unacknowledged (never shown as saved), and sent
+    // again later (the driver backs off).
     expect(failed).toMatchObject({
       ok: false,
-      error: { code: "unauthenticated" },
+      error: { code: "auth_unavailable" },
     });
-    expect(page.paused).toBe("context_changed");
+    expect(page.paused).toBeNull();
+    expect(unacknowledgedChanges(page)).toEqual({ motion });
     expect(displayedAppearance(page).motion).toBe(motion);
 
     process.env.NEXT_PUBLIC_SUPABASE_URL = env.apiUrl;

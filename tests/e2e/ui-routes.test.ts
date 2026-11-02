@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 import { createServerClient } from "@supabase/ssr";
@@ -47,6 +48,7 @@ class Browser {
     return {
       status: response.status,
       location: response.headers.get("location"),
+      setCookies: response.headers.getSetCookie(),
       html: await response.text(),
     };
   }
@@ -160,6 +162,74 @@ describe("UI routes against the real backend", () => {
       expect(page.status).toBe(200);
       expect(page.html).toContain(slug);
     }
+  });
+
+  it("Supabase Auth down: /indisponible, never /login; her cookies survive; once Auth is back, the same session", async () => {
+    const { browser } = await signedInBrowser();
+    const { error } = await browser.supabase().rpc("complete_onboarding", {
+      p_first_name: "Mila",
+      p_last_name: "Laurent",
+      p_business_name: "Studio Mila",
+      p_slug: `studio-outage-${randomUUID().slice(0, 6)}`,
+      p_timezone: "Europe/Paris",
+      p_phone: "06 12 34 56 78",
+      p_minimum_booking_notice_minutes: 120,
+      p_maximum_booking_advance_days: 90,
+      p_buffer_minutes: 10,
+    });
+    expect(error).toBeNull();
+    const cookiesBefore = browser.header();
+
+    const auth = "supabase_auth_booking-saas";
+    const health = async () => {
+      try {
+        const response = await fetch(`${env.apiUrl}/auth/v1/health`, {
+          headers: { apikey: env.anonKey },
+          signal: AbortSignal.timeout(1000),
+        });
+        return response.status;
+      } catch {
+        return 0;
+      }
+    };
+    execFileSync("docker", ["stop", auth], { stdio: "ignore" });
+    try {
+      // The gateway first waits for the stopped upstream, then answers 5xx
+      // at once: wait for that (bounded), never for an arbitrary delay.
+      let attempts = 0;
+      while ((await health()) < 500) {
+        if (++attempts > 120) throw new Error("Auth never reported down");
+      }
+
+      for (const path of ["/app", "/app/welcome", "/onboarding", "/login"]) {
+        const page = await browser.get(path);
+        expectRedirect(page, "/indisponible");
+        // No session cookie is deleted.
+        expect(
+          page.setCookies.filter(
+            (line) =>
+              line.startsWith("sb-") && /max-age=0|^sb-[^=]+=;/i.test(line),
+          ),
+        ).toEqual([]);
+      }
+      const unavailable = await browser.get("/indisponible");
+      expect(unavailable.status).toBe(200);
+      expect(unavailable.html).toContain(
+        "Nous ne pouvons pas vérifier votre connexion.",
+      );
+      expect(browser.header()).toBe(cookiesBefore);
+    } finally {
+      execFileSync("docker", ["start", auth], { stdio: "ignore" });
+      let attempts = 0;
+      while ((await health()) !== 200) {
+        if (++attempts > 120) throw new Error("Auth did not come back");
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    const app = await browser.get("/app");
+    expect(app.status).toBe(200);
+    expect(app.html).toContain("Chargement de l’agenda");
   });
 
   it("explains a failed confirmation link on /login", async () => {

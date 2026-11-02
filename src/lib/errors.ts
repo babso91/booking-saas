@@ -102,6 +102,8 @@ export const appErrorMessages = {
     "Cette fiche cliente n’a pas d’adresse email : ajoutez-la avant d’ouvrir l’espace client.",
   context_changed:
     "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
+  auth_unavailable:
+    "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -218,6 +220,7 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_not_found: 404,
   client_hub_email_required: 409,
   context_changed: 409,
+  auth_unavailable: 503,
   internal: 500,
 };
 
