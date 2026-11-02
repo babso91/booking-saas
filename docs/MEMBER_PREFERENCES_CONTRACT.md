@@ -223,7 +223,8 @@ const appearance = renderableAppearance(area.appearance, [
 - `expected` vaut `{ incarnation, version }`, que la machine d'état fournit.
 - Erreurs :
   - `context_changed` : la session n'est plus ce contexte, rien d'écrit ;
-  - `unauthenticated`, `no_business`, `validation_error` ;
+  - `unauthenticated` (pas de session valide), `no_business`, `validation_error` ;
+  - `auth_unavailable` : Supabase Auth ne répond pas, la session n'a pas pu être vérifiée (ce n'est **pas** une déconnexion ; rien n'est écrit) ;
   - `internal` : base absente ou réseau côté serveur.
 
 **Côté client : état observé et intentions.** Le fournisseur d'apparence pilote la machine d'état pure de `src/features/preferences/client/preference-sync.ts`. Elle sépare strictement deux choses, qui ne se déduisent jamais l'une de l'autre :
@@ -266,6 +267,7 @@ Dans les deux cas, cela ne change que ce qui est affiché pour les champs sans i
 3. À la réponse : `saveAnswered(state, request.ticket, data)`, puis `nextSave` à nouveau. Les intentions plus récentes, ou non acquittées (`stale`), repartent.
 4. En cas d'erreur :
    - `context_changed`, `unauthenticated`, `forbidden` ou `no_business` : `saveFailed(state, ticket, "context_changed")`. La sauvegarde est en pause et les intentions conservées. Recharger la page (`router.refresh()`) : le layout donnera le contexte.
+   - `auth_unavailable` : comme une erreur réseau, `saveFailed(state, ticket, "network")` puis un nouvel essai avec backoff. Ce n'est pas une sortie de contexte : les intentions restent, non acquittées, et ne doivent jamais être annoncées comme enregistrées.
    - Toute autre erreur, ou pas de réponse : `saveFailed(state, ticket, "network")`, puis un nouvel essai avec délai croissant.
 5. Lectures :
    - quand faire une lecture : au retour sur l'onglet (`visibilitychange`, `focus`), après une pause, et **dès que `readNeeded(state)` est vrai** (réconciliation, sans attendre un focus) ;
@@ -339,5 +341,5 @@ Contrat proposé pour une PR ultérieure, distinct des préférences :
   - Les intentions ne sont jamais touchées.
   - La lecture de réconciliation (`readNeeded`), ou la prochaine sauvegarde, corrige l'affichage (testé : jamais de blocage, au plus une lecture par ambiguïté).
 - **Intentions égales à l'état du compte :** elles sont envoyées quand même, et acquittées par `unchanged`. Cela coûte un aller-retour, et c'est voulu : l'égalité avec un état observé n'est pas une preuve.
-- **Indisponibilité de la base :** la session ne peut pas être vérifiée et l'action répond `unauthenticated`. Le client ne distingue pas ce cas d'une vraie déconnexion : la sauvegarde se met en pause, sans rien perdre, jusqu'à une lecture réussie.
+- **Indisponibilité de Supabase Auth :** la session ne peut pas être vérifiée ; l'action répond `auth_unavailable` (distinct de `unauthenticated`, voir `src/lib/supabase/auth-errors.ts`). Le pilote réessaie avec backoff, sans rien perdre ni rien annoncer comme enregistré. Les pages privées affichent `/indisponible` au lieu de renvoyer vers `/login`, et aucun cookie de session n'est supprimé.
 - Les préférences d'affichage autres que l'apparence (widgets, image personnelle) ne sont pas encore modélisées (§ 5 et § 7).

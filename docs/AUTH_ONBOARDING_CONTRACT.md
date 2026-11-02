@@ -92,19 +92,20 @@ Le serveur est la seule implémentation de la normalisation. L'UI affiche le `sl
 
 ## Codes d'erreur
 
-| Code                  | HTTP | Quand                                                                             |
-| --------------------- | ---- | --------------------------------------------------------------------------------- |
-| `validation_error`    | 400  | entrée invalide (équivalent de `invalid_input`) ; voir `fieldErrors`              |
-| `unauthenticated`     | 401  | pas de session valide (équivalent de `unauthorized`)                              |
-| `invalid_credentials` | 401  | email ou mot de passe incorrect (message identique si le compte n'existe pas)     |
-| `email_not_confirmed` | 403  | connexion avant confirmation de l'email                                           |
-| `email_taken`         | 409  | inscription avec un email déjà confirmé (ou déjà utilisé sans confirmation email) |
-| `rate_limited`        | 429  | limite Supabase Auth atteinte                                                     |
-| `already_onboarded`   | 409  | l'onboarding a déjà été réalisé : aller sur `/app`                                |
-| `slug_taken`          | 409  | slug déjà utilisé (`fieldErrors.slug`)                                            |
-| `slug_reserved`       | 409  | slug réservé (`fieldErrors.slug`)                                                 |
-| `forbidden`           | 403  | action non autorisée                                                              |
-| `internal`            | 500  | erreur inattendue ; détail uniquement dans les logs serveur                       |
+| Code                  | HTTP | Quand                                                                                                                          |
+| --------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `validation_error`    | 400  | entrée invalide (équivalent de `invalid_input`) ; voir `fieldErrors`                                                           |
+| `unauthenticated`     | 401  | pas de session valide (équivalent de `unauthorized`)                                                                           |
+| `invalid_credentials` | 401  | email ou mot de passe incorrect (message identique si le compte n'existe pas)                                                  |
+| `email_not_confirmed` | 403  | connexion avant confirmation de l'email                                                                                        |
+| `email_taken`         | 409  | inscription avec un email déjà confirmé (ou déjà utilisé sans confirmation email)                                              |
+| `rate_limited`        | 429  | limite Supabase Auth atteinte                                                                                                  |
+| `already_onboarded`   | 409  | l'onboarding a déjà été réalisé : aller sur `/app`                                                                             |
+| `slug_taken`          | 409  | slug déjà utilisé (`fieldErrors.slug`)                                                                                         |
+| `slug_reserved`       | 409  | slug réservé (`fieldErrors.slug`)                                                                                              |
+| `forbidden`           | 403  | action non autorisée                                                                                                           |
+| `internal`            | 500  | erreur inattendue ; détail uniquement dans les logs serveur                                                                    |
+| `auth_unavailable`    | 503  | Supabase Auth ne répond pas (réseau, 5xx, 429) : la session n'a pas pu être vérifiée. Ce n'est pas une déconnexion : réessayer |
 
 ## Confirmation email
 
@@ -140,12 +141,24 @@ Inscription avec un email existant (comportement réel de Supabase Auth, testé)
 
 ## Routage
 
-| État serveur            | `/app/**`       | `/onboarding` | `/login`        | `/b/[slug]`, `/api/public/**` |
-| ----------------------- | --------------- | ------------- | --------------- | ----------------------------- |
-| non connecté            | → `/login`      | → `/login`    | affiché         | public                        |
-| connecté, sans business | → `/onboarding` | affiché       | → `/onboarding` | public                        |
-| connecté, business prêt | affiché         | → `/app`      | → `/app`        | public                        |
+| État serveur            | `/app/**`         | `/onboarding`     | `/login`          | `/b/[slug]`, `/api/public/**` |
+| ----------------------- | ----------------- | ----------------- | ----------------- | ----------------------------- |
+| non connecté            | → `/login`        | → `/login`        | affiché           | public                        |
+| connecté, sans business | → `/onboarding`   | affiché           | → `/onboarding`   | public                        |
+| connecté, business prêt | affiché           | → `/app`          | → `/app`          | public                        |
+| Auth injoignable        | → `/indisponible` | → `/indisponible` | → `/indisponible` | public                        |
 
 L'état est calculé côté serveur à chaque requête : session validée par le serveur Auth, puis appartenance lue sous RLS. Il ne dépend jamais d'un état navigateur. Chaque état n'est accepté que par une seule route, ce qui exclut toute boucle.
+
+### Auth injoignable n'est pas une déconnexion
+
+La cause d'un échec est lue sur le type et le statut de l'erreur Supabase, jamais sur son message (`authFailureOf`, `src/lib/supabase/auth-errors.ts`) :
+
+| Erreur                                                                                                          | Cause         | Effet                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AuthSessionMissingError`, `AuthApiError` 4xx (hors 429), JWT invalide                                          | `signed_out`  | refus comme avant : `/login`, `unauthenticated`, cookies effacés par Supabase                                                                        |
+| `AuthRetryableFetchError` (pas de réponse, 5xx), `AuthUnknownError`, `AuthApiError` 5xx ou 429, erreur non-Auth | `unavailable` | refus **temporaire** : le proxy ne redirige pas et ne supprime aucun cookie ; les pages privées → `/indisponible` ; les actions → `auth_unavailable` |
+
+Dans les deux cas l'accès est refusé : une panne ne laisse jamais rien passer (guards, actions et RLS vérifient toujours la session). Une fois Auth revenu, la même session fonctionne.
 
 Les pages `/signup` et `/login` appartiennent à la branche UI. Une page d'inscription devra appeler `redirectAuthenticatedUser()` (`src/features/auth/data/guards.ts`) dans son layout, comme `/login`.
