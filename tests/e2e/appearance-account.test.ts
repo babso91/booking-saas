@@ -1,4 +1,4 @@
-import type { Page, Route } from "playwright";
+import type { Page, Request, Route } from "playwright";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -499,34 +499,87 @@ type SaveOnWire = {
   answer: string;
 };
 
-/** Every save this page sends: for whom, what, and what the server said. */
-function savesOnWire(page: Page) {
-  const seen: Promise<SaveOnWire>[] = [];
-  page.on("response", (response) => {
-    const body = response.request().postData() ?? "";
-    if (
-      !response.request().headers()["next-action"] ||
-      !body.includes('"changes"')
-    ) {
-      return;
+// The page keeps its own copy of the answer, read as it arrives. Asking the
+// browser for the body afterwards (response.text()) is not reliable: once the
+// page gave the stream up, Chromium has "No data found", no navigation needed.
+const COPY_THE_ANSWERS = `{
+  const send = window.fetch;
+  window.fetch = async (input, init) => {
+    const response = await send(input, init);
+    const body = init && init.body;
+    if (typeof body === "string" && body.includes('"changes"')) {
+      response.clone().text().then(
+        (text) => window.__saveAnswered(body, text),
+        (error) => window.__saveAnswered(body, "unreadable: " + error),
+      );
     }
-    seen.push(
-      response.text().then((text) => {
+    return response;
+  };
+}`;
+
+/** Only the action's own row: the rest of the answer is the page's render. */
+const resultOf = (text: string) => {
+  const row = /"a":"\$@(\w+)"/.exec(text)?.[1];
+  const result = text
+    .split("\n")
+    .find((line) => row !== undefined && line.startsWith(`${row}:`));
+  return (
+    /"code":"(\w+)"/.exec(result ?? "")?.[1] ??
+    /"status":"(\w+)"/.exec(result ?? "")?.[1] ??
+    `unreadable: ${text.slice(0, 200)}`
+  );
+};
+
+/**
+ * Loads the page again with a witness: every save it sends from then on, for
+ * whom, what (as it leaves, from the request), and what the server said; and
+ * how many documents were loaded since, to tell a navigation from a render.
+ * Nothing here can reject behind the test's back: an answer that never comes
+ * fails `saves()`, and a closed page takes its listeners and its copies along.
+ */
+async function savesOnWire(page: Page) {
+  const seen: { body: string; answer: string | null }[] = [];
+  let documents = -1;
+  const onRequest = (request: Request) => {
+    const body = request.postData() ?? "";
+    if (request.headers()["next-action"] && body.includes('"changes"')) {
+      seen.push({ body, answer: null });
+    }
+  };
+  const onDocument = () => {
+    documents += 1;
+  };
+  page.on("request", onRequest);
+  page.on("domcontentloaded", onDocument);
+  page.once("close", () => {
+    page.off("request", onRequest);
+    page.off("domcontentloaded", onDocument);
+  });
+  await page.exposeFunction("__saveAnswered", (body: string, text: string) => {
+    const save = seen.find((s) => s.body === body && s.answer === null);
+    // Never seen leaving: kept, so that the comparison shows it.
+    if (save) save.answer = text;
+    else seen.push({ body, answer: `not on the wire: ${text}` });
+  });
+  await page.addInitScript({ content: COPY_THE_ANSWERS });
+  await openSettings(page);
+  return {
+    saves: async (): Promise<SaveOnWire[]> => {
+      await vi.waitFor(
+        () => expect(seen.filter(({ answer }) => answer === null)).toEqual([]),
+        { timeout: 15_000, interval: 50 },
+      );
+      return seen.map(({ body, answer }) => {
         const [{ context, changes }] = JSON.parse(body);
         return {
           membershipId: context.membershipId,
           changes,
-          answer:
-            /"code":"(context_changed|unauthenticated|forbidden|no_business)"/.exec(
-              text,
-            )?.[1] ??
-            /"status":"(saved|unchanged|stale)"/.exec(text)?.[1] ??
-            "unreadable",
+          answer: resultOf(answer!),
         };
-      }),
-    );
-  });
-  return () => Promise.all(seen);
+      });
+    },
+    documentsLoaded: () => documents,
+  };
 }
 
 describe("removed from the business, then back: what the wire and the database say", () => {
@@ -556,15 +609,13 @@ describe("removed from the business, then back: what the wire and the database s
     const { page } = await open(browser);
     await choose(page, /^Studio/);
     await said(page, SAVED);
-    await page.reload();
-    await hydrated(page.getByRole("radio", { name: /^Studio/ }));
+    const wire = await savesOnWire(page);
     await drawn(page, "studio");
-    return { browser, page, before: await memberOf(browser) };
+    return { browser, page, wire, before: await memberOf(browser) };
   };
 
   it("a choice born under the old one is refused, dropped, and never written to the new one", async () => {
-    const { browser, page, before } = await settled("Lou");
-    const saves = savesOnWire(page);
+    const { browser, page, wire, before } = await settled("Lou");
     const after = await removedAndBack(browser);
     expect(after).not.toBe(before);
 
@@ -578,7 +629,7 @@ describe("removed from the business, then back: what the wire and the database s
     await choose(page, /^Écrin/);
     await inDatabase(browser, { style: "ecrin" });
     await said(page, SAVED);
-    expect(await saves()).toEqual([
+    expect(await wire.saves()).toEqual([
       {
         membershipId: before,
         changes: { mode: "dark" },
@@ -591,12 +642,12 @@ describe("removed from the business, then back: what the wire and the database s
       version: "1",
       color_mode: "light",
     });
+    expect(wire.documentsLoaded()).toBe(0);
     await page.context().close();
   });
 
   it("a choice made once the new one is drawn is hers: written to it (dark, then Écrin, version 2)", async () => {
-    const { browser, page } = await settled("Mia");
-    const saves = savesOnWire(page);
+    const { browser, page, wire } = await settled("Mia");
     const after = await removedAndBack(browser);
     await comeBack(page);
     await drawn(page, "classique");
@@ -610,10 +661,11 @@ describe("removed from the business, then back: what the wire and the database s
       color_mode: "dark",
       version: "2",
     });
-    expect(await saves()).toEqual([
+    expect(await wire.saves()).toEqual([
       { membershipId: after, changes: { mode: "dark" }, answer: "saved" },
       { membershipId: after, changes: { style: "ecrin" }, answer: "saved" },
     ]);
+    expect(wire.documentsLoaded()).toBe(0);
     await page.context().close();
   });
 
@@ -621,7 +673,7 @@ describe("removed from the business, then back: what the wire and the database s
     const { browser } = await professionalWithVisit("Zoe", "Rose");
     const { page } = await open(browser);
     const before = await memberOf(browser);
-    const saves = savesOnWire(page);
+    const wire = await savesOnWire(page);
     await choose(page, /^Studio/);
     await said(page, SAVED);
     const after = await removedAndBack(browser);
@@ -631,27 +683,27 @@ describe("removed from the business, then back: what the wire and the database s
     await choose(page, /^Écrin/);
     await inDatabase(browser, { style: "ecrin" });
 
-    const [, sombre] = await saves();
+    const [, sombre] = await wire.saves();
     const oldSide = sombre!.membershipId === before;
     console.info(
-      `[membership trace] Sombre sent to the ${oldSide ? "old" : "new"} one`,
+      `[membership trace] Sombre sent to the ${oldSide ? "old" : "new"} one, answered ${sombre!.answer}`,
     );
-    expect(sombre!.answer).toBe(oldSide ? "context_changed" : "saved");
-    await vi.waitFor(
-      async () =>
-        expect(await rowOf(browser)).toMatchObject(
-          oldSide
-            ? { style: "ecrin", version: "1", color_mode: "light" }
-            : { style: "ecrin", version: "2", color_mode: "dark" },
-        ),
-      { timeout: 15_000, interval: 100 },
+    expect(await wire.saves()).toEqual([
+      { membershipId: before, changes: { style: "studio" }, answer: "saved" },
+      {
+        membershipId: oldSide ? before : after,
+        changes: { mode: "dark" },
+        answer: oldSide ? "context_changed" : "saved",
+      },
+      { membershipId: after, changes: { style: "ecrin" }, answer: "saved" },
+    ]);
+    await inDatabase(
+      browser,
+      oldSide
+        ? { style: "ecrin", version: "1", color_mode: "light" }
+        : { style: "ecrin", version: "2", color_mode: "dark" },
     );
-    expect(
-      (await saves()).filter(
-        ({ membershipId, changes }) =>
-          membershipId === after && "mode" in changes && oldSide,
-      ),
-    ).toEqual([]);
+    expect(wire.documentsLoaded()).toBe(0);
     await page.context().close();
   });
 });
