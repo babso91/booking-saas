@@ -43,10 +43,8 @@ let styleToFocus: StyleId | null = null;
 
 const syncWords = {
   saving: "Enregistrement…",
-  retrying:
-    "Pas encore enregistré sur ton compte. Ton choix reste appliqué ici, nouvel essai automatique.",
-  paused:
-    "Enregistrement en pause : ta session a peut-être changé. Ton choix reste appliqué ici.",
+  retrying: "Pas encore enregistré. Ton choix reste appliqué ici.",
+  paused: "Enregistrement en pause. Ton choix reste appliqué ici.",
 };
 
 export function AppearanceSettings() {

@@ -38,6 +38,12 @@ import {
 // A render of the layout says which context the page is in, nothing more:
 // its preferences may be older than an answer already taken, so inside the
 // same context they are ignored.
+//
+// A style that comes from elsewhere is not shown by itself. Each style has its
+// own frame: drawing it mounts the page again and destroys what she was typing.
+// It waits (`receivedStyle`) until she asks for it or goes to another page. Her
+// own choice and another context are drawn at once; the other settings are only
+// colours, and follow live.
 
 export const REQUEST_TIMEOUT_MS = 15_000;
 export const FIRST_RETRY_MS = 1_000;
@@ -86,7 +92,10 @@ export type SyncStatus =
   "idle" | "saving" | "retrying" | "paused" | "unavailable";
 
 export type DriverView = {
+  /** What to draw: her account's, in the style this page is showing. */
   appearance: AppearancePreferences;
+  /** The style her account holds, when this page is not showing it yet. */
+  receivedStyle: AppearancePreferences["style"] | null;
   status: SyncStatus;
   /** Whether her account holds a row (an old device's look is not offered). */
   accountHasPreferences: boolean;
@@ -95,16 +104,27 @@ export type DriverView = {
   savedHere: boolean;
 };
 
+/** Pause saving: the session may not be this page's. */
 const SESSION_REFUSALS = new Set([
   "context_changed",
   "unauthenticated",
   "forbidden",
   "no_business",
 ]);
+/**
+ * Those the server could only say by reading the session: the layout can tell.
+ * Not `unauthenticated`: an authentication service that does not answer is
+ * reported the same way, and the layout's guard would send her to sign in.
+ */
+const askLayout = (code: string) =>
+  SESSION_REFUSALS.has(code) && code !== "unauthenticated";
 
 export class PreferenceDriver {
   private state: SyncState | null;
   private fallback: AppearancePreferences;
+  private shownStyle: AppearancePreferences["style"];
+  /** She kept the old device's look: the read after it draws it at once. */
+  private drawNextRead = false;
   private view: DriverView;
   private readonly listeners = new Set<() => void>();
   private running = false;
@@ -126,6 +146,7 @@ export class PreferenceDriver {
   ) {
     this.state = area.snapshot ? initialSyncState(area.snapshot) : null;
     this.fallback = area.appearance;
+    this.shownStyle = area.appearance.style;
     this.view = this.computeView();
   }
 
@@ -153,6 +174,7 @@ export class PreferenceDriver {
     if (!area.snapshot) {
       if (!this.state) {
         this.fallback = area.appearance;
+        this.shownStyle = area.appearance.style;
         this.publish();
       }
       return;
@@ -163,6 +185,7 @@ export class PreferenceDriver {
     } else if (!sameContext(this.state.context, area.snapshot.context)) {
       this.leaveRequests();
       this.state = enterContext(this.state, area.snapshot);
+      this.shownStyle = area.snapshot.preferences.appearance.style;
     } else {
       return;
     }
@@ -177,8 +200,15 @@ export class PreferenceDriver {
       ...displayedAppearance(this.state),
       ...patch,
     });
+    if (patch.style) this.shownStyle = patch.style;
     this.publish();
     this.pump();
+  }
+
+  /** She asked for it, or this page is gone: nothing left to protect. */
+  applyReceivedStyle() {
+    this.shownStyle = this.accountAppearance().style;
+    this.publish();
   }
 
   /** She came back to the tab: one read, however many events say so. */
@@ -219,10 +249,11 @@ export class PreferenceDriver {
           if (result.ok) {
             this.importing = "idle";
             this.readDue = true;
+            this.drawNextRead = true;
             resolve(true);
           } else {
             this.importing = "failed";
-            if (SESSION_REFUSALS.has(result.error.code)) this.askRefresh();
+            if (askLayout(result.error.code)) this.askRefresh();
             resolve(false);
           }
         },
@@ -271,7 +302,7 @@ export class PreferenceDriver {
           if (this.state.paused === "context_changed") this.askRefresh();
         } else if (SESSION_REFUSALS.has(result.error.code)) {
           this.state = saveFailed(this.state!, ticket, "context_changed");
-          this.askRefresh();
+          if (askLayout(result.error.code)) this.askRefresh();
           this.failed();
         } else {
           this.state = saveFailed(this.state!, ticket, "network");
@@ -287,6 +318,8 @@ export class PreferenceDriver {
 
   private sendRead() {
     this.readDue = false;
+    const draw = this.drawNextRead;
+    this.drawNextRead = false;
     const [state, ticket] = startRead(this.state!);
     this.state = state;
     this.settleOnce(
@@ -301,16 +334,19 @@ export class PreferenceDriver {
           } else {
             this.refreshAsked = false;
             if (Object.keys(this.state.intents).length === 0) this.succeeded();
+            if (draw) this.applyReceivedStyle();
           }
         } else {
           // Not a reason to render the layout: with the database away, a
           // read is refused too, and its guard would send her to sign in.
           this.state = readFailed(this.state!, ticket);
+          this.drawNextRead ||= draw;
           this.failed();
         }
       },
       () => {
         this.state = readFailed(this.state!, ticket);
+        this.drawNextRead ||= draw;
         this.failed();
       },
     );
@@ -379,6 +415,7 @@ export class PreferenceDriver {
     this.refreshAsked = false;
     this.importing = "idle";
     this.savedHere = false;
+    this.drawNextRead = false;
   }
 
   private succeeded() {
@@ -412,11 +449,20 @@ export class PreferenceDriver {
     this.host.refresh();
   }
 
+  private accountAppearance() {
+    return this.state ? displayedAppearance(this.state) : this.fallback;
+  }
+
   private computeView(): DriverView {
     const state = this.state;
+    const account = this.accountAppearance();
+    const drawn = {
+      appearance: { ...account, style: this.shownStyle },
+      receivedStyle: account.style === this.shownStyle ? null : account.style,
+    };
     if (!state) {
       return {
-        appearance: this.fallback,
+        ...drawn,
         status: "unavailable",
         accountHasPreferences: false,
         importing: this.importing,
@@ -425,7 +471,7 @@ export class PreferenceDriver {
     }
     const waiting = Object.keys(unacknowledgedChanges(state)).length > 0;
     return {
-      appearance: displayedAppearance(state),
+      ...drawn,
       status: !waiting
         ? "idle"
         : state.paused

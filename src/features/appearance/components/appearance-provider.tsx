@@ -31,6 +31,7 @@ import {
   DELIVERED_STYLES,
   type Appearance,
 } from "../appearance";
+import type { StyleId } from "../palettes";
 import { AccountNotice } from "./account-notice";
 
 // Her appearance, applied to the professional area. The server renders it
@@ -40,8 +41,9 @@ import { AccountNotice } from "./account-notice";
 // dialogs), and lets go when she leaves it.
 //
 // Her account decides and PreferenceDriver keeps this page in step with it
-// (docs/MEMBER_PREFERENCES_CONTRACT.md § 6). AppearanceProvider, without an
-// account, is for the previews: choices live in the page only.
+// (docs/MEMBER_PREFERENCES_CONTRACT.md § 6). A style received from elsewhere
+// waits for her: see the driver. AppearanceProvider, without an account, is
+// for the previews: choices live in the page only.
 
 type AppearanceContext = {
   appearance: Appearance;
@@ -55,6 +57,9 @@ type AppearanceContext = {
 };
 
 const Context = createContext<AppearanceContext | null>(null);
+
+/** Nothing can be typed there, and the server draws it in her account's style. */
+const TODAY = "/app/today";
 
 function AppearanceFrame({
   value,
@@ -187,10 +192,23 @@ export function AccountAppearanceProvider({
     [view.appearance],
   );
 
+  const received = view.receivedStyle
+    ? renderableAppearance(
+        { ...view.appearance, style: view.receivedStyle },
+        DELIVERED_STYLES,
+      ).style
+    : appearance.style;
+  const receivedWaits = received !== appearance.style;
+
+  // Before paint: the next page is already in her account's style.
+  useLayoutEffect(() => driver.applyReceivedStyle(), [driver, pathname]);
+  useLayoutEffect(() => {
+    if (receivedWaits && pathname === TODAY) driver.applyReceivedStyle();
+  }, [driver, pathname, receivedWaits]);
+
   // Her account moved to Classique from elsewhere: « Aujourd’hui » is not
   // one of its pages (the server redirects there too).
-  const leaveToday =
-    pathname === "/app/today" && appearance.style === "classique";
+  const leaveToday = pathname === TODAY && appearance.style === "classique";
   useEffect(() => {
     if (leaveToday) router.replace("/app");
   }, [leaveToday, router]);
@@ -217,6 +235,8 @@ export function AccountAppearanceProvider({
       <AccountNotice
         status={view.status}
         offer={offer}
+        received={receivedWaits ? (received as StyleId) : null}
+        onApply={() => driver.applyReceivedStyle()}
         importing={view.importing}
         onKeep={async () => {
           if (offer && (await driver.importDevice(offer))) {

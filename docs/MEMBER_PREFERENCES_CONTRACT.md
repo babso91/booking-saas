@@ -156,7 +156,7 @@ La réponse contient toujours le contexte et l'état actuel du compte. Avec `sta
 - **`dash_appearance`** (Studio 1, historique) :
   - n'est jamais appliqué au compte de lui-même ;
   - si son compte n'a encore rien (version 0), `loadAreaPreferences` le renvoie dans `deviceAppearanceOffer` ;
-  - l'interface propose alors : « Garder cette apparence sur votre compte ? » ;
+  - l'interface propose alors : « Garder cette apparence sur ton compte ? » ;
   - `importDeviceAppearanceAction` n'écrit que s'il n'y a pas de ligne, pour le contexte de la page : dès qu'un compte a des préférences, l'import répond `stale` et n'écrit rien.
   - **Ainsi, un ancien cookie laissé par une autre professionnelle sur l'appareil ne peut jamais écraser les préférences d'un compte.** Un cookie malformé ne propose rien.
 
@@ -322,12 +322,15 @@ Les fonctions et leurs signatures sont inchangées : `initialSyncState`, `enterC
 - **Styles livrés :** `DELIVERED_STYLES` (`classique`, `studio`, `ecrin`). Un compte en Carnet s'affiche en Classique. Un autre réglage n'envoie que ce champ, le style du compte reste Carnet.
 - **Ancien cookie :** `dash_appearance` n'est plus écrit. La proposition d'import s'affiche sur toutes les pages de `/app` : sinon, une professionnelle revenue à Classique sans explication n'irait jamais la chercher. Accepter ou refuser efface le cookie de cet appareil.
 - **Accepter l'ancien cookie :** l'action d'import, puis une lecture envoyée après elle. Passer par `changeLocally` réécrirait le choix par-dessus un compte qui en a déjà un.
-- **Lecture refusée (`unauthenticated`…) :** elle ne déclenche pas `router.refresh()`. Base absente, la lecture est refusée aussi, et le garde du layout enverrait la professionnelle vers la connexion. Seul un refus de sauvegarde rafraîchit, comme le demande le § 6.
+- **Lecture refusée (`unauthenticated`…) :** elle ne déclenche pas `router.refresh()`. Base absente, la lecture est refusée aussi, et le garde du layout enverrait la professionnelle vers la connexion.
+- **Sauvegarde refusée :** `context_changed`, `forbidden` et `no_business` rafraîchissent, comme le demande le § 6 : le serveur a pu lire la session. `unauthenticated` met en pause sans rafraîchir, ce qui s'écarte du § 6 : ce code est aussi celui d'un service d'authentification qui ne répond pas. La carte propose « Réessayer » et « Me reconnecter » ; c'est elle qui décide de partir, jamais une panne.
+- **Style reçu d'ailleurs :** il attend (`receivedStyle`) qu'elle le demande ou change de page, car chaque style a son propre cadre et le dessiner remonte la page. Son propre choix, un autre contexte et l'import qu'elle accepte s'appliquent tout de suite. Les autres réglages sont des couleurs, et suivent en direct. « Aujourd'hui » l'applique tout de suite : le serveur y choisit le cadre et on ne peut rien y saisir.
 
 **Comportement de Next.js à connaître.**
 
 - Les Server Actions passent une à la fois : une sauvegarde attend la lecture en cours, et l'inverse.
 - Une navigation abandonne l'action en cours, et sa promesse ne se règle jamais (`app-router-instance.js`). Le délai maximal n'est donc pas une précaution : la sauvegarde repart après 15 s, et répond `unchanged` ou `stale` si elle avait déjà abouti.
+- Le délai ne retire pas une action de la file de Next.js : une lecture bloquée retient ce qui suit, jusqu'à ce que sa requête se termine. Les envois répétés restent limités par l'attente entre deux essais, et chaque sauvegarde porte la version attendue : passée en retard, elle répond `stale` sans rien écrire.
 
 ## 7. Personnalisation de l'établissement (préparée, non livrée)
 
@@ -345,7 +348,7 @@ Contrat proposé pour une PR ultérieure, distinct des préférences :
 
 ## 8. Limites
 
-- **Style reçu d'un autre appareil :** chaque style a son propre cadre. Une lecture qui apporte un autre style remonte la page, et un formulaire en cours de saisie est perdu. C'est rare (changer de style ailleurs, puis revenir en pleine saisie), mais ce n'est pas traité.
+- **Panne du service d'authentification :** `proxy.ts`, `getSessionState` et `getBusinessContext` traitent toute erreur de lecture de la session comme une absence de session. L'interface ne repart plus seule vers la connexion, mais une navigation pendant la panne y mène encore. La distinction est à faire côté serveur ; un nouveau code d'erreur serait traité par le pilote comme une panne, sans autre changement.
 - **Base absente au rendu :** les réglages s'affichent désactivés jusqu'à une lecture réussie. Aucun choix n'est gardé en attente, faute de contexte à qui l'envoyer.
 - La synchronisation entre appareils se fait au rendu et au retour sur l'onglet, pas en temps réel (pas de Realtime).
 - **Fraîcheur entre incarnations :** l'ordre est celui d'envoi des requêtes, pas celui de leur traitement par le serveur.

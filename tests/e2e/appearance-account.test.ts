@@ -72,9 +72,11 @@ const drawn = (page: Page, style: string) =>
     timeout: 15_000,
     interval: 50,
   });
-const said = (page: Page, text: string) =>
+const said = (page: Page, text: string | RegExp) =>
   page.getByRole("status").filter({ hasText: text }).first().waitFor();
-const SAVED = "Enregistré sur ton compte.";
+// Exactly: a string matches anywhere, whatever the case, and "Pas encore
+// enregistré sur ton compte" would pass for it.
+const SAVED = /^Enregistré sur ton compte\.$/;
 
 /** She comes back to this tab: what the browser tells the page. */
 const comeBack = (page: Page) =>
@@ -89,7 +91,11 @@ const isSave = (route: Route) =>
 const isRead = (route: Route) =>
   isAction(route) && !actionBody(route).includes('"context"');
 
-/** Holds the first request matching, until the test lets it go. */
+/**
+ * Holds the first request matching, until the test lets it go. The route stays
+ * installed: removing the last one continues what it holds, whatever the test
+ * says next (Playwright's removeHandler).
+ */
 async function hold(page: Page, matches: (route: Route) => boolean) {
   let held: Route | null = null;
   let arrived!: () => void;
@@ -106,10 +112,9 @@ async function hold(page: Page, matches: (route: Route) => boolean) {
   });
   return {
     here,
-    release: async () => {
-      await page.unroute("**/app/**");
-      await held!.continue();
-    },
+    release: () => held!.continue(),
+    /** It never reached the server. */
+    lose: () => held!.abort(),
   };
 }
 
@@ -348,11 +353,13 @@ describe("when answers do not come as hoped", () => {
     await save.here;
     await page.getByRole("link", { name: "Agenda" }).first().click();
     await page.waitForURL(`${APP}/app`);
+    expect(await rowOf(browser)).toBeNull();
 
+    // The first one is still held: only the driver's new attempt can write.
     await page.clock.fastForward(16_000);
-    await save.release();
     await page.clock.fastForward(2_000);
     await inDatabase(browser, { color_mode: "dark" });
+    await save.lose();
     await page.context().close();
   });
 
@@ -367,6 +374,121 @@ describe("when answers do not come as hoped", () => {
     await choose(page, /^Aucune/);
     await read.release();
     await inDatabase(browser, { motion: "none" });
+    await page.context().close();
+  });
+});
+
+describe("a session that is gone", () => {
+  it("expired under the page: she stays, her choice stays, and it arrives once back", async () => {
+    const { browser } = await professionalWithVisit("Ines", "Rose");
+    const { page } = await open(browser);
+    const signedIn = await page.context().cookies();
+    await page.context().clearCookies();
+
+    await choose(page, /^Sombre/);
+    await said(page, /Pas encore enregistré|en pause/);
+    expect(new URL(page.url()).pathname).toBe("/app/settings/appearance");
+    expect(await rowOf(browser)).toBeNull();
+    expect(await page.getByRole("radio", { name: /^Sombre/ }).isChecked()).toBe(
+      true,
+    );
+    await page.getByRole("link", { name: "Me reconnecter" }).waitFor();
+
+    await page.context().addCookies(signedIn);
+    await page.getByRole("button", { name: "Réessayer" }).click();
+    await inDatabase(browser, { color_mode: "dark" });
+    await said(page, SAVED);
+    expect(new URL(page.url()).pathname).toBe("/app/settings/appearance");
+    await page.context().close();
+  });
+});
+
+describe("a style chosen on another device", () => {
+  const elsewhere = async (
+    browser: Browser,
+    name: RegExp,
+    row: Partial<Row>,
+  ) => {
+    const other = await signedInPage(browser, { appearance: null });
+    await openSettings(other.page);
+    await choose(other.page, name);
+    await inDatabase(browser, row);
+    await other.page.context().close();
+  };
+
+  it("does not touch the form she is filling in, then the next page is in it", async () => {
+    const { browser } = await professionalWithVisit("Jade", "Rose");
+    const { page } = await signedInPage(browser, {
+      appearance: look("studio"),
+    });
+    await page.goto(`${APP}/app/services`);
+    await drawn(page, "studio");
+    await (
+      await hydrated(
+        page.getByRole("button", { name: "Ajouter une prestation" }).first(),
+      )
+    ).click();
+    const name = page.getByLabel("Nom", { exact: true });
+    await name.fill("Soin du re");
+    await name.evaluate((input) => {
+      (window as unknown as { draft: Element }).draft = input;
+    });
+
+    await elsewhere(browser, /^Écrin/, { style: "ecrin" });
+    await comeBack(page);
+    await said(page, "Ton compte est passé à Écrin");
+
+    // The read's answer refreshed the route: the same element, still there.
+    expect(await name.inputValue()).toBe("Soin du re");
+    expect(
+      await name.evaluate(
+        (input) =>
+          (window as unknown as { draft: Element }).draft === input &&
+          input.isConnected,
+      ),
+    ).toBe(true);
+    expect((await applied(page)).style).toBe("studio");
+
+    // She finishes, and what she typed is what is created.
+    await name.pressSequentially("gard");
+    await page.getByLabel("Durée", { exact: true }).fill("45");
+    await page.getByLabel("Prix", { exact: true }).fill("50");
+    await page
+      .getByRole("button", { name: "Enregistrer", exact: true })
+      .click();
+    await vi.waitFor(
+      async () => {
+        const { rows } = await db.query(
+          "select 1 from public.services where business_id = $1 and name = $2",
+          [browser.member!.businessId, "Soin du regard"],
+        );
+        expect(rows).toHaveLength(1);
+      },
+      { timeout: 15_000, interval: 100 },
+    );
+    expect((await applied(page)).style).toBe("studio");
+
+    await page
+      .getByRole("link", { name: /Agenda/ })
+      .filter({ visible: true })
+      .first()
+      .click();
+    await page.waitForURL(`${APP}/app`);
+    await drawn(page, "ecrin");
+    await page.context().close();
+  });
+
+  it("is applied when she asks; the card is accessible", async () => {
+    const { browser } = await professionalWithVisit("Kim", "Rose");
+    const { page } = await open(browser);
+    await elsewhere(browser, /^Studio/, { style: "studio" });
+    await comeBack(page);
+    await said(page, "Ton compte est passé à Studio");
+    expect((await applied(page)).style).toBe("classique");
+    await expectAccessible(page, "the card of a received style");
+
+    await page.getByRole("button", { name: "Appliquer maintenant" }).click();
+    await drawn(page, "studio");
     await page.context().close();
   });
 });
@@ -470,7 +592,7 @@ describe("the look an old version left on this device", () => {
   };
   const question = (page: Page) =>
     page.getByRole("region", {
-      name: "Garder cette apparence sur votre compte ?",
+      name: "Garder cette apparence sur ton compte ?",
     });
   const deviceCookie = async (page: Page) =>
     (await page.context().cookies()).some(

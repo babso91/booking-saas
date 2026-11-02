@@ -301,6 +301,51 @@ describe("coming back to the tab", () => {
   });
 });
 
+describe("a style received from elsewhere", () => {
+  const moved = () =>
+    actions.getMyPreferencesAction.mockResolvedValue({
+      ok: true,
+      data: {
+        context: context(),
+        preferences: {
+          incarnation: uuid("a1"),
+          version: 3,
+          appearance: { ...defaultAppearancePreferences, style: "ecrin" },
+        },
+      },
+    });
+  const comeBack = () =>
+    act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+  it("mounts nothing again, and says so, until she asks", async () => {
+    moved();
+    render(<Page of={area({}, 2)} />);
+    const before = radio(/^Sombre/);
+    await comeBack();
+    expect(style()).toBe("classique");
+    expect(radio(/^Sombre/)).toBe(before);
+    expect(said()).toContain("Ton compte est passé à Écrin");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Appliquer maintenant" }),
+    );
+    expect(style()).toBe("ecrin");
+    expect(said()).not.toContain("Ton compte est passé");
+  });
+
+  it("the next page is in her account's style", async () => {
+    moved();
+    const { rerender } = render(<Page of={area({}, 2)} />);
+    await comeBack();
+    expect(style()).toBe("classique");
+    path.current = "/app/services";
+    rerender(<Page of={area({}, 2)} />);
+    expect(style()).toBe("ecrin");
+  });
+});
+
 describe("the account could not be read", () => {
   const away = (): AreaPreferences => ({
     snapshot: null,
@@ -329,7 +374,8 @@ describe("the account could not be read", () => {
     });
     render(<Page of={away()} />);
     await act(async () => undefined);
-    expect(style()).toBe("ecrin");
+    expect(style()).toBe("studio");
+    expect(said()).toContain("Ton compte est passé à Écrin");
     expect(radio(/^Studio/).matches(":disabled")).toBe(false);
   });
 });
@@ -342,7 +388,7 @@ describe("an old device's look", () => {
   };
   const question = () =>
     screen.queryByRole("region", {
-      name: "Garder cette apparence sur votre compte ?",
+      name: "Garder cette apparence sur ton compte ?",
     });
 
   beforeEach(() => {

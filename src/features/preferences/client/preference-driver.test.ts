@@ -300,6 +300,115 @@ describe("failures", () => {
     expect(saves).toHaveLength(2);
     expect(sentChanges(saves[1]!)).toEqual({ mode: "dark" });
   });
+
+  it("unauthenticated may be an outage: paused, never sent to sign in by itself", async () => {
+    const { driver, saves, reads, refresh } = setup();
+    driver.change({ mode: "dark" });
+    await saves[0]!.refuse("unauthenticated");
+    expect(driver.getView()).toMatchObject({
+      status: "paused",
+      appearance: { mode: "dark" },
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await reads[0]!.refuse("unauthenticated");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(refresh).not.toHaveBeenCalled();
+
+    await reads[1]!.answer(snapshot());
+    expect(sentChanges(saves[1]!)).toEqual({ mode: "dark" });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it.each(["forbidden", "no_business"])(
+    "%s: the server read the session, the layout can tell",
+    async (code) => {
+      const { driver, saves, refresh } = setup();
+      driver.change({ mode: "dark" });
+      await saves[0]!.refuse(code);
+      expect(driver.getView().status).toBe("paused");
+      expect(refresh).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("the read a navigation abandoned: timed out, a later one answers, its late answer is dropped", async () => {
+    const { driver, reads } = setup();
+    driver.returned();
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS + 1_000);
+    driver.returned();
+    expect(reads).toHaveLength(2);
+    await reads[0]!.answer(snapshot({ mode: "dark" }, 9));
+    expect(driver.getView().appearance.mode).toBe("light");
+    await reads[1]!.answer(snapshot({ mode: "system" }, 10));
+    expect(driver.getView().appearance.mode).toBe("system");
+  });
+});
+
+describe("a style received from elsewhere", () => {
+  const from = async (
+    { driver, reads }: ReturnType<typeof setup>,
+    appearance: AppearanceChanges,
+  ) => {
+    driver.returned();
+    await reads.at(-1)!.answer(snapshot(appearance, 3));
+  };
+
+  it("waits, while the other settings follow live", async () => {
+    const page = setup();
+    await from(page, { style: "ecrin", mode: "dark" });
+    expect(page.driver.getView()).toMatchObject({
+      appearance: { style: "classique", mode: "dark" },
+      receivedStyle: "ecrin",
+      status: "idle",
+    });
+
+    page.driver.applyReceivedStyle();
+    expect(page.driver.getView()).toMatchObject({
+      appearance: { style: "ecrin", mode: "dark" },
+      receivedStyle: null,
+    });
+  });
+
+  it("another setting while it waits does not write the style", async () => {
+    const page = setup();
+    await from(page, { style: "ecrin" });
+    page.driver.change({ motion: "none" });
+    expect(sentChanges(page.saves[0]!)).toEqual({ motion: "none" });
+    expect(page.driver.getView().appearance.style).toBe("classique");
+  });
+
+  it("her own choice is drawn at once, and is the one kept", async () => {
+    const page = setup();
+    await from(page, { style: "ecrin" });
+    page.driver.change({ style: "studio", accent: null });
+    expect(page.driver.getView()).toMatchObject({
+      appearance: { style: "studio" },
+      receivedStyle: null,
+    });
+    expect(sentChanges(page.saves[0]!).style).toBe("studio");
+  });
+
+  it("goes away if her account comes back to what is shown", async () => {
+    const page = setup();
+    await from(page, { style: "ecrin" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    page.driver.returned();
+    await page.reads.at(-1)!.answer(snapshot({ style: "classique" }, 4));
+    expect(page.driver.getView().receivedStyle).toBeNull();
+  });
+
+  it("another context is drawn at once: never the other account's frame", async () => {
+    const page = setup();
+    await from(page, { style: "ecrin" });
+    page.driver.receiveArea({
+      snapshot: snapshot({ style: "studio" }, 1, context("2")),
+      appearance: { ...defaultAppearancePreferences, style: "studio" },
+    });
+    expect(page.driver.getView()).toMatchObject({
+      appearance: { style: "studio" },
+      receivedStyle: null,
+    });
+  });
 });
 
 describe("reads", () => {
@@ -353,7 +462,7 @@ describe("reads", () => {
     await reads[1]!.answer(
       snapshot({ style: "ecrin" }, 9, context(), uuid("a1")),
     );
-    expect(driver.getView().appearance.style).toBe("ecrin");
+    expect(driver.getView().receivedStyle).toBe("ecrin");
   });
 
   it("an answer it could not order asks for one more read, and only one", async () => {
@@ -493,7 +602,8 @@ describe("the account could not be read", () => {
     await reads[1]!.answer(snapshot({ style: "ecrin" }, 2));
     expect(driver.getView()).toMatchObject({
       status: "idle",
-      appearance: { style: "ecrin" },
+      appearance: { style: "studio" },
+      receivedStyle: "ecrin",
     });
     driver.change({ mode: "dark" });
     expect(saves[0]!.input).toMatchObject({
@@ -509,7 +619,7 @@ describe("the account could not be read", () => {
       appearance: defaultAppearancePreferences,
     });
     await reads[0]!.answer(snapshot({ style: "studio" }, 1));
-    expect(driver.getView().appearance.style).toBe("ecrin");
+    expect(driver.getView().receivedStyle).toBe("ecrin");
   });
 });
 
