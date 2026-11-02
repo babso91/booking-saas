@@ -401,12 +401,31 @@ describe("Écrin in a browser", () => {
     look("__proto__"),
     look("ECRIN"),
     look("carnet"),
-  ])("the cookie %s activates no style once hydrated", async (cookie) => {
+  ])("the old cookie %s activates no style once hydrated", async (cookie) => {
     const { browser } = await professionalWithVisit("Tara", "Lia");
-    const { page } = await signedInPage(browser, { appearance: cookie });
+    const { page } = await signedInPage(browser, {
+      appearance: null,
+      legacyCookie: cookie,
+    });
     await page.goto(`${APP}/app`);
     await hydrated(page.getByRole("button", { name: /Lia Visite/ }).first());
     expect(await applied(page)).toMatchObject({ style: "classique", frame: 0 });
+    await page.context().close();
+  });
+
+  it("an account in Carnet is drawn in Classique and keeps Carnet", async () => {
+    const { browser, businessId } = await professionalWithVisit("Tess", "Lia");
+    const { page } = await signedInPage(browser, {
+      appearance: look("carnet"),
+    });
+    await page.goto(`${APP}/app`);
+    await hydrated(page.getByRole("button", { name: /Lia Visite/ }).first());
+    expect(await applied(page)).toMatchObject({ style: "classique", frame: 0 });
+    const { rows } = await db.query(
+      "select style from public.member_preferences where business_id = $1",
+      [businessId],
+    );
+    expect(rows[0].style).toBe("carnet");
     await page.context().close();
   });
 

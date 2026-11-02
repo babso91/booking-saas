@@ -5,6 +5,7 @@ import {
   APP,
   professionalWithVisit,
   STUDIO,
+  wear,
   type Browser,
 } from "./support/studio";
 
@@ -24,7 +25,7 @@ afterAll(() => chrome.close());
 
 /** A page signed in as this professional, in the Studio style. */
 async function studioPage(browser: Browser, width = 1280, height = 800) {
-  browser.cookies.set("dash_appearance", STUDIO);
+  await wear(browser, STUDIO);
   const context = await chrome.newContext({ viewport: { width, height } });
   await context.addCookies(
     [...browser.cookies].map(([name, value]) => ({ name, value, url: APP })),

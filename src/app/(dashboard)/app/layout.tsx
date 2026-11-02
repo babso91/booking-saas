@@ -1,27 +1,22 @@
-import { cookies } from "next/headers";
-
 import { requireReadyBusiness } from "@/features/auth/data/guards";
-import {
-  APPEARANCE_COOKIE,
-  parseAppearance,
-} from "@/features/appearance/appearance";
-import { AppearanceProvider } from "@/features/appearance/components/appearance-provider";
+import { AccountAppearanceProvider } from "@/features/appearance/components/appearance-provider";
+import { loadArea } from "@/features/appearance/server/area-appearance";
 
 // Server-side gate of the professional area: unauthenticated → /login,
 // signed in without business → /onboarding. Data access is still authorised
 // by the DAL and RLS on every request; this only routes the visitor.
 //
-// Her appearance (ambiance, mode, accent, motion) is read from this device's
-// cookie, strictly (parseAppearance), so the area is rendered in it at once.
+// Her appearance is read from her account, for this business, so the area is
+// rendered in it at once, on every device.
 export default async function PrivateAppLayout({
   children,
 }: LayoutProps<"/app">) {
   await requireReadyBusiness();
-  const appearance = parseAppearance(
-    (await cookies()).get(APPEARANCE_COOKIE)?.value,
-  );
+  const area = await loadArea();
 
   return (
-    <AppearanceProvider initial={appearance}>{children}</AppearanceProvider>
+    <AccountAppearanceProvider area={area}>
+      {children}
+    </AccountAppearanceProvider>
   );
 }

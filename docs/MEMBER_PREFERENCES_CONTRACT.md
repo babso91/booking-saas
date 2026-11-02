@@ -1,8 +1,6 @@
 # Préférences personnelles des professionnelles — contrat livré
 
-Ce document décrit le socle backend qui garde les préférences d'apparence de chaque professionnelle sur son compte. Il sert de passation à Claude UI pour brancher le moteur d'apparence de Studio 1 (PR #28, `src/features/appearance`) sur ce socle.
-
-Cette PR ne modifie pas l'interface : le moteur d'apparence n'est pas encore sur `main`. Le câblage est décrit au § 6.
+Ce document décrit le socle backend qui garde les préférences d'apparence de chaque professionnelle sur son compte, et son branchement au moteur d'apparence (`src/features/appearance`). Le contrat est au § 6, ce qui a été branché au § 6 bis.
 
 - **Migration :** `supabase/migrations/20261031090000_member_preferences.sql`.
 - **Code :** `src/features/preferences/`.
@@ -168,7 +166,7 @@ Garanties sur `identity.context` (`{ userId, businessId, membershipId }`) :
 - **`dash_appearance`** (Studio 1, historique) :
   - n'est jamais appliqué au compte de lui-même ;
   - si son compte n'a encore rien (version 0), `loadAreaPreferences` le renvoie dans `deviceAppearanceOffer` ;
-  - l'interface propose alors : « Garder cette apparence sur votre compte ? » ;
+  - l'interface propose alors : « Garder cette apparence sur ton compte ? » ;
   - `importDeviceAppearanceAction` n'écrit que s'il n'y a pas de ligne, pour le contexte de la page : dès qu'un compte a des préférences, l'import répond `stale` et n'écrit rien.
   - **Ainsi, un ancien cookie laissé par une autre professionnelle sur l'appareil ne peut jamais écraser les préférences d'un compte.** Un cookie malformé ne propose rien.
 
@@ -357,6 +355,25 @@ Les fonctions et leurs signatures sont inchangées : `initialSyncState`, `enterC
 | cache `dash_pref` de l'appareil pour ce compte et cet établissement | et pour cette appartenance seulement                                                                           |
 | `state.business` de la session sans appartenance                    | `state.business.membershipId`                                                                                  |
 
+## 6 bis. Branchement livré
+
+- **Pilote :** `src/features/preferences/client/preference-driver.ts`, sans React. Il envoie ce que la machine demande : un règlement par requête, délai maximal de 15 s, attente de 1 s à 30 s après un échec. Il ne décide de rien d'autre.
+- **Fournisseur :** `AccountAppearanceProvider`, dans le layout de `/app`. `AppearanceProvider` reste pour les aperçus : rien n'y est conservé.
+- **Contexte envoyé :** `{ businessId, membershipId }` seulement. Le schéma strict des actions refuse `userId`, que porte `PreferenceContext`.
+- **Styles livrés :** `DELIVERED_STYLES` (`classique`, `studio`, `ecrin`). Un compte en Carnet s'affiche en Classique. Un autre réglage n'envoie que ce champ, le style du compte reste Carnet.
+- **Ancien cookie :** `dash_appearance` n'est plus écrit. La proposition d'import s'affiche sur toutes les pages de `/app` : sinon, une professionnelle revenue à Classique sans explication n'irait jamais la chercher. Accepter ou refuser efface le cookie de cet appareil.
+- **Accepter l'ancien cookie :** l'action d'import, puis une lecture envoyée après elle. Passer par `changeLocally` réécrirait le choix par-dessus un compte qui en a déjà un.
+- **Lecture refusée :** elle ne déclenche pas `router.refresh()` quand un état existe : base absente, la garde du layout échoue, et la page où elle se trouve serait perdue.
+- **Sauvegarde refusée :** `context_changed`, `forbidden` et `no_business` rafraîchissent, comme le demande le § 6 : le serveur a pu lire la session. `unauthenticated` met en pause sans rafraîchir, ce qui s'écarte du § 6 : ce code dit maintenant que sa session est finie (une panne d'Auth répond `auth_unavailable`, traité comme une erreur réseau), et la garde l'enverrait à la connexion en emportant un choix pas encore enregistré. La carte propose « Réessayer » et « Me reconnecter » : c'est elle qui décide de partir.
+- **Identité de la page :** le pilote suit le tableau « Rendu du layout » avec `area.identity`. Tant que `state` est `null`, le statut est `unavailable` : contrôles désactivés, explication dans les réglages, rien d'envoyé. `confirmed` : lecture avec attente croissante. `unconfirmed` : aucune lecture, `router.refresh()` avec la même attente. Une réponse d'une identité antérieure ne peut plus agir : tout changement d'identité abandonne les requêtes en cours.
+- **Style reçu d'ailleurs :** il attend (`receivedStyle`) qu'elle le demande ou change de page, car chaque style a son propre cadre et le dessiner remonte la page. Son propre choix, un autre contexte et l'import qu'elle accepte s'appliquent tout de suite. Les autres réglages sont des couleurs, et suivent en direct. « Aujourd'hui » l'applique tout de suite : le serveur y choisit le cadre et on ne peut rien y saisir.
+
+**Comportement de Next.js à connaître.**
+
+- Les Server Actions passent une à la fois : une sauvegarde attend la lecture en cours, et l'inverse.
+- Une navigation abandonne l'action en cours, et sa promesse ne se règle jamais (`app-router-instance.js`). Le délai maximal n'est donc pas une précaution : la sauvegarde repart après 15 s, et répond `unchanged` ou `stale` si elle avait déjà abouti.
+- Le délai ne retire pas une action de la file de Next.js : une lecture bloquée retient ce qui suit, jusqu'à ce que sa requête se termine. Les envois répétés restent limités par l'attente entre deux essais, et chaque sauvegarde porte la version attendue : passée en retard, elle répond `stale` sans rien écrire.
+
 ## 7. Personnalisation de l'établissement (préparée, non livrée)
 
 Contrat proposé pour une PR ultérieure, distinct des préférences :
@@ -373,7 +390,8 @@ Contrat proposé pour une PR ultérieure, distinct des préférences :
 
 ## 8. Limites
 
-- L'interface n'est pas branchée : le moteur d'apparence est dans les PR #28 et #29.
+- **Panne du service d'authentification :** `proxy.ts`, `getSessionState` et `getBusinessContext` traitent toute erreur de lecture de la session comme une absence de session. L'interface ne repart plus seule vers la connexion, mais une navigation pendant la panne y mène encore. La distinction est à faire côté serveur ; un nouveau code d'erreur serait traité par le pilote comme une panne, sans autre changement.
+- **Base absente au rendu :** les réglages s'affichent désactivés jusqu'à une lecture réussie. Aucun choix n'est gardé en attente, faute de contexte à qui l'envoyer.
 - La synchronisation entre appareils se fait au rendu et au retour sur l'onglet, pas en temps réel (pas de Realtime).
 - **Fraîcheur entre incarnations :** l'ordre est celui d'envoi des requêtes, pas celui de leur traitement par le serveur.
   - Une lecture envoyée plus tard mais servie plus tôt peut montrer brièvement un état plus ancien **pour les champs sans intention**.

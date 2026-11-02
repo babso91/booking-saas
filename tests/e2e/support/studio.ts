@@ -22,6 +22,8 @@ export const STUDIO = "atelier.light.standard.-.studio";
 /** Cookies of one browser on the app origin. */
 export class Browser {
   readonly cookies = new Map<string, string>();
+  /** Whose session this is, for what tests set up in the database. */
+  member: { userId: string; businessId: string } | null = null;
 
   header() {
     return [...this.cookies]
@@ -55,6 +57,33 @@ export class Browser {
       html: await response.text(),
     };
   }
+}
+
+/**
+ * Her account holds this look ("atelier.light.standard.-.ecrin": ambiance,
+ * mode, motion, accent, style), written directly as an arrangement of the
+ * test. The tests of choosing one go through the page (appearance-account).
+ */
+export async function wear(browser: Browser, look: string) {
+  const [ambiance, mode, motion, accent, style] = look.split(".");
+  await db.query(
+    `insert into public.member_preferences
+       (business_id, user_id, style, ambiance, color_mode, accent, motion)
+     values ($1, $2, $3, $4, $5, $6, $7)
+     on conflict (business_id, user_id) do update set
+       style = excluded.style, ambiance = excluded.ambiance,
+       color_mode = excluded.color_mode, accent = excluded.accent,
+       motion = excluded.motion`,
+    [
+      browser.member!.businessId,
+      browser.member!.userId,
+      style,
+      ambiance,
+      mode,
+      accent === "-" ? null : `#${accent!.toUpperCase()}`,
+      motion,
+    ],
+  );
 }
 
 /** A signed-in professional with her business, and one visit going on now. */
@@ -96,6 +125,7 @@ export async function professionalWithVisit(name: string, client: string) {
     [slug],
   );
   const businessId = rows[0]!.id;
+  browser.member = { userId: signIn.data.user!.id, businessId };
   const service = await db.query<{ id: string }>(
     `insert into public.services (business_id, name, duration_minutes, price_cents)
      values ($1, 'Rehaussement de cils', 75, 6000) returning id`,

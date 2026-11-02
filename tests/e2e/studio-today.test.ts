@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { APP, Browser, professionalWithVisit, STUDIO } from "./support/studio";
+import {
+  APP,
+  Browser,
+  professionalWithVisit,
+  STUDIO,
+  wear,
+} from "./support/studio";
 
 // Studio 1 against the real backend (`next start` + local Supabase): the
 // "Aujourd’hui" page reads her day through the agenda's own read (RLS), in
@@ -18,7 +24,7 @@ describe("Studio 1 against the real backend", () => {
     const mine = await professionalWithVisit("Maëlys", "Inès");
     const theirs = await professionalWithVisit("Alma", "Zélie");
 
-    mine.browser.cookies.set("dash_appearance", STUDIO);
+    await wear(mine.browser, STUDIO);
     const today = await mine.browser.get("/app/today");
     expect(today.status).toBe(200);
     expect(today.html).toContain("Créneau en cours");
@@ -32,16 +38,13 @@ describe("Studio 1 against the real backend", () => {
 
   it("Classique: this address leads to the agenda", async () => {
     const { browser } = await professionalWithVisit("Jade", "Rose");
-    browser.cookies.set(
-      "dash_appearance",
-      "atelier.light.standard.-.classique",
-    );
+    await wear(browser, "atelier.light.standard.-.classique");
     const response = await browser.get("/app/today");
     expect(response.status).toBe(307);
     expect(new URL(response.location!, APP).pathname).toBe("/app");
   });
 
-  it("a hostile appearance cookie never breaks a page (no 500)", async () => {
+  it("a hostile old appearance cookie never breaks a page (no 500)", async () => {
     const { browser } = await professionalWithVisit("Lina", "Nour");
     for (const value of [
       "constructor.dark.none.-.studio",
