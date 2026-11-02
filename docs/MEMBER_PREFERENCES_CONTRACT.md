@@ -140,13 +140,23 @@ La réponse contient toujours le contexte et l'état actuel du compte. Avec `sta
 
 ### Source de vérité et premier rendu
 
-**La base est la source de vérité.** Le layout de `/app` la lit à chaque rendu avec `loadAreaPreferences` (`src/features/preferences/server/area-preferences.ts`), en un appel. Le premier rendu est donc déjà le sien, sans script ni flash, sur tous ses appareils.
+**La base est la source de vérité.** Le layout de `/app` la lit à chaque rendu avec `loadAreaPreferences()` (`src/features/preferences/server/area-preferences.ts`), en un appel. Le premier rendu est donc déjà le sien, sans script ni flash, sur tous ses appareils.
 
-| `source`  | Quand                                  | `snapshot`                 | Ce qui est rendu                                          |
-| --------- | -------------------------------------- | -------------------------- | --------------------------------------------------------- |
-| `account` | la base répond                         | contexte + préférences     | ses préférences (ou les défauts, version 0)               |
-| `device`  | la base est momentanément absente      | `null` (aucune sauvegarde) | le cache **de cet appareil pour ce compte** (`dash_pref`) |
-| `default` | base absente et pas de cache à son nom | `null`                     | les défauts                                               |
+**L'identité de la page vient de la session, pas des préférences.** `loadAreaPreferences()` ne prend aucun argument. Elle part de l'état de session de la requête (`currentSessionState()`, celui que la garde vient d'utiliser : Auth, puis son appartenance lue sous RLS) et renvoie `identity`, que la lecture des préférences réussisse ou non. Le `snapshot` n'est rendu que s'il est pour exactement cette identité.
+
+| `identity.status` | `source`  | Quand                                                                                                                                                | `snapshot`                 | Ce qui est rendu                                                   |
+| ----------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------ |
+| `confirmed`       | `account` | session prête, préférences lues pour cette appartenance                                                                                              | contexte + préférences     | ses préférences (ou les défauts, version 0)                        |
+| `confirmed`       | `device`  | session prête, lecture des préférences en échec                                                                                                      | `null` (aucune sauvegarde) | le cache **de cet appareil pour cette appartenance** (`dash_pref`) |
+| `confirmed`       | `default` | session prête, lecture en échec, pas de cache pour cette appartenance                                                                                | `null`                     | les défauts                                                        |
+| `unconfirmed`     | `default` | session absente, sans établissement, Auth injoignable, appartenance illisible, ou appartenance changée ou quittée pendant le rendu (lecture refusée) | `null`                     | les défauts ; **jamais** de cache ni de contexte                   |
+
+Garanties sur `identity.context` (`{ userId, businessId, membershipId }`) :
+
+- `userId` : l'utilisateur validé par Auth (`getUser`), pas le cookie seul ;
+- `businessId` et `membershipId` : sa ligne `business_members` (la plus ancienne, comme partout en V1), lue sous RLS. `membershipId` est l'`id` de cette ligne. Départ puis retour donnent une nouvelle ligne, donc un nouveau `membershipId`.
+- Si les préférences lues répondent pour une autre appartenance que celle de la session (elle est partie et revenue entre les deux lectures), ou si la lecture est refusée (`forbidden` : elle est partie), rien n'est garanti : `unconfirmed` / `membership_changed`, sans snapshot ni cache.
+- Le cache appareil n'est utilisé que si son appartenance est celle de la session : le cache d'une appartenance précédente (même compte, même établissement) n'est jamais montré.
 
 ### Les cookies
 
@@ -154,7 +164,7 @@ La réponse contient toujours le contexte et l'état actuel du compte. Avec `sta
   - posé par le serveur après chaque lecture ou écriture par action, et seulement si sa valeur change (HttpOnly, `Path=/app`, SameSite=Lax, Secure en production, un an) ;
   - format : `2.<propriétaire>.<appartenance>.<incarnation|->.<version>.<style>.<ambiance>.<mode>.<motion>.<accent|->`, où le propriétaire est le SHA-256 de son identifiant et de celui de l'établissement ;
   - lu strictement : un champ inconnu, une incohérence (incarnation et version), un autre propriétaire ou un autre format, et tout le cache est ignoré ;
-  - il ne sert qu'à l'affichage, quand la base est absente.
+  - il ne sert qu'à l'affichage, quand la lecture des préférences échoue, et seulement pour l'appartenance de la session (`membershipId`).
 - **`dash_appearance`** (Studio 1, historique) :
   - n'est jamais appliqué au compte de lui-même ;
   - si son compte n'a encore rien (version 0), `loadAreaPreferences` le renvoie dans `deviceAppearanceOffer` ;
@@ -164,18 +174,19 @@ La réponse contient toujours le contexte et l'état actuel du compte. Avec `sta
 
 ### Situations
 
-| Situation                                 | Comportement                                                                                                                                                                               |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Premier compte, aucune préférence         | défauts, version 0 ; proposition d'import si un ancien cookie valide existe                                                                                                                |
-| Écrin sur l'ordinateur, puis le téléphone | le téléphone lit Écrin au premier rendu                                                                                                                                                    |
-| Couleur changée sur le téléphone          | l'ordinateur la reçoit au prochain rendu, ou à la synchronisation (focus, § 6)                                                                                                             |
-| Changement de compte ou d'établissement   | nouveau contexte, nouvelle génération (`enterContext`) ; toute réponse de l'ancien est ignorée ; une requête de l'ancien exécutée sous la nouvelle session est refusée (`context_changed`) |
-| Départ puis retour dans l'établissement   | nouvelle appartenance, donc nouveau contexte ; la page restée ouverte n'écrit rien ; le nouveau rendu repart de la version 0, sans blocage                                                 |
-| Déconnexion puis reconnexion              | nouvelle génération, mêmes préférences ; déconnectée, rien n'est lisible ni écrit                                                                                                          |
-| Réponses concurrentes ou en désordre      | un état plus ancien ne remplace jamais un plus récent (§ 6) ; une lecture, même périmée, n'efface jamais un choix non acquitté                                                             |
-| Écritures répétées                        | `unchanged`, version inchangée ; l'appareil n'envoie rien sans changement                                                                                                                  |
-| Erreur réseau                             | le changement reste en attente et est renvoyé ; un nouvel essai déjà appliqué donne `unchanged`                                                                                            |
-| Base absente                              | rendu depuis `dash_pref` (son compte) ou les défauts ; les écritures échouent, la synchronisation se met en pause, et reprend dès qu'une lecture répond pour ce contexte                   |
+| Situation                                 | Comportement                                                                                                                                                                                                                      |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Premier compte, aucune préférence         | défauts, version 0 ; proposition d'import si un ancien cookie valide existe                                                                                                                                                       |
+| Écrin sur l'ordinateur, puis le téléphone | le téléphone lit Écrin au premier rendu                                                                                                                                                                                           |
+| Couleur changée sur le téléphone          | l'ordinateur la reçoit au prochain rendu, ou à la synchronisation (focus, § 6)                                                                                                                                                    |
+| Changement de compte ou d'établissement   | nouveau contexte, nouvelle génération (`enterContext`) ; toute réponse de l'ancien est ignorée ; une requête de l'ancien exécutée sous la nouvelle session est refusée (`context_changed`)                                        |
+| Départ puis retour dans l'établissement   | nouvelle appartenance, donc nouveau contexte ; la page restée ouverte n'écrit rien ; le nouveau rendu repart de la version 0, sans blocage                                                                                        |
+| Déconnexion puis reconnexion              | nouvelle génération, mêmes préférences ; déconnectée, rien n'est lisible ni écrit                                                                                                                                                 |
+| Réponses concurrentes ou en désordre      | un état plus ancien ne remplace jamais un plus récent (§ 6) ; une lecture, même périmée, n'efface jamais un choix non acquitté                                                                                                    |
+| Écritures répétées                        | `unchanged`, version inchangée ; l'appareil n'envoie rien sans changement                                                                                                                                                         |
+| Erreur réseau                             | le changement reste en attente et est renvoyé ; un nouvel essai déjà appliqué donne `unchanged`                                                                                                                                   |
+| Lecture des préférences en échec          | identité confirmée par la session ; rendu depuis `dash_pref` (cette appartenance) ou les défauts ; rien n'est envoyé avant une lecture pour cette identité                                                                        |
+| Base absente                              | la session ne peut pas être établie : la garde de `/app` échoue avant le rendu ; les actions répondent `internal` ou `auth_unavailable`, la synchronisation se met en pause et reprend dès qu'une lecture répond pour ce contexte |
 
 ## 5. Évolution du schéma
 
@@ -194,20 +205,25 @@ La réponse contient toujours le contexte et l'état actuel du compte. Avec `sta
 **Côté serveur (layout `/app`) :**
 
 ```ts
-const state = await requireReadyBusiness();
-const area = await loadAreaPreferences({
-  userId: state.user.id,
-  businessId: state.business.id,
-});
-// area.snapshot: { context, preferences } | null (base absente)
+await requireReadyBusiness();
+const area = await loadAreaPreferences(); // aucun argument : la session de la requête
+// area.identity:
+//   { status: "confirmed", context: { userId, businessId, membershipId } }
+//   { status: "unconfirmed", reason: "unauthenticated" | "onboarding_required"
+//       | "auth_unavailable" | "session_unreadable" | "membership_changed" }
+// area.snapshot: { context, preferences } | null
+//   (jamais présent sans identité confirmée ; s'il est présent,
+//    sameContext(area.snapshot.context, area.identity.context) est vrai)
 // area.appearance: ce qu'il faut rendre maintenant
-// area.source: "account" | "device" | "default"
-// area.deviceAppearanceOffer: Appearance | null
+// area.source: "account" | "device" | "default" ("default" si unconfirmed)
+// area.deviceAppearanceOffer: Appearance | null (null si pas de snapshot)
 const appearance = renderableAppearance(area.appearance, [
   "classique",
   "studio",
 ]);
 ```
+
+Le type est une union discriminée sur `identity.status` : avec `unconfirmed`, TypeScript sait que `snapshot` est `null` et `source` vaut `"default"`.
 
 `AppearancePreferences` a exactement la forme de `Appearance` (`style`, `ambiance`, `mode`, `accent`, `motion`). Seuls les styles possibles sont plus nombreux, d'où `renderableAppearance`.
 
@@ -262,7 +278,7 @@ Dans les deux cas, cela ne change que ce qui est affiché pour les champs sans i
 
 **Étapes :**
 
-1. `initialSyncState(area.snapshot)` au premier rendu, puis `enterContext(state, area.snapshot)` à chaque rendu dont le contexte diffère, ou après une nouvelle connexion. Afficher `displayedAppearance(state)`. Si `area.snapshot` est `null`, afficher `area.appearance` et ne rien envoyer avant une lecture réussie.
+1. À chaque rendu du layout, partir de `area.identity`, **jamais** du contexte d'un état précédent, d'un snapshot précédent ou d'un cookie (tableau « Rendu du layout » ci-dessous). Afficher `displayedAppearance(state)` quand il y a un état, sinon `area.appearance`.
 2. Au choix de la professionnelle : `changeLocally(state, next)` (appliqué tout de suite ; chaque champ qui diffère de ce qu'elle voit devient une intention), puis `nextSave(state)` donne la requête à envoyer, une seule à la fois, avec son ticket. Elle transporte toutes les intentions.
 3. À la réponse : `saveAnswered(state, request.ticket, data)`, puis `nextSave` à nouveau. Les intentions plus récentes, ou non acquittées (`stale`), repartent.
 4. En cas d'erreur :
@@ -275,6 +291,19 @@ Dans les deux cas, cela ne change que ce qui est affiché pour les champs sans i
    - une lecture répondue pour ce même contexte lève la pause, et les intentions repartent.
 6. Après `STALE_LIMIT` (5) réponses `stale` consécutives, la sauvegarde se met en pause (`paused: "conflict"`) jusqu'à la lecture suivante : jamais de boucle infinie.
 7. `unacknowledgedChanges(state)` donne ses choix pas encore acquittés : pour afficher « enregistrement… », ou avertir avant de quitter la page.
+
+**Rendu du layout : ce que fait le pilote.** `state` est l'état de synchronisation courant (ou `null`) ; `generation` est le dernier numéro de génération utilisé par la page, gardé même quand `state` est `null` :
+
+| `area`                        | `state` courant                      | Action du pilote                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `confirmed` + `snapshot`      | `null`                               | `initialSyncState(area.snapshot, generation + 1)`                                                                                                                                                                                                                                                                                                                                           |
+| `confirmed` + `snapshot`      | même contexte (`sameContext`)        | garder `state` (rafraîchissement : le nouvel état passe par `readAnswered` ou les réponses de sauvegarde)                                                                                                                                                                                                                                                                                   |
+| `confirmed` + `snapshot`      | autre contexte                       | `enterContext(state, area.snapshot)`                                                                                                                                                                                                                                                                                                                                                        |
+| `confirmed`, `snapshot: null` | même contexte que `identity.context` | garder `state` et ses intentions : c'est la même appartenance, seule la lecture a échoué. Lire (étape 5) avec backoff                                                                                                                                                                                                                                                                       |
+| `confirmed`, `snapshot: null` | `null` ou autre contexte             | **abandonner** `state` (comme `enterContext` : les intentions de l'ancien contexte ne sont jamais envoyées) ; `state = null` ; afficher `area.appearance` ; ne rien envoyer ; lancer `getMyPreferencesAction()` avec backoff et n'accepter que la réponse dont `context` égale `identity.context` : alors `state = initialSyncState(data, generation + 1)`. Toute autre réponse est ignorée |
+| `unconfirmed`                 | quelconque                           | **abandonner** `state` ; `state = null` ; afficher `area.appearance` (les défauts) ; aucune sauvegarde, aucune lecture, aucun contexte repris d'un état ou d'un snapshot précédent. Redemander un rendu plus tard (`router.refresh()` avec backoff, ou au retour sur l'onglet)                                                                                                              |
+
+Pendant que `state` est `null`, toute réponse d'une requête envoyée sous une identité antérieure est ignorée : le pilote note l'identité au moment de l'envoi et la compare à celle de la page à la réponse.
 
 **Lectures de réconciliation : ce que la machine garantit, ce que le pilote doit faire.**
 
@@ -318,6 +347,16 @@ Les fonctions et leurs signatures sont inchangées : `initialSyncState`, `enterC
 
 **À noter :** poser un cookie dans une Server Action rafraîchit la route. Le layout relit alors le compte. Si le contexte n'a pas changé, ne pas appeler `enterContext` : le nouvel état passe par `readAnswered` ou les réponses de sauvegarde.
 
+**Migration depuis `5df33d3` (identité de la page) :**
+
+| Avant                                                               | Maintenant                                                                                                     |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `loadAreaPreferences({ userId, businessId })`                       | `loadAreaPreferences()` : l'identité vient de la session de la requête                                         |
+| contexte de la page = `area.snapshot?.context`                      | contexte de la page = `area.identity.context` (si `confirmed`) ; `area.snapshot.context` lui est toujours égal |
+| `snapshot: null` sans dire pour qui                                 | `identity` toujours présente ; `unconfirmed` quand elle ne peut pas être garantie                              |
+| cache `dash_pref` de l'appareil pour ce compte et cet établissement | et pour cette appartenance seulement                                                                           |
+| `state.business` de la session sans appartenance                    | `state.business.membershipId`                                                                                  |
+
 ## 7. Personnalisation de l'établissement (préparée, non livrée)
 
 Contrat proposé pour une PR ultérieure, distinct des préférences :
@@ -341,5 +380,6 @@ Contrat proposé pour une PR ultérieure, distinct des préférences :
   - Les intentions ne sont jamais touchées.
   - La lecture de réconciliation (`readNeeded`), ou la prochaine sauvegarde, corrige l'affichage (testé : jamais de blocage, au plus une lecture par ambiguïté).
 - **Intentions égales à l'état du compte :** elles sont envoyées quand même, et acquittées par `unchanged`. Cela coûte un aller-retour, et c'est voulu : l'égalité avec un état observé n'est pas une preuve.
-- **Indisponibilité de Supabase Auth :** la session ne peut pas être vérifiée ; l'action répond `auth_unavailable` (distinct de `unauthenticated`, voir `src/lib/supabase/auth-errors.ts`). Le pilote réessaie avec backoff, sans rien perdre ni rien annoncer comme enregistré. Les pages privées affichent `/indisponible` au lieu de renvoyer vers `/login`, et aucun cookie de session n'est supprimé.
+- **Indisponibilité de Supabase Auth :** la session ne peut pas être vérifiée ; l'action répond `auth_unavailable` (distinct de `unauthenticated`, voir `src/lib/supabase/auth-errors.ts`). Le pilote réessaie avec backoff, sans rien perdre ni rien annoncer comme enregistré. Les pages privées affichent `/indisponible` au lieu de renvoyer vers `/login`, et aucun cookie de session n'est supprimé. Cela vaut aussi dans les Server Actions, y compris quand Auth renvoie une réponse illisible pendant le refresh d'un jeton expiré (`docs/AUTH_ONBOARDING_CONTRACT.md`).
+- **Identité et contexte du snapshot :** l'identité vient de deux lectures (session, puis préférences), pas d'une transaction. Un départ, avec ou sans retour, entre les deux est détecté (`membership_changed` : autre appartenance lue, ou lecture refusée `forbidden`). Seul un échec transitoire de la lecture (réseau, base) garde l'identité confirmée. Elle peut alors désigner une appartenance quittée depuis : aucune écriture n'y est possible (`context_changed`), et la prochaine requête le constate.
 - Les préférences d'affichage autres que l'apparence (widgets, image personnelle) ne sont pas encore modélisées (§ 5 et § 7).
