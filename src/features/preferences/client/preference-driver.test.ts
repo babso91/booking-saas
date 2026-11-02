@@ -80,6 +80,28 @@ function held<T>(input?: unknown) {
   return { promise, entry };
 }
 
+/** A render with her account read: the identity is the snapshot's. */
+const rendered = (first: PreferencesSnapshot) => ({
+  identity: { status: "confirmed" as const, context: first.context },
+  snapshot: first,
+  appearance: first.preferences.appearance,
+});
+/** A render that knows who she is, but could not read her preferences. */
+const unread = (
+  ctx = context(),
+  appearance = defaultAppearancePreferences,
+) => ({
+  identity: { status: "confirmed" as const, context: ctx },
+  snapshot: null,
+  appearance,
+});
+/** A render that cannot say who she is. */
+const unconfirmed = (reason = "membership_changed") => ({
+  identity: { status: "unconfirmed" as const, reason },
+  snapshot: null,
+  appearance: defaultAppearancePreferences,
+});
+
 function setup(first: PreferencesSnapshot | null = snapshot()) {
   const reads: Held<PreferencesSnapshot>[] = [];
   const saves: Held<SaveAnswer>[] = [];
@@ -87,13 +109,12 @@ function setup(first: PreferencesSnapshot | null = snapshot()) {
   const refresh = vi.fn();
   let hidden = false;
   const driver = new PreferenceDriver(
-    {
-      snapshot: first,
-      appearance: first?.preferences.appearance ?? {
-        ...defaultAppearancePreferences,
-        style: "studio",
-      },
-    },
+    first
+      ? rendered(first)
+      : unread(context(), {
+          ...defaultAppearancePreferences,
+          style: "studio",
+        }),
     {
       read: () => {
         const { promise, entry } = held<PreferencesSnapshot>();
@@ -401,10 +422,9 @@ describe("a style received from elsewhere", () => {
   it("another context is drawn at once: never the other account's frame", async () => {
     const page = setup();
     await from(page, { style: "ecrin" });
-    page.driver.receiveArea({
-      snapshot: snapshot({ style: "studio" }, 1, context("2")),
-      appearance: { ...defaultAppearancePreferences, style: "studio" },
-    });
+    page.driver.receiveArea(
+      rendered(snapshot({ style: "studio" }, 1, context("2"))),
+    );
     expect(page.driver.getView()).toMatchObject({
       appearance: { style: "studio" },
       receivedStyle: null,
@@ -504,10 +524,7 @@ describe("reads", () => {
 });
 
 describe("left and joined again: a choice of the old membership", () => {
-  const joined = () => ({
-    snapshot: snapshot({}, 0, context("9"), null),
-    appearance: defaultAppearancePreferences,
-  });
+  const joined = () => rendered(snapshot({}, 0, context("9"), null));
   const membership = (save: Held<SaveAnswer>) =>
     (save.input as { context: { membershipId: string } }).context.membershipId;
 
@@ -574,10 +591,7 @@ describe("renders of the layout", () => {
     const { driver, saves, reads } = setup(snapshot({}, 1));
     driver.change({ style: "ecrin" });
     // router.refresh() during the save, with the account as it was.
-    driver.receiveArea({
-      snapshot: snapshot({ style: "studio" }, 1),
-      appearance: defaultAppearancePreferences,
-    });
+    driver.receiveArea(rendered(snapshot({ style: "studio" }, 1)));
     expect(driver.getView().appearance.style).toBe("ecrin");
     expect(driver.getView().status).toBe("saving");
     expect(saves).toHaveLength(1);
@@ -586,14 +600,26 @@ describe("renders of the layout", () => {
     expect(driver.getView().status).toBe("idle");
   });
 
-  it("a render without the database does not lose the context", () => {
-    const { driver } = setup(snapshot({ style: "studio" }, 1));
-    driver.receiveArea({
-      snapshot: null,
-      appearance: defaultAppearancePreferences,
+  it("a render without the database does not lose the context: her choice stays, and a read is sent", async () => {
+    const { driver, saves, reads } = setup(snapshot({ style: "studio" }, 1));
+    driver.change({ mode: "dark" });
+    driver.receiveArea(unread());
+    expect(driver.getView().appearance).toMatchObject({
+      style: "studio",
+      mode: "dark",
     });
-    expect(driver.getView().appearance.style).toBe("studio");
+    expect(driver.getView().status).toBe("saving");
+    expect(reads).toHaveLength(1);
+
+    // Another such render does not send another read.
+    driver.receiveArea(unread());
+    expect(reads).toHaveLength(1);
+    await saves[0]!.answer(saved({ style: "studio", mode: "dark" }, 2));
     expect(driver.getView().status).toBe("idle");
+
+    await reads[0]!.refuse("internal");
+    await vi.advanceTimersByTimeAsync(FIRST_RETRY_MS - 1);
+    expect(reads).toHaveLength(1);
   });
 
   it.each([
@@ -605,10 +631,9 @@ describe("renders of the layout", () => {
       const { driver, saves, reads } = setup(snapshot({ mode: "dark" }, 4));
       driver.returned();
       driver.change({ style: "ecrin" });
-      driver.receiveArea({
-        snapshot: snapshot({ style: "studio" }, 2, next, uuid("a7")),
-        appearance: defaultAppearancePreferences,
-      });
+      driver.receiveArea(
+        rendered(snapshot({ style: "studio" }, 2, next, uuid("a7"))),
+      );
       expect(driver.getView()).toMatchObject({
         status: "idle",
         appearance: { style: "studio", mode: "light" },
@@ -634,10 +659,7 @@ describe("renders of the layout", () => {
     const { driver, saves } = setup();
     driver.change({ mode: "dark" });
     await saves[0]!.drop();
-    driver.receiveArea({
-      snapshot: snapshot({}, 1, context("2", "b2")),
-      appearance: defaultAppearancePreferences,
-    });
+    driver.receiveArea(rendered(snapshot({}, 1, context("2", "b2"))));
     await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
     expect(saves).toHaveLength(1);
   });
@@ -649,6 +671,248 @@ describe("renders of the layout", () => {
     expect(driver.getView().status).toBe("paused");
     expect(driver.getView().appearance.mode).toBe("dark");
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the page's identity comes from the render, not from her preferences", () => {
+  const b = context("2", "b2");
+  const dark = { ...defaultAppearancePreferences, mode: "dark" as const };
+
+  it("a save on its way for A, B rendered unread, A's late answer: nothing of A acts for B", async () => {
+    const { driver, saves, reads } = setup(snapshot({ style: "studio" }, 1));
+    driver.change({ mode: "dark" });
+    expect(saves[0]!.input).toMatchObject({ context: onWire(context()) });
+
+    driver.receiveArea(unread(b));
+    // What is drawn is what the render says, not A's look.
+    expect(driver.getView()).toMatchObject({
+      status: "unavailable",
+      receivedStyle: null,
+      savedHere: false,
+      appearance: defaultAppearancePreferences,
+    });
+
+    // Sombre on B's page: the controls are off, and nothing is kept for later.
+    driver.change({ mode: "dark" });
+    expect(driver.getView().appearance.mode).toBe("light");
+
+    await saves[0]!.answer(saved({ style: "studio", mode: "dark" }, 2));
+    expect(driver.getView()).toMatchObject({
+      status: "unavailable",
+      savedHere: false,
+      appearance: defaultAppearancePreferences,
+    });
+    await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+    expect(saves).toHaveLength(1);
+
+    // B's read starts B: a new state, without anything of A. (The first one
+    // ran out of time during that wait, and went again by itself.)
+    expect(reads.length).toBeGreaterThan(1);
+    await reads.at(-1)!.answer(snapshot({ style: "ecrin" }, 3, b, uuid("a7")));
+    expect(driver.getView()).toMatchObject({
+      status: "idle",
+      appearance: { mode: "light" },
+      receivedStyle: "ecrin",
+    });
+    await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+    expect(saves).toHaveLength(1);
+
+    driver.change({ motion: "none" });
+    expect(saves[1]!.input).toEqual({
+      context: onWire(b),
+      expected: { incarnation: uuid("a7"), version: 3 },
+      changes: { motion: "none" },
+    });
+  });
+
+  it("then B's own render brings the account: a new state; her page stays as drawn until she asks", async () => {
+    const { driver, saves } = setup(snapshot({ style: "studio" }, 1));
+    driver.change({ mode: "dark" });
+    driver.receiveArea(unread(b));
+    await saves[0]!.drop();
+
+    driver.receiveArea(
+      rendered(snapshot({ style: "ecrin" }, 3, b, uuid("a7"))),
+    );
+    expect(driver.getView()).toMatchObject({
+      status: "idle",
+      appearance: { style: "classique", mode: "light" },
+      receivedStyle: "ecrin",
+    });
+    await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+    expect(saves).toHaveLength(1);
+  });
+
+  it("the look of the render is shown, its device cache for B, never A's", () => {
+    const { driver } = setup(snapshot({ style: "studio" }, 1));
+    driver.receiveArea(unread(b, dark));
+    expect(driver.getView().appearance).toEqual(dark);
+  });
+
+  it("A's read and A's import, answered under B: dropped", async () => {
+    const { driver, reads, imports } = setup(snapshot({}, 0));
+    driver.returned();
+    const settled = driver.importDevice(defaultAppearancePreferences);
+    driver.receiveArea(unread(b));
+    await imports[0]!.answer(saved({ style: "ecrin" }, 1));
+    await expect(settled).resolves.toBe(false);
+    await reads[0]!.answer(snapshot({ style: "studio" }, 9));
+    expect(driver.getView()).toMatchObject({
+      status: "unavailable",
+      importing: "idle",
+      appearance: defaultAppearancePreferences,
+    });
+  });
+
+  it("B's read answered for anyone else: refused, the layout asked, read again", async () => {
+    const { driver, reads, saves, refresh } = setup(snapshot({}, 1));
+    driver.receiveArea(unread(b));
+    await reads[0]!.answer(snapshot({ style: "studio" }, 9));
+    expect(driver.getView()).toMatchObject({
+      status: "unavailable",
+      appearance: defaultAppearancePreferences,
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    driver.change({ mode: "dark" });
+    expect(saves).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(FIRST_RETRY_MS);
+    await reads[1]!.answer(snapshot({}, 3, b, uuid("a7")));
+    expect(driver.getView().status).toBe("idle");
+  });
+
+  it("renders repeated without her preferences: one read at a time, the wait keeps growing", async () => {
+    const { driver, reads } = setup(snapshot({}, 1));
+    driver.receiveArea(unread(b));
+    driver.receiveArea(unread(b));
+    expect(reads).toHaveLength(1);
+    await reads[0]!.refuse("internal");
+    driver.receiveArea(unread(b));
+    await vi.advanceTimersByTimeAsync(FIRST_RETRY_MS);
+    expect(reads).toHaveLength(2);
+    await reads[1]!.refuse("internal");
+    driver.receiveArea(unread(b));
+    await vi.advanceTimersByTimeAsync(2 * FIRST_RETRY_MS - 1);
+    expect(reads).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reads).toHaveLength(3);
+  });
+
+  it("back to A through B: A's old answers do not touch A's new state", async () => {
+    const { driver, saves } = setup(snapshot({ style: "studio" }, 1));
+    driver.change({ mode: "dark" });
+    driver.receiveArea(unread(b));
+    driver.receiveArea(rendered(snapshot({ style: "ecrin" }, 5)));
+    await saves[0]!.answer(saved({ style: "studio", mode: "dark" }, 2));
+    expect(driver.getView()).toMatchObject({
+      savedHere: false,
+      appearance: { style: "ecrin", mode: "light" },
+    });
+  });
+
+  it("left and joined again, unread: a new context, the old one's answers dropped", async () => {
+    const { driver, saves, reads } = setup(snapshot({ style: "studio" }, 1));
+    driver.change({ mode: "dark" });
+    driver.receiveArea(unread(context("9")));
+    expect(driver.getView()).toMatchObject({
+      status: "unavailable",
+      appearance: defaultAppearancePreferences,
+    });
+    await saves[0]!.refuse("context_changed");
+    // Same account, same business: the old membership's answer is still another's.
+    await reads[0]!.answer(snapshot({ style: "studio" }, 2));
+    expect(driver.getView().status).toBe("unavailable");
+
+    await vi.advanceTimersByTimeAsync(FIRST_RETRY_MS);
+    await reads[1]!.answer(snapshot({}, 0, context("9"), null));
+    driver.change({ style: "ecrin" });
+    expect(saves[1]!.input).toEqual({
+      context: onWire(context("9")),
+      expected: { incarnation: null, version: 0 },
+      changes: { style: "ecrin" },
+    });
+  });
+
+  describe("unconfirmed", () => {
+    it("after a state: nothing kept, nothing sent, nothing read, no context reused", async () => {
+      const { driver, saves, reads } = setup(snapshot({ style: "studio" }, 1));
+      driver.change({ mode: "dark" });
+      driver.receiveArea(unconfirmed());
+      expect(driver.getView()).toMatchObject({
+        status: "unavailable",
+        savedHere: false,
+        appearance: defaultAppearancePreferences,
+      });
+      driver.change({ mode: "dark" });
+      await saves[0]!.answer(saved({ style: "studio", mode: "dark" }, 2));
+      driver.returned();
+      driver.retry();
+      await vi.advanceTimersByTimeAsync(10 * LAST_RETRY_MS);
+      expect(saves).toHaveLength(1);
+      expect(reads).toHaveLength(0);
+      expect(driver.getView().appearance).toEqual(defaultAppearancePreferences);
+      await expect(
+        driver.importDevice(defaultAppearancePreferences),
+      ).resolves.toBe(false);
+    });
+
+    it("asks for a render, waiting more each time, up to the limit", async () => {
+      const { driver, refresh } = setup(snapshot({}, 1));
+      driver.receiveArea(unconfirmed());
+      expect(refresh).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(FIRST_RETRY_MS);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      // A render that cannot say either changes nothing to the wait.
+      driver.receiveArea(unconfirmed("auth_unavailable"));
+      await vi.advanceTimersByTimeAsync(2 * FIRST_RETRY_MS - 1);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(refresh).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+      const asked = refresh.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(LAST_RETRY_MS - 1);
+      expect(refresh.mock.calls.length).toBeLessThanOrEqual(asked + 1);
+    });
+
+    it("hidden, it asks nothing; back on the tab, at once", async () => {
+      const { driver, refresh, hide } = setup(snapshot({}, 1));
+      hide(true);
+      driver.receiveArea(unconfirmed());
+      await vi.advanceTimersByTimeAsync(10 * LAST_RETRY_MS);
+      expect(refresh).not.toHaveBeenCalled();
+      hide(false);
+      driver.returned();
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("then confirmed: a new state, even for the same context, A's answers dropped", async () => {
+      const { driver, saves } = setup(snapshot({ style: "studio" }, 1));
+      driver.change({ mode: "dark" });
+      driver.receiveArea(unconfirmed());
+      driver.receiveArea(rendered(snapshot({ style: "ecrin" }, 3)));
+      expect(driver.getView()).toMatchObject({
+        status: "idle",
+        receivedStyle: null,
+        appearance: { style: "ecrin", mode: "light" },
+      });
+      await saves[0]!.answer(saved({ style: "studio", mode: "dark" }, 2));
+      expect(driver.getView().appearance.style).toBe("ecrin");
+      await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+      expect(saves).toHaveLength(1);
+    });
+
+    it("then confirmed unread: reads for that identity only", async () => {
+      const { driver, reads, refresh } = setup(snapshot({}, 1));
+      driver.receiveArea(unconfirmed());
+      await vi.advanceTimersByTimeAsync(FIRST_RETRY_MS);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      driver.receiveArea(unread(b));
+      expect(reads).toHaveLength(1);
+      await reads[0]!.answer(snapshot({}, 3, b, uuid("a7")));
+      expect(driver.getView().status).toBe("idle");
+      await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -681,10 +945,7 @@ describe("the account could not be read", () => {
 
   it("a render that brings the account wins over a read still on its way", async () => {
     const { driver, reads } = setup(null);
-    driver.receiveArea({
-      snapshot: snapshot({ style: "ecrin" }, 2),
-      appearance: defaultAppearancePreferences,
-    });
+    driver.receiveArea(rendered(snapshot({ style: "ecrin" }, 2)));
     await reads[0]!.answer(snapshot({ style: "studio" }, 1));
     expect(driver.getView().receivedStyle).toBe("ecrin");
   });
@@ -767,10 +1028,7 @@ describe("an old device's look", () => {
     await expect(settled).resolves.toBe(true);
     await reads[0]!.refuse("auth_unavailable");
 
-    driver.receiveArea({
-      snapshot: snapshot({}, 0, context("9"), null),
-      appearance: defaultAppearancePreferences,
-    });
+    driver.receiveArea(rendered(snapshot({}, 0, context("9"), null)));
     await vi.advanceTimersByTimeAsync(10 * LAST_RETRY_MS);
     expect(reads).toHaveLength(1);
     expect(driver.getView().appearance.style).toBe("classique");

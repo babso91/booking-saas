@@ -54,6 +54,7 @@ function area(
 ): AreaPreferences {
   const look = { ...defaultAppearancePreferences, ...appearance };
   return {
+    identity: { status: "confirmed", context: context(membershipId) },
     snapshot: {
       context: context(membershipId),
       preferences: {
@@ -348,6 +349,7 @@ describe("a style received from elsewhere", () => {
 
 describe("the account could not be read", () => {
   const away = (): AreaPreferences => ({
+    identity: { status: "confirmed", context: context(M1) },
     snapshot: null,
     appearance: { ...defaultAppearancePreferences, style: "studio" },
     source: "device",
@@ -377,6 +379,47 @@ describe("the account could not be read", () => {
     expect(style()).toBe("studio");
     expect(said()).toContain("Ton compte est passé à Écrin");
     expect(radio(/^Studio/).matches(":disabled")).toBe(false);
+  });
+
+  it("another identity without her preferences: the old look goes, the controls are off", async () => {
+    actions.getMyPreferencesAction.mockReturnValue(
+      new Promise(() => undefined),
+    );
+    const { rerender } = render(<Page of={area({ style: "ecrin" }, 2)} />);
+    expect(style()).toBe("ecrin");
+    rerender(
+      <Page
+        of={{
+          ...away(),
+          identity: { status: "confirmed", context: context(uuid("77")) },
+          appearance: defaultAppearancePreferences,
+          source: "default",
+        }}
+      />,
+    );
+    expect(style()).toBe("classique");
+    expect(screen.getByText(/Ton compte ne répond pas/)).toBeTruthy();
+    expect(radio(/^Écrin/).matches(":disabled")).toBe(true);
+  });
+
+  it("no identity: the defaults, the controls off, nothing read", async () => {
+    const { rerender } = render(<Page of={area({ style: "ecrin" }, 2)} />);
+    rerender(
+      <Page
+        of={{
+          identity: { status: "unconfirmed", reason: "membership_changed" },
+          snapshot: null,
+          appearance: defaultAppearancePreferences,
+          source: "default",
+          deviceAppearanceOffer: null,
+        }}
+      />,
+    );
+    await act(async () => undefined);
+    expect(style()).toBe("classique");
+    expect(radio(/^Écrin/).matches(":disabled")).toBe(true);
+    expect(actions.getMyPreferencesAction).not.toHaveBeenCalled();
+    expect(actions.saveMyPreferencesAction).not.toHaveBeenCalled();
   });
 });
 

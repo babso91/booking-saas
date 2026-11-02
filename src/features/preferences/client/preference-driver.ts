@@ -9,7 +9,6 @@ import {
 import {
   changeLocally,
   displayedAppearance,
-  enterContext,
   initialSyncState,
   nextSave,
   readAnswered,
@@ -35,9 +34,12 @@ import {
 // carried may have been applied (sent again, it comes back `unchanged` or
 // `stale`, both handled).
 //
-// A render of the layout says which context the page is in, nothing more:
-// its preferences may be older than an answer already taken, so inside the
-// same context they are ignored.
+// A render of the layout says who the page is for (`identity`), and that alone
+// decides the context: never its snapshot, never the state it had. Inside the
+// same context its preferences are ignored: they may be older than an answer
+// already taken. Under another identity, or none, everything of the old one is
+// dropped, her choices not saved yet included (docs/MEMBER_PREFERENCES_CONTRACT.md
+// § 6, "Rendu du layout"). Without a state nothing can be changed or saved.
 //
 // A style that comes from elsewhere is not shown by itself. Each style has its
 // own frame: drawing it mounts the page again and destroys what she was typing.
@@ -79,6 +81,9 @@ export type DriverHost = {
 };
 
 export type DriverArea = {
+  identity:
+    | { status: "confirmed"; context: PreferenceContext }
+    | { status: "unconfirmed"; reason: string };
   snapshot: PreferencesSnapshot | null;
   appearance: AppearancePreferences;
 };
@@ -112,15 +117,20 @@ const SESSION_REFUSALS = new Set([
   "no_business",
 ]);
 /**
- * Those the server could only say by reading the session: the layout can tell.
- * Not `unauthenticated`: an authentication service that does not answer is
- * reported the same way, and the layout's guard would send her to sign in.
+ * Those the layout can settle without taking anything from her. Not
+ * `unauthenticated`: her session is over, and the layout's guard would send her
+ * to sign in with a choice not saved yet; the card lets her decide. (A failing
+ * authentication service says `auth_unavailable`: a network error here.)
  */
 const askLayout = (code: string) =>
   SESSION_REFUSALS.has(code) && code !== "unauthenticated";
 
 export class PreferenceDriver {
-  private state: SyncState | null;
+  /** Who the page is for, as the last render said. */
+  private identity: DriverArea["identity"];
+  private state: SyncState | null = null;
+  /** The last one given: it outlives the times without a state. */
+  private generation = 0;
   private fallback: AppearancePreferences;
   private shownStyle: AppearancePreferences["style"];
   /**
@@ -147,7 +157,8 @@ export class PreferenceDriver {
     private readonly actions: DriverActions,
     private readonly host: DriverHost,
   ) {
-    this.state = area.snapshot ? initialSyncState(area.snapshot) : null;
+    this.identity = area.identity;
+    if (area.snapshot) this.enter(area.snapshot);
     this.fallback = area.appearance;
     this.shownStyle = area.appearance.style;
     this.view = this.computeView();
@@ -172,25 +183,49 @@ export class PreferenceDriver {
     this.clearWait();
   }
 
-  /** A render of the layout. Enters a context only if it is another one. */
+  /** A render of the layout: see the top of this file. */
   receiveArea(area: DriverArea) {
-    if (!area.snapshot) {
-      if (!this.state) {
-        this.fallback = area.appearance;
-        this.shownStyle = area.appearance.style;
-        this.publish();
+    const { identity, snapshot } = area;
+    const before = this.identity;
+    this.identity = identity;
+
+    if (identity.status === "unconfirmed") {
+      if (this.state || before.status === "confirmed") {
+        this.leaveRequests();
+        this.state = null;
+        this.failed();
+      }
+      this.show(area.appearance);
+      this.publish();
+      return;
+    }
+
+    if (this.state && sameContext(this.state.context, identity.context)) {
+      if (!snapshot && this.state.readsInFlight.length === 0) {
+        this.readDue = true;
+        this.pump();
       }
       return;
     }
-    if (!this.state) {
-      this.leaveRequests();
-      this.state = initialSyncState(area.snapshot);
-    } else if (!sameContext(this.state.context, area.snapshot.context)) {
-      this.leaveRequests();
-      this.state = enterContext(this.state, area.snapshot);
-      this.shownStyle = area.snapshot.preferences.appearance.style;
-    } else {
+
+    // Still waiting for this very identity: its read goes on, its wait too.
+    const stillHere =
+      !this.state &&
+      before.status === "confirmed" &&
+      sameContext(before.context, identity.context);
+    if (stillHere && !snapshot) {
+      this.show(area.appearance);
+      this.publish();
       return;
+    }
+
+    this.leaveRequests();
+    this.state = null;
+    if (snapshot) {
+      this.enter(snapshot);
+      if (!stillHere) this.shownStyle = snapshot.preferences.appearance.style;
+    } else {
+      this.show(area.appearance);
     }
     this.publish();
     this.pump();
@@ -220,6 +255,7 @@ export class PreferenceDriver {
     if (now - this.lastReturn < RETURN_GAP_MS) return;
     this.lastReturn = now;
     if (this.state?.readsInFlight.length) return;
+    if (!this.state) this.clearWait();
     this.readDue = true;
     this.pump();
   }
@@ -272,8 +308,16 @@ export class PreferenceDriver {
   /** Sends what is due, unless waiting after a failure. */
   private pump() {
     if (!this.running || this.waiting !== null) return;
+    if (this.identity.status === "unconfirmed") {
+      // Nothing to read for anyone: only a render can say who she is.
+      if (!this.host.isHidden()) {
+        this.host.refresh();
+        this.failed();
+      }
+      return;
+    }
     if (!this.state) {
-      if (!this.host.isHidden()) this.readFirst();
+      if (!this.host.isHidden()) this.readFirst(this.identity.context);
       return;
     }
     const [state, request] = nextSave(this.state);
@@ -340,8 +384,8 @@ export class PreferenceDriver {
             if (draw) this.applyReceivedStyle();
           }
         } else {
-          // Not a reason to render the layout: with the database away, a
-          // read is refused too, and its guard would send her to sign in.
+          // Not a reason to render the layout: with the database away, its
+          // guard fails too, and the page she is on would be lost.
           this.state = readFailed(this.state!, ticket);
           this.drawNextRead ||= draw;
           this.failed();
@@ -355,18 +399,22 @@ export class PreferenceDriver {
     );
   }
 
-  /** The render had no account: a read gives this page its context. */
-  private readFirst() {
+  /** The render had no account: a read for this identity starts the state. */
+  private readFirst(context: PreferenceContext) {
     if (this.readBeforeFirst) return;
     this.readBeforeFirst = true;
     this.settleOnce(
       this.actions.read(),
       (result) => {
         this.readBeforeFirst = false;
-        if (result.ok) {
-          this.state = initialSyncState(result.data);
+        if (!result.ok) {
+          this.failed();
+        } else if (sameContext(result.data.context, context)) {
+          this.enter(result.data);
           this.succeeded();
         } else {
+          // Answered for someone else: only the layout can tell.
+          this.askRefresh();
           this.failed();
         }
       },
@@ -406,6 +454,17 @@ export class PreferenceDriver {
       (result) => settle(() => answered(result)),
       () => settle(lost),
     );
+  }
+
+  private enter(snapshot: PreferencesSnapshot) {
+    this.generation += 1;
+    this.state = initialSyncState(snapshot, this.generation);
+  }
+
+  /** No state: what the render says, nothing of what was shown before. */
+  private show(appearance: AppearancePreferences) {
+    this.fallback = appearance;
+    this.shownStyle = appearance.style;
   }
 
   /** Leaving a context: nothing sent for it can act any more. */

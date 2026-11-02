@@ -21,11 +21,8 @@ export const metadata: Metadata = {
 export default async function TodayPage() {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
-  const { user, business } = await requireReadyBusiness();
-  const appearance = await loadRenderedAppearance({
-    userId: user.id,
-    businessId: business.id,
-  });
+  const { business } = await requireReadyBusiness();
+  const appearance = await loadRenderedAppearance();
   if (appearance.style === "classique") redirect("/app");
 
   // Today and now, from the calendar authority (PostgreSQL); then the week

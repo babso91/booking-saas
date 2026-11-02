@@ -11,8 +11,8 @@ import { loadArea } from "@/features/appearance/server/area-appearance";
 export default async function PrivateAppLayout({
   children,
 }: LayoutProps<"/app">) {
-  const { user, business } = await requireReadyBusiness();
-  const area = await loadArea({ userId: user.id, businessId: business.id });
+  await requireReadyBusiness();
+  const area = await loadArea();
 
   return (
     <AccountAppearanceProvider area={area}>

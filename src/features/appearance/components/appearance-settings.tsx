@@ -100,8 +100,9 @@ export function AppearanceSettings() {
         {sync === "unavailable" ? (
           <Notice tone="offline">
             <span className="flex flex-wrap items-center gap-3">
-              Ton compte ne répond pas pour l’instant : ton apparence s’affiche
-              mais ne peut pas être modifiée.
+              Ton compte ne répond pas pour l’instant : cet affichage n’est
+              peut-être pas ton apparence, et rien ne peut être modifié. Nouvel
+              essai automatique.
               <Button size="md" variant="secondary" onClick={retry}>
                 Réessayer
               </Button>

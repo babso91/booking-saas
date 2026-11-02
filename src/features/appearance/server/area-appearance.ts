@@ -8,18 +8,10 @@ import { loadAreaPreferences } from "@/features/preferences/server/area-preferen
 import { DELIVERED_STYLES, type Appearance } from "../appearance";
 
 /** One read per request, for the layout and the page that both need it. */
-const areaOf = cache((userId: string, businessId: string) =>
-  loadAreaPreferences({ userId, businessId }),
-);
-
-export const loadArea = (member: { userId: string; businessId: string }) =>
-  areaOf(member.userId, member.businessId);
+export const loadArea = cache(() => loadAreaPreferences());
 
 /** What the page draws, without changing what her account holds. */
-export async function loadRenderedAppearance(member: {
-  userId: string;
-  businessId: string;
-}): Promise<Appearance> {
-  const area = await loadArea(member);
+export async function loadRenderedAppearance(): Promise<Appearance> {
+  const area = await loadArea();
   return renderableAppearance(area.appearance, DELIVERED_STYLES);
 }
