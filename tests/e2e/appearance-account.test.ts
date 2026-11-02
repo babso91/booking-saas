@@ -493,6 +493,169 @@ describe("a style chosen on another device", () => {
   });
 });
 
+type SaveOnWire = {
+  membershipId: string;
+  changes: Record<string, unknown>;
+  answer: string;
+};
+
+/** Every save this page sends: for whom, what, and what the server said. */
+function savesOnWire(page: Page) {
+  const seen: Promise<SaveOnWire>[] = [];
+  page.on("response", (response) => {
+    const body = response.request().postData() ?? "";
+    if (
+      !response.request().headers()["next-action"] ||
+      !body.includes('"changes"')
+    ) {
+      return;
+    }
+    seen.push(
+      response.text().then((text) => {
+        const [{ context, changes }] = JSON.parse(body);
+        return {
+          membershipId: context.membershipId,
+          changes,
+          answer:
+            /"code":"(context_changed|unauthenticated|forbidden|no_business)"/.exec(
+              text,
+            )?.[1] ??
+            /"status":"(saved|unchanged|stale)"/.exec(text)?.[1] ??
+            "unreadable",
+        };
+      }),
+    );
+  });
+  return () => Promise.all(seen);
+}
+
+describe("removed from the business, then back: what the wire and the database say", () => {
+  const memberOf = async ({ member }: Browser) => {
+    const { rows } = await db.query<{ id: string }>(
+      "select id from public.business_members where business_id = $1 and user_id = $2",
+      [member!.businessId, member!.userId],
+    );
+    return rows[0]!.id;
+  };
+  const removedAndBack = async (browser: Browser) => {
+    const { userId, businessId } = browser.member!;
+    await db.query(
+      "delete from public.business_members where business_id = $1 and user_id = $2",
+      [businessId, userId],
+    );
+    expect(await rowOf(browser)).toBeNull();
+    await db.query(
+      "insert into public.business_members (business_id, user_id, role) values ($1, $2, 'owner')",
+      [businessId, userId],
+    );
+    return memberOf(browser);
+  };
+  /** Her account in Studio, on a page where nothing is on its way any more. */
+  const settled = async (name: string) => {
+    const { browser } = await professionalWithVisit(name, "Rose");
+    const { page } = await open(browser);
+    await choose(page, /^Studio/);
+    await said(page, SAVED);
+    await page.reload();
+    await hydrated(page.getByRole("radio", { name: /^Studio/ }));
+    await drawn(page, "studio");
+    return { browser, page, before: await memberOf(browser) };
+  };
+
+  it("a choice born under the old one is refused, dropped, and never written to the new one", async () => {
+    const { browser, page, before } = await settled("Lou");
+    const saves = savesOnWire(page);
+    const after = await removedAndBack(browser);
+    expect(after).not.toBe(before);
+
+    await choose(page, /^Sombre/);
+    await drawn(page, "classique");
+    expect(await page.getByRole("radio", { name: /^Clair/ }).isChecked()).toBe(
+      true,
+    );
+    expect(await rowOf(browser)).toBeNull();
+
+    await choose(page, /^Écrin/);
+    await inDatabase(browser, { style: "ecrin" });
+    await said(page, SAVED);
+    expect(await saves()).toEqual([
+      {
+        membershipId: before,
+        changes: { mode: "dark" },
+        answer: "context_changed",
+      },
+      { membershipId: after, changes: { style: "ecrin" }, answer: "saved" },
+    ]);
+    expect(await rowOf(browser)).toMatchObject({
+      style: "ecrin",
+      version: "1",
+      color_mode: "light",
+    });
+    await page.context().close();
+  });
+
+  it("a choice made once the new one is drawn is hers: written to it (dark, then Écrin, version 2)", async () => {
+    const { browser, page } = await settled("Mia");
+    const saves = savesOnWire(page);
+    const after = await removedAndBack(browser);
+    await comeBack(page);
+    await drawn(page, "classique");
+    expect(await rowOf(browser)).toBeNull();
+
+    await choose(page, /^Sombre/);
+    await inDatabase(browser, { color_mode: "dark", version: "1" });
+    await choose(page, /^Écrin/);
+    await inDatabase(browser, {
+      style: "ecrin",
+      color_mode: "dark",
+      version: "2",
+    });
+    expect(await saves()).toEqual([
+      { membershipId: after, changes: { mode: "dark" }, answer: "saved" },
+      { membershipId: after, changes: { style: "ecrin" }, answer: "saved" },
+    ]);
+    await page.context().close();
+  });
+
+  it("without waiting for anything: whichever side the click falls on, only the new side is written", async () => {
+    const { browser } = await professionalWithVisit("Zoe", "Rose");
+    const { page } = await open(browser);
+    const before = await memberOf(browser);
+    const saves = savesOnWire(page);
+    await choose(page, /^Studio/);
+    await said(page, SAVED);
+    const after = await removedAndBack(browser);
+
+    await choose(page, /^Sombre/);
+    await drawn(page, "classique");
+    await choose(page, /^Écrin/);
+    await inDatabase(browser, { style: "ecrin" });
+
+    const [, sombre] = await saves();
+    const oldSide = sombre!.membershipId === before;
+    console.info(
+      `[membership trace] Sombre sent to the ${oldSide ? "old" : "new"} one`,
+    );
+    expect(sombre!.answer).toBe(oldSide ? "context_changed" : "saved");
+    await vi.waitFor(
+      async () =>
+        expect(await rowOf(browser)).toMatchObject(
+          oldSide
+            ? { style: "ecrin", version: "1", color_mode: "light" }
+            : { style: "ecrin", version: "2", color_mode: "dark" },
+        ),
+      { timeout: 15_000, interval: 100 },
+    );
+    expect(
+      (await saves()).filter(
+        ({ membershipId, changes }) =>
+          membershipId === after && "mode" in changes && oldSide,
+      ),
+    ).toEqual([]);
+    await page.context().close();
+  });
+});
+
 describe("another session under the page", () => {
   const signIn = async (page: Page, browser: Browser) => {
     await page.context().clearCookies();
@@ -542,39 +705,6 @@ describe("another session under the page", () => {
     await page.context().addCookies(signedIn);
     await page.goto(`${APP}/app`);
     await drawn(page, "studio");
-    await page.context().close();
-  });
-
-  it("removed from the business, then back: the old page writes nothing, the new one starts anew", async () => {
-    const { browser } = await professionalWithVisit("Zoe", "Rose");
-    const { userId, businessId } = browser.member!;
-    const { page } = await open(browser);
-    await choose(page, /^Studio/);
-    await said(page, SAVED);
-
-    await db.query(
-      "delete from public.business_members where business_id = $1 and user_id = $2",
-      [businessId, userId],
-    );
-    expect(await rowOf(browser)).toBeNull();
-    await db.query(
-      "insert into public.business_members (business_id, user_id, role) values ($1, $2, 'owner')",
-      [businessId, userId],
-    );
-
-    // The tab left open still names the old membership: refused, then the
-    // layout gives the new one, and the choice of the old one is dropped.
-    await choose(page, /^Sombre/);
-    await drawn(page, "classique");
-    expect(await rowOf(browser)).toBeNull();
-
-    await choose(page, /^Écrin/);
-    await said(page, SAVED);
-    expect(await rowOf(browser)).toMatchObject({
-      style: "ecrin",
-      version: "1",
-      color_mode: "light",
-    });
     await page.context().close();
   });
 });

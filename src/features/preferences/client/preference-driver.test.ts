@@ -502,6 +502,72 @@ describe("reads", () => {
   });
 });
 
+describe("left and joined again: a choice of the old membership", () => {
+  const joined = () => ({
+    snapshot: snapshot({}, 0, context("9"), null),
+    appearance: defaultAppearancePreferences,
+  });
+  const membership = (save: Held<SaveAnswer>) =>
+    (save.input as { context: { membershipId: string } }).context.membershipId;
+
+  it("refused, then the new membership: never sent to it, not shown, not after a retry", async () => {
+    const { driver, saves, reads } = setup(snapshot({ style: "studio" }, 1));
+    driver.change({ mode: "dark" });
+    expect(membership(saves[0]!)).toBe(context().membershipId);
+    await saves[0]!.refuse("context_changed");
+    driver.receiveArea(joined());
+    expect(driver.getView().appearance).toMatchObject({
+      mode: "light",
+      style: "classique",
+    });
+
+    await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+    driver.returned();
+    await reads.at(-1)?.answer(snapshot({}, 0, context("9"), null));
+    await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+    expect(saves).toHaveLength(1);
+
+    driver.change({ style: "ecrin" });
+    expect(saves).toHaveLength(2);
+    expect(membership(saves[1]!)).toBe(context("9").membershipId);
+    expect(sentChanges(saves[1]!)).toEqual({ style: "ecrin" });
+  });
+
+  it("still waiting behind a save on its way: dropped with it", async () => {
+    const { driver, saves } = setup(snapshot({}, 1));
+    driver.change({ mode: "dark" });
+    driver.change({ motion: "none" });
+    expect(saves).toHaveLength(1);
+    driver.receiveArea(joined());
+    await saves[0]!.answer(saved({ mode: "dark" }, 2));
+    await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+    expect(saves).toHaveLength(1);
+    expect(driver.getView().status).toBe("idle");
+  });
+
+  it("the read says another membership first: kept for the old one, sent to none", async () => {
+    const { driver, saves, reads } = setup(snapshot({}, 1));
+    driver.returned();
+    driver.change({ mode: "dark" });
+    await reads[0]!.answer(snapshot({}, 0, context("9"), null));
+    await saves[0]!.refuse("context_changed");
+    await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+    expect(saves).toHaveLength(1);
+    driver.receiveArea(joined());
+    await vi.advanceTimersByTimeAsync(LAST_RETRY_MS);
+    expect(saves).toHaveLength(1);
+    expect(driver.getView().appearance.mode).toBe("light");
+  });
+
+  it("chosen once the new membership is drawn: her new choice, sent to it", () => {
+    const { driver, saves } = setup(snapshot({ style: "studio" }, 1));
+    driver.receiveArea(joined());
+    driver.change({ mode: "dark" });
+    expect(membership(saves[0]!)).toBe(context("9").membershipId);
+    expect(sentChanges(saves[0]!)).toEqual({ mode: "dark" });
+  });
+});
+
 describe("renders of the layout", () => {
   it("the same context: nothing changes, nothing is erased, nothing is read", async () => {
     const { driver, saves, reads } = setup(snapshot({}, 1));
