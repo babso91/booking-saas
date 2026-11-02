@@ -2,6 +2,7 @@ import { contrast, isHexColor, mix, readableTone } from "@/lib/color/contrast";
 
 import {
   ambiances,
+  carnetPapers,
   ecrinPalettes,
   STUDIO_SIGNATURE,
   studioPalettes,
@@ -13,7 +14,8 @@ import {
 
 // A professional's appearance preferences for her area: its style, the
 // ambiance (Classique), light or dark (or the system's), her accent — her
-// signature colour in Studio, her stone in Écrin — and the animations she
+// signature colour in Studio, her stone in Écrin, her ink in Carnet (where the
+// ambiance is her paper) — and the animations she
 // wants. Core.
 //
 // Her account keeps them (docs/MEMBER_PREFERENCES_CONTRACT.md), so the first
@@ -50,7 +52,7 @@ export const defaultAppearance: Appearance = {
   motion: "standard",
 };
 
-const styleIds: StyleId[] = ["classique", "studio", "ecrin"];
+const styleIds: StyleId[] = ["classique", "studio", "ecrin", "carnet"];
 /** The styles this build can draw; another one is shown as Classique. */
 export const DELIVERED_STYLES = styleIds;
 const modes: ModePreference[] = ["light", "dark", "system"];
@@ -102,6 +104,7 @@ export function basePalette(
 ): Palette {
   if (style === "studio") return studioPalettes[mode];
   if (style === "ecrin") return ecrinPalettes[mode];
+  if (style === "carnet") return carnetPapers[ambiance][mode];
   return ambiances[ambiance][mode];
 }
 

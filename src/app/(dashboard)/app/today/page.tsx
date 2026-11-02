@@ -6,6 +6,7 @@ import { AppShell } from "@/features/agenda/components/app-shell";
 import { getAgenda } from "@/features/agenda/data/agenda";
 import { loadRenderedAppearance } from "@/features/appearance/server/area-appearance";
 import { requireReadyBusiness } from "@/features/auth/data/guards";
+import { CarnetToday } from "@/features/dashboard/carnet/carnet-today";
 import { StudioToday } from "@/features/dashboard/components/studio-today";
 import { EcrinToday } from "@/features/dashboard/ecrin/ecrin-today";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -16,7 +17,7 @@ export const metadata: Metadata = {
   title: "Aujourd’hui",
 };
 
-// "Aujourd’hui": her day at a glance, in the Studio and Écrin styles; in
+// "Aujourd’hui": her day at a glance, in the Studio, Écrin and Carnet styles; in
 // Classique, the agenda is her home and this address leads there.
 export default async function TodayPage() {
   // Also checked here: the layout guard does not stop the page from being
@@ -45,7 +46,13 @@ export default async function TodayPage() {
       business={{ name: business.name, slug: business.slug }}
       current="today"
     >
-      {appearance.style === "ecrin" ? (
+      {appearance.style === "carnet" ? (
+        <CarnetToday
+          agenda={agenda}
+          date={today.date}
+          serverNow={Date.parse(today.now)}
+        />
+      ) : appearance.style === "ecrin" ? (
         <EcrinToday
           agenda={agenda}
           date={today.date}

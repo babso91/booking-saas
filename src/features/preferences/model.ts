@@ -223,8 +223,8 @@ export function sameAppearance(
 }
 
 /**
- * What the area can draw: a style this build does not ship yet (Écrin and
- * Carnet before their PR) is rendered as Classique, without changing what
+ * What the area can draw: a style this build does not ship yet (as Écrin and
+ * Carnet were before their PR) is rendered as Classique, without changing what
  * her account holds; her accent was chosen for that style, so it is left
  * out too. `supported` is the engine's list of finished styles.
  */

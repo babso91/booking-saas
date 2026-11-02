@@ -78,10 +78,11 @@ function resolve(classes: string, state: State, palette: Palette) {
   return { bg: pick("bg"), text: pick("text") };
 }
 
-const looks = (["classique", "studio", "ecrin"] as StyleId[]).flatMap((style) =>
-  (Object.keys(ambiances) as AmbianceId[]).flatMap((ambiance) =>
-    (["light", "dark"] as Mode[]).map((mode) => ({ style, ambiance, mode })),
-  ),
+const looks = (["classique", "studio", "ecrin", "carnet"] as StyleId[]).flatMap(
+  (style) =>
+    (Object.keys(ambiances) as AmbianceId[]).flatMap((ambiance) =>
+      (["light", "dark"] as Mode[]).map((mode) => ({ style, ambiance, mode })),
+    ),
 );
 
 describe("buttons read in every state, style, ambiance and mode", () => {

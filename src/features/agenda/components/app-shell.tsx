@@ -20,6 +20,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { useDashboardStyle } from "@/features/appearance/components/appearance-provider";
 import { SignOutButton } from "@/features/auth/components/sign-out-button";
 import { StudioShell } from "@/features/dashboard/components/studio-shell";
+import { CarnetShell } from "@/features/dashboard/carnet/carnet-shell";
 import { EcrinShell } from "@/features/dashboard/ecrin/ecrin-shell";
 import type { DashboardSection } from "@/features/dashboard/sections";
 import { cn } from "@/lib/cn";
@@ -59,6 +60,13 @@ export function AppShell({
 
   const [accountOpen, setAccountOpen] = useState(false);
   const style = useDashboardStyle();
+
+  if (style === "carnet")
+    return (
+      <CarnetShell business={business} current={current}>
+        {children}
+      </CarnetShell>
+    );
 
   if (style === "ecrin")
     return (

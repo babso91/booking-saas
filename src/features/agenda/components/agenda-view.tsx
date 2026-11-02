@@ -33,6 +33,7 @@ import {
   StudioAgenda,
   type StudioView,
 } from "@/features/dashboard/agenda/studio-agenda";
+import { CarnetAgenda } from "@/features/dashboard/carnet/carnet-agenda";
 import { EcrinAgenda } from "@/features/dashboard/ecrin/ecrin-agenda";
 import { cn } from "@/lib/cn";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
@@ -101,6 +102,7 @@ export function AgendaView({
   today: initialToday,
   initialDate,
   initialAppointmentId,
+  initialCreate,
 }: {
   /** Day to open on (a link from a customer profile); today otherwise. */
   initialDate?: string;
@@ -110,12 +112,14 @@ export function AgendaView({
    * it. Ignored if that range does not hold it.
    */
   initialAppointmentId?: string;
+  /** A link asked for a new appointment: the form opens, once. */
+  initialCreate?: boolean;
   /** The business's date today, from PostgreSQL. */
   today: string;
 }) {
   const wide = useMediaQuery("(min-width: 768px)");
   const style = useDashboardStyle();
-  // Studio and Écrin: other presentations of this same controller, where a
+  // Studio, Écrin and Carnet: other presentations of this same controller, where a
   // computer can also show one day.
   const designed = style !== "classique";
   const [studioView, setStudioView] = useState<StudioView>("week");
@@ -359,6 +363,17 @@ export function AgendaView({
     return null;
   }
 
+  // Asked by a link ("Noter", from another page): once, when the view is known.
+  const createAsked = useRef(initialCreate === true);
+  useEffect(() => {
+    if (wide === null || !createAsked.current) return;
+    createAsked.current = false;
+    // Reloading the page does not ask again.
+    window.history.replaceState(null, "", "/app");
+    openCreateAppointment();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
+  }, [wide]);
+
   if (wide === null) return <AgendaSkeleton />;
 
   const title =
@@ -495,7 +510,12 @@ export function AgendaView({
   );
 
   if (designed) {
-    const Presentation = style === "ecrin" ? EcrinAgenda : StudioAgenda;
+    const Presentation =
+      style === "carnet"
+        ? CarnetAgenda
+        : style === "ecrin"
+          ? EcrinAgenda
+          : StudioAgenda;
     return (
       <Presentation
         view={view}

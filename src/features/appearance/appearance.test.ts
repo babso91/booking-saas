@@ -10,6 +10,8 @@ import {
   serializeAppearance,
 } from "./appearance";
 import {
+  carnetPapers,
+  inkPresets,
   ambiances,
   ecrinPalettes,
   signaturePresets,
@@ -134,7 +136,8 @@ describe("the Écrin style", () => {
     "atelier.light.standard.-.__proto__",
     "atelier.light.standard.-.ECRIN",
     "atelier.light.standard.-.ecrin ",
-    "atelier.light.standard.-.carnet",
+    "atelier.light.standard.-.CARNET",
+    "atelier.light.standard.-.cahier",
     "ecrin",
   ])("an unauthorised style never applies (%s)", (raw) => {
     expect(parseAppearance(raw).style).toBe(defaultAppearance.style);
@@ -179,6 +182,46 @@ describe("the Écrin style", () => {
   it("does not depend on the ambiance (Écrin brings its own neutrals)", () => {
     expect(paletteFor("ecrin", "sauge", "light", null).paper).toBe(
       paletteFor("ecrin", "atelier", "light", null).paper,
+    );
+  });
+});
+
+describe("the Carnet style", () => {
+  const papers = Object.keys(ambiances) as AmbianceId[];
+
+  it.each(
+    papers.flatMap((paper) =>
+      (["light", "dark"] as Mode[]).map((mode) => ({ paper, mode })),
+    ),
+  )("$paper · $mode: every text reads, with any ink", ({ paper, mode }) => {
+    expect(unreadable(carnetPapers[paper][mode])).toEqual([]);
+    for (const color of [
+      ...inkPresets.map((preset) => preset.color),
+      ...randomColors(150),
+    ]) {
+      const palette = paletteFor("carnet", paper, mode, color);
+      expect(
+        contrast(palette.onSignature, palette.signature),
+        color,
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(unreadable(palette), color).toEqual([]);
+    }
+  });
+
+  it("is a value of the same cookie, and reversible", () => {
+    const carnet = { ...defaultAppearance, style: "carnet" as const };
+    expect(parseAppearance(serializeAppearance(carnet))).toEqual(carnet);
+  });
+
+  it("her ambiance is her paper, and comes back as it was in Classique", () => {
+    expect(paletteFor("carnet", "lin", "dark", null)).toMatchObject(
+      carnetPapers.lin.dark,
+    );
+    expect(paletteFor("carnet", "lin", "light", null).paper).not.toBe(
+      paletteFor("carnet", "sauge", "light", null).paper,
+    );
+    expect(paletteFor("classique", "lin", "light", null).paper).toBe(
+      ambiances.lin.light.paper,
     );
   });
 });

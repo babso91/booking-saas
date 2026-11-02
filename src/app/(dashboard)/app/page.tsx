@@ -23,7 +23,7 @@ export default async function AgendaPage({ searchParams }: PageProps<"/app">) {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
   const { business } = await requireReadyBusiness();
-  const { date, rdv } = await searchParams;
+  const { date, rdv, noter } = await searchParams;
   // The business's date today, from the calendar authority (PostgreSQL).
   const client = await createServerSupabaseClient();
   const [{ today }, progress] = await Promise.all([
@@ -43,6 +43,7 @@ export default async function AgendaPage({ searchParams }: PageProps<"/app">) {
         today={today}
         initialDate={requestedDay(date)}
         initialAppointmentId={requestedAppointment(rdv)}
+        initialCreate={noter === "1"}
       />
     </AppShell>
   );
