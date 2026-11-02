@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createServer, type Server } from "node:http";
 
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
@@ -9,6 +10,7 @@ import {
   requireReadyBusiness,
   currentSessionState,
 } from "@/features/auth/data/guards";
+import { signOutAction } from "@/features/auth/actions/auth";
 import { getSessionState } from "@/features/auth/data/session";
 import { getMyPreferencesAction } from "@/features/preferences/actions/preferences";
 import { AppException } from "@/lib/errors";
@@ -61,6 +63,8 @@ vi.mock("next/headers", () => ({
       device.set(name, value, options),
   }),
 }));
+
+vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 
 const admin = createClient<Database>(env.apiUrl, env.serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -346,4 +350,244 @@ describe("the error is typed", () => {
       code: "auth_unavailable",
     });
   });
+});
+
+// The access token has expired and Auth answers something it cannot read
+// (an HTML 403 or 418 from a proxy, a firewall…): auth-js reports
+// AuthUnknownError, which it does not retry, and removes the session. Under
+// a Server Action, that removal reaches the cookie store before the action
+// answers `auth_unavailable`: the refresh token was lost to an outage.
+// A local gateway forwards everything to the stack, except Auth when told
+// to answer that way.
+
+type Gateway = { url: string; authAnswer: number | null; close(): void };
+
+async function startGateway(): Promise<Gateway> {
+  const gateway = { authAnswer: null as number | null };
+  const server: Server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk as Buffer);
+    if (gateway.authAnswer !== null && request.url!.startsWith("/auth/v1/")) {
+      response.writeHead(gateway.authAnswer, { "content-type": "text/html" });
+      response.end("<html><body>Service unavailable</body></html>");
+      return;
+    }
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(request.headers)) {
+      if (["host", "connection", "content-length"].includes(name)) continue;
+      if (typeof value === "string") headers.set(name, value);
+    }
+    const upstream = await fetch(`${env.apiUrl}${request.url}`, {
+      method: request.method,
+      headers,
+      body: chunks.length > 0 ? Buffer.concat(chunks) : undefined,
+    });
+    const out: Record<string, string> = {};
+    upstream.headers.forEach((value, name) => {
+      if (
+        !["content-encoding", "content-length", "transfer-encoding"].includes(
+          name,
+        )
+      ) {
+        out[name] = value;
+      }
+    });
+    response.writeHead(upstream.status, out);
+    response.end(Buffer.from(await upstream.arrayBuffer()));
+  });
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve()),
+  );
+  const { port } = server.address() as { port: number };
+  return Object.assign(gateway, {
+    // Same host as the stack (127.0.0.1): same session cookie name.
+    url: `http://127.0.0.1:${port}`,
+    close: () => server.close(),
+  });
+}
+
+/** Her session as this device stores it (chunked or not). */
+function storedSession() {
+  const names = [...device.cookies.keys()]
+    .filter((name) => /^sb-[^.]+-auth-token(\.\d+)?$/.test(name))
+    .sort();
+  const value = names.map((name) => device.cookies.get(name)!).join("");
+  if (!value) return null;
+  const raw = value.startsWith("base64-")
+    ? Buffer.from(value.slice(7), "base64url").toString("utf8")
+    : value;
+  return { names, session: JSON.parse(raw) };
+}
+
+/** The access token expires now; the refresh token is untouched. */
+function expireAccessToken() {
+  const stored = storedSession()!;
+  stored.session.expires_at = Math.floor(Date.now() / 1000) - 60;
+  const key = stored.names[0]!.replace(/\.\d+$/, "");
+  for (const name of stored.names) device.cookies.delete(name);
+  device.set(
+    key,
+    `base64-${Buffer.from(JSON.stringify(stored.session)).toString("base64url")}`,
+  );
+}
+
+function sessionIdOf(accessToken: string) {
+  const payload = JSON.parse(
+    Buffer.from(accessToken.split(".")[1]!, "base64url").toString("utf8"),
+  );
+  return payload.session_id as string;
+}
+
+function sessionCookies() {
+  return new Map(
+    [...device.cookies].filter(([name]) => name.startsWith("sb-")),
+  );
+}
+
+describe("an unreadable answer from Auth with an expired access token, under a Server Action", () => {
+  let gateway: Gateway;
+
+  beforeAll(async () => {
+    gateway = await startGateway();
+  });
+
+  afterEach(() => {
+    gateway.authAnswer = null;
+  });
+
+  it.each([403, 418])(
+    "HTTP %i: auth_unavailable, the refresh token is kept, and the same session resumes once Auth answers",
+    async (status) => {
+      device = new Device();
+      await signInHere(izabela);
+      const sessionId = sessionIdOf(storedSession()!.session.access_token);
+      expireAccessToken();
+      const before = sessionCookies();
+
+      process.env.NEXT_PUBLIC_SUPABASE_URL = gateway.url;
+      gateway.authAnswer = status;
+
+      expect(await getMyPreferencesAction()).toMatchObject({
+        ok: false,
+        error: { code: "auth_unavailable" },
+      });
+      expect(sessionCookies()).toEqual(before);
+      expect(await redirectOf(() => requireReadyBusiness())).toBe(
+        "/indisponible",
+      );
+      expect(sessionCookies()).toEqual(before);
+
+      // Auth answers again: the same session, refreshed.
+      gateway.authAnswer = null;
+      expect((await getMyPreferencesAction()).ok).toBe(true);
+      const after = storedSession()!.session;
+      expect(sessionIdOf(after.access_token)).toBe(sessionId);
+      expect(after.expires_at * 1000).toBeGreaterThan(Date.now());
+    },
+  );
+
+  it("a refresh token Auth really refuses (revoked) is still removed: unauthenticated", async () => {
+    device = new Device();
+    await signInHere(izabela);
+    const other = createClient<Database>(env.apiUrl, env.anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    await other.auth.signInWithPassword({
+      email: izabela.email,
+      password: izabela.password,
+    });
+    await other.auth.signOut({ scope: "global" });
+    expireAccessToken();
+
+    process.env.NEXT_PUBLIC_SUPABASE_URL = gateway.url;
+    expect(await getMyPreferencesAction()).toMatchObject({
+      ok: false,
+      error: { code: "unauthenticated" },
+    });
+    expect(sessionCookies().size).toBe(0);
+  });
+
+  it("a session revoked elsewhere, access token still valid: removed, unauthenticated", async () => {
+    device = new Device();
+    await signInHere(izabela);
+    const other = createClient<Database>(env.apiUrl, env.anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    await other.auth.signInWithPassword({
+      email: izabela.email,
+      password: izabela.password,
+    });
+    await other.auth.signOut({ scope: "global" });
+
+    expect(await getMyPreferencesAction()).toMatchObject({
+      ok: false,
+      error: { code: "unauthenticated" },
+    });
+    expect(sessionCookies().size).toBe(0);
+  });
+});
+
+describe("signing out on purpose always forgets the session on this device", () => {
+  let gateway: Gateway;
+
+  beforeAll(async () => {
+    gateway = await startGateway();
+  });
+
+  afterEach(() => {
+    gateway.authAnswer = null;
+  });
+
+  async function refreshWorks(refreshToken: string) {
+    const client = createClient<Database>(env.apiUrl, env.anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { error } = await client.auth.refreshSession({
+      refresh_token: refreshToken,
+    });
+    return error === null;
+  }
+
+  it("Auth up: the session is revoked and its cookies deleted", async () => {
+    device = new Device();
+    await signInHere(izabela);
+    const refreshToken = storedSession()!.session.refresh_token;
+
+    expect(await signOutAction()).toEqual({
+      ok: true,
+      data: { next: "/login" },
+    });
+    expect(sessionCookies().size).toBe(0);
+    expect(await refreshWorks(refreshToken)).toBe(false);
+    expect(await redirectOf(() => requireReadyBusiness())).toBe("/login");
+  });
+
+  it.each([
+    ["an unreadable 418, access token valid", 418, false],
+    ["an unreadable 403, access token expired", 403, true],
+    ["a 503, access token valid", 503, false],
+    // auth-js retries a 5xx refresh for up to 30 s, then gives up without
+    // removing anything: the slow case, the one only an explicit deletion
+    // covers.
+    ["a 503, access token expired", 503, true],
+  ] as const)(
+    "Auth unreachable (%s): her cookies are deleted all the same",
+    async (_label, status, expired) => {
+      device = new Device();
+      await signInHere(izabela);
+      if (expired) expireAccessToken();
+
+      process.env.NEXT_PUBLIC_SUPABASE_URL = gateway.url;
+      gateway.authAnswer = status;
+      expect(await signOutAction()).toEqual({
+        ok: true,
+        data: { next: "/login" },
+      });
+      expect(sessionCookies().size).toBe(0);
+
+      gateway.authAnswer = null;
+      expect(await redirectOf(() => requireReadyBusiness())).toBe("/login");
+    },
+    60_000,
+  );
 });

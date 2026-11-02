@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { hasPublicSupabaseEnv } from "@/lib/env/public";
 import { authFailureOf } from "@/lib/supabase/auth-errors";
+import { deletesCookie } from "@/lib/supabase/session-cookies";
 
 /** Routes that require a signed-in professional. Everything else is public. */
 export function requiresSession(pathname: string) {
@@ -14,11 +15,6 @@ type CookieWrite = {
   value: string;
   options: Parameters<NextResponse["cookies"]["set"]>[2];
 };
-
-/** A write that removes a cookie (empty value, or expired). */
-function deletes({ value, options }: CookieWrite) {
-  return value === "" || options?.maxAge === 0;
-}
 
 export async function refreshSupabaseSession(request: NextRequest) {
   if (!hasPublicSupabaseEnv()) {
@@ -61,11 +57,11 @@ export async function refreshSupabaseSession(request: NextRequest) {
   // answer `auth_unavailable`. Nothing is let through on the strength of
   // this proxy: it never authorises anything.
   const applied = unavailable
-    ? writes.filter((write) => !deletes(write))
+    ? writes.filter((write) => !deletesCookie(write))
     : writes;
   if (unavailable) {
     // What the guards and actions read next: her cookies as they came.
-    for (const write of writes.filter(deletes)) {
+    for (const write of writes.filter(deletesCookie)) {
       const value = original.get(write.name);
       if (value !== undefined) request.cookies.set(write.name, value);
     }
