@@ -74,7 +74,7 @@ export function PreferencesStep({ draft, update, headingRef }: StepProps) {
             id={timezoneId}
             value={draft.timezone}
             onChange={(event) => update("timezone", event.target.value)}
-            className="h-14 w-full cursor-pointer appearance-none rounded-2xl border border-line bg-paper-raised pr-11 pl-4 text-[16px] text-ink transition-[border-color,box-shadow] duration-200 hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_rgba(151,73,58,0.12)] focus-visible:outline-none"
+            className="h-14 w-full cursor-pointer appearance-none rounded-2xl border border-line bg-paper-raised pr-11 pl-4 text-[16px] text-ink transition-[border-color,box-shadow] duration-200 hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)] focus-visible:outline-none"
           >
             {timezoneOptions(draft.timezone).map((option) => (
               <option key={option.value} value={option.value}>

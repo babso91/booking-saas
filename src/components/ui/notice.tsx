@@ -12,11 +12,11 @@ const tones: Record<NoticeTone, { box: string; icon: ReactNode }> = {
     icon: <InfoIcon size={18} />,
   },
   error: {
-    box: "bg-danger-soft/70 text-[#7a2f23] border-danger/15",
+    box: "bg-danger-soft/70 text-danger-strong border-danger/15",
     icon: <AlertIcon size={18} />,
   },
   warning: {
-    box: "bg-warning-soft text-[#6b4613] border-warning/15",
+    box: "bg-warning-soft text-warning-strong border-warning/15",
     icon: <AlertIcon size={18} />,
   },
   offline: {
@@ -24,7 +24,7 @@ const tones: Record<NoticeTone, { box: string; icon: ReactNode }> = {
     icon: <WifiOffIcon size={18} />,
   },
   success: {
-    box: "bg-success-soft text-[#2c4f38] border-success/15",
+    box: "bg-success-soft text-success-strong border-success/15",
     icon: <CheckIcon size={18} />,
   },
 };

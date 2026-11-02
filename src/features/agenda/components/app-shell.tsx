@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
+import { BookingHost } from "@/components/shared/booking-host";
 import { BrandMark } from "@/components/shared/brand-mark";
 import {
   CalendarIcon,
@@ -10,28 +11,33 @@ import {
   ChevronRightIcon,
   ClockIcon,
   GiftIcon,
+  PaletteIcon,
   SparkIcon,
   UserIcon,
   UsersIcon,
 } from "@/components/ui/icons";
 import { Sheet } from "@/components/ui/sheet";
+import { useDashboardStyle } from "@/features/appearance/components/appearance-provider";
 import { SignOutButton } from "@/features/auth/components/sign-out-button";
-import { bookingHost } from "@/lib/brand";
+import { StudioShell } from "@/features/dashboard/components/studio-shell";
+import { EcrinShell } from "@/features/dashboard/ecrin/ecrin-shell";
+import type { DashboardSection } from "@/features/dashboard/sections";
 import { cn } from "@/lib/cn";
 
 type Business = { name: string; slug: string };
-type Section =
-  "agenda" | "clients" | "services" | "loyalty" | "hours" | "calendar";
+type Section = DashboardSection;
 
 const CALENDAR_SETTINGS = "/app/settings/calendar";
 const CLIENTS = "/app/clients";
 const SERVICES = "/app/services";
 const HOURS = "/app/settings/hours";
 const LOYALTY = "/app/loyalty";
+const APPEARANCE = "/app/settings/appearance";
 
 /**
- * Professional area frame. Desktop: compact sidebar. Phones and tablets: a
- * top bar and a bottom tab bar within thumb reach (not a squeezed sidebar).
+ * Professional area frame, in her style. Classique — desktop: compact
+ * sidebar; phones and tablets: a top bar and a bottom tab bar within thumb
+ * reach (not a squeezed sidebar). Studio: its own frame (StudioShell).
  */
 export function AppShell({
   business,
@@ -52,6 +58,21 @@ export function AppShell({
     );
 
   const [accountOpen, setAccountOpen] = useState(false);
+  const style = useDashboardStyle();
+
+  if (style === "ecrin")
+    return (
+      <EcrinShell business={business} current={current}>
+        {children}
+      </EcrinShell>
+    );
+
+  if (style === "studio")
+    return (
+      <StudioShell business={business} current={current}>
+        {children}
+      </StudioShell>
+    );
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-paper lg:flex-row">
@@ -102,6 +123,13 @@ export function AppShell({
             className={item("calendar")}
           >
             <CalendarSyncIcon size={18} /> Google Calendar
+          </Link>
+          <Link
+            href={APPEARANCE}
+            aria-current={current === "appearance" ? "page" : undefined}
+            className={item("appearance")}
+          >
+            <PaletteIcon size={18} /> Apparence
           </Link>
         </nav>
         <div className="mt-auto flex flex-col gap-3 rounded-2xl border border-line bg-paper p-4">
@@ -163,7 +191,8 @@ export function AppShell({
             "flex h-16 cursor-pointer flex-col items-center justify-center gap-1 text-[11.5px]",
             current === "calendar" ||
               current === "hours" ||
-              current === "loyalty"
+              current === "loyalty" ||
+              current === "appearance"
               ? "font-semibold text-ink"
               : "text-ink-soft",
           )}
@@ -209,6 +238,16 @@ export function AppShell({
             <span className="flex-1">Google Calendar</span>
             <ChevronRightIcon size={18} className="text-ink-muted" />
           </Link>
+          <Link
+            href={APPEARANCE}
+            onClick={() => setAccountOpen(false)}
+            aria-current={current === "appearance" ? "page" : undefined}
+            className="flex min-h-14 items-center gap-3 rounded-2xl border border-line bg-paper px-4 text-[15px] font-medium text-ink transition-colors hover:border-line-strong"
+          >
+            <PaletteIcon size={20} className="text-ink-soft" />
+            <span className="flex-1">Apparence</span>
+            <ChevronRightIcon size={18} className="text-ink-muted" />
+          </Link>
           <PublicLink slug={business.slug} />
           <SignOutButton />
         </div>
@@ -231,7 +270,8 @@ function PublicLink({ slug }: { slug: string }) {
         </span>
       </span>
       <span className="break-all text-ink-soft">
-        {bookingHost()}/b/{slug}
+        <BookingHost />
+        /b/{slug}
       </span>
     </p>
   );

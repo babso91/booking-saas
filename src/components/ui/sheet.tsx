@@ -187,7 +187,7 @@ export function Sheet({
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         className={cn(
-          "absolute flex max-h-[92dvh] flex-col bg-paper-raised shadow-[0_-20px_60px_-30px_rgba(35,28,24,0.45)] outline-none",
+          "absolute flex max-h-[92dvh] flex-col bg-paper-raised shadow-[0_-20px_60px_-30px_rgb(var(--shadow-rgb)/0.45)] outline-none",
           placement === "side"
             ? "inset-x-0 bottom-0 animate-sheet-up rounded-t-[28px] lg:inset-y-0 lg:right-0 lg:left-auto lg:max-h-none lg:w-[460px] lg:animate-sheet-left lg:rounded-none lg:rounded-l-[28px]"
             : "inset-x-0 bottom-0 animate-sheet-up rounded-t-[28px] sm:inset-0 sm:m-auto sm:h-fit sm:w-[440px] sm:animate-pop sm:rounded-[28px]",

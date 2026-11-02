@@ -162,7 +162,7 @@ export function AppointmentDetails({
         />
       ) : null}
 
-      <dl className="grid grid-cols-1 gap-3 rounded-2xl border border-line bg-paper p-4 text-[15px]">
+      <div className="grid grid-cols-1 gap-3 rounded-2xl border border-line bg-paper p-4 text-[15px]">
         <Detail icon={<CalendarIcon size={17} />} label="Date">
           <span className="first-letter:uppercase">{formatFullDate(date)}</span>
         </Detail>
@@ -197,7 +197,7 @@ export function AppointmentDetails({
             {appointment.cancellationReason}
           </Detail>
         ) : null}
-      </dl>
+      </div>
 
       <div className="flex flex-col gap-2.5">
         <Button variant="secondary" size="md" fullWidth onClick={onEdit}>
@@ -295,10 +295,10 @@ function Detail({
       >
         {icon}
       </span>
-      <div className="flex min-w-0 flex-col">
+      <dl className="flex min-w-0 flex-col">
         <dt className="text-[12.5px] text-ink-muted">{label}</dt>
         <dd className="text-ink">{children}</dd>
-      </div>
+      </dl>
     </div>
   );
 }

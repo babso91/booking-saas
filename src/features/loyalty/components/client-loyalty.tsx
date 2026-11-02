@@ -633,7 +633,7 @@ function RedemptionItem({
             type="button"
             className={smallButton}
             onClick={onFulfil}
-            aria-label={`Marquer « ${reward.name} » comme utilisée`}
+            aria-label={`Marquer comme utilisée « ${reward.name} »`}
           >
             Marquer comme utilisée
           </button>

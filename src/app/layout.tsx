@@ -1,5 +1,14 @@
 import type { Metadata, Viewport } from "next";
-import { Hanken_Grotesk, Instrument_Serif } from "next/font/google";
+import {
+  Archivo,
+  Hanken_Grotesk,
+  Instrument_Serif,
+  Jost,
+  Marcellus,
+} from "next/font/google";
+
+import { BookingHostProvider } from "@/components/shared/booking-host";
+import { bookingHost } from "@/lib/brand";
 
 import "./globals.css";
 
@@ -15,6 +24,32 @@ const serif = Instrument_Serif({
   style: ["normal", "italic"],
   variable: "--font-serif",
   display: "swap",
+});
+
+// The professional area's Studio style. Not preloaded: only downloaded on
+// the pages that use it.
+const studio = Archivo({
+  subsets: ["latin"],
+  axes: ["wdth"],
+  variable: "--font-studio",
+  display: "swap",
+  preload: false,
+});
+
+// The professional area's Écrin style: engraved lettering and a light sans.
+// Not preloaded either.
+const engraved = Marcellus({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-engraved",
+  display: "swap",
+  preload: false,
+});
+const ecrinSans = Jost({
+  subsets: ["latin"],
+  variable: "--font-ecrin",
+  display: "swap",
+  preload: false,
 });
 
 export const metadata: Metadata = {
@@ -37,9 +72,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="fr"
-      className={`${body.variable} ${serif.variable} h-full antialiased`}
+      className={`${body.variable} ${serif.variable} ${studio.variable} ${engraved.variable} ${ecrinSans.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">{children}</body>
+      <body className="flex min-h-full flex-col">
+        <BookingHostProvider host={bookingHost()}>
+          {children}
+        </BookingHostProvider>
+      </body>
     </html>
   );
 }

@@ -56,6 +56,37 @@ describe("formatting", () => {
     expect(formatLocalTime("2026-10-24T00:05")).toBe("0 h 05");
   });
 
+  it("names every month in French, accents included, and the integration tests' date pattern accepts each", () => {
+    // `\w` is ASCII only, even with the u flag: it never matches the é of
+    // février or décembre, nor the û of août. The integration tests'
+    // pattern uses \p{L} (any letter) and must accept every month.
+    const pattern = /^\p{L}+ \d{1,2} \p{L}+ \d{4}$/u;
+    const months = [
+      ["2027-01-15T10:00", "vendredi 15 janvier 2027"],
+      ["2027-02-15T10:00", "lundi 15 février 2027"],
+      ["2027-03-15T10:00", "lundi 15 mars 2027"],
+      ["2027-04-15T10:00", "jeudi 15 avril 2027"],
+      ["2027-05-15T10:00", "samedi 15 mai 2027"],
+      ["2027-06-15T10:00", "mardi 15 juin 2027"],
+      ["2027-07-15T10:00", "jeudi 15 juillet 2027"],
+      ["2027-08-15T10:00", "dimanche 15 août 2027"],
+      ["2027-09-15T10:00", "mercredi 15 septembre 2027"],
+      ["2027-10-15T10:00", "vendredi 15 octobre 2027"],
+      ["2027-11-15T10:00", "lundi 15 novembre 2027"],
+      ["2027-12-15T10:00", "mercredi 15 décembre 2027"],
+    ] as const;
+    for (const [local, expected] of months) {
+      const formatted = formatLocalDate(local);
+      expect(formatted).toBe(expected);
+      expect(formatted, formatted).toMatch(pattern);
+    }
+    // The ASCII-only pattern the tests used before fails on accented months.
+    const ascii = /^\w+ \d{1,2} \w+ \d{4}$/u;
+    expect(
+      months.filter(([local]) => !ascii.test(formatLocalDate(local))).length,
+    ).toBe(3);
+  });
+
   it("formats durations", () => {
     expect(formatDuration(45)).toBe("45 min");
     expect(formatDuration(60)).toBe("1 h");

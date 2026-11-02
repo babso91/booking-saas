@@ -28,7 +28,7 @@ export const statusMeta: Record<
   },
   cancelled: {
     label: "Annulé",
-    badge: "bg-sand text-ink-muted",
+    badge: "bg-sand text-ink-soft",
     card: "border-l-line-strong bg-sand/50 opacity-75",
     icon: BanIcon,
   },

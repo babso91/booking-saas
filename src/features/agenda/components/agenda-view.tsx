@@ -27,9 +27,16 @@ import type {
   AgendaBlockDto,
   AgendaDto,
 } from "@/features/agenda/data/agenda";
+import { useDashboardStyle } from "@/features/appearance/components/appearance-provider";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
+import {
+  StudioAgenda,
+  type StudioView,
+} from "@/features/dashboard/agenda/studio-agenda";
+import { EcrinAgenda } from "@/features/dashboard/ecrin/ecrin-agenda";
 import { cn } from "@/lib/cn";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
+import { addDaysToLocalDate } from "@/lib/time/local-date";
 
 import {
   dayNumber,
@@ -41,7 +48,11 @@ import {
   visibleRange,
   type AgendaView as View,
 } from "../client/dates";
-import { agendaRequestRange, restrictToDays } from "../client/layout";
+import {
+  agendaRangeWithBuffers,
+  agendaRequestRange,
+  restrictToDays,
+} from "../client/layout";
 import { useCanonicalToday } from "../client/use-canonical-today";
 import { zoneOf } from "../client/zone";
 import { AgendaError, TextAction } from "./agenda-error";
@@ -73,7 +84,10 @@ const DEFAULT_TIME = "09:00";
 
 /**
  * Professional agenda. Desktop and tablet (≥ 768 px) read one week, phones
- * one day: exactly the range on screen, in one aggregated request.
+ * one day: exactly the range on screen, in one aggregated request. In the
+ * Studio style, a computer can also show one day; the Studio presentation
+ * (StudioAgenda) is driven by this same controller — same reading, same
+ * "today", same panels and actions.
  * Writes are never applied optimistically: the server's answer updates the
  * open panel and the visible range is reloaded.
  *
@@ -86,14 +100,26 @@ const DEFAULT_TIME = "09:00";
 export function AgendaView({
   today: initialToday,
   initialDate,
+  initialAppointmentId,
 }: {
   /** Day to open on (a link from a customer profile); today otherwise. */
   initialDate?: string;
+  /**
+   * Appointment to open once the first range is read (a link from
+   * "Aujourd’hui"): its details panel, exactly as a tap on the grid opens
+   * it. Ignored if that range does not hold it.
+   */
+  initialAppointmentId?: string;
   /** The business's date today, from PostgreSQL. */
   today: string;
 }) {
   const wide = useMediaQuery("(min-width: 768px)");
-  const view: View = wide ? "week" : "day";
+  const style = useDashboardStyle();
+  // Studio and Écrin: other presentations of this same controller, where a
+  // computer can also show one day.
+  const designed = style !== "classique";
+  const [studioView, setStudioView] = useState<StudioView>("week");
+  const view: View = wide ? (designed ? studioView : "week") : "day";
   const clock = useSyncExternalStore(subscribeClock, clockBucket, () => 0);
 
   const canonical = useCanonicalToday(initialToday, clock);
@@ -111,6 +137,9 @@ export function AgendaView({
   const [awaitingToday, setAwaitingToday] = useState<number | null>(null);
   const intent = useRef(0);
   const alive = useRef(true);
+  // Opened once, from the first answer that comes back, and only if she has
+  // not done anything else meanwhile (see supersede).
+  const pendingAppointment = useRef(initialAppointmentId ?? null);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -122,17 +151,35 @@ export function AgendaView({
   const key = `${range.startDate}:${range.endDate}:${includeCancelled}:${reloadToken}`;
   const rangeKey = `${range.startDate}:${range.endDate}:${includeCancelled}`;
 
+  // Studio and Écrin show free time, which a buffer from the day before can
+  // hold.
+  const readRange = (days: string[]) =>
+    designed ? agendaRangeWithBuffers(days) : agendaRequestRange(days);
+
   useEffect(() => {
     if (wide === null) return;
     let active = true;
     const observation = canonical.begin();
     callAction(() =>
-      getAgendaAction({ ...agendaRequestRange(range.days), includeCancelled }),
+      getAgendaAction({ ...readRange(range.days), includeCancelled }),
     ).then((result) => {
       if (!active) return;
       if (result.ok) {
         canonical.observe(observation, result.data);
-        setLoaded({ key, data: restrictToDays(result.data, range.days) });
+        const data = restrictToDays(result.data, range.days, {
+          buffers: designed,
+        });
+        setLoaded({ key, data });
+        const wanted = pendingAppointment.current;
+        pendingAppointment.current = null;
+        const found = wanted
+          ? data.appointments.find((item) => item.id === wanted)
+          : undefined;
+        // Never over a panel she has opened meanwhile (a draft is kept).
+        if (found)
+          setPanelState(
+            (open) => open ?? { kind: "appointment", appointment: found },
+          );
       } else setFailed({ key, error: result.error });
     });
     return () => {
@@ -171,6 +218,9 @@ export function AgendaView({
    */
   function supersede() {
     intent.current += 1;
+    // Her intention changed: the appointment a link asked to open is no
+    // longer what she wants on screen.
+    pendingAppointment.current = null;
     setAwaitingToday(null);
     setTodayFailure(null);
   }
@@ -291,11 +341,11 @@ export function AgendaView({
   async function refreshBlock(block: AgendaBlockDto) {
     const observation = canonical.begin();
     const result = await callAction(() =>
-      getAgendaAction({ ...agendaRequestRange(range.days), includeCancelled }),
+      getAgendaAction({ ...readRange(range.days), includeCancelled }),
     );
     if (!result.ok) return result.error;
     canonical.observe(observation, result.data);
-    const data = restrictToDays(result.data, range.days);
+    const data = restrictToDays(result.data, range.days, { buffers: designed });
     setLoaded({ key, data });
     const fresh = data.blocks.find((item) => item.id === block.id);
     if (fresh) {
@@ -325,6 +375,166 @@ export function AgendaView({
                 ? "Fermeture"
                 : "Créneau bloqué"
               : "";
+
+  const banners = (
+    <>
+      {notice ? (
+        <div className="p-4 pb-0 sm:px-6 lg:px-8">
+          <Notice
+            tone="info"
+            action={
+              <TextAction onClick={() => setNotice(null)}>Compris</TextAction>
+            }
+          >
+            {notice}
+          </Notice>
+        </div>
+      ) : null}
+
+      {todayFailure ? (
+        <div className="p-4 pb-0 sm:px-6 lg:px-8">
+          <AgendaError
+            error={todayFailure.error}
+            subject="agenda"
+            action={
+              todayFailure.error.code === "network" ||
+              todayFailure.error.code === "internal" ? (
+                <TextAction onClick={todayFailure.retry}>Réessayer</TextAction>
+              ) : undefined
+            }
+          />
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="p-4 sm:px-6 lg:px-8">
+          <AgendaError
+            error={error}
+            subject="agenda"
+            action={
+              error.code === "network" || error.code === "internal" ? (
+                <TextAction onClick={reload}>Réessayer</TextAction>
+              ) : undefined
+            }
+          />
+        </div>
+      ) : null}
+    </>
+  );
+
+  const panels = (
+    <Sheet open={panel !== null} onClose={() => setPanel(null)} title={title}>
+      {panel?.kind === "appointment" ? (
+        <AppointmentDetails
+          key={`${panel.appointment.id}:${panel.appointment.version}`}
+          appointment={panel.appointment}
+          zone={zone}
+          onEdit={() => openEdit(panel.appointment)}
+          onUpdated={showAppointment}
+          onRefresh={() => refreshAppointment(panel.appointment, false)}
+        />
+      ) : null}
+      {panel?.kind === "createAppointment" ||
+      panel?.kind === "editAppointment" ? (
+        <AppointmentForm
+          key={
+            panel.kind === "editAppointment"
+              ? `${panel.appointment.id}:${panel.appointment.version}`
+              : "create"
+          }
+          mode={
+            panel.kind === "editAppointment"
+              ? { kind: "edit", appointment: panel.appointment }
+              : { kind: "create", date: panel.date, time: panel.time }
+          }
+          services={services ?? { status: "loading" }}
+          zone={zone}
+          onSaved={showAppointment}
+          onCancel={() =>
+            setPanel(
+              panel.kind === "editAppointment"
+                ? { kind: "appointment", appointment: panel.appointment }
+                : null,
+            )
+          }
+          onRefresh={
+            panel.kind === "editAppointment"
+              ? () => refreshAppointment(panel.appointment, true)
+              : undefined
+          }
+        />
+      ) : null}
+      {panel?.kind === "createBlock" || panel?.kind === "block" ? (
+        <BlockForm
+          key={
+            panel.kind === "block"
+              ? `${panel.block.id}:${panel.block.version}`
+              : "create"
+          }
+          mode={
+            panel.kind === "block"
+              ? { kind: "edit", block: panel.block }
+              : { kind: "create", date: panel.date, time: panel.time }
+          }
+          zone={zone}
+          onSaved={() => {
+            setPanel(null);
+            reload();
+          }}
+          onDeleted={() => {
+            setPanel(null);
+            reload();
+          }}
+          onCancel={() => setPanel(null)}
+          onRefresh={
+            panel.kind === "block" ? () => refreshBlock(panel.block) : undefined
+          }
+        />
+      ) : null}
+    </Sheet>
+  );
+
+  if (designed) {
+    const Presentation = style === "ecrin" ? EcrinAgenda : StudioAgenda;
+    return (
+      <Presentation
+        view={view}
+        wide={wide}
+        onView={(next) => {
+          // Her intention changed: like any navigation.
+          supersede();
+          setStudioView(next);
+        }}
+        days={range.days}
+        anchor={anchor}
+        today={today}
+        data={data}
+        nowMs={clock ? clock * 30_000 : null}
+        loading={loading || awaitingToday !== null}
+        includeCancelled={includeCancelled}
+        onIncludeCancelled={setIncludeCancelled}
+        onShift={(direction) =>
+          navigate(
+            direction === 7 || direction === -7
+              ? addDaysToLocalDate(anchor, direction)
+              : shiftAnchor(view, anchor, direction),
+          )
+        }
+        onToday={() => withToday(navigate)}
+        onSelectDay={navigate}
+        onNewAppointment={() => openCreateAppointment()}
+        onNewBlock={() => openCreateBlock()}
+        onOpenAppointment={(appointment) =>
+          setPanel({ kind: "appointment", appointment })
+        }
+        onOpenBlock={(block) => setPanel({ kind: "block", block })}
+        onCreateAt={(date, time) => openCreateAppointment(date, time)}
+        banners={banners}
+        panels={panels}
+        onRefresh={reload}
+      />
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -413,49 +623,7 @@ export function AgendaView({
           </div>
         ) : null}
 
-        {notice ? (
-          <div className="p-4 pb-0 sm:px-6 lg:px-8">
-            <Notice
-              tone="info"
-              action={
-                <TextAction onClick={() => setNotice(null)}>Compris</TextAction>
-              }
-            >
-              {notice}
-            </Notice>
-          </div>
-        ) : null}
-
-        {todayFailure ? (
-          <div className="p-4 pb-0 sm:px-6 lg:px-8">
-            <AgendaError
-              error={todayFailure.error}
-              subject="agenda"
-              action={
-                todayFailure.error.code === "network" ||
-                todayFailure.error.code === "internal" ? (
-                  <TextAction onClick={todayFailure.retry}>
-                    Réessayer
-                  </TextAction>
-                ) : undefined
-              }
-            />
-          </div>
-        ) : null}
-
-        {error ? (
-          <div className="p-4 sm:px-6 lg:px-8">
-            <AgendaError
-              error={error}
-              subject="agenda"
-              action={
-                error.code === "network" || error.code === "internal" ? (
-                  <TextAction onClick={reload}>Réessayer</TextAction>
-                ) : undefined
-              }
-            />
-          </div>
-        ) : null}
+        {banners}
 
         <TimeGrid
           days={range.days}
@@ -472,7 +640,7 @@ export function AgendaView({
 
         {empty && !loading ? (
           <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center p-6">
-            <div className="pointer-events-auto flex max-w-sm animate-rise flex-col items-center gap-3 rounded-3xl border border-line bg-paper-raised/95 px-6 py-7 text-center shadow-[0_24px_60px_-34px_rgba(35,28,24,0.45)]">
+            <div className="pointer-events-auto flex max-w-sm animate-rise flex-col items-center gap-3 rounded-3xl border border-line bg-paper-raised/95 px-6 py-7 text-center shadow-[0_24px_60px_-34px_rgb(var(--shadow-rgb)/0.45)]">
               <p className="font-display text-[28px] leading-tight text-ink">
                 {view === "week"
                   ? "Ta semaine est encore libre."
@@ -514,77 +682,7 @@ export function AgendaView({
         </Button>
       </div>
 
-      <Sheet open={panel !== null} onClose={() => setPanel(null)} title={title}>
-        {panel?.kind === "appointment" ? (
-          <AppointmentDetails
-            key={`${panel.appointment.id}:${panel.appointment.version}`}
-            appointment={panel.appointment}
-            zone={zone}
-            onEdit={() => openEdit(panel.appointment)}
-            onUpdated={showAppointment}
-            onRefresh={() => refreshAppointment(panel.appointment, false)}
-          />
-        ) : null}
-        {panel?.kind === "createAppointment" ||
-        panel?.kind === "editAppointment" ? (
-          <AppointmentForm
-            key={
-              panel.kind === "editAppointment"
-                ? `${panel.appointment.id}:${panel.appointment.version}`
-                : "create"
-            }
-            mode={
-              panel.kind === "editAppointment"
-                ? { kind: "edit", appointment: panel.appointment }
-                : { kind: "create", date: panel.date, time: panel.time }
-            }
-            services={services ?? { status: "loading" }}
-            zone={zone}
-            onSaved={showAppointment}
-            onCancel={() =>
-              setPanel(
-                panel.kind === "editAppointment"
-                  ? { kind: "appointment", appointment: panel.appointment }
-                  : null,
-              )
-            }
-            onRefresh={
-              panel.kind === "editAppointment"
-                ? () => refreshAppointment(panel.appointment, true)
-                : undefined
-            }
-          />
-        ) : null}
-        {panel?.kind === "createBlock" || panel?.kind === "block" ? (
-          <BlockForm
-            key={
-              panel.kind === "block"
-                ? `${panel.block.id}:${panel.block.version}`
-                : "create"
-            }
-            mode={
-              panel.kind === "block"
-                ? { kind: "edit", block: panel.block }
-                : { kind: "create", date: panel.date, time: panel.time }
-            }
-            zone={zone}
-            onSaved={() => {
-              setPanel(null);
-              reload();
-            }}
-            onDeleted={() => {
-              setPanel(null);
-              reload();
-            }}
-            onCancel={() => setPanel(null)}
-            onRefresh={
-              panel.kind === "block"
-                ? () => refreshBlock(panel.block)
-                : undefined
-            }
-          />
-        ) : null}
-      </Sheet>
+      {panels}
     </div>
   );
 }

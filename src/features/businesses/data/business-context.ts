@@ -1,6 +1,7 @@
 import "server-only";
 
 import { AppException } from "@/lib/errors";
+import { authFailureOf } from "@/lib/supabase/auth-errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
@@ -24,7 +25,13 @@ export async function getBusinessContext(
   const { data: userData, error: userError } = await client.auth.getUser();
 
   if (userError || !userData.user) {
-    throw new AppException("unauthenticated", { cause: userError });
+    // Auth unreachable is a temporary error, never a sign-out.
+    throw new AppException(
+      userError && authFailureOf(userError) === "unavailable"
+        ? "auth_unavailable"
+        : "unauthenticated",
+      { cause: userError },
+    );
   }
 
   const { data, error } = await client

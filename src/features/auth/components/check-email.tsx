@@ -76,7 +76,7 @@ export function CheckEmail({
       <div className="flex w-full animate-rise flex-col gap-3 [animation-delay:140ms]">
         <Link
           href="/login"
-          className="inline-flex h-14 w-full items-center justify-center rounded-2xl bg-ink text-base font-medium text-paper-raised shadow-[0_10px_24px_-12px_rgba(35,28,24,0.55)] transition-[background-color,transform] duration-200 hover:bg-[#382d27] active:scale-[0.985]"
+          className="inline-flex h-14 w-full items-center justify-center rounded-2xl bg-ink text-base font-medium text-paper-raised shadow-[0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] transition-[background-color,transform] duration-200 hover:bg-[color-mix(in_srgb,var(--ink)_86%,var(--paper))] active:scale-[0.985]"
         >
           J’ai confirmé, me connecter
         </Link>
@@ -115,7 +115,7 @@ export function CheckEmail({
 function Envelope() {
   return (
     <div className="relative animate-pop" aria-hidden="true">
-      <div className="absolute inset-0 -z-10 scale-150 rounded-full bg-[radial-gradient(circle,rgba(151,73,58,0.16),transparent_65%)]" />
+      <div className="absolute inset-0 -z-10 scale-150 rounded-full bg-[radial-gradient(circle,color-mix(in_srgb,var(--accent)_16%,transparent),transparent_65%)]" />
       <svg width="84" height="84" viewBox="0 0 84 84">
         <rect
           x="6"

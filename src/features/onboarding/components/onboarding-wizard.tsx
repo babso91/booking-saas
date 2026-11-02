@@ -506,7 +506,7 @@ export function OnboardingWizard({ owner }: { owner: string }) {
       >
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute size-[640px] rounded-full bg-[radial-gradient(circle_at_center,rgba(151,73,58,0.2),transparent_62%)] transition-transform duration-[1200ms] ease-soft"
+          className="pointer-events-none absolute size-[640px] rounded-full bg-[radial-gradient(circle_at_center,color-mix(in_srgb,var(--accent)_20%,transparent),transparent_62%)] transition-transform duration-[1200ms] ease-soft"
           style={{ transform: ambientPosition(finished ? 4 : step) }}
         />
         <p className="relative flex items-center gap-2 text-[12.5px] font-medium tracking-[0.12em] text-ink-soft uppercase">

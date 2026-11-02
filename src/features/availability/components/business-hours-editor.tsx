@@ -750,7 +750,7 @@ function TimeSelect({
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className="h-12 w-full min-w-0 cursor-pointer rounded-xl border border-line bg-paper-raised px-3 text-[16px] text-ink tabular-nums hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_rgba(151,73,58,0.12)] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+        className="h-12 w-full min-w-0 cursor-pointer rounded-xl border border-line bg-paper-raised px-3 text-[16px] text-ink tabular-nums hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-70"
       >
         {timeOptions(value).map((time) => (
           <option key={time} value={time}>

@@ -25,7 +25,7 @@ export function Switch({
       />
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute top-1 left-1 size-5 rounded-full bg-paper-raised shadow-[0_1px_3px_rgba(35,28,24,0.25)] transition-transform duration-200 ease-soft peer-checked:translate-x-5"
+        className="pointer-events-none absolute top-1 left-1 size-5 rounded-full bg-paper-raised shadow-[0_1px_3px_rgb(var(--shadow-rgb)/0.25)] transition-transform duration-200 ease-soft peer-checked:translate-x-5"
       />
     </span>
   );

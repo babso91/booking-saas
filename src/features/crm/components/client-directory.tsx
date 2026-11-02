@@ -261,7 +261,7 @@ export function ClientDirectory({ initial }: { initial: DirectoryQuery }) {
               placeholder="Nom, email ou téléphone"
               autoComplete="off"
               enterKeyHint="search"
-              className="h-12 w-full rounded-2xl border border-line bg-paper-raised pr-11 pl-11 text-[16px] text-ink transition-[border-color,box-shadow] duration-200 placeholder:text-ink-muted hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_rgba(151,73,58,0.12)] focus-visible:outline-none [&::-webkit-search-cancel-button]:hidden"
+              className="h-12 w-full rounded-2xl border border-line bg-paper-raised pr-11 pl-11 text-[16px] text-ink transition-[border-color,box-shadow] duration-200 placeholder:text-ink-muted hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)] focus-visible:outline-none [&::-webkit-search-cancel-button]:hidden"
             />
             {text ? (
               <button
@@ -282,7 +282,7 @@ export function ClientDirectory({ initial }: { initial: DirectoryQuery }) {
               onChange={(event) =>
                 change({ sort: event.target.value as ClientSort })
               }
-              className="h-12 cursor-pointer rounded-2xl border border-line bg-paper-raised px-3 text-[15px] text-ink hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_rgba(151,73,58,0.12)] focus-visible:outline-none"
+              className="h-12 cursor-pointer rounded-2xl border border-line bg-paper-raised px-3 text-[15px] text-ink hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)] focus-visible:outline-none"
             >
               {CLIENT_SORTS.map((sort) => (
                 <option key={sort} value={sort}>
@@ -461,22 +461,10 @@ function ClientRow({
     : null;
   const others = client.upcomingCount - 1;
 
-  // One complete sentence for screen readers; the visual row stays terse.
-  const label = [
-    client.displayName,
-    client.completedCount === 0
-      ? "pas encore venue"
-      : `${visitsLabel(client.completedCount)}, dernière le ${last}`,
-    next ? `prochain rendez-vous ${next.replace(" · ", " à ")}` : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
-
   return (
     <Link
       href={`/app/clients/${client.id}`}
       data-client={client.id}
-      aria-label={label}
       className="group flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-paper focus-visible:bg-paper focus-visible:outline-none md:grid md:grid-cols-[minmax(0,2.4fr)_0.9fr_1.1fr_1.5fr_1.25rem] md:gap-4 md:px-5"
     >
       <span className="flex min-w-0 flex-1 items-center gap-3">
@@ -495,6 +483,7 @@ function ClientRow({
           </span>
           {next ? (
             <span className="mt-1 w-fit rounded-full bg-accent-soft px-2 py-0.5 text-[12px] font-medium text-accent-strong md:hidden">
+              <span className="sr-only">Prochain rendez-vous : </span>
               {next}
             </span>
           ) : null}
@@ -509,15 +498,18 @@ function ClientRow({
         {visitsLabel(client.completedCount)}
       </span>
       <span className="hidden text-[14.5px] text-ink-soft md:block">
+        {last ? <span className="sr-only">Dernière le </span> : null}
         {last ?? "—"}
       </span>
       <span className="hidden shrink-0 items-center gap-1.5 md:flex md:min-w-0">
         {next ? (
           <span className="truncate rounded-full bg-accent-soft px-2.5 py-1 text-[12.5px] font-medium text-accent-strong">
+            <span className="sr-only">Prochain rendez-vous : </span>
             {next}
           </span>
         ) : (
           <span className="hidden text-[14.5px] text-ink-muted md:inline">
+            <span className="sr-only">Prochain rendez-vous : </span>
             Aucun
           </span>
         )}

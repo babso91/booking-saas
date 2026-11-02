@@ -578,7 +578,7 @@ function Card({
   return (
     <section
       className={cn(
-        "flex animate-rise flex-col gap-3 rounded-3xl border border-line bg-paper-raised p-5 shadow-[0_18px_40px_-34px_rgba(35,28,24,0.45)] sm:p-6",
+        "flex animate-rise flex-col gap-3 rounded-3xl border border-line bg-paper-raised p-5 shadow-[0_18px_40px_-34px_rgb(var(--shadow-rgb)/0.45)] sm:p-6",
         className,
       )}
       {...props}
@@ -593,7 +593,7 @@ const iconTones = {
   progress: "bg-sand text-ink-soft",
   active: "bg-success-soft text-success",
   delayed: "bg-sand text-ink-soft",
-  action: "bg-warning-soft text-[#6b4613]",
+  action: "bg-warning-soft text-warning-strong",
 } as const;
 
 function CardIcon({

@@ -1,8 +1,8 @@
 import { useId } from "react";
 
+import { BookingHost } from "@/components/shared/booking-host";
 import { TextField } from "@/components/ui/field";
 import { LinkIcon } from "@/components/ui/icons";
-import { bookingHost } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 import { normalizeSlugInput, slugify } from "../../slug";
@@ -74,7 +74,8 @@ export function SlugStep({
             <LinkIcon size={19} />
           </span>
           <p className="min-w-0 text-[15px] leading-snug break-all text-ink-muted sm:text-[17px]">
-            {bookingHost()}/b/
+            <BookingHost />
+            /b/
             <span className="font-semibold text-ink">
               {previewSlug || "ton-lien"}
             </span>

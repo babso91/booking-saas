@@ -16,3 +16,17 @@ export function requestedDay(value: string | string[] | undefined) {
     return undefined;
   }
 }
+
+/**
+ * `?rdv=<uuid>` opens that appointment's details once its day is read
+ * (links from "Aujourd’hui"). Only a well-formed id is kept; whether it is
+ * hers is decided by the agenda read itself (RLS), never by the link.
+ */
+export function requestedAppointment(value: string | string[] | undefined) {
+  return typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+    ? value.toLowerCase()
+    : undefined;
+}

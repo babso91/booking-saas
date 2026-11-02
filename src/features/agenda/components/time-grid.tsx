@@ -402,9 +402,8 @@ function AppointmentCard({
     <button
       type="button"
       onClick={onOpen}
-      aria-label={`${start}, ${appointment.client.displayName}, ${appointment.service.name}, ${meta.label}`}
       className={cn(
-        "@container absolute z-20 flex cursor-pointer flex-col gap-0.5 overflow-hidden rounded-lg border border-l-[3px] border-line/80 px-2 py-1 text-left shadow-[0_6px_16px_-12px_rgba(35,28,24,0.5)] transition-[box-shadow,transform] duration-150 hover:shadow-[0_10px_24px_-12px_rgba(35,28,24,0.55)] active:scale-[0.99]",
+        "@container absolute z-20 flex cursor-pointer flex-col gap-0.5 overflow-hidden rounded-lg border border-l-[3px] border-line/80 px-2 py-1 text-left shadow-[0_6px_16px_-12px_rgb(var(--shadow-rgb)/0.5)] transition-[box-shadow,transform] duration-150 hover:shadow-[0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] active:scale-[0.99]",
         meta.card,
       )}
       style={style}
@@ -440,6 +439,10 @@ function AppointmentCard({
           {formatDuration(appointment.durationMinutes)} · {price}
         </span>
       ) : null}
+      <span className="sr-only">
+        , {start}, {appointment.client.displayName}, {appointment.service.name},{" "}
+        {meta.label}
+      </span>
     </button>
   );
 }

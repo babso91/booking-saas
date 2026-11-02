@@ -132,12 +132,12 @@ const controlShell = cn(
 );
 
 const focusRing =
-  "focus-within:border-ink focus-within:shadow-[0_0_0_4px_rgba(151,73,58,0.12)]";
+  "focus-within:border-ink focus-within:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)]";
 
 function shellState(status: FieldStatus, invalid: boolean, disabled?: boolean) {
   if (disabled) return "border-line bg-sand/40 opacity-70";
   if (invalid || status === "error")
-    return "border-danger/70 focus-within:border-danger focus-within:shadow-[0_0_0_4px_rgba(156,61,46,0.12)]";
+    return "border-danger/70 focus-within:border-danger focus-within:shadow-[0_0_0_4px_color-mix(in_srgb,var(--danger)_12%,transparent)]";
   if (status === "success") return cn("border-success/60", focusRing);
   return cn("border-line hover:border-line-strong", focusRing);
 }

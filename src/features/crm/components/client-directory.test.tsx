@@ -80,7 +80,7 @@ async function renderDirectory(initial: Partial<DirectoryQuery> = {}) {
 const rows = () =>
   within(screen.getByRole("region", { name: "Liste des clientes" }))
     .getAllByRole("link")
-    .map((link) => link.getAttribute("aria-label"));
+    .map((link) => link.textContent);
 const lastInput = () =>
   listClientsAction.mock.calls[listClientsAction.mock.calls.length - 1]![0];
 
@@ -110,12 +110,24 @@ describe("list", () => {
       limit: 25,
     });
     expect(screen.getByText("132 clientes")).toBeTruthy();
-    expect(rows()).toEqual([
-      "Emma Laurent, 12 visites, dernière le 2 oct., prochain rendez-vous sam. 24 oct. à 14:30",
-      "Inès Benali, 4 visites, dernière le 18 sept. 2025, prochain rendez-vous lun. 12 oct. à 10:00",
-      "Zoé, pas encore venue",
-    ]);
-    const zoe = screen.getByRole("link", { name: "Zoé, pas encore venue" });
+    const [emma, ines, zoeRow] = rows();
+    for (const said of [
+      "Emma Laurent",
+      "12 visites",
+      "Dernière le 2 oct.",
+      "Prochain rendez-vous : sam. 24 oct. · 14:30",
+    ])
+      expect(emma).toContain(said);
+    for (const said of [
+      "Inès Benali",
+      "4 visites",
+      "Dernière le 18 sept. 2025",
+      "Prochain rendez-vous : lun. 12 oct. · 10:00",
+    ])
+      expect(ines).toContain(said);
+    expect(zoeRow).toContain("Pas encore venue");
+    expect(zoeRow).toContain("Prochain rendez-vous : Aucun");
+    const zoe = screen.getByRole("link", { name: /Zoé.*Pas encore venue/ });
     expect(zoe.getAttribute("href")).toBe(`/app/clients/${ZOE.id}`);
     expect(within(zoe).getAllByText("Pas encore venue").length).toBeGreaterThan(
       0,
@@ -205,7 +217,7 @@ describe("list", () => {
 
     first(ok(directoryPage([EMMA, ZOE]))); // the older read, late
     await flush();
-    expect(rows()[0]).toMatch(/^Inès Benali/);
+    expect(rows()[0]).toMatch(/Inès Benali/);
     expect(rows()).toHaveLength(1);
   });
 });
@@ -527,11 +539,11 @@ it("StrictMode: the first, cleaned-up run of the read never overwrites the newer
   );
   await flush();
   expect(listClientsAction).toHaveBeenCalledTimes(2);
-  expect(rows()).toEqual([expect.stringMatching(/^Inès Benali/)]);
+  expect(rows()).toEqual([expect.stringMatching(/Inès Benali/)]);
 
   first(ok(directoryPage([EMMA, ZOE])));
   await flush();
-  expect(rows()).toEqual([expect.stringMatching(/^Inès Benali/)]);
+  expect(rows()).toEqual([expect.stringMatching(/Inès Benali/)]);
 });
 
 describe("adding a customer by hand", () => {
