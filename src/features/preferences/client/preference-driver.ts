@@ -123,7 +123,10 @@ export class PreferenceDriver {
   private state: SyncState | null;
   private fallback: AppearancePreferences;
   private shownStyle: AppearancePreferences["style"];
-  /** She kept the old device's look: the read after it draws it at once. */
+  /**
+   * She kept the old device's look: a read is owed until one succeeds (each
+   * failure waits its turn), and that read draws it at once.
+   */
   private drawNextRead = false;
   private view: DriverView;
   private readonly listeners = new Set<() => void>();
@@ -279,7 +282,7 @@ export class PreferenceDriver {
     const stuck = this.state.paused && this.state.readsInFlight.length === 0;
     if (
       !this.host.isHidden() &&
-      (this.readDue || stuck || readNeeded(this.state))
+      (this.readDue || this.drawNextRead || stuck || readNeeded(this.state))
     ) {
       this.sendRead();
     }

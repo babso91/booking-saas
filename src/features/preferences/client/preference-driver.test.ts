@@ -12,6 +12,7 @@ import {
   type PreferencesSnapshot,
 } from "../model";
 import {
+  FIRST_RETRY_MS,
   LAST_RETRY_MS,
   PreferenceDriver,
   REQUEST_TIMEOUT_MS,
@@ -710,6 +711,69 @@ describe("an old device's look", () => {
       appearance: { style: "ecrin" },
       accountHasPreferences: true,
     });
+  });
+
+  it("kept, its read refused for a while: read again by itself, waiting more each time, then shown", async () => {
+    const { driver, imports, reads } = setup();
+    const settled = driver.importDevice(look);
+    await imports[0]!.answer(saved({ style: "ecrin" }, 1));
+    await expect(settled).resolves.toBe(true);
+
+    await reads[0]!.refuse("auth_unavailable");
+    expect(driver.getView().appearance.style).toBe("classique");
+    await vi.advanceTimersByTimeAsync(FIRST_RETRY_MS - 1);
+    expect(reads).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reads).toHaveLength(2);
+
+    await reads[1]!.refuse("auth_unavailable");
+    await vi.advanceTimersByTimeAsync(2 * FIRST_RETRY_MS - 1);
+    expect(reads).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reads).toHaveLength(3);
+
+    await reads[2]!.answer(
+      snapshot({ style: "ecrin" }, 1, context(), uuid("a1")),
+    );
+    expect(driver.getView()).toMatchObject({
+      appearance: { style: "ecrin" },
+      accountHasPreferences: true,
+      receivedStyle: null,
+    });
+
+    // Owed no more: nothing goes on reading.
+    await vi.advanceTimersByTimeAsync(10 * LAST_RETRY_MS);
+    expect(reads).toHaveLength(3);
+  });
+
+  it("kept, its read never answered: the timeout does not end what is owed", async () => {
+    const { driver, imports, reads } = setup();
+    const settled = driver.importDevice(look);
+    await imports[0]!.answer(saved({ style: "ecrin" }, 1));
+    await expect(settled).resolves.toBe(true);
+
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS + FIRST_RETRY_MS);
+    expect(reads).toHaveLength(2);
+    await reads[1]!.answer(
+      snapshot({ style: "ecrin" }, 1, context(), uuid("a1")),
+    );
+    expect(driver.getView().appearance.style).toBe("ecrin");
+  });
+
+  it("kept, then another context: the read owed to the old one is not owed any more", async () => {
+    const { driver, imports, reads } = setup();
+    const settled = driver.importDevice(look);
+    await imports[0]!.answer(saved({ style: "ecrin" }, 1));
+    await expect(settled).resolves.toBe(true);
+    await reads[0]!.refuse("auth_unavailable");
+
+    driver.receiveArea({
+      snapshot: snapshot({}, 0, context("9"), null),
+      appearance: defaultAppearancePreferences,
+    });
+    await vi.advanceTimersByTimeAsync(10 * LAST_RETRY_MS);
+    expect(reads).toHaveLength(1);
+    expect(driver.getView().appearance.style).toBe("classique");
   });
 
   it("the account has its own: they stay", async () => {
