@@ -101,8 +101,9 @@ export async function signOutAction(): Promise<
   return run(async () => {
     // She asked to leave: this device forgets her session whatever Auth
     // answers. If Auth cannot be reached, the session is not revoked on its
-    // side (it ends when its refresh token expires), but nothing of it is
-    // left here.
+    // side (its refresh token stays usable until it is revoked or the
+    // session reaches Auth's configured limits), but nothing of it is left
+    // on this device.
     const client = await createServerSupabaseClient("sign_out");
     try {
       if ((await signOut(client)) === "unavailable") {
