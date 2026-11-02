@@ -2,6 +2,7 @@ import "server-only";
 
 import { authException } from "@/features/auth/data/auth-errors";
 import type { SignInInput, SignUpInput } from "@/features/auth/schemas/auth";
+import { authFailureOf } from "@/lib/supabase/auth-errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
 export type SignUpOutcome =
@@ -62,12 +63,22 @@ export async function signInWithPassword(
 /**
  * Revokes the session server-side (refresh token and session row) and clears
  * the auth cookies. Scope "local" ends this device's session only.
+ *   revoked      Auth ended the session (or it was already invalid);
+ *   unavailable  Auth could not be reached: the session is not revoked on
+ *                its side. The caller still forgets it on this device
+ *                (forgetSessionOnThisDevice).
  */
-export async function signOut(client: AppSupabaseClient): Promise<void> {
+export async function signOut(
+  client: AppSupabaseClient,
+): Promise<"revoked" | "unavailable"> {
   const { error } = await client.auth.signOut({ scope: "local" });
 
+  if (error && authFailureOf(error) === "unavailable") {
+    return "unavailable";
+  }
   // An already-invalid session is a successful sign-out.
   if (error && error.code !== "session_not_found") {
     throw authException(error);
   }
+  return "revoked";
 }

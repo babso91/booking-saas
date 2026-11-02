@@ -283,6 +283,11 @@ export const errorCopy: Record<
     message:
       "Ajoute l’adresse email de ta cliente avant de lui ouvrir l’espace client.",
   },
+  auth_unavailable: {
+    title: "Connexion momentanément indisponible",
+    message:
+      "On ne peut pas vérifier ta connexion pour le moment. Tu es toujours connectée : réessaie dans un instant.",
+  },
   context_changed: {
     title: "Session changée",
     message:

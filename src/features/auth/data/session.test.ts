@@ -15,7 +15,13 @@ describe("destinationFor", () => {
       destinationFor({
         status: "ready",
         user,
-        business: { id: "b", slug: "s", name: "n", timezone: "Europe/Paris" },
+        business: {
+          id: "b",
+          membershipId: "m",
+          slug: "s",
+          name: "n",
+          timezone: "Europe/Paris",
+        },
       }),
     ).toBe("/app");
   });

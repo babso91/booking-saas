@@ -23,7 +23,10 @@ import {
   validationException,
   type ActionResult,
 } from "@/lib/errors";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import {
+  createServerSupabaseClient,
+  forgetSessionOnThisDevice,
+} from "@/lib/supabase/server";
 
 // Auth contract for the UI. Every action returns ActionResult<T> with stable
 // error codes (see docs/AUTH_ONBOARDING_CONTRACT.md); none throws to the UI.
@@ -96,8 +99,19 @@ export async function signOutAction(): Promise<
   ActionResult<{ next: "/login" }>
 > {
   return run(async () => {
-    const client = await createServerSupabaseClient();
-    await signOut(client);
+    // She asked to leave: this device forgets her session whatever Auth
+    // answers. If Auth cannot be reached, the session is not revoked on its
+    // side (its refresh token stays usable until it is revoked or the
+    // session reaches Auth's configured limits), but nothing of it is left
+    // on this device.
+    const client = await createServerSupabaseClient("sign_out");
+    try {
+      if ((await signOut(client)) === "unavailable") {
+        console.warn("Sign-out: Auth unreachable, session forgotten locally");
+      }
+    } finally {
+      await forgetSessionOnThisDevice();
+    }
 
     revalidatePath("/", "layout");
     return { next: "/login" as const };

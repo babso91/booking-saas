@@ -92,19 +92,20 @@ Le serveur est la seule implémentation de la normalisation. L'UI affiche le `sl
 
 ## Codes d'erreur
 
-| Code                  | HTTP | Quand                                                                             |
-| --------------------- | ---- | --------------------------------------------------------------------------------- |
-| `validation_error`    | 400  | entrée invalide (équivalent de `invalid_input`) ; voir `fieldErrors`              |
-| `unauthenticated`     | 401  | pas de session valide (équivalent de `unauthorized`)                              |
-| `invalid_credentials` | 401  | email ou mot de passe incorrect (message identique si le compte n'existe pas)     |
-| `email_not_confirmed` | 403  | connexion avant confirmation de l'email                                           |
-| `email_taken`         | 409  | inscription avec un email déjà confirmé (ou déjà utilisé sans confirmation email) |
-| `rate_limited`        | 429  | limite Supabase Auth atteinte                                                     |
-| `already_onboarded`   | 409  | l'onboarding a déjà été réalisé : aller sur `/app`                                |
-| `slug_taken`          | 409  | slug déjà utilisé (`fieldErrors.slug`)                                            |
-| `slug_reserved`       | 409  | slug réservé (`fieldErrors.slug`)                                                 |
-| `forbidden`           | 403  | action non autorisée                                                              |
-| `internal`            | 500  | erreur inattendue ; détail uniquement dans les logs serveur                       |
+| Code                  | HTTP | Quand                                                                                                                          |
+| --------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `validation_error`    | 400  | entrée invalide (équivalent de `invalid_input`) ; voir `fieldErrors`                                                           |
+| `unauthenticated`     | 401  | pas de session valide (équivalent de `unauthorized`)                                                                           |
+| `invalid_credentials` | 401  | email ou mot de passe incorrect (message identique si le compte n'existe pas)                                                  |
+| `email_not_confirmed` | 403  | connexion avant confirmation de l'email                                                                                        |
+| `email_taken`         | 409  | inscription avec un email déjà confirmé (ou déjà utilisé sans confirmation email)                                              |
+| `rate_limited`        | 429  | limite Supabase Auth atteinte                                                                                                  |
+| `already_onboarded`   | 409  | l'onboarding a déjà été réalisé : aller sur `/app`                                                                             |
+| `slug_taken`          | 409  | slug déjà utilisé (`fieldErrors.slug`)                                                                                         |
+| `slug_reserved`       | 409  | slug réservé (`fieldErrors.slug`)                                                                                              |
+| `forbidden`           | 403  | action non autorisée                                                                                                           |
+| `internal`            | 500  | erreur inattendue ; détail uniquement dans les logs serveur                                                                    |
+| `auth_unavailable`    | 503  | Supabase Auth ne répond pas (réseau, 5xx, 429) : la session n'a pas pu être vérifiée. Ce n'est pas une déconnexion : réessayer |
 
 ## Confirmation email
 
@@ -137,15 +138,38 @@ Inscription avec un email existant (comportement réel de Supabase Auth, testé)
 - `getUser` refuse l'ancien jeton d'accès. Toutes les gardes, le proxy et les actions passent par là, donc `/app` et les actions sont fermés immédiatement ;
 - le refresh token est révoqué (`refresh_token_not_found`) ;
 - **limite** : un jeton d'accès copié avant la déconnexion reste accepté par PostgREST (lectures et RPC, sous RLS) jusqu'à son expiration (`jwt_expiry`, 3600 s par défaut). PostgREST ne vérifie que la signature et la date d'expiration du JWT. Pas de liste noire maison : pour réduire la fenêtre, réduire `jwt_expiry` en production.
+- **déconnexion pendant une panne d'Auth** : l'appareil oublie toujours la session. `signOutAction` crée son client avec le motif `"sign_out"` (aucune suppression retenue), puis `forgetSessionOnThisDevice()` efface les cookies de session restants (session, morceaux, vérificateur PKCE), même quand auth-js les garde après un refresh qu'il réessaie. L'action répond `{ next: "/login" }`. **Limite** : Auth n'a pas pu révoquer la session de son côté. Le refresh token reste utilisable côté Auth (un refresh token Supabase n'expire pas à date fixe par défaut) jusqu'à une révocation, par exemple « se déconnecter partout », ou jusqu'aux limites de session configurées dans Auth. Plus aucun cookie de l'appareil ne le contient.
 
 ## Routage
 
-| État serveur            | `/app/**`       | `/onboarding` | `/login`        | `/b/[slug]`, `/api/public/**` |
-| ----------------------- | --------------- | ------------- | --------------- | ----------------------------- |
-| non connecté            | → `/login`      | → `/login`    | affiché         | public                        |
-| connecté, sans business | → `/onboarding` | affiché       | → `/onboarding` | public                        |
-| connecté, business prêt | affiché         | → `/app`      | → `/app`        | public                        |
+| État serveur            | `/app/**`         | `/onboarding`     | `/login`          | `/b/[slug]`, `/api/public/**` |
+| ----------------------- | ----------------- | ----------------- | ----------------- | ----------------------------- |
+| non connecté            | → `/login`        | → `/login`        | affiché           | public                        |
+| connecté, sans business | → `/onboarding`   | affiché           | → `/onboarding`   | public                        |
+| connecté, business prêt | affiché           | → `/app`          | → `/app`          | public                        |
+| Auth injoignable        | → `/indisponible` | → `/indisponible` | → `/indisponible` | public                        |
 
 L'état est calculé côté serveur à chaque requête : session validée par le serveur Auth, puis appartenance lue sous RLS. Il ne dépend jamais d'un état navigateur. Chaque état n'est accepté que par une seule route, ce qui exclut toute boucle.
+
+### Auth injoignable n'est pas une déconnexion
+
+La cause d'un échec est lue sur le type et le statut de l'erreur Supabase, jamais sur son message (`authFailureOf`, `src/lib/supabase/auth-errors.ts`) :
+
+| Erreur                                                                                                          | Cause         | Effet                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AuthSessionMissingError`, `AuthApiError` 4xx (hors 429), JWT invalide                                          | `signed_out`  | refus comme avant : `/login`, `unauthenticated`, cookies effacés par Supabase                                                                        |
+| `AuthRetryableFetchError` (pas de réponse, 5xx), `AuthUnknownError`, `AuthApiError` 5xx ou 429, erreur non-Auth | `unavailable` | refus **temporaire** : le proxy ne redirige pas et ne supprime aucun cookie ; les pages privées → `/indisponible` ; les actions → `auth_unavailable` |
+
+Dans les deux cas l'accès est refusé : une panne ne laisse jamais rien passer (guards, actions et RLS vérifient toujours la session). Une fois Auth revenu, la même session fonctionne.
+
+**Cookies dans les Server Actions et les Route Handlers.** auth-js supprime la session stockée quand un refresh échoue sans être réessayé, y compris sur une réponse illisible (`AuthUnknownError` : 403 ou 418 en HTML renvoyé par un proxy…). Cette suppression part vers le magasin de cookies avant que l'action ne réponde. Le client serveur (`createServerSupabaseClient`, `src/lib/supabase/server.ts`) observe donc ses propres échanges avec Auth (`src/lib/supabase/session-cookies.ts`) :
+
+| Dernier échange avec Auth                                                                           | Suppressions de cookies                                                         |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| réponse lue : 2xx, ou 4xx (hors 429) au corps JSON (refresh refusé, session révoquée, JWT invalide) | appliquées : c'est Auth qui a mis fin à la session                              |
+| pas de réponse, 5xx, 429, ou corps qui n'est pas du JSON                                            | **retenues** : les cookies restent intacts ; l'action répond `auth_unavailable` |
+| aucun échange (cookie illisible, décidé localement)                                                 | appliquées                                                                      |
+
+Les écritures qui posent une session (refresh réussi) ne sont jamais retenues. Seule la déconnexion volontaire utilise le motif `"sign_out"`, qui applique toutes les suppressions (voir Déconnexion).
 
 Les pages `/signup` et `/login` appartiennent à la branche UI. Une page d'inscription devra appeler `redirectAuthenticatedUser()` (`src/features/auth/data/guards.ts`) dans son layout, comme `/login`.

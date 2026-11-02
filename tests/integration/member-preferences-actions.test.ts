@@ -67,6 +67,31 @@ class Device {
 let device = new Device();
 const cookieWrites = vi.fn();
 
+// The preferences read alone can be made to fail, or be preceded by a
+// change (Auth and the session stay real): what loadAreaPreferences does
+// when only that read fails, or when her membership changes under it.
+const preferencesRead: { fails: boolean; before?: () => Promise<void> } = {
+  fails: false,
+};
+vi.mock("@/features/preferences/data/preferences", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/features/preferences/data/preferences")
+    >();
+  return {
+    ...actual,
+    readMemberPreferences: async (
+      ...args: Parameters<typeof actual.readMemberPreferences>
+    ) => {
+      await preferencesRead.before?.();
+      if (preferencesRead.fails) {
+        throw new Error("preferences read failed (injected)");
+      }
+      return actual.readMemberPreferences(...args);
+    },
+  };
+});
+
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     getAll: () => device.getAll(),
@@ -130,6 +155,8 @@ beforeAll(async () => {
 
 afterEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = env.apiUrl;
+  preferencesRead.fails = false;
+  preferencesRead.before = undefined;
 });
 
 const look = (patch: Partial<AppearancePreferences> = {}) => ({
@@ -143,11 +170,16 @@ async function enterArea(
   businessId: string,
   previous?: SyncState,
 ) {
-  const area = await loadAreaPreferences({
+  const area = await loadAreaPreferences();
+  expect(area.source).toBe("account");
+  expect(area.identity).toEqual({
+    status: "confirmed",
+    context: area.snapshot!.context,
+  });
+  expect(area.snapshot!.context).toMatchObject({
     userId: account.userId,
     businessId,
   });
-  expect(area.source).toBe("account");
   return previous
     ? enterContext(previous, area.snapshot!)
     : initialSyncState(area.snapshot!);
@@ -347,10 +379,7 @@ describe("preferences actions, on her devices", () => {
   ])("refuses %s", async (_label, input) => {
     device = new Device();
     await signInHere(izabela);
-    const area = await loadAreaPreferences({
-      userId: izabela.userId,
-      businessId: studioI.id,
-    });
+    const area = await loadAreaPreferences();
     const withContext =
       input && _label !== "no context"
         ? {
@@ -660,13 +689,14 @@ describe("another account on the same device", () => {
     const izabelaCache = device.get(DEVICE_CACHE_COOKIE)?.value;
     await signOutHere();
     await signInHere(marie);
-    process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:9";
-    const offline = await loadAreaPreferences({
-      userId: marie.userId,
-      businessId: studioM.id,
-    });
+    preferencesRead.fails = true;
+    const offline = await loadAreaPreferences();
     expect(device.get(DEVICE_CACHE_COOKIE)?.value).toBe(izabelaCache);
-    expect(offline).toMatchObject({ source: "default", snapshot: null });
+    expect(offline).toMatchObject({
+      identity: { status: "confirmed", context: { userId: marie.userId } },
+      source: "default",
+      snapshot: null,
+    });
     expect(offline.appearance).toEqual(defaultAppearancePreferences);
   });
 });
@@ -726,13 +756,16 @@ describe("leaving the business and joining it again", () => {
     await signInHere(izabela);
     let page = await enterArea(izabela, studioI.id);
     await getMyPreferencesAction();
-    process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:9";
-    const area = await loadAreaPreferences({
-      userId: izabela.userId,
-      businessId: studioI.id,
+    preferencesRead.fails = true;
+    const area = await loadAreaPreferences();
+    expect(area).toMatchObject({
+      identity: { status: "confirmed", context: page.context },
+      source: "device",
+      snapshot: null,
     });
-    expect(area).toMatchObject({ source: "device", snapshot: null });
     expect(area.appearance).toEqual(page.observed.appearance);
+    preferencesRead.fails = false;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:9";
 
     const motion =
       page.observed.appearance.motion === "none" ? "discrete" : "none";
@@ -741,12 +774,15 @@ describe("leaving the business and joining it again", () => {
     const failed = await sendSave(request!);
     expect(failed.ok).toBe(false);
     page = answer(sending, request!, failed);
-    // The session cannot be read either: saving pauses, her choice is kept.
+    // Auth cannot be reached either: a temporary error, not a sign-out.
+    // Her choice is kept, unacknowledged (never shown as saved), and sent
+    // again later (the driver backs off).
     expect(failed).toMatchObject({
       ok: false,
-      error: { code: "unauthenticated" },
+      error: { code: "auth_unavailable" },
     });
-    expect(page.paused).toBe("context_changed");
+    expect(page.paused).toBeNull();
+    expect(unacknowledgedChanges(page)).toEqual({ motion });
     expect(displayedAppearance(page).motion).toBe(motion);
 
     process.env.NEXT_PUBLIC_SUPABASE_URL = env.apiUrl;
@@ -761,12 +797,10 @@ describe("leaving the business and joining it again", () => {
     device = new Device();
     await signInHere(izabela);
     device.set(DEVICE_CACHE_COOKIE, "2.zzz.<script>");
-    process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:9";
-    const area = await loadAreaPreferences({
-      userId: izabela.userId,
-      businessId: studioI.id,
-    });
+    preferencesRead.fails = true;
+    const area = await loadAreaPreferences();
     expect(area.source).toBe("default");
+    expect(area.identity.status).toBe("confirmed");
   });
 });
 
@@ -777,10 +811,7 @@ describe("Studio 1's device cookie (dash_appearance)", () => {
     device = new Device();
     device.set(LEGACY_APPEARANCE_COOKIE, "lin.dark.none.97493a.studio");
     await signInHere(fresh);
-    const area = await loadAreaPreferences({
-      userId: fresh.userId,
-      businessId: business.id,
-    });
+    const area = await loadAreaPreferences();
     expect(area).toMatchObject({
       source: "account",
       appearance: { style: "classique" },
@@ -808,10 +839,7 @@ describe("Studio 1's device cookie (dash_appearance)", () => {
         preferences: { appearance: { style: "studio" }, version: 1 },
       },
     });
-    const after = await loadAreaPreferences({
-      userId: fresh.userId,
-      businessId: business.id,
-    });
+    const after = await loadAreaPreferences();
     expect(after.deviceAppearanceOffer).toBeNull();
   });
 
@@ -819,10 +847,7 @@ describe("Studio 1's device cookie (dash_appearance)", () => {
     device = new Device();
     device.set(LEGACY_APPEARANCE_COOKIE, "sauge.light.standard.-.classique");
     await signInHere(izabela);
-    const area = await loadAreaPreferences({
-      userId: izabela.userId,
-      businessId: studioI.id,
-    });
+    const area = await loadAreaPreferences();
     expect(area.deviceAppearanceOffer).toBeNull();
     const before = await rowOf(studioI.id, izabela.userId);
     const forced = await importDeviceAppearanceAction({
@@ -862,14 +887,198 @@ describe("Studio 1's device cookie (dash_appearance)", () => {
 
   it("a malformed cookie offers nothing", async () => {
     const fresh = await createAccount("act-malformed");
-    const business = await createBusiness(fresh.userId);
+    await createBusiness(fresh.userId);
     device = new Device();
     device.set(LEGACY_APPEARANCE_COOKIE, "constructor.dark.none.zzz.studio");
     await signInHere(fresh);
-    const area = await loadAreaPreferences({
-      userId: fresh.userId,
-      businessId: business.id,
-    });
+    const area = await loadAreaPreferences();
     expect(area.deviceAppearanceOffer).toBeNull();
+  });
+});
+
+describe("the page's identity (loadAreaPreferences().identity)", () => {
+  async function membershipOf(businessId: string, userId: string) {
+    const { rows } = await db.query<{ id: string }>(
+      "select id from public.business_members where business_id = $1 and user_id = $2",
+      [businessId, userId],
+    );
+    return rows[0]?.id ?? null;
+  }
+
+  async function join(businessId: string, userId: string) {
+    await db.query(
+      `insert into public.business_members (business_id, user_id, role) values ($1, $2, 'owner')`,
+      [businessId, userId],
+    );
+    return (await membershipOf(businessId, userId))!;
+  }
+
+  async function leave(businessId: string, userId: string) {
+    await db.query(
+      "delete from public.business_members where business_id = $1 and user_id = $2",
+      [businessId, userId],
+    );
+  }
+
+  it("comes from the session, with or without her preferences", async () => {
+    device = new Device();
+    await signInHere(izabela);
+    const context = {
+      userId: izabela.userId,
+      businessId: studioI.id,
+      membershipId: (await membershipOf(studioI.id, izabela.userId))!,
+    };
+    const read = await loadAreaPreferences();
+    expect(read.identity).toEqual({ status: "confirmed", context });
+    expect(read.snapshot!.context).toEqual(context);
+
+    preferencesRead.fails = true;
+    const notRead = await loadAreaPreferences();
+    expect(notRead.identity).toEqual({ status: "confirmed", context });
+    expect(notRead.snapshot).toBeNull();
+  });
+
+  it("left and joined again: the new membership, never the old one, read or not", async () => {
+    const member = await createAccount("id-rejoin");
+    const business = await createBusiness(
+      (await createAccount("id-owner")).userId,
+    );
+    device = new Device();
+    await signInHere(member);
+    const first = await join(business.id, member.userId);
+    const before = await loadAreaPreferences();
+    expect(before.identity).toMatchObject({
+      context: { membershipId: first },
+    });
+    // Her preferences under the first membership, cached by the device.
+    const saved = await saveMyPreferencesAction({
+      context: { businessId: business.id, membershipId: first },
+      expected: { incarnation: null, version: 0 },
+      changes: { style: "ecrin" },
+    });
+    expect(saved).toMatchObject({ ok: true, data: { status: "saved" } });
+    const cache = parseDeviceCache(
+      device.get(DEVICE_CACHE_COOKIE)?.value,
+      deviceCacheOwner(member.userId, business.id),
+    );
+    expect(cache).toMatchObject({
+      membershipId: first,
+      preferences: { appearance: { style: "ecrin" } },
+    });
+
+    await leave(business.id, member.userId);
+    const second = await join(business.id, member.userId);
+    expect(second).not.toBe(first);
+
+    const read = await loadAreaPreferences();
+    expect(read.identity).toEqual({
+      status: "confirmed",
+      context: {
+        userId: member.userId,
+        businessId: business.id,
+        membershipId: second,
+      },
+    });
+    expect(read.snapshot!.context.membershipId).toBe(second);
+    expect(read.snapshot!.preferences.version).toBe(0);
+
+    // Her preferences cannot be read: still the new membership, and the
+    // device's cache of the old one (Écrin) is not shown.
+    preferencesRead.fails = true;
+    const notRead = await loadAreaPreferences();
+    expect(notRead).toEqual({
+      identity: read.identity,
+      snapshot: null,
+      appearance: defaultAppearancePreferences,
+      source: "default",
+      deviceAppearanceOffer: null,
+    });
+  });
+
+  it("a membership that changes during the render: unconfirmed, nothing vouched for", async () => {
+    const member = await createAccount("id-race");
+    const business = await createBusiness(
+      (await createAccount("id-race-owner")).userId,
+    );
+    device = new Device();
+    await signInHere(member);
+    await join(business.id, member.userId);
+    // Between the session (her membership) and the preferences read, she
+    // leaves and joins again.
+    preferencesRead.before = async () => {
+      preferencesRead.before = undefined;
+      await leave(business.id, member.userId);
+      await join(business.id, member.userId);
+    };
+    expect(await loadAreaPreferences()).toEqual({
+      identity: { status: "unconfirmed", reason: "membership_changed" },
+      snapshot: null,
+      appearance: defaultAppearancePreferences,
+      source: "default",
+      deviceAppearanceOffer: null,
+    });
+  });
+
+  it("a membership gone during the render (she left): unconfirmed, never its cache", async () => {
+    const member = await createAccount("id-gone");
+    const business = await createBusiness(
+      (await createAccount("id-gone-owner")).userId,
+    );
+    device = new Device();
+    await signInHere(member);
+    await join(business.id, member.userId);
+    await getMyPreferencesAction();
+    expect(device.get(DEVICE_CACHE_COOKIE)).toBeDefined();
+    preferencesRead.before = async () => {
+      preferencesRead.before = undefined;
+      await leave(business.id, member.userId);
+    };
+    expect(await loadAreaPreferences()).toEqual({
+      identity: { status: "unconfirmed", reason: "membership_changed" },
+      snapshot: null,
+      appearance: defaultAppearancePreferences,
+      source: "default",
+      deviceAppearanceOffer: null,
+    });
+  });
+
+  it("without a ready session: unconfirmed, with its reason; never a cache", async () => {
+    const member = await createAccount("id-states");
+    const business = await createBusiness(
+      (await createAccount("id-states-owner")).userId,
+    );
+    device = new Device();
+    await signInHere(member);
+    await join(business.id, member.userId);
+    await getMyPreferencesAction();
+    expect(device.get(DEVICE_CACHE_COOKIE)).toBeDefined();
+    const nothing = {
+      snapshot: null,
+      appearance: defaultAppearancePreferences,
+      source: "default",
+      deviceAppearanceOffer: null,
+    };
+
+    // Auth unreachable.
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:9";
+    expect(await loadAreaPreferences()).toEqual({
+      identity: { status: "unconfirmed", reason: "auth_unavailable" },
+      ...nothing,
+    });
+    process.env.NEXT_PUBLIC_SUPABASE_URL = env.apiUrl;
+
+    // She left the business (no other one).
+    await leave(business.id, member.userId);
+    expect(await loadAreaPreferences()).toEqual({
+      identity: { status: "unconfirmed", reason: "onboarding_required" },
+      ...nothing,
+    });
+
+    // Signed out.
+    await signOutHere();
+    expect(await loadAreaPreferences()).toEqual({
+      identity: { status: "unconfirmed", reason: "unauthenticated" },
+      ...nothing,
+    });
   });
 });
