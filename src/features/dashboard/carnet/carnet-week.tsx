@@ -158,7 +158,10 @@ export function CarnetWeek({
     if (time) onCreateAt(date, time);
   }
 
-  const hoursColumn = (
+  // "Now" is written in the margin of the page that holds today, not over
+  // the visits.
+  const todayPage = today ? (days.indexOf(today) >= LEFT_PAGE ? 1 : 0) : -1;
+  const hoursColumn = (page: number) => (
     <div className={styles.hours} aria-hidden="true">
       {marks.map((mark) => (
         <span
@@ -170,6 +173,11 @@ export function CarnetWeek({
           {mark.repeated ? <small>2ᵉ fois</small> : null}
         </span>
       ))}
+      {nowShown && page === todayPage ? (
+        <span className={styles.hourNow} style={{ top: y(nowY) }}>
+          {nowLabel}
+        </span>
+      ) : null}
     </div>
   );
 
@@ -217,7 +225,9 @@ export function CarnetWeek({
                 {index === LEFT_PAGE ? (
                   <div className={styles.gutter} aria-hidden="true" />
                 ) : null}
-                {index === 0 || index === LEFT_PAGE ? hoursColumn : null}
+                {index === 0 || index === LEFT_PAGE
+                  ? hoursColumn(index === 0 ? 0 : 1)
+                  : null}
                 <div
                   role="group"
                   aria-label={`Journée du ${formatFullDate(column.date)}, ${column.count} rendez-vous`}
@@ -417,9 +427,7 @@ export function CarnetWeek({
                       aria-label={`Il est ${nowLabel}`}
                       className={styles.nowRule}
                       style={{ top: y(nowY) }}
-                    >
-                      <span aria-hidden="true">{nowLabel}</span>
-                    </span>
+                    />
                   ) : null}
                 </div>
               </Fragment>

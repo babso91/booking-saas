@@ -1312,14 +1312,16 @@ button.pause {
   background: var(--accent);
   pointer-events: none;
 }
-.nowRule > span {
+.hourNow {
   position: absolute;
-  top: 3px;
   right: 2px;
-  padding: 0 3px;
-  background: var(--paper);
+  z-index: 2;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: var(--accent);
   font-family: var(--mono);
   font-size: 10.5px;
   line-height: 1.3;
-  color: var(--accent-strong);
+  color: var(--paper);
+  transform: translateY(-50%);
 }
