@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { agenda, appointment } from "../../../../tests/support/agenda-fixtures";
+import {
+  agenda,
+  appointment,
+  CLIENT_A,
+} from "../../../../tests/support/agenda-fixtures";
 import { todayModel } from "../client/today-model";
 import {
   folioOf,
@@ -22,7 +26,9 @@ const lede = (appointments: ReturnType<typeof appointment>[], at: string) =>
     ),
   )
     .map((part) => part.text)
-    .join("");
+    .join("")
+    // What she reads; the spaces in an hour do not break.
+    .replaceAll("\u00a0", " ");
 
 describe("a planner's dates", () => {
   it.each([
@@ -59,8 +65,8 @@ describe("a planner's dates", () => {
   });
 
   it("writes an hour as she would", () => {
-    expect(frTime("09:00")).toBe("9 h");
-    expect(frTime("14:05")).toBe("14 h 05");
+    expect(frTime("09:00")).toBe("9\u00a0h");
+    expect(frTime("14:05")).toBe("14\u00a0h\u00a005");
   });
 });
 
@@ -92,6 +98,17 @@ describe("the day's sentence", () => {
       ),
     );
     expect(parts.find((part) => part.marked)?.text).toBe("un pris en ligne");
+  });
+
+  it("speaks French: elision, and a day booked entirely online", () => {
+    const elia = appointment({
+      local: `${DAY}T10:00`,
+      source: "public",
+      client: { id: CLIENT_A, displayName: "Elia Visite" },
+    });
+    expect(lede([elia], `${DAY}T08:30:00Z`)).toMatch(
+      /^Un rendez.vous, pris en ligne\. Créneau d’Elia en cours/,
+    );
   });
 
   it("two at once: said as two", () => {

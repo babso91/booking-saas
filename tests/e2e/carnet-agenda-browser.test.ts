@@ -314,8 +314,11 @@ describe("Carnet in a browser", () => {
       appearance: CARNET,
     });
     await page.goto(`${APP}/app/settings/appearance`);
-    const choose = async (name: RegExp) =>
-      (await hydrated(page.getByRole("radio", { name }))).check();
+    // Her click lands on the label: the radio itself is visually hidden.
+    const choose = async (name: string) =>
+      (
+        await hydrated(page.locator("label", { hasText: name }).first())
+      ).click();
     const row = async () =>
       (
         await db.query(
@@ -325,9 +328,9 @@ describe("Carnet in a browser", () => {
         )
       ).rows[0];
 
-    await choose(/^Encre bleue/);
-    await choose(/^Sombre/);
-    await choose(/^Prune/);
+    await choose("Encre bleue");
+    await choose("Sombre");
+    await choose("Prune");
     await vi.waitFor(
       async () =>
         expect(await row()).toMatchObject({

@@ -1041,6 +1041,10 @@ button.pause {
   display: grid;
   grid-template-columns: var(--grid);
 }
+/* Room above the first hour, so its label is never under the heads. */
+.plannerBody {
+  margin-top: 10px;
+}
 .plannerHeads {
   position: sticky;
   top: 0;

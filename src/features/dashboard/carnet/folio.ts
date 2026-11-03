@@ -64,11 +64,11 @@ export function weekSpan(days: string[]) {
   return `${day(first)} – ${day(last)} ${monthOf(last)} ${toYear}`;
 }
 
-/** "14:05" as she would write it: "14 h 05", "9 h". */
+/** "14:05" as she would write it: "14 h 05", "9 h", never cut at a line end. */
 export function frTime(time: string) {
   const [hours, minutes] = time.split(":");
   const hour = Number(hours);
-  return minutes === "00" ? `${hour} h` : `${hour} h ${minutes}`;
+  return minutes === "00" ? `${hour}\u00a0h` : `${hour}\u00a0h\u00a0${minutes}`;
 }
 
 const NUMBERS = [
@@ -92,6 +92,9 @@ const upper = (count: number) =>
   count <= 12 ? NUMBERS[count]! : String(count);
 
 const firstName = (name: string) => name.split(" ")[0] ?? name;
+/** "de Camille", "d’Elia". */
+const of = (name: string) =>
+  /^[aeiouyhàâéèêëîïôöûü]/i.test(name) ? `d’${name}` : `de ${name}`;
 
 export type LedePart = { text: string; marked?: boolean };
 
@@ -120,7 +123,13 @@ export function ledeOf(model: TodayModel): LedePart[] {
 
   const plural = counts.total > 1;
   const parts: LedePart[] = [{ text: `${upper(counts.total)} rendez‑vous` }];
-  if (counts.online > 0) {
+  if (counts.online > 0 && counts.online === counts.total) {
+    parts.push({ text: ", " });
+    parts.push({
+      text: plural ? "tous pris en ligne" : "pris en ligne",
+      marked: true,
+    });
+  } else if (counts.online > 0) {
     parts.push({ text: ", dont " });
     parts.push({
       text: `${lower(counts.online)} pris en ligne`,
@@ -139,7 +148,7 @@ export function ledeOf(model: TodayModel): LedePart[] {
     parts.push({ text: `${upper(currents.length)} créneaux en cours. ` });
   else if (currents[0])
     parts.push({
-      text: `Créneau de ${firstName(currents[0].appointment.client.displayName)} en cours${
+      text: `Créneau ${of(firstName(currents[0].appointment.client.displayName))} en cours${
         currents[0].endsAfter
           ? ""
           : `, fin prévue à ${frTime(timeOf(currents[0].appointment.localEndsAt))}`
