@@ -1,18 +1,16 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
-import { startOfWeek } from "@/features/agenda/client/dates";
 import { AppShell } from "@/features/agenda/components/app-shell";
-import { getAgenda } from "@/features/agenda/data/agenda";
 import { loadRenderedAppearance } from "@/features/appearance/server/area-appearance";
 import { requireReadyBusiness } from "@/features/auth/data/guards";
 import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import { CarnetToday } from "@/features/dashboard/carnet/carnet-today";
+import { readTodayWeek } from "@/features/dashboard/data/today-week";
 import { StudioToday } from "@/features/dashboard/components/studio-today";
 import { EcrinToday } from "@/features/dashboard/ecrin/ecrin-today";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { readBusinessToday } from "@/lib/time/business-time";
-import { addDaysToLocalDate } from "@/lib/time/local-date";
 
 export const metadata: Metadata = {
   title: "Aujourd’hui",
@@ -28,18 +26,14 @@ export default async function TodayPage() {
   if (appearance.style === "classique") redirect("/app");
 
   // Today and now, from the calendar authority (PostgreSQL); then the week
-  // around it, read exactly as the agenda reads it (RLS: members only).
+  // around it, read exactly as the agenda reads it, buffers from the day
+  // before included (RLS: members only).
   const client = await createServerSupabaseClient();
   const today = await readBusinessToday(client, business.id);
-  const monday = startOfWeek(today.date);
-  const agenda = await getAgenda(
+  const agenda = await readTodayWeek(
     client,
     { businessId: business.id, timezone: business.timezone },
-    {
-      startDate: monday,
-      endDate: addDaysToLocalDate(monday, 6),
-      includeCancelled: false,
-    },
+    today.date,
   );
 
   return (
