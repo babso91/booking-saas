@@ -322,7 +322,7 @@ describe("Carnet in a browser", () => {
     const row = async () =>
       (
         await db.query(
-          `select style, ambiance, mode, accent from public.member_preferences
+          `select style, ambiance, color_mode, accent from public.member_preferences
            where business_id = $1`,
           [businessId],
         )
@@ -336,7 +336,7 @@ describe("Carnet in a browser", () => {
         expect(await row()).toMatchObject({
           style: "carnet",
           ambiance: "lin",
-          mode: "dark",
+          color_mode: "dark",
           accent: expect.stringMatching(/^#7a3e66$/i),
         }),
       { timeout: 15_000 },
