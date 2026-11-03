@@ -20,6 +20,11 @@ import { Sheet } from "@/components/ui/sheet";
 import { useDashboardStyle } from "@/features/appearance/components/appearance-provider";
 import { SignOutButton } from "@/features/auth/components/sign-out-button";
 import { StudioShell } from "@/features/dashboard/components/studio-shell";
+import {
+  areaIdentityKey,
+  type AreaIdentity,
+} from "@/features/dashboard/area-identity";
+import { CarnetShell } from "@/features/dashboard/carnet/carnet-shell";
 import { EcrinShell } from "@/features/dashboard/ecrin/ecrin-shell";
 import type { DashboardSection } from "@/features/dashboard/sections";
 import { cn } from "@/lib/cn";
@@ -34,21 +39,41 @@ const HOURS = "/app/settings/hours";
 const LOYALTY = "/app/loyalty";
 const APPEARANCE = "/app/settings/appearance";
 
+type ShellProps = {
+  business: Business;
+  /** The section on screen (aria-current and highlight). */
+  current?: Section;
+  children: ReactNode;
+};
+
+/**
+ * The area of one identity. The page renders it with the identity its guard
+ * resolved, on every render (navigation, refresh): when the session now holds
+ * another membership, the frame and the whole page under it start again from
+ * nothing. React keeps a component's state while the same type stays at the
+ * same place, and Next keeps the page's components across a refresh or a
+ * change of address on the same page: the key is what says it is no longer
+ * the same area. The previous one's state (data read, services, open panels,
+ * forms, unfolded notes) is dropped with it, and its answers still on their
+ * way land in components that are gone. Within one identity — another date,
+ * another style, another page — nothing is reset by this.
+ */
+export function AppShell({
+  identity,
+  ...props
+}: ShellProps & {
+  /** From the page's guard (requireReadyBusiness), never from the client. */
+  identity: AreaIdentity;
+}) {
+  return <AreaFrame key={areaIdentityKey(identity)} {...props} />;
+}
+
 /**
  * Professional area frame, in her style. Classique — desktop: compact
  * sidebar; phones and tablets: a top bar and a bottom tab bar within thumb
  * reach (not a squeezed sidebar). Studio: its own frame (StudioShell).
  */
-export function AppShell({
-  business,
-  current = "agenda",
-  children,
-}: {
-  business: Business;
-  /** The section on screen (aria-current and highlight). */
-  current?: Section;
-  children: ReactNode;
-}) {
+function AreaFrame({ business, current = "agenda", children }: ShellProps) {
   const item = (section: Section) =>
     cn(
       "flex h-11 items-center gap-3 rounded-xl px-3 text-[15px] font-medium transition-colors",
@@ -59,6 +84,13 @@ export function AppShell({
 
   const [accountOpen, setAccountOpen] = useState(false);
   const style = useDashboardStyle();
+
+  if (style === "carnet")
+    return (
+      <CarnetShell business={business} current={current}>
+        {children}
+      </CarnetShell>
+    );
 
   if (style === "ecrin")
     return (

@@ -1,4 +1,8 @@
 import {
+  scopeId,
+  type DraftScope,
+} from "@/features/businesses/client/draft-scope";
+import {
   CLIENT_FILTERS,
   CLIENT_SORTS,
   type ClientFilter,
@@ -45,6 +49,14 @@ export function parseDirectoryQuery(params: {
     sort: pick(first(params.sort), CLIENT_SORTS, DEFAULT_QUERY.sort),
   };
 }
+
+/**
+ * Where the directory as she left it is kept for the profile's way back
+ * (session storage), per identity: a search typed in one business is never
+ * the link of another's profile.
+ */
+export const directoryKeyFor = (scope: DraftScope) =>
+  `crm:directory:${scopeId(scope)}`;
 
 /** The directory's address for `state`, defaults omitted. */
 export function directoryHref(state: DirectoryQuery) {

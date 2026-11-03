@@ -360,7 +360,7 @@ Les fonctions et leurs signatures sont inchangées : `initialSyncState`, `enterC
 - **Pilote :** `src/features/preferences/client/preference-driver.ts`, sans React. Il envoie ce que la machine demande : un règlement par requête, délai maximal de 15 s, attente de 1 s à 30 s après un échec. Il ne décide de rien d'autre.
 - **Fournisseur :** `AccountAppearanceProvider`, dans le layout de `/app`. `AppearanceProvider` reste pour les aperçus : rien n'y est conservé.
 - **Contexte envoyé :** `{ businessId, membershipId }` seulement. Le schéma strict des actions refuse `userId`, que porte `PreferenceContext`.
-- **Styles livrés :** `DELIVERED_STYLES` (`classique`, `studio`, `ecrin`). Un compte en Carnet s'affiche en Classique. Un autre réglage n'envoie que ce champ, le style du compte reste Carnet.
+- **Styles livrés :** `DELIVERED_STYLES` (`classique`, `studio`, `ecrin`, `carnet`). En Carnet, `ambiance` désigne le papier (Sienne, Encre bleue, Olive) : même valeur stockée, sans migration.
 - **Ancien cookie :** `dash_appearance` n'est plus écrit. La proposition d'import s'affiche sur toutes les pages de `/app` : sinon, une professionnelle revenue à Classique sans explication n'irait jamais la chercher. Accepter ou refuser efface le cookie de cet appareil.
 - **Accepter l'ancien cookie :** l'action d'import, puis une lecture envoyée après elle. Passer par `changeLocally` réécrirait le choix par-dessus un compte qui en a déjà un.
 - **Lecture refusée :** elle ne déclenche pas `router.refresh()` quand un état existe : base absente, la garde du layout échoue, et la page où elle se trouve serait perdue.

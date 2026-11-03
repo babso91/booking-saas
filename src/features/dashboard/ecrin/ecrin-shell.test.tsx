@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/features/agenda/components/app-shell";
+import { SAMPLE_IDENTITY } from "@/features/dashboard/fixtures/sample-identity";
 import { defaultAppearance } from "@/features/appearance/appearance";
 import { AppearanceProvider } from "@/features/appearance/components/appearance-provider";
 import { initialsOf } from "../sections";
@@ -23,7 +24,11 @@ const business = { name: "Atelier Maëlys", slug: "atelier-maelys" };
 function renderEcrin(current?: "today" | "hours") {
   return render(
     <AppearanceProvider initial={{ ...defaultAppearance, style: "ecrin" }}>
-      <AppShell business={business} current={current}>
+      <AppShell
+        identity={SAMPLE_IDENTITY}
+        business={business}
+        current={current}
+      >
         <p>contenu</p>
       </AppShell>
     </AppearanceProvider>,
@@ -124,7 +129,7 @@ describe("the monogram (WCAG 2.5.3): what she sees is in what she can say", () =
   ])("%s", (name, initials) => {
     render(
       <AppearanceProvider initial={{ ...defaultAppearance, style: "ecrin" }}>
-        <AppShell business={{ name, slug: "x" }}>
+        <AppShell identity={SAMPLE_IDENTITY} business={{ name, slug: "x" }}>
           <p>contenu</p>
         </AppShell>
       </AppearanceProvider>,

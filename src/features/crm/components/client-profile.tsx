@@ -38,7 +38,7 @@ import {
 import { cn } from "@/lib/cn";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
 
-import { appendUnique } from "../client/directory-state";
+import { appendUnique, directoryKeyFor } from "../client/directory-state";
 import {
   agendaDayHref,
   dateWithYear,
@@ -66,14 +66,13 @@ import { Timeline, type NoteHandlers } from "./timeline";
 
 const TIMELINE_PAGE = 20;
 const DIRECTORY = "/app/clients";
-const DIRECTORY_KEY = "crm:directory";
 
 const noSubscription = () => () => {};
 
-/** Back to the list as it was (search, filter, sort), when known. */
-function savedDirectory() {
+/** Back to the list as it was (search, filter, sort), when known, for her. */
+function savedDirectory(key: string) {
   try {
-    const saved = window.sessionStorage.getItem(DIRECTORY_KEY);
+    const saved = window.sessionStorage.getItem(key);
     return saved?.startsWith(DIRECTORY) ? saved : DIRECTORY;
   } catch {
     return DIRECTORY; // storage unavailable
@@ -143,7 +142,7 @@ export function ClientProfile({
   const [tab, setTab] = useState<"history" | "dossier">("history");
   const backHref = useSyncExternalStore(
     noSubscription,
-    savedDirectory,
+    () => savedDirectory(directoryKeyFor(scope)),
     () => DIRECTORY,
   );
   // One layout at a time (never the history twice in the page).

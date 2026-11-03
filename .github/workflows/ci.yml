@@ -65,6 +65,14 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      # Screens as the browser tests saw them, real data: for review only.
+      - name: Upload screen captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: test-results/screens
+          if-no-files-found: ignore
       - name: Stop local Supabase
         if: always()
         run: npx supabase stop --no-backup

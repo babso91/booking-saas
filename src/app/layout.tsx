@@ -2,9 +2,11 @@ import type { Metadata, Viewport } from "next";
 import {
   Archivo,
   Hanken_Grotesk,
+  IBM_Plex_Mono,
   Instrument_Serif,
   Jost,
   Marcellus,
+  Newsreader,
 } from "next/font/google";
 
 import { BookingHostProvider } from "@/components/shared/booking-host";
@@ -52,6 +54,24 @@ const ecrinSans = Jost({
   preload: false,
 });
 
+// The professional area's Carnet style: a book face, and figures as a printer
+// sets folios. Not preloaded either.
+const carnetSerif = Newsreader({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  axes: ["opsz"],
+  variable: "--font-carnet-serif",
+  display: "swap",
+  preload: false,
+});
+const carnetMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-carnet-mono",
+  display: "swap",
+  preload: false,
+});
+
 export const metadata: Metadata = {
   title: {
     default: "Booking SaaS",
@@ -72,7 +92,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="fr"
-      className={`${body.variable} ${serif.variable} ${studio.variable} ${engraved.variable} ${ecrinSans.variable} h-full antialiased`}
+      className={`${body.variable} ${serif.variable} ${studio.variable} ${engraved.variable} ${ecrinSans.variable} ${carnetSerif.variable} ${carnetMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
         <BookingHostProvider host={bookingHost()}>
