@@ -226,6 +226,101 @@ describe("the week, a double page — computer", () => {
   });
 });
 
+describe("visits too close to be touched one by one — computer and tablet", () => {
+  beforeEach(() => useViewport(true));
+
+  const names = ["Ada", "Bea", "Cleo", "Dina", "Elsa", "Fanny", "Gaia", "Hana"];
+  // Eight visits of 5 minutes, every 15 minutes, from 10:00.
+  const tally = names.map((name, index) =>
+    appointment({
+      local: `${TODAY}T${String(10 + Math.floor((index * 15) / 60)).padStart(2, "0")}:${String((index * 15) % 60).padStart(2, "0")}`,
+      durationMinutes: 5,
+      bufferMinutes: 0,
+      client: { id: `c-${name}`, displayName: `${name} Morel` },
+    }),
+  );
+
+  async function bracket() {
+    return screen.findByRole("button", {
+      name: /^8 rendez-vous rapprochés, de 10:00 à 11:50, voir la liste$/,
+    });
+  }
+
+  it("each still written at its place, one target over them all", async () => {
+    show(tally);
+    const day = await screen.findByRole("group", {
+      name: /mardi 29 septembre.*, 8 rendez-vous/i,
+    });
+    await bracket();
+    // No target of 20 px each, 18 px apart: none of them is a button alone.
+    for (const name of names)
+      expect(
+        within(day).queryByRole("button", { name: new RegExp(name) }),
+      ).toBeNull();
+    // Drawn, each, exactly at its start.
+    const strokes = day.querySelectorAll("[data-shared]");
+    expect(strokes).toHaveLength(8);
+  });
+
+  it("by finger: the bracket, then her visit in the list, then its details", async () => {
+    const user = userEvent.setup();
+    show(tally);
+    await user.click(await bracket());
+    const list = await screen.findByRole("dialog", {
+      name: "Rendez-vous rapprochés",
+    });
+    expect(list.textContent).toMatch(/mardi 29 septembre.*de 10:00 à 11:50/i);
+    const rows = within(list).getAllByRole("button", { name: /Morel/ });
+    expect(rows.map((row) => row.textContent)).toEqual(
+      tally.map((item) =>
+        expect.stringContaining(item.localStartsAt.slice(11, 16)),
+      ),
+    );
+    await user.click(rows[2]!);
+    const details = await screen.findByRole("dialog", { name: "Rendez-vous" });
+    expect(details.textContent).toMatch(/Cleo Morel/);
+    expect(
+      screen.queryByRole("dialog", { name: "Rendez-vous rapprochés" }),
+    ).toBeNull();
+  });
+
+  it("by keyboard: Enter opens the list, Escape closes it", async () => {
+    const user = userEvent.setup();
+    show(tally);
+    const target = await bracket();
+    target.focus();
+    await user.keyboard("{Enter}");
+    const list = await screen.findByRole("dialog", {
+      name: "Rendez-vous rapprochés",
+    });
+    expect(target.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(within(list).getAllByRole("button", { name: /Morel/ })).toHaveLength(
+      8,
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Rendez-vous rapprochés" }),
+      ).toBeNull(),
+    );
+  });
+
+  it("a short visit with room around it keeps its own target", async () => {
+    show([
+      appointment({
+        local: `${TODAY}T14:00`,
+        durationMinutes: 5,
+        client: { id: "c-1", displayName: "Lou Martin" },
+      }),
+      camille,
+    ]);
+    expect(
+      await screen.findByRole("button", { name: /Lou.*Lou Martin/ }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /rapprochés/ })).toBeNull();
+  });
+});
+
 describe("a day written down — phone", () => {
   beforeEach(() => useViewport(false));
 

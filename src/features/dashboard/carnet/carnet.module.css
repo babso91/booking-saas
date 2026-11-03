@@ -1227,7 +1227,8 @@ button.pause {
   position: absolute;
   z-index: 20;
   display: flex;
-  min-height: 20px;
+  /* A target for a finger (close-visits.ts, TARGET_PX). */
+  min-height: 24px;
   flex-direction: column;
   overflow: hidden;
   border-left: 2px solid var(--ink);
@@ -1270,6 +1271,94 @@ button.pause {
   flex-wrap: wrap;
   align-items: baseline;
   column-gap: 5px;
+}
+/* Visits too close to be touched one by one: each still a stroke exactly as
+   long as it is, at its place — a tally on the page — and one bracket over
+   them, in the day's margin, that opens their list. */
+.slot[data-shared] {
+  min-height: 2px;
+  pointer-events: none;
+}
+.closeVisits {
+  position: absolute;
+  z-index: 25;
+  right: 0;
+  left: 0;
+  min-height: 24px;
+  border-right: 2px solid var(--accent);
+  border-radius: 0 7px 7px 0;
+  background: transparent;
+  cursor: pointer;
+}
+.closeVisits:hover,
+.closeVisits:focus-visible {
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+}
+.closeCount {
+  position: absolute;
+  top: 1px;
+  right: 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  padding: 0 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--paper-raised);
+}
+/* Their list: a line each, written like the day's entries. */
+.closeList {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.closeList li + li {
+  border-top: 1px solid var(--line);
+}
+.closeRow {
+  display: grid;
+  width: 100%;
+  min-height: 52px;
+  grid-template-columns: 4.2rem 1fr auto;
+  align-items: center;
+  gap: 12px;
+  border-radius: 8px;
+  padding: 6px 8px;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+.closeRow:hover {
+  background: var(--sand);
+}
+.closeTime {
+  font-family: var(--font-carnet-mono), ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.closeWho {
+  display: grid;
+  min-width: 0;
+}
+.closeWho b {
+  overflow: hidden;
+  font-weight: 400;
+  font-style: italic;
+  font-size: 17px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.closeWho small {
+  overflow: hidden;
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink-soft);
+}
+.closeLook {
+  font-size: 12.5px;
+  color: var(--ink-soft);
 }
 .slot[data-look="now"] {
   border-left-color: var(--accent);

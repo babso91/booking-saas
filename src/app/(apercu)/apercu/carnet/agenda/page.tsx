@@ -13,6 +13,7 @@ import {
   sampleDenseWeek,
   sampleInstant,
   sampleNightWeek,
+  sampleShortWeek,
   sampleTrainingWeek,
   sampleWeek,
 } from "@/features/dashboard/fixtures/sample-week";
@@ -21,7 +22,7 @@ export const metadata = { title: "Carnet · Agenda" };
 
 // The real Carnet agenda components on a fictional week (no database).
 // ?vue=jour|semaine, ?jour=YYYY-MM-DD, ?heure=HH:MM (default 14:05),
-// ?jeu=charge|nuit|formation|dense|tampon, ?apparence=<cookie value>.
+// ?jeu=charge|nuit|formation|dense|tampon|courts, ?apparence=<cookie value>.
 export default async function CarnetAgendaPreviewPage({
   searchParams,
 }: PageProps<"/apercu/carnet/agenda">) {
@@ -37,7 +38,9 @@ export default async function CarnetAgendaPreviewPage({
             ? sampleDenseWeek
             : jeu === "tampon"
               ? sampleBufferWeek
-              : sampleWeek;
+              : jeu === "courts"
+                ? sampleShortWeek
+                : sampleWeek;
   const date =
     typeof jour === "string" &&
     week.workingHours.days.some((day) => day.date === jour)
