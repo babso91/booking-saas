@@ -8,6 +8,7 @@ import {
   noSideScroll,
   signedInPage,
 } from "./support/ecrin";
+import { capture } from "./support/capture";
 import { APP, professionalWithVisit } from "./support/studio";
 
 const CARNET = look("carnet");
@@ -39,7 +40,7 @@ const VARIANTS = [
 
 describe.each(VARIANTS)(
   "shared screens in Carnet — $name",
-  ({ appearance, width, phone }) => {
+  ({ name, appearance, width, phone }) => {
     it("Clientes, Prestations, Fidélité, Horaires, Calendar, Apparence", async () => {
       const { browser } = await professionalWithVisit("Maëlys", "Camille");
       const { page, errors } = await signedInPage(browser, {
@@ -49,6 +50,10 @@ describe.each(VARIANTS)(
         phone,
       });
 
+      const check = async (page: Page, what: string) => {
+        await expectAccessible(page, what);
+        await capture(page, `secondary ${name} ${what}`);
+      };
       const arrive = async (path: string, heading: string) => {
         await page.goto(`${APP}${path}`);
         await page.getByRole("heading", { name: heading, level: 1 }).waitFor();
@@ -71,27 +76,27 @@ describe.each(VARIANTS)(
           .getByRole("region", { name: "Liste des clientes" })
           .getByRole("link", { name: /Camille Visite/ }),
       );
-      await expectAccessible(page, "clients");
+      await check(page, "clients");
       await page.getByRole("button", { name: /Ajouter une cliente/ }).click();
       await page.getByRole("dialog").waitFor();
-      await expectAccessible(page, "add client");
+      await check(page, "add client");
       await closeDialog(page);
       await client.click();
       await page.waitForURL(/\/app\/clients\/[0-9a-f-]{36}/);
       await page.getByRole("heading", { name: /Camille Visite/ }).waitFor();
       await page.waitForLoadState("networkidle");
       expect(await noSideScroll(page)).toBe(true);
-      await expectAccessible(page, "client profile");
+      await check(page, "client profile");
 
       // Prestations: her real service, its panel, the add panel.
       await arrive("/app/services", "Prestations");
       const edit = await hydrated(
         page.getByRole("button", { name: "Modifier Rehaussement de cils" }),
       );
-      await expectAccessible(page, "services");
+      await check(page, "services");
       await edit.click();
       await page.getByRole("dialog").waitFor();
-      await expectAccessible(page, "edit service");
+      await check(page, "edit service");
       await closeDialog(page);
 
       // Fidélité: the program is read, the reward panel opens.
@@ -99,10 +104,10 @@ describe.each(VARIANTS)(
       const reward = await hydrated(
         page.getByRole("button", { name: /Nouvelle récompense/ }),
       );
-      await expectAccessible(page, "loyalty");
+      await check(page, "loyalty");
       await reward.click();
       await page.getByRole("dialog").waitFor();
-      await expectAccessible(page, "new reward");
+      await check(page, "new reward");
       await closeDialog(page);
 
       // Horaires: the week is read, a day answers, nothing is saved.
@@ -110,17 +115,17 @@ describe.each(VARIANTS)(
       await page
         .getByRole("button", { name: /Enregistrer les horaires/ })
         .waitFor();
-      await expectAccessible(page, "hours");
+      await check(page, "hours");
       const monday = await hydrated(page.getByLabel("Lundi ouvert"));
       const open = await monday.isChecked();
       await monday.click();
       expect(await monday.isChecked()).toBe(!open);
 
       await arrive("/app/settings/calendar", "Google Calendar");
-      await expectAccessible(page, "calendar");
+      await check(page, "calendar");
 
       await arrive("/app/settings/appearance", "Apparence");
-      await expectAccessible(page, "appearance");
+      await check(page, "appearance");
 
       expect(errors).toEqual([]);
       await page.context().close();

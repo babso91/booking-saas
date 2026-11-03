@@ -8,6 +8,7 @@ import {
   noSideScroll,
   signedInPage,
 } from "./support/ecrin";
+import { capture } from "./support/capture";
 import { APP, db, professionalWithVisit } from "./support/studio";
 
 // Carnet in a real browser against the real backend: the agenda is read after
@@ -307,6 +308,46 @@ describe("Carnet in a browser", () => {
     await page.context().close();
   });
 
+  it("her paper and ink are kept on her account, and come back after a reload", async () => {
+    const { browser, businessId } = await professionalWithVisit("Ines", "Rosa");
+    const { page, errors } = await signedInPage(browser, {
+      appearance: CARNET,
+    });
+    await page.goto(`${APP}/app/settings/appearance`);
+    const choose = async (name: RegExp) =>
+      (await hydrated(page.getByRole("radio", { name }))).check();
+    const row = async () =>
+      (
+        await db.query(
+          `select style, ambiance, mode, accent from public.member_preferences
+           where business_id = $1`,
+          [businessId],
+        )
+      ).rows[0];
+
+    await choose(/^Encre bleue/);
+    await choose(/^Sombre/);
+    await choose(/^Prune/);
+    await vi.waitFor(
+      async () =>
+        expect(await row()).toMatchObject({
+          style: "carnet",
+          ambiance: "lin",
+          mode: "dark",
+          accent: expect.stringMatching(/^#7a3e66$/i),
+        }),
+      { timeout: 15_000 },
+    );
+    await page.reload();
+    await page.getByRole("heading", { name: "Apparence" }).waitFor();
+    expect(await applied(page)).toMatchObject({ style: "carnet", frame: 1 });
+    expect(
+      await page.getByRole("radio", { name: /^Encre bleue/ }).isChecked(),
+    ).toBe(true);
+    expect(errors).toEqual([]);
+    await page.context().close();
+  });
+
   it("malformed links open nothing and break nothing", async () => {
     const { browser } = await professionalWithVisit("Lina", "Nour");
     const { page, errors } = await signedInPage(browser, {
@@ -417,27 +458,31 @@ describe("Carnet in a browser", () => {
     ["sauge.light.standard.-.carnet", "olive"],
   ])(
     "axe: home, week, day and card (%s, %s)",
-    async (appearance) => {
+    async (appearance, label) => {
       const { browser } = await professionalWithVisit("Noor", "Elia");
       const { page } = await signedInPage(browser, { appearance });
       await page.goto(`${APP}/app/today`);
       await hydrated(page.getByRole("link", { name: /Elia Visite/ }).first());
       await expectAccessible(page, "home");
+      await capture(page, `agenda ${label} home`);
 
       await page.goto(`${APP}/app`);
       const visit = await hydrated(
         page.getByRole("button", { name: /Elia Visite/ }).first(),
       );
       await expectAccessible(page, "week");
+      await capture(page, `agenda ${label} week`);
       await visit.click();
       await page.getByRole("dialog").waitFor();
       await expectAccessible(page, "card");
+      await capture(page, `agenda ${label} card`);
       await page.keyboard.press("Escape");
       await page.getByRole("dialog").waitFor({ state: "detached" });
 
       await page.getByRole("button", { name: "Jour", exact: true }).click();
       await page.getByRole("list", { name: "Ordre du jour" }).waitFor();
       await expectAccessible(page, "day");
+      await capture(page, `agenda ${label} day`);
       await page.context().close();
     },
     120_000,
@@ -462,6 +507,7 @@ describe("Carnet in a phone", () => {
       );
       expect(await noSideScroll(page)).toBe(true);
       await expectAccessible(page, `${width} day`);
+      await capture(page, `phone ${width} day`);
 
       // The card from the thread.
       await visit.click();
