@@ -3,6 +3,8 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { SAMPLE_IDENTITY } from "@/features/dashboard/fixtures/sample-identity";
+
 import { AppShell } from "./app-shell";
 
 vi.mock(
@@ -15,7 +17,10 @@ vi.mock("@/features/auth/actions/auth", () => ({ signOutAction: vi.fn() }));
 describe("AppShell", () => {
   it("links only to real destinations and marks upcoming sections as such", () => {
     render(
-      <AppShell business={{ name: "Studio Mila", slug: "studio-mila" }}>
+      <AppShell
+        identity={SAMPLE_IDENTITY}
+        business={{ name: "Studio Mila", slug: "studio-mila" }}
+      >
         <p>contenu</p>
       </AppShell>,
     );
@@ -38,7 +43,10 @@ describe("AppShell", () => {
   it("opens the account panel from the mobile tab bar", async () => {
     const user = userEvent.setup();
     render(
-      <AppShell business={{ name: "Studio Mila", slug: "studio-mila" }}>
+      <AppShell
+        identity={SAMPLE_IDENTITY}
+        business={{ name: "Studio Mila", slug: "studio-mila" }}
+      >
         <p>contenu</p>
       </AppShell>,
     );
@@ -58,6 +66,7 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     render(
       <AppShell
+        identity={SAMPLE_IDENTITY}
         business={{ name: "Studio Mila", slug: "studio-mila" }}
         current="calendar"
       >
@@ -85,6 +94,7 @@ describe("AppShell", () => {
   it("marks Clientes as the current page in the customer screens", () => {
     render(
       <AppShell
+        identity={SAMPLE_IDENTITY}
         business={{ name: "Studio Mila", slug: "studio-mila" }}
         current="clients"
       >
@@ -107,6 +117,7 @@ describe("loyalty", () => {
     const user = userEvent.setup();
     render(
       <AppShell
+        identity={SAMPLE_IDENTITY}
         business={{ name: "Studio Mila", slug: "studio-mila" }}
         current="loyalty"
       >
@@ -133,6 +144,7 @@ describe("services and hours", () => {
   it("are reachable from the sidebar and the phone tab bar, marked as current there", () => {
     const { unmount } = render(
       <AppShell
+        identity={SAMPLE_IDENTITY}
         business={{ name: "Studio Mila", slug: "studio-mila" }}
         current="services"
       >
@@ -150,6 +162,7 @@ describe("services and hours", () => {
 
     render(
       <AppShell
+        identity={SAMPLE_IDENTITY}
         business={{ name: "Studio Mila", slug: "studio-mila" }}
         current="hours"
       >

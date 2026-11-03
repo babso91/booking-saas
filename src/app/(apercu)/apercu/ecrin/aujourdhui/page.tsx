@@ -1,4 +1,5 @@
 import { AppShell } from "@/features/agenda/components/app-shell";
+import { SAMPLE_IDENTITY } from "@/features/dashboard/fixtures/sample-identity";
 import {
   defaultAppearance,
   parseAppearance,
@@ -50,6 +51,7 @@ export default async function EcrinTodayPreview({
   return (
     <AppearanceProvider initial={appearance}>
       <AppShell
+        identity={SAMPLE_IDENTITY}
         business={{ name: "Atelier Maëlys", slug: "atelier-maelys" }}
         current="today"
       >

@@ -83,6 +83,13 @@ const clockBucket = () => Math.floor(Date.now() / 30_000);
 
 const DEFAULT_TIME = "09:00";
 
+/** A read refused because of who asks, not because of what is asked. */
+const IDENTITY_LOST = new Set<UiError["code"]>([
+  "unauthenticated",
+  "no_business",
+  "forbidden",
+]);
+
 /**
  * Professional agenda. Desktop and tablet (≥ 768 px) read one week, phones
  * one day: exactly the range on screen, in one aggregated request. In the
@@ -192,9 +199,16 @@ export function AgendaView({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` covers the inputs
   }, [key, wide]);
 
-  // Data of the visible range only (a previous range is never shown on new dates).
-  const data = loaded && loaded.key.startsWith(rangeKey) ? loaded.data : null;
   const error = failed?.key === key ? failed.error : null;
+  // Refused for want of a session or a membership: this session no longer
+  // vouches for whom the range was read. Nothing read before stays on screen,
+  // not even an open panel, until the area is rendered for whoever it is now
+  // (AppShell starts it again from nothing).
+  const refused = error !== null && IDENTITY_LOST.has(error.code);
+  // Data of the visible range only (a previous range is never shown on new dates).
+  const data =
+    !refused && loaded && loaded.key.startsWith(rangeKey) ? loaded.data : null;
+  const shown = refused ? null : panel;
   const loading = loaded?.key !== key && !error;
   const empty =
     data !== null && data.appointments.length === 0 && data.blocks.length === 0;
@@ -438,58 +452,58 @@ export function AgendaView({
   );
 
   const panels = (
-    <Sheet open={panel !== null} onClose={() => setPanel(null)} title={title}>
-      {panel?.kind === "appointment" ? (
+    <Sheet open={shown !== null} onClose={() => setPanel(null)} title={title}>
+      {shown?.kind === "appointment" ? (
         <AppointmentDetails
-          key={`${panel.appointment.id}:${panel.appointment.version}`}
-          appointment={panel.appointment}
+          key={`${shown.appointment.id}:${shown.appointment.version}`}
+          appointment={shown.appointment}
           zone={zone}
-          onEdit={() => openEdit(panel.appointment)}
+          onEdit={() => openEdit(shown.appointment)}
           onUpdated={showAppointment}
-          onRefresh={() => refreshAppointment(panel.appointment, false)}
+          onRefresh={() => refreshAppointment(shown.appointment, false)}
         />
       ) : null}
-      {panel?.kind === "createAppointment" ||
-      panel?.kind === "editAppointment" ? (
+      {shown?.kind === "createAppointment" ||
+      shown?.kind === "editAppointment" ? (
         <AppointmentForm
           key={
-            panel.kind === "editAppointment"
-              ? `${panel.appointment.id}:${panel.appointment.version}`
+            shown.kind === "editAppointment"
+              ? `${shown.appointment.id}:${shown.appointment.version}`
               : "create"
           }
           mode={
-            panel.kind === "editAppointment"
-              ? { kind: "edit", appointment: panel.appointment }
-              : { kind: "create", date: panel.date, time: panel.time }
+            shown.kind === "editAppointment"
+              ? { kind: "edit", appointment: shown.appointment }
+              : { kind: "create", date: shown.date, time: shown.time }
           }
           services={services ?? { status: "loading" }}
           zone={zone}
           onSaved={showAppointment}
           onCancel={() =>
             setPanel(
-              panel.kind === "editAppointment"
-                ? { kind: "appointment", appointment: panel.appointment }
+              shown.kind === "editAppointment"
+                ? { kind: "appointment", appointment: shown.appointment }
                 : null,
             )
           }
           onRefresh={
-            panel.kind === "editAppointment"
-              ? () => refreshAppointment(panel.appointment, true)
+            shown.kind === "editAppointment"
+              ? () => refreshAppointment(shown.appointment, true)
               : undefined
           }
         />
       ) : null}
-      {panel?.kind === "createBlock" || panel?.kind === "block" ? (
+      {shown?.kind === "createBlock" || shown?.kind === "block" ? (
         <BlockForm
           key={
-            panel.kind === "block"
-              ? `${panel.block.id}:${panel.block.version}`
+            shown.kind === "block"
+              ? `${shown.block.id}:${shown.block.version}`
               : "create"
           }
           mode={
-            panel.kind === "block"
-              ? { kind: "edit", block: panel.block }
-              : { kind: "create", date: panel.date, time: panel.time }
+            shown.kind === "block"
+              ? { kind: "edit", block: shown.block }
+              : { kind: "create", date: shown.date, time: shown.time }
           }
           zone={zone}
           onSaved={() => {
@@ -502,7 +516,7 @@ export function AgendaView({
           }}
           onCancel={() => setPanel(null)}
           onRefresh={
-            panel.kind === "block" ? () => refreshBlock(panel.block) : undefined
+            shown.kind === "block" ? () => refreshBlock(shown.block) : undefined
           }
         />
       ) : null}

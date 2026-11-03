@@ -12,8 +12,14 @@ import {
   nextNavigationMock,
   router,
 } from "../../../../tests/support/next-router";
-import { DEFAULT_QUERY, type DirectoryQuery } from "../client/directory-state";
+import {
+  DEFAULT_QUERY,
+  directoryKeyFor,
+  type DirectoryQuery,
+} from "../client/directory-state";
 import { ClientDirectory } from "./client-directory";
+
+const SCOPE = { userId: "user-1", businessId: "business-1" };
 
 const listClientsAction = vi.fn();
 vi.mock("@/features/crm/actions/crm", () => ({
@@ -71,7 +77,10 @@ const ZOE = directoryClient({
 
 async function renderDirectory(initial: Partial<DirectoryQuery> = {}) {
   const view = render(
-    <ClientDirectory initial={{ ...DEFAULT_QUERY, ...initial }} />,
+    <ClientDirectory
+      scope={SCOPE}
+      initial={{ ...DEFAULT_QUERY, ...initial }}
+    />,
   );
   await flush();
   return view;
@@ -161,7 +170,7 @@ describe("list", () => {
       limit: 25,
     });
     expect(window.location.search).toBe("?q=0612");
-    expect(window.sessionStorage.getItem("crm:directory")).toBe(
+    expect(window.sessionStorage.getItem(directoryKeyFor(SCOPE))).toBe(
       "/app/clients?q=0612",
     );
   });
@@ -339,7 +348,7 @@ describe("empty, loading and errors", () => {
     listClientsAction.mockReturnValueOnce(
       new Promise((resolve) => (answer = resolve)),
     );
-    render(<ClientDirectory initial={DEFAULT_QUERY} />);
+    render(<ClientDirectory scope={SCOPE} initial={DEFAULT_QUERY} />);
     expect(
       screen.getAllByText("Chargement des clientes…").length,
     ).toBeGreaterThan(0);
@@ -534,7 +543,7 @@ it("StrictMode: the first, cleaned-up run of the read never overwrites the newer
     .mockResolvedValueOnce(ok(directoryPage([INES])));
   render(
     <StrictMode>
-      <ClientDirectory initial={DEFAULT_QUERY} />
+      <ClientDirectory scope={SCOPE} initial={DEFAULT_QUERY} />
     </StrictMode>,
   );
   await flush();

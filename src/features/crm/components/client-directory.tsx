@@ -11,6 +11,7 @@ import {
   SearchIcon,
 } from "@/components/ui/icons";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
+import type { DraftScope } from "@/features/businesses/client/draft-scope";
 import { listClientsAction } from "@/features/crm/actions/crm";
 import {
   CLIENT_FILTERS,
@@ -26,6 +27,7 @@ import {
   appendUnique,
   DEFAULT_QUERY,
   directoryHref,
+  directoryKeyFor,
   type DirectoryQuery,
 } from "../client/directory-state";
 import { dateWithYear, dayAndTime } from "../client/format";
@@ -70,7 +72,14 @@ type Request = { state: DirectoryQuery; seq: number };
  * re-read they say so; if that read fails they stay, marked as possibly
  * out of date, with a retry. Rows of other criteria are never shown.
  */
-export function ClientDirectory({ initial }: { initial: DirectoryQuery }) {
+export function ClientDirectory({
+  initial,
+  scope,
+}: {
+  initial: DirectoryQuery;
+  /** The signed-in identity, from the server session (the way back). */
+  scope: DraftScope;
+}) {
   const [text, setText] = useState(initial.query);
   const [request, setRequest] = useState<Request>({ state: initial, seq: 0 });
   /** Last rows read successfully (for `listing.key`). */
@@ -111,17 +120,18 @@ export function ClientDirectory({ initial }: { initial: DirectoryQuery }) {
     return () => window.clearTimeout(timer);
   }, [text, state.query]);
 
+  const backKey = directoryKeyFor(scope);
   // The address follows what is shown, and the profile's "Clientes" link
   // comes back to it (Back finds it again too).
   useEffect(() => {
     const href = directoryHref(state);
     window.history.replaceState(window.history.state, "", href);
     try {
-      window.sessionStorage.setItem("crm:directory", href);
+      window.sessionStorage.setItem(backKey, href);
     } catch {
       // Storage unavailable: the profile links to the plain directory.
     }
-  }, [state]);
+  }, [state, backKey]);
 
   // First page of every new read; only the latest one is ever applied.
   useEffect(() => {

@@ -6,6 +6,7 @@ import { AppShell } from "@/features/agenda/components/app-shell";
 import { getAgenda } from "@/features/agenda/data/agenda";
 import { loadRenderedAppearance } from "@/features/appearance/server/area-appearance";
 import { requireReadyBusiness } from "@/features/auth/data/guards";
+import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import { CarnetToday } from "@/features/dashboard/carnet/carnet-today";
 import { StudioToday } from "@/features/dashboard/components/studio-today";
 import { EcrinToday } from "@/features/dashboard/ecrin/ecrin-today";
@@ -22,7 +23,7 @@ export const metadata: Metadata = {
 export default async function TodayPage() {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
-  const { business } = await requireReadyBusiness();
+  const { user, business } = await requireReadyBusiness();
   const appearance = await loadRenderedAppearance();
   if (appearance.style === "classique") redirect("/app");
 
@@ -43,6 +44,7 @@ export default async function TodayPage() {
 
   return (
     <AppShell
+      identity={areaIdentityOf({ user, business })}
       business={{ name: business.name, slug: business.slug }}
       current="today"
     >

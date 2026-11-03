@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgendaView } from "@/features/agenda/components/agenda-view";
 import { AppShell } from "@/features/agenda/components/app-shell";
+import { SAMPLE_IDENTITY } from "@/features/dashboard/fixtures/sample-identity";
 import { defaultAppearance } from "@/features/appearance/appearance";
 import { AppearanceProvider } from "@/features/appearance/components/appearance-provider";
 import { AppearanceSettings } from "@/features/appearance/components/appearance-settings";
@@ -392,6 +393,7 @@ describe("changing style in the page", () => {
     render(
       <AppearanceProvider initial={{ ...carnet, ambiance: "lin" }}>
         <AppShell
+          identity={SAMPLE_IDENTITY}
           business={{ name: "Atelier Maëlys", slug: "atelier-maelys" }}
           current="appearance"
         >

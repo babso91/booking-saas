@@ -5,6 +5,7 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/features/agenda/components/app-shell";
+import { SAMPLE_IDENTITY } from "@/features/dashboard/fixtures/sample-identity";
 import {
   defaultAppearancePreferences,
   importDeviceAppearanceSchema,
@@ -99,6 +100,7 @@ function holdSave() {
 const Page = ({ of }: { of: AreaPreferences }) => (
   <AccountAppearanceProvider area={of}>
     <AppShell
+      identity={SAMPLE_IDENTITY}
       business={{ name: "Atelier Maëlys", slug: "atelier-maelys" }}
       current="appearance"
     >

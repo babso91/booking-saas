@@ -1,4 +1,5 @@
 import { AppShell } from "@/features/agenda/components/app-shell";
+import { SAMPLE_IDENTITY } from "@/features/dashboard/fixtures/sample-identity";
 import { parseAppearance } from "@/features/appearance/appearance";
 import { AppearanceProvider } from "@/features/appearance/components/appearance-provider";
 import { AppearanceSettings } from "@/features/appearance/components/appearance-settings";
@@ -18,6 +19,7 @@ export default async function AppearancePreviewPage({
       )}
     >
       <AppShell
+        identity={SAMPLE_IDENTITY}
         business={{ name: "Studio Exemple", slug: "studio-exemple" }}
         current="appearance"
       >
