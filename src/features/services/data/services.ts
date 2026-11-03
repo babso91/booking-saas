@@ -17,7 +17,7 @@ import type { Tables, TablesUpdate } from "@/types/database.generated";
 // database).
 
 const SERVICE_COLUMNS =
-  "id, name, description, duration_minutes, price_cents, active, display_order, version";
+  "id, name, description, duration_minutes, price_cents, active, display_order, version, category_id";
 
 type ServiceRow = Pick<
   Tables<"services">,
@@ -29,6 +29,7 @@ type ServiceRow = Pick<
   | "active"
   | "display_order"
   | "version"
+  | "category_id"
 >;
 
 export type ServiceDto = {
@@ -39,7 +40,12 @@ export type ServiceDto = {
   priceCents: number;
   active: boolean;
   displayOrder: number;
-  /** Pass it back as `expectedVersion` to edit this service. */
+  /** null: not in a category (shown last, without a heading). */
+  categoryId: string | null;
+  /**
+   * Pass it back as `expectedVersion` to edit this service. It changes with
+   * its fields, its category and its options.
+   */
   version: number;
 };
 
@@ -52,6 +58,7 @@ function toServiceDto(row: ServiceRow): ServiceDto {
     priceCents: row.price_cents,
     active: row.active,
     displayOrder: row.display_order,
+    categoryId: row.category_id,
     version: row.version,
   };
 }
@@ -117,11 +124,16 @@ export async function createService(
       p_price_cents: input.priceCents,
       p_active: input.active,
       p_display_order: input.displayOrder,
+      p_category_id: input.categoryId ?? undefined,
     })
     .single();
 
   if (error) {
-    throw databaseException(error);
+    // The category deleted between its check and the insert.
+    throw databaseException(
+      error,
+      error.code === "23503" ? { conflict: "category_not_found" } : {},
+    );
   }
   // This request created a service, deleted since: never created again.
   if (data.status === "deleted") {
@@ -159,6 +171,7 @@ function servicePatch(changes: ServiceChanges): TablesUpdate<"services"> {
   if (changes.active !== undefined) patch.active = changes.active;
   if (changes.displayOrder !== undefined)
     patch.display_order = changes.displayOrder;
+  if (changes.categoryId !== undefined) patch.category_id = changes.categoryId;
 
   return patch;
 }
@@ -200,7 +213,14 @@ async function writeService(
   const { data, error } = await query.select(SERVICE_COLUMNS).maybeSingle();
 
   if (error) {
-    throw databaseException(error);
+    // A category of another business, or one deleted meanwhile, does not
+    // exist for this service (composite foreign key).
+    throw error.code === "23503"
+      ? new AppException("category_not_found", {
+          cause: error,
+          fieldErrors: { categoryId: [appErrorMessages.category_not_found] },
+        })
+      : databaseException(error);
   }
   if (data) {
     return toServiceDto(data);

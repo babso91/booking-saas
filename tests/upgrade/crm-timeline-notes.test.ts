@@ -36,7 +36,7 @@ async function tables() {
     `select
        (select md5(string_agg(n::text, '|' order by n.id)) from public.client_notes n where n.business_id = $1) as notes,
        (select md5(string_agg(r::text, '|' order by r.request_id)) from private.client_note_requests r where r.business_id = $1) as requests,
-       (select md5(string_agg(a::text, '|' order by a.id)) from public.appointments a where a.business_id = $1) as appointments`,
+       (select md5(string_agg((to_jsonb(a) - 'options_snapshot')::text, '|' order by a.id)) from public.appointments a where a.business_id = $1) as appointments`,
     [businessId],
   );
   return JSON.stringify(rows[0]);

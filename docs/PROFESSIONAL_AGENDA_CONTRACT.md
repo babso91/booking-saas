@@ -220,6 +220,10 @@ type AppointmentClient =
 - **Nouvelle prestation.** La durée, le nom et le prix sont repris de la prestation (qui doit être active). Le buffer et la devise viennent des réglages actuels.
 - **Déplacement vers un créneau occupé.** Il donne `schedule_conflict`, et le rendez-vous reste inchangé.
 
+### Options de prestation
+
+`createAppointmentAction` et `updateAppointmentAction` acceptent `optionChoiceIds` (même règle de prix et de durée que la réservation publique). Déplacer un rendez-vous ne le retarife jamais. `AgendaAppointmentDto.options` donne les réponses convenues. Voir `docs/CATALOG_CONTRACT.md` § 6 et § 8.
+
 ## Statuts
 
 | Depuis      | Vers autorisé                       | Remarque                                                                                                        |

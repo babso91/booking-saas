@@ -31,6 +31,17 @@ export const appErrorMessages = {
     "Cette prestation a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_deleted:
     "Cette prestation a déjà été créée, puis supprimée. Elle n’a pas été recréée.",
+  category_not_found: "Cette catégorie n’existe plus.",
+  stale_category:
+    "Cette catégorie a été modifiée entre-temps. Rechargez-la avant de réessayer.",
+  category_deleted:
+    "Cette catégorie a déjà été créée, puis supprimée. Elle n’a pas été recréée.",
+  options_required:
+    "Choisissez une réponse pour chaque option obligatoire de cette prestation.",
+  option_choice_unavailable:
+    "Une option choisie n’est plus proposée. Rechargez la prestation pour voir les options actuelles.",
+  quote_changed:
+    "Le prix ou la durée de cette prestation a changé. Vérifiez le nouveau montant avant de réserver.",
   booking_unavailable:
     "La réservation en ligne est momentanément indisponible. Merci de réessayer plus tard.",
   stale_business_hours:
@@ -176,6 +187,12 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   service_unavailable: 409,
   stale_service: 409,
   service_deleted: 410,
+  category_not_found: 404,
+  stale_category: 409,
+  category_deleted: 410,
+  options_required: 422,
+  option_choice_unavailable: 409,
+  quote_changed: 409,
   stale_business_hours: 409,
   booking_unavailable: 503,
   stale_appointment: 409,

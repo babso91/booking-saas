@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { businessSlugSchema } from "@/features/businesses/schemas/slug";
+import { optionChoiceIdsSchema } from "@/features/catalog/schemas";
 
 /** Local wall-clock time `HH:MM`; `24:00` closes a range at midnight. */
 export const localTimeSchema = z
@@ -140,6 +141,12 @@ export const availabilityQuerySchema = z.object({
   slug: businessSlugSchema,
   serviceId: z.uuid(),
   date: localDateSchema,
+  /**
+   * The answers chosen for the service's options (comma-separated in the
+   * query string). Absent: none, as before options existed. The slots fit
+   * the service's duration plus these answers'.
+   */
+  optionChoiceIds: optionChoiceIdsSchema.default([]),
 });
 
 export type ReplaceBusinessHoursInput = z.output<
@@ -151,4 +158,8 @@ export type UpdateBookingSettingsInput = z.output<
 export type AvailabilityExceptionInput = z.output<
   typeof createAvailabilityExceptionSchema
 >;
-export type AvailabilityQuery = z.output<typeof availabilityQuerySchema>;
+/** Without `optionChoiceIds`: none (the shape callers had before options). */
+export type AvailabilityQuery = Omit<
+  z.output<typeof availabilityQuerySchema>,
+  "optionChoiceIds"
+> & { optionChoiceIds?: string[] };

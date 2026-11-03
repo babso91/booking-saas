@@ -59,7 +59,7 @@ async function legacyRows() {
 
 async function appointmentsHash() {
   const { rows } = await db.query(
-    `select md5(string_agg(a::text, '|' order by a.id)) as hash
+    `select md5(string_agg((to_jsonb(a) - 'options_snapshot')::text, '|' order by a.id)) as hash
      from public.appointments a where a.business_id = $1`,
     [business.id],
   );

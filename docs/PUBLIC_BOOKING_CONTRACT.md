@@ -86,6 +86,10 @@ La réponse ne contient **rien de la fiche cliente** : pas d'identifiant de clie
 | `booking_unavailable`  | 503  | l'ingress de confiance n'a pas fourni d'adresse (configuration absente ou requête directe)                                                              | « Réservation momentanément indisponible » ; garder la demande, renvoi possible plus tard |
 | `internal`             | 500  | inattendu, ou clé de service absente du déploiement                                                                                                     | message générique ; renvoyer **avec le même `requestId`**                                 |
 
+### Options et catégories (catalogue)
+
+Depuis `20261103090000_service_catalog.sql`, une réservation peut porter les réponses aux options de la prestation (`optionChoiceIds`), et le serveur calcule le prix et la durée totaux. Une prestation d'une catégorie masquée n'est plus réservable en ligne. Une requête sans options se comporte exactement comme avant, y compris son empreinte d'idempotence. Contrat complet : `docs/CATALOG_CONTRACT.md`.
+
 ## 4. Fuseau et heures
 
 - La disponibilité donne `localStartsAt` et `localEndsAt` (heure murale du business) : les afficher tels quels, jamais l'heure du navigateur.

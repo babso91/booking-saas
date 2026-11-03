@@ -33,6 +33,7 @@ export async function getAvailableSlots(
     p_slug: query.slug,
     p_service_id: query.serviceId,
     p_date: query.date,
+    p_option_choice_ids: query.optionChoiceIds ?? [],
   });
 
   if (error) {

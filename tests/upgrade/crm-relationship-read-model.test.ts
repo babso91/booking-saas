@@ -34,7 +34,7 @@ const inDays = (days: number, hour: number) => {
 async function tables() {
   const { rows } = await db.query(
     `select
-       (select md5(string_agg(a::text, '|' order by a.id)) from public.appointments a where a.business_id = $1) as appointments,
+       (select md5(string_agg((to_jsonb(a) - 'options_snapshot')::text, '|' order by a.id)) from public.appointments a where a.business_id = $1) as appointments,
        -- The columns of that version: later migrations may add others.
        (select md5(string_agg((c.id, c.business_id, c.first_name, c.last_name, c.email, c.phone, c.internal_notes, c.loyalty_token_hash, c.created_at, c.updated_at)::text, '|' order by c.id)) from public.clients c where c.business_id = $1) as clients,
        -- The columns of that version, and the rows it held: the reminders

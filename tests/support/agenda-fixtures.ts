@@ -99,6 +99,7 @@ export function appointment(
     bufferMinutes: 10,
     priceCents: 6500,
     currency: "EUR",
+    options: [],
     service: { id: SERVICE_A, name: "Rehaussement de cils" },
     client: { id: CLIENT_A, displayName: "Camille Roux" },
     internalNotes: null,

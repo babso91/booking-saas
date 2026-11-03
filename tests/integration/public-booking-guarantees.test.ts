@@ -149,6 +149,8 @@ describe("the journey", () => {
       durationMinutes: 60,
       priceCents: 6500,
       currency: "EUR",
+      // No option chosen (service_catalog migration).
+      options: [],
       businessName: expect.any(String),
       status: "confirmed",
       replayed: false,
@@ -216,6 +218,8 @@ describe("the journey", () => {
         "currency",
         "durationMinutes",
         "endsAt",
+        // The answers chosen (none here), never anything of the customer.
+        "options",
         "priceCents",
         "replayed",
         "serviceName",

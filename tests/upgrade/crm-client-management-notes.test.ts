@@ -45,7 +45,7 @@ async function tables() {
            c.internal_notes, c.loyalty_token_hash, c.created_at, c.updated_at)::text,
           '|' order by c.id))
         from public.clients c where c.business_id = $1) as clients,
-       (select md5(string_agg(a::text, '|' order by a.id))
+       (select md5(string_agg((to_jsonb(a) - 'options_snapshot')::text, '|' order by a.id))
         from public.appointments a where a.business_id = $1) as appointments,
        -- The columns of that version, and the rows it held: the reminders
        -- queued by a later migration (20261019090000) are not part of it.

@@ -460,14 +460,15 @@ describe("booking validates exactly what is listed (fixed now, production core)"
       /private\.create_public_booking_at\(\s*pg_catalog\.now\(\)/,
     );
     expect(rows[1]!.body).toMatch(
-      /private\.available_slots\([^)]*pg_catalog\.now\(\)\)/,
+      // The answers are passed through, never a "now" of the caller's.
+      /private\.available_slots\([^)]*pg_catalog\.now\(\),\s*p_option_choice_ids\s*\)/,
     );
 
     // No client can choose its own "now".
     const { rows: grants } = await db.query<{ anon: boolean; auth: boolean }>(
       `select
-         has_function_privilege('anon', 'private.create_public_booking_at(timestamptz, text, uuid, timestamptz, text, text, text, text, uuid, inet)', 'execute') as anon,
-         has_function_privilege('authenticated', 'private.create_public_booking_at(timestamptz, text, uuid, timestamptz, text, text, text, text, uuid, inet)', 'execute') as auth`,
+         has_function_privilege('anon', 'private.create_public_booking_at(timestamptz, text, uuid, timestamptz, text, text, text, text, uuid, inet, uuid[], integer, integer)', 'execute') as anon,
+         has_function_privilege('authenticated', 'private.create_public_booking_at(timestamptz, text, uuid, timestamptz, text, text, text, text, uuid, inet, uuid[], integer, integer)', 'execute') as auth`,
     );
     expect(grants[0]).toEqual({ anon: false, auth: false });
   });

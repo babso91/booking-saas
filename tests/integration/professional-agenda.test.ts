@@ -499,6 +499,7 @@ describe("reading a range", () => {
         bufferMinutes: 15,
         priceCents: 6500,
         currency: "EUR",
+        options: [],
         service: { id: a.service, name: "Pose complète" },
         client: { id: a.client, displayName: "Julie" },
         internalNotes: "Allergie colle",

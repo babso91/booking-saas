@@ -17,3 +17,10 @@ export function migrateUp() {
     stdio: "inherit",
   });
 }
+
+// Comparing rows before and after the chain of migrations: a later
+// migration may add a column (with a default) to a table without rewriting
+// any existing value, which still changes the row's text. The tests compare
+// the columns their own migration knew: `to_jsonb(row) - 'added_column'`
+// (for instance the catalogue's appointments.options_snapshot and
+// services.category_id / options_revision).

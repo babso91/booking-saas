@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { businessSlugSchema } from "@/features/businesses/schemas/slug";
+import { optionChoiceIdsSchema } from "@/features/catalog/schemas";
 
 const optionalText = <T extends z.ZodType<string | undefined>>(schema: T) =>
   z.preprocess(
@@ -25,6 +26,18 @@ export const createPublicBookingSchema = z.object({
     .pipe(z.email("Adresse email invalide.")),
   /** One per booking form: a retry of the same booking never books twice. */
   requestId: z.uuid(),
+  /**
+   * The answers chosen for the service's options, one per answered group.
+   * Absent: none (a client written before options books as it always did).
+   * The price and the duration are always the server's.
+   */
+  optionChoiceIds: optionChoiceIdsSchema.default([]),
+  /**
+   * What she was shown (optional): if the server's price or duration
+   * differs, nothing is booked (`quote_changed`).
+   */
+  expectedPriceCents: z.number().int().min(0).max(2_147_483_647).optional(),
+  expectedDurationMinutes: z.number().int().min(5).max(720).optional(),
   phone: optionalText(
     z
       .string()
@@ -34,6 +47,8 @@ export const createPublicBookingSchema = z.object({
   ),
 });
 
-export type CreatePublicBookingInput = z.output<
-  typeof createPublicBookingSchema
->;
+/** Without `optionChoiceIds`: none (the shape callers had before options). */
+export type CreatePublicBookingInput = Omit<
+  z.output<typeof createPublicBookingSchema>,
+  "optionChoiceIds"
+> & { optionChoiceIds?: string[] };
