@@ -94,3 +94,38 @@ Un compte déjà en `carnet` en base passe de Classique à Carnet au déploiemen
 - `carnet-week.tsx` et `carnet-agenda.tsx` reprennent de petits blocs d'Écrin (colonnes de la semaine, balayage, retour sur l'onglet) plutôt que de toucher Écrin. Une factorisation est possible après validation.
 - Encaissement : aucun bouton ni montant. Sa place est la fiche partagée, puis le Registre, quand le backend existera.
 - Comme en Studio et Écrin, les notes internes restent dans la charge React même repliées.
+
+## 8. Réponse à l'audit Codex de `00593e1` (2 IMPORTANT, 1 MINOR)
+
+### IMPORTANT 1 : un établissement ne voit rien d'un autre (`d1ffc6e`)
+
+- Cause : rien ne liait l'état client à l'identité serveur. Une page rendue à nouveau pour B (actualisation, navigation sur la même page) gardait l'état React de A : rendez-vous lus, prestations, panneaux, notes dépliées.
+- Correction : chaque page passe à `AppShell` l'identité résolue par son garde `requireReadyBusiness()` (utilisateur, établissement, membership ; `area-identity.ts`). La coquille et toute la page sont clées sur elle : une autre identité, ou la même entreprise sous une membership renouvelée, repart de rien. Les réponses encore en route arrivent dans des composants démontés et ne s'affichent jamais. La clé provient du rendu de la page, pas du layout : Next ne re-rend pas un layout partagé lors d'une navigation douce, alors que la page l'est toujours. `cacheComponents` (Activity) n'est pas activé ; s'il l'était, la clé suivrait encore le rendu de la page. Une date, un style ou une page différents dans la même identité ne réinitialisent rien.
+- Identité perdue : une lecture refusée (`unauthenticated`, `no_business`, `forbidden`) n'affiche plus la période lue auparavant ni un panneau ouvert.
+- Voisin trouvé en chemin : le lien de retour vers le répertoire Clientes (sessionStorage) est rangé par identité ; une recherche faite dans A ne devient plus le lien d'une fiche de B.
+- Tests (`area-isolation.test.tsx`, vrai parent React sans démontage, en Classique, Studio, Écrin et Carnet) : fiche et note ouvertes, lecture de A retardée, prestations de A lues ou en route, membership renouvelée, brouillon conservé pour la même identité, lecture refusée, notes d'Aujourd'hui. Sans la correction, 20 sur 27 échouent ; les 7 restants sont les cas « même identité ».
+
+### IMPORTANT 2 : le tampon de la veille (`4d6e315`)
+
+- Cause : Aujourd'hui lisait sa semaine à partir du lundi. Un dimanche 23 h 30–23 h 50 suivi de 30 min de tampon n'était pas lu : 2 h libres annoncées au lieu de 1 h 40.
+- Correction : `readTodayWeek` lit comme l'agenda, avec `agendaRangeWithBuffers` puis `restrictToDays(…, { buffers: true })`. La veille n'est pas un jour de la semaine, et sa visite ne compte pas parmi celles du lundi : elle ne fait que tenir du temps. Studio et Écrin comptent des visites, pas du temps libre : leur texte est identique avec ou sans elle.
+- Tests : en composant (fin de semaine, de mois, d'année, dimanche de 25 h, tampon finissant pile à l'ouverture, sans tampon) ; sur PostgreSQL (`tests/integration/today-week.test.ts`, horaires réels, Paris, New York, Auckland). Sans la correction, 8 sur 12 échouent en composant.
+
+### MINOR : rendez-vous très courts (`6bf0939`)
+
+- Chaque visite reçoit au moins 24 px à partir de son début exact. Quand ces cibles se chevaucheraient et qu'une visite est trop courte pour la sienne :
+  - les visites restent tracées à leur place exacte ;
+  - une accolade, dans la marge du jour, les rassemble : « N rendez-vous rapprochés, de … à …, voir la liste » ;
+  - elle ouvre une liste (une ligne de 57 px par visite), puis la fiche habituelle.
+- Une visite courte isolée garde sa propre cible, de 24 px. Les visites longues côte à côte ne changent pas.
+- Vérifié dans un vrai navigateur à 768, 1024 et 1440 px, en clair et en sombre :
+  - axe WCAG 2.2 AA sans violation ;
+  - aucune cible sous 24 px, aucun chevauchement ;
+  - toucher sur tablette, clavier (Entrée, Tab, Échap avec retour du focus sur l'accolade).
+- Aperçu : `/apercu/carnet/agenda?jeu=courts`.
+
+### Limites restantes
+
+- Une visite très courte qui touche une visite longue partage l'accolade avec elle : la longue reste tracée et nommée, mais s'ouvre depuis la liste.
+- Le cas A → B est prouvé en composant, avec un vrai parent React, et non dans un parcours e2e qui ferait basculer une session entre deux établissements : l'application ne propose pas encore de changer d'établissement.
+- Studio et Écrin n'ont pas reçu l'accolade : leurs grilles gardent leur propre traitement des visites courtes.
