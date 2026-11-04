@@ -27,6 +27,15 @@ export const appErrorMessages = {
   stale_note:
     "Cette note a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_unavailable: "Cette prestation n’est pas disponible.",
+  stale_site_draft:
+    "Le brouillon du site a été modifié entre-temps. Rechargez-le avant de réessayer.",
+  site_not_found: "Ce site n’a pas encore de brouillon.",
+  site_not_published: "Ce site n’est pas encore publié.",
+  site_version_not_found: "Cette version du site n’existe pas.",
+  site_unreadable:
+    "Certains textes du site ne seraient pas lisibles. Corrigez les couleurs avant de publier.",
+  site_asset_unavailable:
+    "Une photo du site n’est pas (ou plus) disponible. Choisissez-en une autre.",
   stale_service:
     "Cette prestation a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_deleted:
@@ -187,6 +196,12 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   note_deleted: 410,
   stale_note: 409,
   service_unavailable: 409,
+  stale_site_draft: 409,
+  site_not_found: 404,
+  site_not_published: 404,
+  site_version_not_found: 404,
+  site_unreadable: 422,
+  site_asset_unavailable: 409,
   stale_service: 409,
   service_deleted: 410,
   category_not_found: 404,
