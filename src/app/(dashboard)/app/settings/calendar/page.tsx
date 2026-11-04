@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { requireReadyBusiness } from "@/features/auth/data/guards";
+import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { CalendarSettings } from "@/features/calendar/components/calendar-settings";
 
@@ -13,12 +14,13 @@ export default async function CalendarSettingsPage({
 }: PageProps<"/app/settings/calendar">) {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
-  const { business } = await requireReadyBusiness();
+  const { user, business } = await requireReadyBusiness();
   // Set by the OAuth callback when coming back from Google.
   const { calendar } = await searchParams;
 
   return (
     <AppShell
+      identity={areaIdentityOf({ user, business })}
       business={{ name: business.name, slug: business.slug }}
       current="calendar"
     >

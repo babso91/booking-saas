@@ -352,10 +352,13 @@ describe("Écrin in a browser", () => {
       (
         await hydrated(page.locator("label", { hasText: name }).first())
       ).click();
-    const expectLive = async (style: string, frame: number) => {
+    const expectLive = async (style: string, frame: number, chosen = true) => {
       await vi.waitFor(async () =>
         expect(await applied(page)).toMatchObject({ style, frame }),
       );
+      // Reloaded once her account holds it: before, the page would still be
+      // saving it, and the server rightly answers with the previous style.
+      if (chosen) await page.getByText("Enregistré sur ton compte.").waitFor();
       await page.reload();
       await page.getByRole("heading", { name: "Apparence" }).waitFor();
       expect(await applied(page), `${style} after reload`).toMatchObject({
@@ -364,7 +367,7 @@ describe("Écrin in a browser", () => {
       });
     };
 
-    await expectLive("ecrin", 1);
+    await expectLive("ecrin", 1, false);
     await choose("Studio");
     await expectLive("studio", 0);
     await choose("Classique");
@@ -413,14 +416,14 @@ describe("Écrin in a browser", () => {
     await page.context().close();
   });
 
-  it("an account in Carnet is drawn in Classique and keeps Carnet", async () => {
+  it("an account in Carnet is drawn in Carnet and keeps Carnet", async () => {
     const { browser, businessId } = await professionalWithVisit("Tess", "Lia");
     const { page } = await signedInPage(browser, {
       appearance: look("carnet"),
     });
     await page.goto(`${APP}/app`);
     await hydrated(page.getByRole("button", { name: /Lia Visite/ }).first());
-    expect(await applied(page)).toMatchObject({ style: "classique", frame: 0 });
+    expect(await applied(page)).toMatchObject({ style: "carnet", frame: 0 });
     const { rows } = await db.query(
       "select style from public.member_preferences where business_id = $1",
       [businessId],

@@ -5,6 +5,7 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/features/agenda/components/app-shell";
+import { SAMPLE_IDENTITY } from "@/features/dashboard/fixtures/sample-identity";
 import {
   defaultAppearancePreferences,
   importDeviceAppearanceSchema,
@@ -99,6 +100,7 @@ function holdSave() {
 const Page = ({ of }: { of: AreaPreferences }) => (
   <AccountAppearanceProvider area={of}>
     <AppShell
+      identity={SAMPLE_IDENTITY}
       business={{ name: "Atelier Maëlys", slug: "atelier-maelys" }}
       current="appearance"
     >
@@ -128,18 +130,18 @@ describe("the first render", () => {
     ["ecrin", "ecrin"],
     ["studio", "studio"],
     ["classique", "classique"],
-    // Accepted by the account, not delivered yet: Classique, account untouched.
-    ["carnet", "classique"],
+    ["carnet", "carnet"],
   ] as const)("account in %s: the server already draws %s", (held, drawn) => {
     const html = renderToString(<Page of={area({ style: held }, 2)} />);
     expect(html).toContain(`data-style="${drawn}"`);
     expect(actions.saveMyPreferencesAction).not.toHaveBeenCalled();
   });
 
-  it("does not offer Carnet", () => {
+  it("offers Carnet, with its papers and its ink", () => {
     render(<Page of={area({ style: "carnet" }, 2)} />);
-    expect(screen.queryAllByRole("radio", { name: /Carnet/ })).toEqual([]);
-    expect(radio(/^Classique/)).toHaveProperty("checked", true);
+    expect(radio(/^Carnet/)).toHaveProperty("checked", true);
+    expect(radio(/^Encre bleue/)).toBeTruthy();
+    expect(screen.getByText("Ton encre")).toBeTruthy();
   });
 });
 
@@ -185,10 +187,20 @@ describe("choosing", () => {
     const user = userEvent.setup();
     actions.saveMyPreferencesAction.mockResolvedValue(answer({}, 3));
     render(<Page of={area({ style: "carnet", accent: "#112233" }, 2)} />);
-    expect(style()).toBe("classique");
+    expect(style()).toBe("carnet");
     await user.click(radio(/^Sombre/));
     expect(actions.saveMyPreferencesAction.mock.lastCall![0].changes).toEqual({
       mode: "dark",
+    });
+  });
+
+  it("in Carnet, a paper is her ambiance: the same stored value", async () => {
+    const user = userEvent.setup();
+    actions.saveMyPreferencesAction.mockResolvedValue(answer({}, 3));
+    render(<Page of={area({ style: "carnet" }, 2)} />);
+    await user.click(radio(/^Encre bleue/));
+    expect(actions.saveMyPreferencesAction.mock.lastCall![0].changes).toEqual({
+      ambiance: "lin",
     });
   });
 

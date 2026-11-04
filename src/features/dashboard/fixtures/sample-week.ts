@@ -491,3 +491,53 @@ export const sampleDenseWeek: AgendaDto = (() => {
   });
   return { ...sampleWeek, appointments: dense, blocks: [] };
 })();
+
+/**
+ * Very short visits: on Tuesday eight of 5 minutes every 15 minutes from
+ * 10:00, on Wednesday one alone at 10:00, on Thursday 10 minutes just before
+ * a 2-hour one.
+ */
+export const sampleShortWeek: AgendaDto = (() => {
+  const visit = (
+    date: string,
+    startMinutes: number,
+    minutes: number,
+    index: number,
+    name: string,
+  ): AgendaAppointmentDto => {
+    const clock = (at: number) => `${pad(Math.floor(at / 60))}:${pad(at % 60)}`;
+    const start = clock(startMinutes);
+    const end = clock(startMinutes + minutes);
+    return {
+      ...appointments[0]!,
+      id: `00000000-0000-4000-c000-${String(index).padStart(12, "0")}`,
+      status: "confirmed",
+      startsAt: sampleInstant(date, start),
+      endsAt: sampleInstant(date, end),
+      localStartsAt: `${date}T${start}`,
+      localEndsAt: `${date}T${end}`,
+      durationMinutes: minutes,
+      bufferMinutes: 0,
+      service: {
+        id: "short",
+        name: minutes < 60 ? "Retouche" : "Volume russe",
+      },
+      client: { id: `short-${index}`, displayName: name },
+      internalNotes: null,
+      source: "manual",
+    };
+  };
+  const tally = ["Ada", "Bea", "Cleo", "Dina", "Elsa", "Fanny", "Gaia", "Hana"];
+  return {
+    ...sampleWeek,
+    appointments: [
+      ...tally.map((name, index) =>
+        visit("2026-10-27", 600 + index * 15, 5, index, `${name} Morel`),
+      ),
+      visit("2026-10-28", 600, 5, 20, "Lou Martin"),
+      visit("2026-10-29", 590, 10, 30, "Iris Caron"),
+      visit("2026-10-29", 600, 120, 31, "Jade Roux"),
+    ],
+    blocks: [],
+  };
+})();

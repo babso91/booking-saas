@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { requireReadyBusiness } from "@/features/auth/data/guards";
+import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { ServicesManager } from "@/features/services/components/services-manager";
 
@@ -15,6 +16,7 @@ export default async function ServicesPage() {
 
   return (
     <AppShell
+      identity={areaIdentityOf({ user, business })}
       business={{ name: business.name, slug: business.slug }}
       current="services"
     >

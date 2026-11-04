@@ -19,7 +19,9 @@ import {
 import {
   accentPresets,
   ambiances,
+  carnetPapers,
   ecrinPalettes,
+  inkPresets,
   signaturePresets,
   STUDIO_SIGNATURE,
   stonePresets,
@@ -76,11 +78,14 @@ export function AppearanceSettings() {
       );
   const studio = appearance.style === "studio";
   const ecrin = appearance.style === "ecrin";
+  const carnet = appearance.style === "carnet";
   const presets = studio
     ? signaturePresets
     : ecrin
       ? stonePresets
-      : accentPresets;
+      : carnet
+        ? inkPresets
+        : accentPresets;
   const own = defaultAccent(appearance.style, appearance.ambiance);
 
   return (
@@ -129,7 +134,7 @@ export function AppearanceSettings() {
             legend="Style"
             description="La mise en scène de tout ton espace. Les rubriques et les mots restent les mêmes."
           >
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {(Object.keys(styles) as StyleId[]).map((id) => (
                 <Choice
                   key={id}
@@ -156,7 +161,7 @@ export function AppearanceSettings() {
           </Group>
 
           {studio || ecrin ? null : (
-            <Group legend="Ambiance">
+            <Group legend={carnet ? "Ton papier" : "Ambiance"}>
               <div className="grid gap-3 sm:grid-cols-3">
                 {(Object.keys(ambiances) as AmbianceId[]).map((id) => (
                   <Choice
@@ -165,12 +170,12 @@ export function AppearanceSettings() {
                     checked={appearance.ambiance === id}
                     onSelect={() => set({ ambiance: id })}
                   >
-                    <AmbianceSwatch id={id} />
+                    <AmbianceSwatch id={id} paper={carnet} />
                     <span className="mt-3 block text-[15px] font-semibold text-ink">
-                      {ambiances[id].name}
+                      {(carnet ? carnetPapers : ambiances)[id].name}
                     </span>
                     <span className="block text-[13px] leading-snug text-ink-soft">
-                      {ambiances[id].mood}
+                      {(carnet ? carnetPapers : ambiances)[id].mood}
                     </span>
                   </Choice>
                 ))}
@@ -208,14 +213,18 @@ export function AppearanceSettings() {
                 ? "Ta couleur signature"
                 : ecrin
                   ? "Ta pierre"
-                  : "Couleur d’accent"
+                  : carnet
+                    ? "Ton encre"
+                    : "Couleur d’accent"
             }
             description={
               studio
                 ? "Elle remplit le bloc « maintenant », marque l’heure et tes repères."
                 : ecrin
                   ? "Elle colore l’aiguille du cadran, le créneau en cours et tes repères."
-                  : "Elle souligne les liens, les repères et l’heure actuelle dans ton agenda."
+                  : carnet
+                    ? "Elle écrit tes repères, tes renvois et l’heure actuelle."
+                    : "Elle souligne les liens, les repères et l’heure actuelle dans ton agenda."
             }
           >
             <div className="flex flex-wrap gap-2">
@@ -237,7 +246,9 @@ export function AppearanceSettings() {
                     ? "Cobalt, celle du Studio"
                     : ecrin
                       ? "Améthyste, celle de l’Écrin"
-                      : "Celle de l’ambiance"}
+                      : carnet
+                        ? "Celle de ton papier"
+                        : "Celle de l’ambiance"}
                 </span>
               </Choice>
               {presets
@@ -412,6 +423,34 @@ function Choice({
 
 /** A thumbnail of each style: its ground, its big moment, its type. */
 function StyleSwatch({ id }: { id: StyleId }) {
+  if (id === "carnet") {
+    const palette = carnetPapers.atelier.light;
+    return (
+      <span
+        aria-hidden="true"
+        className="flex h-20 flex-col justify-center gap-1 overflow-hidden rounded-xl border px-3"
+        style={{
+          background: palette.paper,
+          borderColor: palette.line,
+          color: palette.ink,
+        }}
+      >
+        <span
+          className="text-[30px] leading-none font-light italic"
+          style={{ fontFamily: "var(--font-carnet-serif), Georgia, serif" }}
+        >
+          Mardi
+        </span>
+        <span className="block h-px" style={{ background: palette.accent }} />
+        <span
+          className="text-[10px] tracking-[0.04em]"
+          style={{ fontFamily: "var(--font-carnet-mono), monospace" }}
+        >
+          14:30 Camille¹
+        </span>
+      </span>
+    );
+  }
   if (id === "ecrin") {
     const palette = ecrinPalettes.light;
     return (
@@ -513,11 +552,11 @@ function StyleSwatch({ id }: { id: StyleId }) {
   );
 }
 
-function AmbianceSwatch({ id }: { id: AmbianceId }) {
+function AmbianceSwatch({ id, paper }: { id: AmbianceId; paper?: boolean }) {
   return (
     <span aria-hidden="true" className="flex gap-1.5">
       {(["light", "dark"] as const).map((mode) => {
-        const palette = ambiances[id][mode];
+        const palette = (paper ? carnetPapers : ambiances)[id][mode];
         return (
           <span
             key={mode}

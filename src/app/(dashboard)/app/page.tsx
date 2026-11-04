@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { requireReadyBusiness } from "@/features/auth/data/guards";
+import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import {
   requestedAppointment,
   requestedDay,
@@ -22,8 +23,8 @@ export const metadata: Metadata = {
 export default async function AgendaPage({ searchParams }: PageProps<"/app">) {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
-  const { business } = await requireReadyBusiness();
-  const { date, rdv } = await searchParams;
+  const { user, business } = await requireReadyBusiness();
+  const { date, rdv, noter } = await searchParams;
   // The business's date today, from the calendar authority (PostgreSQL).
   const client = await createServerSupabaseClient();
   const [{ today }, progress] = await Promise.all([
@@ -33,7 +34,10 @@ export default async function AgendaPage({ searchParams }: PageProps<"/app">) {
   ]);
 
   return (
-    <AppShell business={{ name: business.name, slug: business.slug }}>
+    <AppShell
+      identity={areaIdentityOf({ user, business })}
+      business={{ name: business.name, slug: business.slug }}
+    >
       {setupComplete(progress) ? null : (
         <div className="shrink-0 border-b border-line bg-paper px-4 py-3 sm:px-6">
           <SetupChecklist progress={progress} compact />
@@ -43,6 +47,7 @@ export default async function AgendaPage({ searchParams }: PageProps<"/app">) {
         today={today}
         initialDate={requestedDay(date)}
         initialAppointmentId={requestedAppointment(rdv)}
+        initialCreate={noter === "1"}
       />
     </AppShell>
   );

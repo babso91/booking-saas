@@ -16,6 +16,7 @@ import {
   timelinePage,
   uuid,
 } from "../../../../tests/support/crm-fixtures";
+import { directoryKeyFor } from "../client/directory-state";
 import { ClientProfile } from "./client-profile";
 
 // The signed-in identity, as the page passes it from the session.
@@ -1045,7 +1046,10 @@ describe("errors", () => {
     actions.listClientTimelineAction.mockResolvedValue(
       fail("client_not_found"),
     );
-    window.sessionStorage.setItem("crm:directory", "/app/clients?q=Emma");
+    window.sessionStorage.setItem(
+      directoryKeyFor(SCOPE),
+      "/app/clients?q=Emma",
+    );
     render(<ClientProfile scope={SCOPE} clientId={CLIENT_ID} />);
     await flush();
     expect(
@@ -1076,13 +1080,24 @@ describe("errors", () => {
 
   it("the back link returns to the list as it was", async () => {
     window.sessionStorage.setItem(
-      "crm:directory",
+      directoryKeyFor(SCOPE),
       "/app/clients?filter=upcoming",
     );
     await renderProfile();
     expect(
       screen.getByRole("link", { name: "Clientes" }).getAttribute("href"),
     ).toBe("/app/clients?filter=upcoming");
+  });
+
+  it("a search typed in another business is never her way back", async () => {
+    window.sessionStorage.setItem(
+      directoryKeyFor({ ...SCOPE, businessId: "another-business" }),
+      "/app/clients?q=Camille",
+    );
+    await renderProfile();
+    expect(
+      screen.getByRole("link", { name: "Clientes" }).getAttribute("href"),
+    ).toBe("/app/clients");
   });
 });
 
