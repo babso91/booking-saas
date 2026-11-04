@@ -36,6 +36,24 @@ const VARIANTS = [
     width: 320,
     phone: true,
   },
+  {
+    name: "computer, Studio",
+    appearance: look("studio"),
+    width: 1280,
+    phone: false,
+  },
+  {
+    name: "computer, Carnet",
+    appearance: look("carnet"),
+    width: 1280,
+    phone: false,
+  },
+  {
+    name: "computer, Écrin",
+    appearance: look("ecrin"),
+    width: 1280,
+    phone: false,
+  },
 ];
 
 async function publicCatalog(slug: string) {
@@ -141,6 +159,13 @@ describe.each(VARIANTS)(
       ).toEqual([["Mains & henné", ["Rehaussement de cils"]]]);
       await check("services in a category");
 
+      // A second one, still empty: her list as it is organised.
+      await page.getByRole("button", { name: "Ajouter une catégorie" }).click();
+      await page.getByRole("dialog").getByLabel("Nom").fill("Regard");
+      await saveDialog(page);
+      await page.getByRole("heading", { name: "Regard", level: 2 }).waitFor();
+      await check("two categories");
+
       // Hidden online: no longer offered on her page, still hers here.
       await page
         .getByRole("button", { name: "Modifier la catégorie Mains & henné" })
@@ -169,7 +194,7 @@ describe.each(VARIANTS)(
         .click();
       await dialog.waitFor({ state: "detached" });
       await page
-        .getByRole("list", { name: "Tes prestations, dans l’ordre" })
+        .getByRole("region", { name: "Sans catégorie" })
         .getByRole("heading", { name: "Rehaussement de cils" })
         .waitFor();
       expect(

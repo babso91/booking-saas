@@ -831,24 +831,29 @@ function CategorySection({
         </div>
         {category ? (
           <div className="-mx-1 flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => onMove(category, -1)}
-              disabled={locked || index === 0}
-              aria-label={`Monter la catégorie ${name}`}
-              className={small}
-            >
-              ↑
-            </button>
-            <button
-              type="button"
-              onClick={() => onMove(category, 1)}
-              disabled={locked || index === count - 1}
-              aria-label={`Descendre la catégorie ${name}`}
-              className={small}
-            >
-              ↓
-            </button>
+            {/* A single category has nowhere to go: no arrows to read. */}
+            {count > 1 ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onMove(category, -1)}
+                  disabled={locked || index === 0}
+                  aria-label={`Monter la catégorie ${name}`}
+                  className={small}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onMove(category, 1)}
+                  disabled={locked || index === count - 1}
+                  aria-label={`Descendre la catégorie ${name}`}
+                  className={small}
+                >
+                  ↓
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               onClick={() => onEdit(category)}
