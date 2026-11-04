@@ -71,7 +71,7 @@ Migration : `supabase/migrations/20261103090000_service_catalog.sql` (additive).
 - Il n'y a pas de brouillon de catalogue côté serveur. Chaque écriture est atomique et validée : les options d'une prestation sont remplacées d'un bloc, et une valeur invalide est refusée en entier. Un prix « à moitié tapé » ne peut donc pas devenir réservable, tant que l'interface n'envoie que des valeurs validées (à l'enregistrement, pas à chaque frappe).
 - Le brouillon et la publication du laboratoire restent ceux du **design** du site (`site_versions`, hors de cette tranche).
 
-Voir § 9 pour l'arbitrage produit, qui est remonté.
+Voir § 9 pour la décision V1.
 
 ## 5. Concurrence, idempotence, versions
 
@@ -206,7 +206,7 @@ type OptionChoice = { id; label; priceDeltaCents; durationDeltaMinutes };
 - `AgendaAppointmentDto` gagne `options: OptionSnapshot[]`. `priceCents` et `durationMinutes` sont les totaux convenus.
 - Les erreurs sont celles du tableau ci-dessus.
 
-## 9. Arbitrage produit à trancher : brouillon ou effet immédiat ?
+## 9. Publication : décision V1 (effet immédiat)
 
 Le laboratoire recommandait un brouillon côté serveur, publié avec le site. Le dashboard actuel applique chaque modification de prestation immédiatement (avec `active`). J'ai livré l'**effet immédiat**, compatible avec l'existant et sans système de publication nouveau.
 
@@ -216,9 +216,43 @@ Le laboratoire recommandait un brouillon côté serveur, publié avec le site. L
 | **B. Brouillon de catalogue publié avec le site** | « Publier » cohérent pour le design et la carte ; aperçu complet avant mise en ligne                                                                                         | deux versions du catalogue : laquelle l'agenda réserve-t-il ? Il faut versionner prestations, options et instantanés, gérer les conflits brouillon / modifications du dashboard, et les rendez-vous pris entre-temps. Un chantier à part entière |
 | **C. Hybride**                                    | effet immédiat pour les prix, durées et options (données métier) ; brouillon seulement pour la présentation (ordre, textes, design)                                          | la frontière doit être expliquée dans le studio                                                                                                                                                                                                  |
 
-**Ma recommandation : A maintenant, C quand le studio de site sera persisté.** Le modèle livré ne ferme pas C : la présentation est déjà séparée du catalogue.
+**Décision provisoire (4 novembre 2026), pour la V1 :**
 
-## 10. Limites
+- **effet immédiat** à l'enregistrement pour les données métier : catégories, prestations, prix, durées et options ;
+- **brouillon et publication** distincts, réservés au design du futur mini-site ;
+- **aucun second moteur de publication** pour le catalogue.
+
+C'est l'option A, qui reste compatible avec C plus tard : la présentation est déjà séparée du catalogue.
+
+## 10. Dépendance : options obligatoires et parcours public actuel
+
+**Ce qui est en place.** Le serveur gère entièrement les options, y compris obligatoires : catalogue public, créneaux, devis, réservation, agenda.
+
+**Ce qui manque.** Le parcours public de réservation actuel (`src/features/public-booking/`, la page `/b/[slug]`) ne connaît pas encore les options. Il lit l'ancienne liste `services`, demande les créneaux sans réponses et réserve sans réponses.
+
+**Ce qui arriverait aujourd'hui** si une prestation publiée avait un groupe **obligatoire** :
+
+- la page l'afficherait, au prix de base ;
+- la demande de créneaux et la réservation répondraient `options_required` : **la cliente ne pourrait pas la réserver**.
+
+Aucun rendez-vous n'est faussé : le serveur refuse, il ne devine pas de réponse et ne réserve pas un prix faux. Mais la prestation est **inutilisable en ligne**.
+
+Avec seulement des groupes **facultatifs**, le parcours actuel réserve la prestation de base, sans supplément. C'est correct, mais la cliente ne peut pas choisir d'option.
+
+**Pourquoi ce n'est pas un risque aujourd'hui.** Aucun écran ne crée encore d'options : le formulaire de prestations du dashboard ne les connaît pas. Seuls `setServiceOptionsAction` et la RPC `set_service_options` peuvent en écrire.
+
+**Conditions d'activation, avant toute ouverture réelle des options aux professionnelles :**
+
+1. Le parcours public (Claude UI) utilise `catalog` de `GET /api/public/businesses/[slug]`. Pour chaque prestation à options, il affiche les groupes, préselectionne la première réponse des groupes obligatoires et met à jour le prix et la durée.
+2. Il passe `optionChoiceIds` aux créneaux et relit les créneaux à chaque changement de réponse (la durée change). Il affiche le `quote` du serveur.
+3. Il envoie `optionChoiceIds`, `expectedPriceCents` et `expectedDurationMinutes` à `POST /api/bookings`. Il traite `options_required`, `option_choice_unavailable` et `quote_changed` (§ 8).
+4. Le récapitulatif et la confirmation affichent les réponses (`options` de la réponse).
+5. Un e2e réel, de la page publique à l'agenda, réserve une prestation avec une option obligatoire et une facultative, puis vérifie le prix et la durée dans l'agenda.
+6. **Seulement ensuite**, l'éditeur d'options du studio ou du dashboard est livré aux professionnelles. Si les deux sont livrés ensemble, l'ordre de déploiement suit le même ordre : parcours public d'abord.
+
+Tant que les conditions 1 à 5 ne sont pas remplies, ne pas exposer l'éditeur d'options. Les catégories, elles, peuvent être utilisées dès maintenant : une catégorie masquée retire seulement des prestations de la réservation en ligne, et le parcours actuel le respecte déjà (via `services`).
+
+## 11. Limites
 
 - **Interface non branchée** :
   - le formulaire de prestations du dashboard ignore encore catégories et options ;
