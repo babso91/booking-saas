@@ -47,7 +47,11 @@ export function ContactStep({
   return (
     <section aria-labelledby="booking-contact" className="flex flex-col gap-5">
       <div id="booking-contact">
-        <StepHeading step={3} total={4} headingRef={headingRef}>
+        <StepHeading
+          step={flow.stepNumber("contact")}
+          total={flow.stepCount}
+          headingRef={headingRef}
+        >
           Vos coordonnées
         </StepHeading>
       </div>
