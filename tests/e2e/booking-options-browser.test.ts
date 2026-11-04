@@ -7,6 +7,7 @@ import {
 } from "@/features/public-booking/client/business-time";
 
 import { capture } from "./support/capture";
+import { behindIngress } from "./support/ingress";
 import {
   expectAccessible,
   look,
@@ -22,9 +23,9 @@ import { APP, Browser, db, professionalWithVisit } from "./support/studio";
 // is computed or decided in the browser.
 
 const VARIANTS = [
-  { name: "phone 390", width: 390, phone: true },
-  { name: "phone 320", width: 320, phone: true },
-  { name: "computer", width: 1280, phone: false },
+  { name: "phone 390", width: 390, phone: true, address: "203.0.113.21" },
+  { name: "phone 320", width: 320, phone: true, address: "203.0.113.22" },
+  { name: "computer", width: 1280, phone: false, address: "203.0.113.23" },
 ];
 
 async function businessWithOptions() {
@@ -99,7 +100,7 @@ async function businessWithOptions() {
 
 describe.each(VARIANTS)(
   "online booking with options — $name",
-  ({ name, width, phone }) => {
+  ({ name, width, phone, address }) => {
     it("her answers, the server's quote, the booking, then the agenda", async () => {
       const pro = await businessWithOptions();
       const { page, errors } = await signedInPage(new Browser(), {
@@ -114,6 +115,8 @@ describe.each(VARIANTS)(
         await capture(page, `booking options ${name} ${what}`);
       };
 
+      // A customer of the real page, behind the trusted ingress.
+      await behindIngress(page.context(), address);
       await page.goto(`${APP}/b/${pro.slug}`);
       await page.getByRole("button", { name: /Rehaussement de cils/ }).click();
       await page
@@ -166,9 +169,23 @@ describe.each(VARIANTS)(
       await page
         .getByRole("button", { name: /Confirmer la réservation/ })
         .click();
-      await page
-        .getByRole("heading", { name: "Rendez-vous confirmé" })
-        .waitFor();
+      // Confirmed, or the refusal said in words (never a bare timeout).
+      const confirmed = page.getByRole("heading", {
+        name: "Rendez-vous confirmé",
+      });
+      // A refusal is an alert; a warning (rate limit) only shows as text:
+      // whatever it is, it is reported in words below, never a bare timeout.
+      await confirmed
+        .or(page.getByRole("alert"))
+        .first()
+        .waitFor()
+        .catch(() => undefined);
+      if (!(await confirmed.isVisible())) {
+        await capture(page, `booking options ${name} refused`);
+        throw new Error(
+          `Not booked: ${await page.locator("main").innerText()}`,
+        );
+      }
       await page.getByText("Volume", { exact: true }).waitFor();
       await check("confirmed");
 
