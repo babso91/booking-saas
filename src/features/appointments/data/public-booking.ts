@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { CreatePublicBookingInput } from "@/features/appointments/schemas/public-booking";
+import type { OptionSnapshot } from "@/features/catalog/model";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
@@ -12,8 +13,11 @@ export type PublicBookingDto = {
   endsAt: string;
   timezone: string;
   serviceName: string;
+  /** Totals: the service plus the answers chosen. */
   durationMinutes: number;
   priceCents: number;
+  /** The answers chosen, as booked (empty without options). */
+  options: OptionSnapshot[];
   currency: string;
   businessName: string;
   /** `confirmed`, or the current status when a retry finds a later change. */
@@ -50,6 +54,9 @@ export async function createPublicBooking(
     p_client_ip: clientIp,
     p_last_name: input.lastName,
     p_phone: input.phone,
+    p_option_choice_ids: input.optionChoiceIds ?? [],
+    p_expected_price_cents: input.expectedPriceCents,
+    p_expected_duration_minutes: input.expectedDurationMinutes,
   });
 
   if (error) {
@@ -70,6 +77,7 @@ export async function createPublicBooking(
     serviceName: row.service_name,
     durationMinutes: row.duration_minutes,
     priceCents: row.price_cents,
+    options: row.options as OptionSnapshot[],
     currency: row.currency,
     businessName: row.business_name,
     status: row.status,

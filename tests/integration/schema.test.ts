@@ -85,10 +85,15 @@ describe("migrated schema", () => {
     );
 
     // The booking itself goes through the public route only (service role).
+    // The catalogue and the quote are read-only projections of what is
+    // bookable online (service_catalog migration).
     expect(rows.map((row) => row.proname)).toEqual([
       "get_available_slots",
+      "get_public_availability",
       "get_public_business",
+      "get_public_catalog",
       "get_public_services",
+      "quote_public_service",
     ]);
   });
 

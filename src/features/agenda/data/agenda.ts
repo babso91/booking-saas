@@ -1,3 +1,4 @@
+import type { OptionSnapshot } from "@/features/catalog/model";
 import "server-only";
 
 import type { AgendaRangeInput } from "@/features/agenda/schemas/agenda";
@@ -59,9 +60,14 @@ export type AgendaAppointmentDto = {
   startOccurrence: LocalTimeOccurrence | null;
   /** Time kept free after the appointment (frozen at booking). */
   bufferMinutes: number;
-  /** Price agreed at booking (snapshot), in minor units (cents). */
+  /**
+   * Price agreed at booking (snapshot), in minor units (cents): the service
+   * plus the answers chosen. `durationMinutes` likewise.
+   */
   priceCents: number;
   currency: string;
+  /** The answers chosen, as agreed (empty without options). */
+  options: OptionSnapshot[];
   service: { id: string; name: string };
   client: { id: string; displayName: string };
   internalNotes: string | null;
@@ -127,7 +133,7 @@ export type AgendaDto = {
 export const APPOINTMENT_COLUMNS = `
   id, version, status, starts_at, ends_at,
   duration_minutes_snapshot, buffer_minutes_snapshot,
-  price_cents_snapshot, currency,
+  price_cents_snapshot, currency, options_snapshot,
   service_id, service_name_snapshot, client_id,
   internal_notes, cancellation_reason, created_by, created_at, updated_at,
   clients!inner(first_name, last_name)
@@ -144,6 +150,7 @@ type AppointmentRow = Pick<
   | "buffer_minutes_snapshot"
   | "price_cents_snapshot"
   | "currency"
+  | "options_snapshot"
   | "service_id"
   | "service_name_snapshot"
   | "client_id"
@@ -181,6 +188,7 @@ export function toAppointmentDto(
     bufferMinutes: row.buffer_minutes_snapshot,
     priceCents: row.price_cents_snapshot,
     currency: row.currency,
+    options: row.options_snapshot as OptionSnapshot[],
     service: { id: row.service_id, name: row.service_name_snapshot },
     client: { id: row.client_id, displayName: clientDisplayName(row.clients) },
     internalNotes: row.internal_notes,

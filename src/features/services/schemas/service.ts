@@ -17,6 +17,8 @@ const serviceFields = {
   priceCents: z.number().int().min(0).max(10_000_000),
   active: z.boolean(),
   displayOrder: z.number().int().min(0).max(10_000),
+  /** null: not in a category. */
+  categoryId: z.uuid().nullable(),
 };
 
 export const serviceIdSchema = z.uuid();
@@ -31,6 +33,7 @@ export const createServiceSchema = z.object({
   priceCents: serviceFields.priceCents,
   active: serviceFields.active.default(true),
   displayOrder: serviceFields.displayOrder.optional(),
+  categoryId: serviceFields.categoryId.optional(),
   /** One per creation form: a retry of the same command creates nothing more. */
   requestId: z.uuid(),
 });
@@ -47,6 +50,7 @@ export const updateServiceSchema = z.object({
       priceCents: serviceFields.priceCents.optional(),
       active: serviceFields.active.optional(),
       displayOrder: serviceFields.displayOrder.optional(),
+      categoryId: serviceFields.categoryId.optional(),
     })
     .refine((changes) => Object.values(changes).some((v) => v !== undefined), {
       message: "Aucune modification fournie.",

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { optionChoiceIdsSchema } from "@/features/catalog/schemas";
 import {
   localDateSchema,
   localDateTimeSchema,
@@ -101,6 +102,8 @@ export const createAppointmentSchema = z.object({
   time: startTimeSchema,
   occurrence: occurrenceInputSchema,
   serviceId: z.uuid(),
+  /** The answers chosen for the service's options; absent: none. */
+  optionChoiceIds: optionChoiceIdsSchema.optional(),
   client: appointmentClientSchema,
   internalNotes: optionalText(2000),
   /** Generated once per form by the UI: a double submit creates one appointment. */
@@ -122,6 +125,12 @@ export const updateAppointmentSchema = z
     time: startTimeSchema.optional(),
     occurrence: occurrenceInputSchema,
     serviceId: z.uuid(),
+    /**
+     * The answers chosen. Absent, or the same as booked, for the same
+     * service: the appointment keeps its agreed price and duration. Another
+     * service or other answers are priced now (absent: none).
+     */
+    optionChoiceIds: optionChoiceIdsSchema.optional(),
     clientId: z.uuid(),
     internalNotes: optionalText(2000),
   })

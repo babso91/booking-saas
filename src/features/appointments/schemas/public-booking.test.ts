@@ -27,7 +27,40 @@ describe("createPublicBookingSchema", () => {
       ...valid,
       lastName: undefined,
       phone: undefined,
+      // A client written before options: no answer, as before.
+      optionChoiceIds: [],
     });
+  });
+
+  it("accepts the chosen answers and what she was shown, nothing malformed", () => {
+    const answers = [
+      "6f1c1d1e-4a39-4b4f-9a49-1f6b1c4f1a01",
+      "6f1c1d1e-4a39-4b4f-9a49-1f6b1c4f1a02",
+    ];
+    expect(
+      createPublicBookingSchema.parse({
+        ...valid,
+        optionChoiceIds: answers,
+        expectedPriceCents: 7500,
+        expectedDurationMinutes: 90,
+      }),
+    ).toMatchObject({
+      optionChoiceIds: answers,
+      expectedPriceCents: 7500,
+      expectedDurationMinutes: 90,
+    });
+    for (const bad of [
+      { optionChoiceIds: ["not-a-uuid"] },
+      { optionChoiceIds: [answers[0], answers[0]] },
+      { optionChoiceIds: Array.from({ length: 51 }, () => answers[0]) },
+      { expectedPriceCents: -1 },
+      { expectedPriceCents: 12.5 },
+      { expectedDurationMinutes: 721 },
+    ]) {
+      expect(
+        createPublicBookingSchema.safeParse({ ...valid, ...bad }).success,
+      ).toBe(false);
+    }
   });
 
   it("normalises email and treats empty optional fields as absent", () => {

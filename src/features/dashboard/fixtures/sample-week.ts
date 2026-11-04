@@ -171,6 +171,7 @@ const appointments: AgendaAppointmentDto[] = entries.map(
     bufferMinutes: 0,
     priceCents,
     currency: "EUR",
+    options: [],
     service: { id: `service-${service}`, name: service },
     client: { id: `client-${index + 1}`, displayName: client },
     internalNotes: null,

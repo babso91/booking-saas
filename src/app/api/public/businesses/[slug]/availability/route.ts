@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { getAvailableSlots } from "@/features/availability/data/slots";
+import { getPublicAvailability } from "@/features/catalog/data/catalog";
 import { availabilityQuerySchema } from "@/features/availability/schemas/availability";
 import { getPublicBusiness } from "@/features/businesses/data/public-business";
 import { AppException, validationException } from "@/lib/errors";
@@ -18,6 +18,11 @@ export async function GET(
       slug: (await ctx.params).slug,
       serviceId: request.nextUrl.searchParams.get("serviceId"),
       date: request.nextUrl.searchParams.get("date"),
+      optionChoiceIds:
+        request.nextUrl.searchParams
+          .get("optionChoiceIds")
+          ?.split(",")
+          .filter(Boolean) ?? undefined,
     });
 
     if (!parsed.success) {
@@ -31,12 +36,16 @@ export async function GET(
       throw new AppException("business_not_found");
     }
 
-    const slots = await getAvailableSlots(client, parsed.data);
+    // One read of the catalogue for both: the slots are always for the
+    // quote's duration, even if the service changes meanwhile.
+    const { slots, quote } = await getPublicAvailability(client, parsed.data);
 
     return jsonOk({
       date: parsed.data.date,
       timezone: business.timezone,
       slots,
+      // The price and duration these slots are for, as the server books them.
+      quote,
     });
   } catch (error) {
     return jsonError(error);

@@ -368,8 +368,8 @@ describe("service creation", () => {
 
     const { rows } = await db.query(
       `select
-         has_function_privilege('anon', 'public.create_service(uuid, uuid, text, integer, integer, text, boolean, integer)', 'execute') as anon,
-         has_function_privilege('authenticated', 'public.create_service(uuid, uuid, text, integer, integer, text, boolean, integer)', 'execute') as authenticated`,
+         has_function_privilege('anon', 'public.create_service(uuid, uuid, text, integer, integer, text, boolean, integer, uuid)', 'execute') as anon,
+         has_function_privilege('authenticated', 'public.create_service(uuid, uuid, text, integer, integer, text, boolean, integer, uuid)', 'execute') as authenticated`,
     );
     expect(rows[0]).toEqual({ anon: false, authenticated: true });
   });

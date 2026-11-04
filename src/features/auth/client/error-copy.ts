@@ -129,6 +129,38 @@ export const errorCopy: Record<
     message:
       "Cette prestation avait déjà été créée, puis supprimée. Elle n’a pas été recréée.",
   },
+  category_not_found: {
+    title: "Catégorie introuvable",
+    message: "Cette catégorie n’existe plus. Recharge ton catalogue.",
+  },
+  stale_category: {
+    title: "Modifiée entre-temps",
+    message: "Cette catégorie a changé. Recharge-la avant de réessayer.",
+  },
+  category_deleted: {
+    title: "Déjà supprimée",
+    message:
+      "Cette catégorie avait déjà été créée, puis supprimée. Elle n’a pas été recréée.",
+  },
+  options_incomplete: {
+    title: "Options à recharger",
+    message:
+      "Les options n’ont pas été chargées en entier ou ont changé. Recharge la prestation avant d’enregistrer.",
+  },
+  options_required: {
+    title: "Option à choisir",
+    message: "Choisis une réponse pour chaque option obligatoire.",
+  },
+  option_choice_unavailable: {
+    title: "Option modifiée",
+    message:
+      "Une option choisie n’est plus proposée. Recharge la prestation pour voir les options actuelles.",
+  },
+  quote_changed: {
+    title: "Prix modifié",
+    message:
+      "Le prix ou la durée a changé entre-temps. Vérifie le nouveau montant avant de valider.",
+  },
   booking_unavailable: {
     title: "Réservation indisponible",
     message:

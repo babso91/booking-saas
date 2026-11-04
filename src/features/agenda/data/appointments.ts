@@ -56,6 +56,7 @@ export async function createManualAppointment(
       p_starts_at: startsAt.toISOString(),
       p_internal_notes: input.internalNotes ?? undefined,
       p_request_id: input.requestId,
+      p_option_choice_ids: input.optionChoiceIds,
       ...clientFields,
     })
     .single();
@@ -139,6 +140,7 @@ export async function updateAppointment(
     p_service_id: input.serviceId,
     p_client_id: input.clientId,
     p_internal_notes: input.internalNotes ?? undefined,
+    p_option_choice_ids: input.optionChoiceIds,
   });
 
   if (error) throw databaseException(error);
