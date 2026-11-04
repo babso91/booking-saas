@@ -171,6 +171,32 @@ async function codeOf(run: () => Promise<unknown>) {
   }
 }
 
+/** The backend running the query that carries `tag`, once it has started. */
+async function backendRunning(tag: string) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const { rows } = await db.query<{ pid: number }>(
+      `select pid from pg_stat_activity where query like $1 and pid <> pg_backend_pid()`,
+      [`%${tag}%`],
+    );
+    if (rows[0]) return rows[0].pid;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`no backend runs the query tagged ${tag}`);
+}
+
+/** Resolves once some backend waits for a lock held by `pid`. */
+async function waitUntilWaitingFor(pid: number) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const { rows } = await db.query(
+      `select 1 from pg_stat_activity where $1 = any (pg_blocking_pids(pid))`,
+      [pid],
+    );
+    if (rows.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`nothing ever waited for backend ${pid}`);
+}
+
 async function appointmentRow(id: string) {
   const { rows } = await db.query(
     `select service_name_snapshot, price_cents_snapshot,
@@ -1141,11 +1167,7 @@ describe("a catalogue changed between reading and booking", () => {
         [studio.slug, serviceId, at("10:00"), randomUUID(), [volume]],
       ),
     );
-    const { rows } = await db.query<{ pid: number }>(
-      `select pid from pg_stat_activity where query like $1 and pid <> pg_backend_pid()`,
-      [`%${tag}%`],
-    );
-    await waitUntilBlocked(rows[0]!.pid);
+    await waitUntilBlocked(await backendRunning(tag));
     await closeTransaction(edit, "commit");
     expect(await booking).toBe("option_choice_unavailable");
     expect(await appointmentCount(studio.id)).toBe(0);
@@ -1190,11 +1212,7 @@ describe("a category hidden while a booking arrives", () => {
         [studio.slug, serviceId, at("10:00"), randomUUID()],
       ),
     );
-    const { rows } = await db.query<{ pid: number }>(
-      `select pid from pg_stat_activity where query like $1 and pid <> pg_backend_pid()`,
-      [`%${tag}%`],
-    );
-    await waitUntilBlocked(rows[0]!.pid);
+    await waitUntilBlocked(await backendRunning(tag));
     await closeTransaction(hide, "commit");
     expect(await booking).toBe("service_not_found");
     expect(await appointmentCount(studio.id)).toBe(0);
@@ -1975,5 +1993,221 @@ describe("the total price fits what an appointment can store", () => {
       (await getCatalogService(alice.client, studio.id, serviceId)).priceCents,
     ).toBe(5000);
     void service;
+  });
+});
+
+describe("a retry is answered only if everything it asked for is there", () => {
+  async function setup() {
+    const studio = await freshStudio();
+    const serviceId = await createService(studio.id, { priceCents: 6000 });
+    const service = await withOptions(alice, studio.id, serviceId, lashOptions);
+    return { studio, serviceId, service };
+  }
+
+  /** The same groups, as new ones (no ids): identical once recreated. */
+  const recreated = (options: ServiceOption[]) =>
+    options.map((option) => ({
+      question: option.question,
+      required: option.required,
+      choices: option.choices.map(
+        ({ label, priceDeltaCents, durationDeltaMinutes }) => ({
+          label,
+          priceDeltaCents,
+          durationDeltaMinutes,
+        }),
+      ),
+    }));
+
+  it("delete and recreate a group from a version changed meanwhile: stale, nothing written", async () => {
+    const { studio, serviceId, service } = await setup();
+    // Her base price changes concurrently: committed while her options save
+    // waits for the service row.
+    const price = await openTransaction();
+    await price.connection.query(
+      "update public.services set price_cents = 6500 where id = $1",
+      [serviceId],
+    );
+    const save = outcome(
+      setServiceOptions(alice.client, studio.id, {
+        serviceId,
+        expectedVersion: service.version,
+        options: recreated(service.options),
+        deletedOptionIds: service.options.map((option) => option.id),
+      }).catch((error: AppException) => {
+        throw new Error(error.code);
+      }),
+    );
+    // Once the save waits for the price change, commit it.
+    await waitUntilWaitingFor(price.pid);
+    await closeTransaction(price, "commit");
+    expect(await save).toBe("stale_service");
+    const after = await getCatalogService(alice.client, studio.id, serviceId);
+    expect(after.options).toEqual(service.options);
+    expect(after.version).toBe(service.version + 1);
+  });
+
+  it("delete and recreate an answer from a stale version: stale, nothing written", async () => {
+    const { studio, serviceId, service } = await setup();
+    await db.query(
+      "update public.services set price_cents = 6500 where id = $1",
+      [serviceId],
+    );
+    const [longueur, depose] = service.options as [
+      ServiceOption,
+      ServiceOption,
+    ];
+    const [naturelle, volume] = longueur.choices as [
+      OptionChoice,
+      OptionChoice,
+    ];
+    expect(
+      await codeOf(() =>
+        setServiceOptions(alice.client, studio.id, {
+          serviceId,
+          expectedVersion: service.version,
+          options: [
+            {
+              ...longueur,
+              choices: [
+                naturelle,
+                {
+                  label: volume.label,
+                  priceDeltaCents: volume.priceDeltaCents,
+                  durationDeltaMinutes: volume.durationDeltaMinutes,
+                },
+              ],
+            },
+            depose,
+          ],
+          deletedChoiceIds: [volume.id],
+        }),
+      ),
+    ).toBe("stale_service");
+    expect(
+      (await getCatalogService(alice.client, studio.id, serviceId)).options,
+    ).toEqual(service.options);
+  });
+
+  it("a group named by an id that is gone is not taken as kept", async () => {
+    const { studio, serviceId, service } = await setup();
+    const [longueur, depose] = service.options as [
+      ServiceOption,
+      ServiceOption,
+    ];
+    // Someone else deletes "Dépose" and recreates it identically.
+    const other = await setServiceOptions(alice.client, studio.id, {
+      serviceId,
+      expectedVersion: service.version,
+      options: [longueur, ...recreated([depose])],
+      deletedOptionIds: [depose.id],
+    });
+    // Her edit, from the old version, keeps "Dépose" by its old id.
+    expect(
+      await codeOf(() =>
+        setServiceOptions(alice.client, studio.id, {
+          serviceId,
+          expectedVersion: service.version,
+          options: [longueur, depose],
+        }),
+      ),
+    ).toBe("stale_service");
+    // Even with its answers given as new ones: only the group's id tells.
+    expect(
+      await codeOf(() =>
+        setServiceOptions(alice.client, studio.id, {
+          serviceId,
+          expectedVersion: service.version,
+          options: [longueur, { ...recreated([depose])[0]!, id: depose.id }],
+          deletedChoiceIds: depose.choices.map((choice) => choice.id),
+        }),
+      ),
+    ).toBe("stale_service");
+    expect(await getCatalogService(alice.client, studio.id, serviceId)).toEqual(
+      other,
+    );
+  });
+
+  it("the same request retried after it was applied: answered as it is, nothing more", async () => {
+    const { studio, serviceId, service } = await setup();
+    const request = {
+      serviceId,
+      expectedVersion: service.version,
+      options: recreated(service.options),
+      deletedOptionIds: service.options.map((option) => option.id),
+    };
+    const applied = await setServiceOptions(alice.client, studio.id, request);
+    expect(applied.version).toBe(service.version + 1);
+    expect(applied.options.map((option) => option.id)).not.toContain(
+      service.options[0]!.id,
+    );
+    expect(await setServiceOptions(alice.client, studio.id, request)).toEqual(
+      applied,
+    );
+    const { rows } = await db.query(
+      "select count(*)::int as n from public.service_options where service_id = $1",
+      [serviceId],
+    );
+    expect(rows[0].n).toBe(2);
+  });
+
+  it("another edit in between: stale, nothing written", async () => {
+    const { studio, serviceId, service } = await setup();
+    const [longueur, depose] = service.options as [
+      ServiceOption,
+      ServiceOption,
+    ];
+    const renamed = await setServiceOptions(alice.client, studio.id, {
+      serviceId,
+      expectedVersion: service.version,
+      options: [{ ...longueur, question: "Longueur des cils" }, depose],
+    });
+    expect(
+      await codeOf(() =>
+        setServiceOptions(alice.client, studio.id, {
+          serviceId,
+          expectedVersion: service.version,
+          options: [longueur],
+          deletedOptionIds: [depose.id],
+        }),
+      ),
+    ).toBe("stale_service");
+    expect(await getCatalogService(alice.client, studio.id, serviceId)).toEqual(
+      renamed,
+    );
+  });
+});
+
+describe("deletion lists without duplicates, as uuids", () => {
+  it("the same id twice (in two spellings) is refused before any write", async () => {
+    const studio = await freshStudio();
+    const serviceId = await createService(studio.id);
+    const service = await withOptions(alice, studio.id, serviceId, lashOptions);
+    const [longueur, depose] = service.options as [
+      ServiceOption,
+      ServiceOption,
+    ];
+    const volume = longueur.choices[1]!;
+    for (const [options, deletedOptions, deletedChoices] of [
+      [[longueur], [depose.id, depose.id.toUpperCase()], []],
+      [[longueur], [depose.id, depose.id], []],
+      [
+        [{ ...longueur, choices: [longueur.choices[0]!] }, depose],
+        [],
+        [volume.id.toUpperCase(), volume.id],
+      ],
+    ] as const) {
+      const { error } = await alice.client.rpc("set_service_options", {
+        p_business_id: studio.id,
+        p_service_id: serviceId,
+        p_expected_version: service.version,
+        p_options: options as never,
+        p_deleted_option_ids: [...deletedOptions],
+        p_deleted_choice_ids: [...deletedChoices],
+      });
+      expect(error?.message).toBe("invalid_options");
+    }
+    expect(await getCatalogService(alice.client, studio.id, serviceId)).toEqual(
+      service,
+    );
   });
 });

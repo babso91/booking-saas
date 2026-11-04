@@ -733,7 +733,12 @@ begin
     or pg_catalog.cardinality(v_deleted_options) > 100
     or pg_catalog.cardinality(v_deleted_choices) > 1000
     or array_position(v_deleted_options, null) is not null
-    or array_position(v_deleted_choices, null) is not null then
+    or array_position(v_deleted_choices, null) is not null
+    -- The same id twice in a deletion list (uuids: whatever its spelling).
+    or pg_catalog.cardinality(v_deleted_options) <> (
+       select count(distinct u.id) from pg_catalog.unnest(v_deleted_options) as u(id))
+    or pg_catalog.cardinality(v_deleted_choices) <> (
+       select count(distinct u.id) from pg_catalog.unnest(v_deleted_choices) as u(id)) then
     raise exception using errcode = '22023', message = 'invalid_options', hint = 'options';
   end if;
 
@@ -748,9 +753,14 @@ begin
     raise exception using errcode = 'P0002', message = 'service_not_found', hint = 'serviceId';
   end if;
 
+  -- From another version: answered as done only if everything the
+  -- request asked for is there (a retry of a request already applied).
+  -- Same content is not enough: a group deleted then recreated as it was,
+  -- or kept by an id that is gone, is not what was asked.
   if v_service.version <> p_expected_version then
-    if private.service_options_document(p_service_id, false)
-      = private.normalized_options(p_options, false) then
+    if private.options_request_applied(
+      p_service_id, p_options, v_deleted_options, v_deleted_choices
+    ) then
       return v_service.version;
     end if;
     raise exception using errcode = 'P0001', message = 'stale_service', hint = 'expectedVersion';
@@ -925,6 +935,74 @@ begin
   return v_version;
 end;
 $$;
+
+-- Whether the options of `p_service_id` are exactly what this request
+-- asked for, its effects included:
+--   * the same content, in the same order (ids aside);
+--   * every id it named to keep is there, at the place it gave it;
+--   * every id it asked to delete is gone from this service.
+-- A new group or answer (no id) matches whatever id it was given.
+create function private.options_request_applied(
+  p_service_id uuid,
+  p_options jsonb,
+  p_deleted_option_ids uuid[],
+  p_deleted_choice_ids uuid[]
+)
+returns boolean
+language plpgsql
+stable
+set search_path = ''
+as $$
+declare
+  v_current jsonb := private.service_options_document(p_service_id, true);
+  v_group record;
+  v_choice record;
+  v_id uuid;
+begin
+  if private.service_options_document(p_service_id, false)
+    is distinct from private.normalized_options(p_options, false) then
+    return false;
+  end if;
+
+  for v_group in
+    select value, ordinality from pg_catalog.jsonb_array_elements(p_options) with ordinality
+  loop
+    v_id := nullif(v_group.value ->> 'id', '')::uuid;
+    if v_id is not null
+      and v_id is distinct from (v_current -> (v_group.ordinality::integer - 1) ->> 'id')::uuid then
+      return false;
+    end if;
+    for v_choice in
+      select value, ordinality
+      from pg_catalog.jsonb_array_elements(v_group.value -> 'choices') with ordinality
+    loop
+      v_id := nullif(v_choice.value ->> 'id', '')::uuid;
+      if v_id is not null and v_id is distinct from (
+        v_current -> (v_group.ordinality::integer - 1) -> 'choices'
+          -> (v_choice.ordinality::integer - 1) ->> 'id'
+      )::uuid then
+        return false;
+      end if;
+    end loop;
+  end loop;
+
+  return not exists (
+    select 1 from public.service_options o
+    where o.service_id = p_service_id and o.id = any (p_deleted_option_ids)
+  ) and not exists (
+    select 1
+    from public.service_option_choices c
+    join public.service_options o on o.id = c.option_id
+    where o.service_id = p_service_id and c.id = any (p_deleted_choice_ids)
+  );
+exception
+  -- A malformed request (an id that is not a uuid…) was not applied.
+  when invalid_text_representation then
+    return false;
+end;
+$$;
+
+revoke all on function private.options_request_applied(uuid, jsonb, uuid[], uuid[]) from public;
 
 -- Her options as a canonical document (for comparing a retry), with or
 -- without their ids.
