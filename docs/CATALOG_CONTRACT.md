@@ -263,7 +263,7 @@ Tant que les conditions 1 à 5 ne sont pas remplies, ne pas exposer l'éditeur d
 ## 11. Limites
 
 - **Interface non branchée** :
-  - le formulaire de prestations du dashboard ignore encore catégories et options ;
+  - le dashboard gère les catégories (`docs/EXPERIENCE_ENGINE_INTEGRATION.md`, PR 1) mais pas encore les options : leur éditeur attend la réservation publique (§ 10) ;
   - la réservation publique actuelle (un ancien client) ne connaît pas les options. Une prestation avec un groupe obligatoire y répondrait `options_required` à la réservation et aux créneaux, tant que le branchement n'est pas fait.
 - **Transfert pro-config** (`src/features/pro-config/transfer/`) : il exporte les prestations sans leurs catégories ni leurs options (format v1). À étendre avant un transfert réel de pilotes qui utilisent ces fonctions.
 - **Autres affichages :**

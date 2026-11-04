@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -17,8 +23,18 @@ import {
 } from "@/features/businesses/client/draft-scope";
 import { getBookingSettingsAction } from "@/features/availability/actions/schedule";
 import {
+  getCatalogAction,
+  reorderCategoriesAction,
+} from "@/features/catalog/actions/catalog";
+import {
+  categoriesAfterMove,
+  orderAfterMove,
+  sectionsOf,
+  type CatalogCategory,
+} from "@/features/catalog/client/catalog-view";
+import type { ServiceOption } from "@/features/catalog/model";
+import {
   deleteServiceAction,
-  listServicesAction,
   reorderServicesAction,
   setServiceActiveAction,
 } from "@/features/services/actions/services";
@@ -26,6 +42,11 @@ import { cn } from "@/lib/cn";
 
 import { creationKey, pendingCreationSnapshot } from "../client/service-drafts";
 import { durationLabel, type ServiceView } from "../client/service-form";
+import {
+  CategorySheet,
+  type CategorySheetTarget,
+  type CurrentCategory,
+} from "./category-sheet";
 import {
   ServiceSheet,
   type CurrentService,
@@ -35,7 +56,41 @@ import {
 type Load =
   | { status: "loading" }
   | { status: "error"; error: UiError }
-  | { status: "ready"; services: ServiceView[]; currency: string };
+  | {
+      status: "ready";
+      categories: CatalogCategory[];
+      services: ServiceView[];
+      /** Read only here: their editor comes with options booked online. */
+      options: Record<string, ServiceOption[]>;
+      currency: string;
+    };
+
+/** One reading of her catalogue: categories, services and their options. */
+async function readCatalog() {
+  const result = await callAction(() => getCatalogAction());
+  if (!result.ok) return result;
+  const { categories, services } = result.data;
+  return {
+    ok: true as const,
+    data: {
+      categories,
+      services: services.map((service): ServiceView => ({
+        id: service.id,
+        name: service.name,
+        description: service.description,
+        durationMinutes: service.durationMinutes,
+        priceCents: service.priceCents,
+        active: service.active,
+        displayOrder: service.displayOrder,
+        categoryId: service.categoryId,
+        version: service.version,
+      })),
+      options: Object.fromEntries(
+        services.map((service) => [service.id, service.options]),
+      ),
+    },
+  };
+}
 
 /** A row action in progress or refused. */
 type RowState = { id: string; kind: "active" | "delete"; error?: UiError };
@@ -44,10 +99,13 @@ const linkAction =
   "cursor-pointer text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4";
 
 /**
- * The business's services (prestations), from the existing Server Actions:
- * list, create, edit, activate or deactivate, reorder, delete when never
- * booked. Every change is shown once the backend confirmed it; reads apply
- * only when they are the latest.
+ * Her catalogue (prestations), from one reading (getCatalogAction): her
+ * categories in her order, each with its services, then the services
+ * without one. Services: create, edit (category included), activate or
+ * deactivate, reorder within their section, delete when never booked.
+ * Categories: create, rename, show or hide online, reorder, delete (their
+ * services stay, without one). Every change is applied at once and shown
+ * once the backend confirmed it; reads apply only when they are the latest.
  *
  * Activating or deactivating is sent by value, without version: it sets the
  * one state the professional sees the opposite of, so a stale list can only
@@ -69,6 +127,8 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [run, setRun] = useState(0);
   const [sheet, setSheet] = useState<ServiceSheetTarget | null>(null);
+  const [categorySheet, setCategorySheet] =
+    useState<CategorySheetTarget | null>(null);
   const [row, setRow] = useState<RowState | null>(null);
   const [ordering, setOrdering] = useState<"idle" | "saving" | UiError>("idle");
   const [deleting, setDeleting] = useState<ServiceView | null>(null);
@@ -85,17 +145,17 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
   useEffect(() => {
     const read = (reads.current += 1);
     void Promise.all([
-      callAction(() => listServicesAction()),
+      readCatalog(),
       callAction(() => getBookingSettingsAction()),
-    ]).then(([services, settings]) => {
+    ]).then(([catalog, settings]) => {
       if (read !== reads.current) return;
-      if (!services.ok)
-        return setLoad({ status: "error", error: services.error });
+      if (!catalog.ok)
+        return setLoad({ status: "error", error: catalog.error });
       if (!settings.ok)
         return setLoad({ status: "error", error: settings.error });
       setLoad({
         status: "ready",
-        services: services.data,
+        ...catalog.data,
         currency: settings.data.currency,
       });
     });
@@ -119,16 +179,32 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
     );
   }
 
+  /** Her catalogue read again, kept in step with the list. */
+  async function readAgain() {
+    const result = await readCatalog();
+    if (result.ok)
+      setLoad((value) =>
+        value.status === "ready" ? { ...value, ...result.data } : value,
+      );
+    return result;
+  }
+
   /** The service as it is now (after a refused edit). */
   async function readCurrent(serviceId: string): Promise<CurrentService> {
-    const result = await callAction(() => listServicesAction());
+    const result = await readAgain();
     if (!result.ok) return { status: "error", error: result.error };
-    // The list is read again anyway: keep it in step.
-    setLoad((value) =>
-      value.status === "ready" ? { ...value, services: result.data } : value,
-    );
-    const service = result.data.find((item) => item.id === serviceId);
+    const service = result.data.services.find((item) => item.id === serviceId);
     return service ? { status: "found", service } : { status: "gone" };
+  }
+
+  /** The category as it is now (after a refused edit). */
+  async function readCategory(categoryId: string): Promise<CurrentCategory> {
+    const result = await readAgain();
+    if (!result.ok) return { status: "error", error: result.error };
+    const category = result.data.categories.find(
+      (item) => item.id === categoryId,
+    );
+    return category ? { status: "found", category } : { status: "gone" };
   }
 
   /** `afterDelete`: offered by a refused deletion, whose row state it replaces. */
@@ -155,13 +231,17 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
     if (result.error.code === "not_found") reload();
   }
 
-  async function move(index: number, delta: -1 | 1) {
+  /** One place up or down within its section (the complete list is sent). */
+  async function move(service: ServiceView, delta: -1 | 1) {
     if (load.status !== "ready" || (row && !row.error) || ordering === "saving")
       return;
-    const ids = load.services.map((service) => service.id);
-    const target = index + delta;
-    if (target < 0 || target >= ids.length) return;
-    [ids[index], ids[target]] = [ids[target]!, ids[index]!];
+    const ids = orderAfterMove(
+      load.categories,
+      load.services,
+      service.id,
+      delta,
+    );
+    if (!ids) return;
     setOrdering("saving");
     const result = await callAction(() =>
       reorderServicesAction({ serviceIds: ids }),
@@ -171,10 +251,14 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
         value.status === "ready" ? { ...value, services: result.data } : value,
       );
       setOrdering("idle");
-      const moved = result.data.find((service) => service.id === ids[target]);
+      const section = sectionsOf(load.categories, result.data).find((item) =>
+        item.services.some((moved) => moved.id === service.id),
+      );
+      const position =
+        section?.services.findIndex((moved) => moved.id === service.id) ?? -1;
       setAnnouncement(
-        moved
-          ? `${moved.name} : position ${target + 1} sur ${ids.length}.`
+        section && position >= 0
+          ? `${service.name} : position ${position + 1} sur ${section.services.length}.`
           : "",
       );
       return;
@@ -208,8 +292,34 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
     setRow({ id: service.id, kind: "delete", error: result.error });
   }
 
-  function openCreate() {
-    setSheet({ mode: "create" });
+  async function moveCategory(category: CatalogCategory, delta: -1 | 1) {
+    if (load.status !== "ready" || (row && !row.error) || ordering === "saving")
+      return;
+    const ids = categoriesAfterMove(load.categories, category.id, delta);
+    if (!ids) return;
+    setOrdering("saving");
+    const result = await callAction(() =>
+      reorderCategoriesAction({ categoryIds: ids }),
+    );
+    if (result.ok) {
+      setLoad((value) =>
+        value.status === "ready"
+          ? { ...value, categories: result.data }
+          : value,
+      );
+      setOrdering("idle");
+      setAnnouncement(
+        `${category.name} : position ${ids.indexOf(category.id) + 1} sur ${ids.length}.`,
+      );
+      return;
+    }
+    setOrdering(result.error);
+    // A category added or deleted elsewhere: read them again.
+    if (result.error.code === "validation_error") reload();
+  }
+
+  function openCreate(categoryId?: string) {
+    setSheet(categoryId ? { mode: "create", categoryId } : { mode: "create" });
   }
 
   /** A row operation is in flight (an error shown on a row locks nothing). */
@@ -233,17 +343,28 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
               Prestations
             </h1>
             <p className="text-[14.5px] text-ink-muted">
-              Ce que tu proposes, avec sa durée et son prix.
+              Ce que tu proposes, avec sa durée et son prix, rangé comme tu
+              veux.
             </p>
           </div>
-          <Button
-            size="md"
-            onClick={openCreate}
-            disabled={load.status !== "ready"}
-            icon={<PlusIcon size={17} />}
-          >
-            Ajouter une prestation
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => setCategorySheet({ mode: "create" })}
+              disabled={load.status !== "ready"}
+            >
+              Ajouter une catégorie
+            </Button>
+            <Button
+              size="md"
+              onClick={() => openCreate()}
+              disabled={load.status !== "ready"}
+              icon={<PlusIcon size={17} />}
+            >
+              Ajouter une prestation
+            </Button>
+          </div>
         </header>
 
         {unconfirmedCreation && load.status === "ready" ? (
@@ -251,7 +372,11 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
             tone="warning"
             title="Une création n’a pas été confirmée"
             action={
-              <button type="button" onClick={openCreate} className={linkAction}>
+              <button
+                type="button"
+                onClick={() => openCreate()}
+                className={linkAction}
+              >
                 Reprendre la création
               </button>
             }
@@ -299,7 +424,7 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
           >
             Tes prestations n’ont pas pu être chargées.
           </Notice>
-        ) : load.services.length === 0 ? (
+        ) : load.services.length === 0 && load.categories.length === 0 ? (
           <div className="flex flex-col items-start gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-7">
             <p className="font-display text-[26px] leading-tight text-ink">
               Ajoute ta première prestation
@@ -310,7 +435,7 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
             </p>
             <Button
               size="md"
-              onClick={openCreate}
+              onClick={() => openCreate()}
               icon={<PlusIcon size={17} />}
             >
               Ajouter une prestation
@@ -329,30 +454,67 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
                   : "Le nouvel ordre n’a pas pu être enregistré. L’ordre affiché est celui enregistré."}
               </Notice>
             ) : null}
-            <ol
-              aria-label="Tes prestations, dans l’ordre"
-              aria-busy={ordering === "saving"}
-              className="flex flex-col gap-3"
-            >
-              {load.services.map((service, index) => (
-                <ServiceRow
-                  key={service.id}
-                  service={service}
-                  currency={load.currency}
-                  index={index}
-                  count={load.services.length}
-                  row={row?.id === service.id ? row : null}
-                  locked={pending || ordering === "saving"}
-                  onEdit={() => setSheet({ mode: "edit", service })}
-                  onToggle={() => void toggleActive(service)}
-                  onMove={(delta) => void move(index, delta)}
-                  onDelete={() => {
-                    setRow(null);
-                    setDeleting(service);
-                  }}
-                />
-              ))}
-            </ol>
+            {sectionsOf(load.categories, load.services).map(
+              (section, sectionIndex, sections) => {
+                const rows = section.services.map((service, index) => (
+                  <ServiceRow
+                    key={service.id}
+                    service={service}
+                    options={load.options[service.id] ?? []}
+                    currency={load.currency}
+                    index={index}
+                    count={section.services.length}
+                    headingLevel={load.categories.length > 0 ? 3 : 2}
+                    row={row?.id === service.id ? row : null}
+                    locked={pending || ordering === "saving"}
+                    onEdit={() => setSheet({ mode: "edit", service })}
+                    onToggle={() => void toggleActive(service)}
+                    onMove={(delta) => void move(service, delta)}
+                    onDelete={() => {
+                      setRow(null);
+                      setDeleting(service);
+                    }}
+                  />
+                ));
+                // Without any category: her list as it always was.
+                if (load.categories.length === 0)
+                  return (
+                    <ol
+                      key="all"
+                      aria-label="Tes prestations, dans l’ordre"
+                      aria-busy={ordering === "saving"}
+                      className="flex flex-col gap-3"
+                    >
+                      {rows}
+                    </ol>
+                  );
+                return (
+                  <CategorySection
+                    key={section.category?.id ?? "none"}
+                    category={section.category}
+                    index={sectionIndex}
+                    count={
+                      sections.filter((item) => item.category !== null).length
+                    }
+                    locked={pending || ordering === "saving"}
+                    busy={ordering === "saving"}
+                    onEdit={(category) =>
+                      setCategorySheet({
+                        mode: "edit",
+                        category,
+                        serviceCount: section.services.length,
+                      })
+                    }
+                    onMove={(category, delta) =>
+                      void moveCategory(category, delta)
+                    }
+                    onAdd={(category) => openCreate(category.id)}
+                  >
+                    {rows}
+                  </CategorySection>
+                );
+              },
+            )}
           </>
         )}
 
@@ -364,6 +526,7 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
       {load.status === "ready" ? (
         <ServiceSheet
           target={sheet}
+          categories={load.categories}
           currency={load.currency}
           scope={scope}
           onClose={() => setSheet(null)}
@@ -397,6 +560,41 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
           readCurrent={readCurrent}
         />
       ) : null}
+
+      <CategorySheet
+        target={categorySheet}
+        onClose={() => setCategorySheet(null)}
+        onSaved={(category, created) => {
+          setLoad((value) =>
+            value.status === "ready"
+              ? {
+                  ...value,
+                  categories: value.categories.some(
+                    (item) => item.id === category.id,
+                  )
+                    ? value.categories.map((item) =>
+                        item.id === category.id ? category : item,
+                      )
+                    : [...value.categories, category],
+                }
+              : value,
+          );
+          setAnnouncement(
+            created
+              ? `Catégorie ${category.name} ajoutée.`
+              : `Catégorie ${category.name} enregistrée.`,
+          );
+          reload();
+        }}
+        onDeleted={(category) => {
+          setAnnouncement(
+            `Catégorie ${category.name} supprimée. Ses prestations sont restées, sans catégorie.`,
+          );
+          reload();
+        }}
+        onReload={reload}
+        readCurrent={readCategory}
+      />
 
       <ConfirmDialog
         open={deleting !== null}
@@ -451,9 +649,11 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
 
 function ServiceRow({
   service,
+  options,
   currency,
   index,
   count,
+  headingLevel,
   row,
   locked,
   onEdit,
@@ -462,9 +662,13 @@ function ServiceRow({
   onDelete,
 }: {
   service: ServiceView;
+  options: ServiceOption[];
   currency: string;
+  /** Its place within its section. */
   index: number;
   count: number;
+  /** Under a category heading (3), or directly under the page's (2). */
+  headingLevel: 2 | 3;
   row: RowState | null;
   locked: boolean;
   onEdit: () => void;
@@ -476,6 +680,7 @@ function ServiceRow({
   const base =
     "flex h-10 min-w-10 cursor-pointer items-center justify-center rounded-xl px-2.5 text-[13.5px] font-medium disabled:cursor-not-allowed disabled:opacity-40";
   const small = cn(base, "text-ink-soft hover:bg-sand hover:text-ink");
+  const Heading = headingLevel === 2 ? "h2" : "h3";
   return (
     <li
       className={cn(
@@ -485,17 +690,20 @@ function ServiceRow({
     >
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-0.5">
-          <h2 className="text-[16px] font-semibold wrap-anywhere text-ink">
+          <Heading className="text-[16px] font-semibold wrap-anywhere text-ink">
             {service.name}
             {!service.active ? (
               <span className="ml-2 rounded-full bg-sand px-2 py-0.5 align-middle text-[11.5px] font-medium text-ink-soft">
                 Désactivée
               </span>
             ) : null}
-          </h2>
+          </Heading>
           <p className="text-[14px] text-ink-soft tabular-nums">
             {durationLabel(service.durationMinutes)} ·{" "}
             {formatPrice(service.priceCents, currency)}
+            {options.length > 0
+              ? ` · ${options.length} ${options.length > 1 ? "options" : "option"}`
+              : ""}
           </p>
           {service.description ? (
             <p className="line-clamp-2 text-[13.5px] wrap-anywhere text-ink-muted">
@@ -567,6 +775,113 @@ function ServiceRow({
         </button>
       </div>
     </li>
+  );
+}
+
+/**
+ * One of her categories: its heading (its name, how many services, whether
+ * it is shown online), its moves and its services; or, last, those without
+ * a category.
+ */
+function CategorySection({
+  category,
+  index,
+  count,
+  locked,
+  busy,
+  onEdit,
+  onMove,
+  onAdd,
+  children,
+}: {
+  category: CatalogCategory | null;
+  index: number;
+  /** How many categories she has. */
+  count: number;
+  locked: boolean;
+  busy: boolean;
+  onEdit: (category: CatalogCategory) => void;
+  onMove: (category: CatalogCategory, delta: -1 | 1) => void;
+  onAdd: (category: CatalogCategory) => void;
+  children: ReactNode[];
+}) {
+  const headingId = `category-${category?.id ?? "none"}`;
+  const name = category?.name ?? "Sans catégorie";
+  const small =
+    "flex h-10 min-w-10 cursor-pointer items-center justify-center rounded-xl px-2.5 text-[13.5px] font-medium text-ink-soft hover:bg-sand hover:text-ink disabled:cursor-not-allowed disabled:opacity-40";
+  const services = children.length;
+  return (
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1 border-b border-line pb-2">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <h2
+            id={headingId}
+            className="font-display text-[24px] leading-tight wrap-anywhere text-ink"
+          >
+            {name}
+          </h2>
+          <p className="text-[13px] text-ink-muted">
+            {services === 0
+              ? "Aucune prestation"
+              : `${services} ${services > 1 ? "prestations" : "prestation"}`}
+            {category && !category.visible
+              ? " · masquée : pas réservable en ligne"
+              : ""}
+          </p>
+        </div>
+        {category ? (
+          <div className="-mx-1 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onMove(category, -1)}
+              disabled={locked || index === 0}
+              aria-label={`Monter la catégorie ${name}`}
+              className={small}
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              onClick={() => onMove(category, 1)}
+              disabled={locked || index === count - 1}
+              aria-label={`Descendre la catégorie ${name}`}
+              className={small}
+            >
+              ↓
+            </button>
+            <button
+              type="button"
+              onClick={() => onEdit(category)}
+              disabled={locked}
+              aria-label={`Modifier la catégorie ${name}`}
+              className={small}
+            >
+              Modifier
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {services > 0 ? (
+        <ol
+          aria-label={`Prestations : ${name}`}
+          aria-busy={busy}
+          className="flex flex-col gap-3"
+        >
+          {children}
+        </ol>
+      ) : null}
+      {category ? (
+        <button
+          type="button"
+          onClick={() => onAdd(category)}
+          disabled={locked}
+          className={cn(small, "self-start text-ink")}
+        >
+          + Ajouter une prestation ici
+          <span className="sr-only"> ({name})</span>
+        </button>
+      ) : null}
+    </section>
   );
 }
 
