@@ -89,6 +89,7 @@ describe("migrated schema", () => {
     // bookable online (service_catalog migration).
     expect(rows.map((row) => row.proname)).toEqual([
       "get_available_slots",
+      "get_public_availability",
       "get_public_business",
       "get_public_catalog",
       "get_public_services",

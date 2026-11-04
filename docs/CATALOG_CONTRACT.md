@@ -37,6 +37,8 @@ Migration : `supabase/migrations/20261103090000_service_catalog.sql` (additive).
   - à l'enregistrement des options ;
   - quand la durée de la prestation change (déclencheur) ;
   - à chaque devis.
+- **Prix maximal.** Le prix de la prestation plus ses réponses les plus chères tient toujours dans le prix d'un rendez-vous (`integer`, 2 147 483 647 centimes), calculé en `bigint`. C'est vérifié à l'enregistrement des options et quand le prix de la prestation change (déclencheur), sinon refus `validation_error`. Une configuration impossible à réserver ne peut pas être enregistrée.
+- **Identifiants.** Ils sont toujours comparés en `uuid` : un même identifiant écrit en majuscules et en minuscules est un doublon, refusé avant toute écriture.
 
 ## 3. Une seule règle de prix et de durée
 
@@ -75,6 +77,8 @@ Voir § 9 pour la décision V1.
 
 ## 5. Concurrence, idempotence, versions
 
+- **Lectures complètes.** Le catalogue du studio (`get_catalog`) et les disponibilités publiques (`get_public_availability`) sont lus chacun en **un seul document**, une seule ligne. Le plafond de lignes de l'API (PostgREST `max_rows`, 1 000) ne peut pas les tronquer, quel que soit le nombre de prestations et de réponses. Testé avec 51 prestations à 20 réponses (1 020 réponses). La lecture d'une table de l'API, elle, s'arrête à 1 000 : le catalogue ne l'utilise plus.
+
 - **Ordre catalogue / réservations.** Les écritures d'options et de visibilité prennent le verrou d'agenda de l'établissement (`private.lock_business_schedule`), comme les réservations. `set_service_options` verrouille aussi la ligne de la prestation, que la réservation tient en partage. Une réservation voit donc le catalogue d'avant une modification, ou la modification attend sa validation : jamais la moitié. C'est testé avec des transactions entrelacées :
   - une réponse supprimée pendant qu'une réservation attend donne `option_choice_unavailable` ;
   - une catégorie masquée pendant qu'une réservation attend donne `service_not_found`.
@@ -112,17 +116,17 @@ Le rendez-vous garde `service_name_snapshot`, `price_cents_snapshot` et `duratio
 
 ### Studio et dashboard (Server Actions)
 
-| Action                                                                                         | Données             | Erreurs propres                                          |
-| ---------------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------- |
-| `getCatalogAction()`                                                                           | `CatalogDto`        | —                                                        |
-| `createCategoryAction({ name, visible?, requestId })`                                          | `CategoryDto`       | `idempotency_conflict`, `category_deleted`               |
-| `updateCategoryAction({ categoryId, expectedVersion, name?, visible? })`                       | `CategoryDto`       | `stale_category`, `category_not_found`                   |
-| `reorderCategoriesAction({ categoryIds })` (toutes, une fois)                                  | `CategoryDto[]`     | `validation_error`                                       |
-| `deleteCategoryAction({ categoryId })`                                                         | —                   | `category_not_found`                                     |
-| `setServiceOptionsAction({ serviceId, expectedVersion, options })`                             | `CatalogServiceDto` | `stale_service`, `service_not_found`, `validation_error` |
-| `createServiceAction({ …, categoryId? })` (existante)                                          | `ServiceDto`        | `category_not_found`                                     |
-| `updateServiceAction({ serviceId, expectedVersion, changes: { …, categoryId? } })` (existante) | `ServiceDto`        | `category_not_found`, `stale_service`                    |
-| `reorderServicesAction`, `setServiceActiveAction`, `deleteServiceAction` (existantes)          | inchangées          | inchangées                                               |
+| Action                                                                                                   | Données             | Erreurs propres                                                                |
+| -------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------ |
+| `getCatalogAction()`                                                                                     | `CatalogDto`        | — (complet, en un seul document)                                               |
+| `createCategoryAction({ name, visible?, requestId })`                                                    | `CategoryDto`       | `idempotency_conflict`, `category_deleted`                                     |
+| `updateCategoryAction({ categoryId, expectedVersion, name?, visible? })`                                 | `CategoryDto`       | `stale_category`, `category_not_found`                                         |
+| `reorderCategoriesAction({ categoryIds })` (toutes, une fois)                                            | `CategoryDto[]`     | `validation_error`                                                             |
+| `deleteCategoryAction({ categoryId })`                                                                   | —                   | `category_not_found`                                                           |
+| `setServiceOptionsAction({ serviceId, expectedVersion, options, deletedOptionIds?, deletedChoiceIds? })` | `CatalogServiceDto` | `options_incomplete`, `stale_service`, `service_not_found`, `validation_error` |
+| `createServiceAction({ …, categoryId? })` (existante)                                                    | `ServiceDto`        | `category_not_found`                                                           |
+| `updateServiceAction({ serviceId, expectedVersion, changes: { …, categoryId? } })` (existante)           | `ServiceDto`        | `category_not_found`, `stale_service`                                          |
+| `reorderServicesAction`, `setServiceActiveAction`, `deleteServiceAction` (existantes)                    | inchangées          | inchangées                                                                     |
 
 ```ts
 type CatalogDto = {
@@ -136,7 +140,8 @@ type OptionChoice = { id; label; priceDeltaCents; durationDeltaMinutes };
 
 **`options` de `setServiceOptionsAction`.** C'est la liste complète, dans l'ordre :
 
-- `id` absent ou `null` crée un groupe ou une réponse, un `id` existant le garde, et ce qui est omis est supprimé ;
+- `id` absent ou `null` crée un groupe ou une réponse, et un `id` existant le garde ;
+- **rien n'est supprimé par omission.** Un groupe existant absent de `options` doit figurer dans `deletedOptionIds`, et une réponse existante d'un groupe conservé dans `deletedChoiceIds`. Sinon, l'enregistrement est refusé (`options_incomplete`, 409) sans rien écrire. Un éditeur qui n'aurait reçu qu'une partie des options ne peut donc jamais supprimer ce qu'il n'a pas vu : il doit recharger (`getCatalogAction`). Supprimer un groupe supprime ses réponses. Un identifiant déjà supprimé est ignoré (nouvelle tentative) ;
 - les identifiants des réponses conservées ne changent pas, et les rendez-vous gardent leur instantané ;
 - une modification réussie renvoie la prestation avec sa nouvelle `version`.
 
@@ -183,6 +188,7 @@ type OptionChoice = { id; label; priceDeltaCents; durationDeltaMinutes };
 
 - **`GET /api/public/businesses/[slug]/availability?serviceId=…&date=YYYY-MM-DD&optionChoiceIds=a,b`** renvoie `{ date, timezone, slots, quote }`.
   - Les créneaux sont calculés pour la durée totale.
+  - Créneaux et devis viennent **d'une seule lecture** (`get_public_availability`, une fonction `STABLE` : un seul instantané). Une modification de la prestation pendant la requête ne peut pas donner des créneaux pour une durée et un devis pour une autre. La réservation revalide quand même tout sous le verrou.
   - `quote` : `{ serviceName, durationMinutes, priceCents, currency, options }`, le prix et la durée que le serveur réservera.
   - Mettre à jour les créneaux à chaque changement de réponse : la durée change.
 - **`POST /api/bookings`** prend les mêmes champs qu'avant, plus :
@@ -194,6 +200,7 @@ type OptionChoice = { id; label; priceDeltaCents; durationDeltaMinutes };
 | Code                        | HTTP | Quoi faire                                                                           |
 | --------------------------- | ---- | ------------------------------------------------------------------------------------ |
 | `options_required`          | 422  | demander la réponse manquante                                                        |
+| `options_incomplete`        | 409  | (studio) recharger les options avant d'enregistrer                                   |
 | `option_choice_unavailable` | 409  | recharger le catalogue (une réponse a été retirée)                                   |
 | `quote_changed`             | 409  | recharger le devis et le montrer avant de réessayer (même `requestId` ou un nouveau) |
 | `service_not_found`         | 404  | la prestation n'est plus réservable en ligne (désactivée ou catégorie masquée)       |

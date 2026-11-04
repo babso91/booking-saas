@@ -210,6 +210,29 @@ $$;
 
 revoke all on function private.service_longest_minutes(uuid, integer) from public;
 
+-- The highest price the service can be booked at (each group's dearest
+-- answer), in bigint: it must fit an appointment's price (integer).
+create function private.service_highest_price(
+  p_service_id uuid,
+  p_base_cents bigint
+)
+returns bigint
+language sql
+stable
+set search_path = ''
+as $$
+  select p_base_cents + coalesce(sum(dearest), 0)::bigint
+  from (
+    select max(c.price_delta_cents)::bigint as dearest
+    from public.service_options o
+    join public.service_option_choices c on c.option_id = o.id
+    where o.service_id = p_service_id
+    group by o.id
+  ) groups;
+$$;
+
+revoke all on function private.service_highest_price(uuid, bigint) from public;
+
 -- SECURITY DEFINER: a member updates her services directly (RLS); the
 -- check reads her options with the owner's rights.
 create function private.check_service_longest()
@@ -225,6 +248,14 @@ begin
       message = 'duration_too_long',
       hint = 'durationMinutes';
   end if;
+  -- A price that, with her dearest answers, an appointment could not store
+  -- (integer): a configuration that could never be booked.
+  if private.service_highest_price(new.id, new.price_cents) > 2147483647 then
+    raise exception using
+      errcode = '22023',
+      message = 'price_too_high',
+      hint = 'priceCents';
+  end if;
   return new;
 end;
 $$;
@@ -232,7 +263,7 @@ $$;
 revoke all on function private.check_service_longest() from public;
 
 create trigger services_check_longest
-  before update of duration_minutes on public.services
+  before update of duration_minutes, price_cents on public.services
   for each row execute function private.check_service_longest();
 
 -- ---------------------------------------------------------------------------
@@ -644,15 +675,26 @@ grant execute on function public.delete_service_category(uuid, uuid) to authenti
 --      "choices": [{ "id": uuid | null, "label": text,
 --                    "priceDeltaCents": int, "durationDeltaMinutes": int }] }]
 -- In this order. An id keeps the group (or answer) it names, null creates
--- one, and what is left out is deleted (appointments keep their snapshot).
--- Up to 20 groups of 1 to 20 answers. The service's version changes.
--- A retry that finds the options already as given (ignoring the ids it
--- created) answers the current version; otherwise stale_service.
+-- one. Up to 20 groups of 1 to 20 answers. The service's version changes.
+--
+-- Nothing is deleted by omission. Every existing group must be given (by
+-- id) or listed in `p_deleted_option_ids`; every existing answer of a group
+-- kept, given or listed in `p_deleted_choice_ids`. An editor that read the
+-- options partially (a truncated read) is refused (options_incomplete)
+-- instead of deleting what it did not see. A deleted group takes its
+-- answers with it; an id already deleted is ignored (a retry).
+--
+-- Ids are compared as uuids. A retry that finds the options already as
+-- given (ignoring the ids it created) answers the current version;
+-- otherwise stale_service. The service's dearest booking must fit an
+-- appointment (price_too_high) and its longest 720 min (duration_too_long).
 create function public.set_service_options(
   p_business_id uuid,
   p_service_id uuid,
   p_expected_version integer,
-  p_options jsonb
+  p_options jsonb,
+  p_deleted_option_ids uuid[] default '{}',
+  p_deleted_choice_ids uuid[] default '{}'
 )
 returns integer
 language plpgsql
@@ -667,14 +709,18 @@ declare
   v_choice_index integer;
   v_option_id uuid;
   v_choice_id uuid;
-  v_kept_options uuid[] := '{}';
-  v_kept_choices uuid[];
   v_question text;
   v_label text;
   v_price integer;
   v_minutes integer;
   v_longest integer := 0;
   v_group_longest integer;
+  v_dearest bigint := 0;
+  v_group_dearest bigint;
+  v_given_options uuid[] := '{}';
+  v_given_choices uuid[] := '{}';
+  v_deleted_options uuid[] := coalesce(p_deleted_option_ids, '{}');
+  v_deleted_choices uuid[] := coalesce(p_deleted_choice_ids, '{}');
   v_version integer;
 begin
   perform private.assert_catalog_access(p_business_id);
@@ -683,7 +729,11 @@ begin
   end if;
   if p_options is null
     or pg_catalog.jsonb_typeof(p_options) <> 'array'
-    or pg_catalog.jsonb_array_length(p_options) > 20 then
+    or pg_catalog.jsonb_array_length(p_options) > 20
+    or pg_catalog.cardinality(v_deleted_options) > 100
+    or pg_catalog.cardinality(v_deleted_choices) > 1000
+    or array_position(v_deleted_options, null) is not null
+    or array_position(v_deleted_choices, null) is not null then
     raise exception using errcode = '22023', message = 'invalid_options', hint = 'options';
   end if;
 
@@ -720,14 +770,22 @@ begin
     if pg_catalog.char_length(v_question) not between 1 and 120 then
       raise exception using errcode = '22023', message = 'invalid_options', hint = 'options';
     end if;
-    v_option_id := nullif(v_group ->> 'id', '')::uuid;
-    if v_option_id is not null and not exists (
-      select 1 from public.service_options o
-      where o.id = v_option_id and o.service_id = p_service_id
-    ) then
-      raise exception using errcode = 'P0001', message = 'option_not_found', hint = 'options';
+    begin
+      v_option_id := nullif(v_group ->> 'id', '')::uuid;
+    exception when invalid_text_representation then
+      raise exception using errcode = '22023', message = 'invalid_options', hint = 'options';
+    end;
+    if v_option_id is not null then
+      if not exists (
+        select 1 from public.service_options o
+        where o.id = v_option_id and o.service_id = p_service_id
+      ) then
+        raise exception using errcode = 'P0001', message = 'option_not_found', hint = 'options';
+      end if;
+      v_given_options := v_given_options || v_option_id;
     end if;
     v_group_longest := 0;
+    v_group_dearest := 0;
     for v_choice in select value from pg_catalog.jsonb_array_elements(v_group -> 'choices') loop
       if pg_catalog.jsonb_typeof(v_choice) <> 'object'
         or pg_catalog.jsonb_typeof(v_choice -> 'label') <> 'string'
@@ -743,51 +801,80 @@ begin
         or (v_choice ->> 'durationDeltaMinutes')::integer > 240 then
         raise exception using errcode = '22023', message = 'invalid_options', hint = 'options';
       end if;
-      v_choice_id := nullif(v_choice ->> 'id', '')::uuid;
-      if v_choice_id is not null and (
-        v_option_id is null
-        or not exists (
+      begin
+        v_choice_id := nullif(v_choice ->> 'id', '')::uuid;
+      exception when invalid_text_representation then
+        raise exception using errcode = '22023', message = 'invalid_options', hint = 'options';
+      end;
+      if v_choice_id is not null then
+        if v_option_id is null or not exists (
           select 1 from public.service_option_choices c
           where c.id = v_choice_id and c.option_id = v_option_id
-        )
-      ) then
-        raise exception using errcode = 'P0001', message = 'option_not_found', hint = 'options';
+        ) then
+          raise exception using errcode = 'P0001', message = 'option_not_found', hint = 'options';
+        end if;
+        v_given_choices := v_given_choices || v_choice_id;
       end if;
       v_group_longest := greatest(v_group_longest, (v_choice ->> 'durationDeltaMinutes')::integer);
+      v_group_dearest := greatest(v_group_dearest, (v_choice ->> 'priceDeltaCents')::bigint);
     end loop;
     v_longest := v_longest + v_group_longest;
+    v_dearest := v_dearest + v_group_dearest;
   end loop;
 
-  -- An id given twice.
-  if exists (
-    select 1
-    from (
-      select g ->> 'id' as id
-      from pg_catalog.jsonb_array_elements(p_options) g
-      where nullif(g ->> 'id', '') is not null
-      union all
-      select c ->> 'id'
-      from pg_catalog.jsonb_array_elements(p_options) g,
-           pg_catalog.jsonb_array_elements(g -> 'choices') c
-      where nullif(c ->> 'id', '') is not null
-    ) ids
-    group by ids.id
-    having count(*) > 1
-  ) then
+  -- An id given twice, as uuids (whatever its spelling), or both given and
+  -- deleted.
+  if pg_catalog.cardinality(v_given_options) <> (
+       select count(distinct u.id) from pg_catalog.unnest(v_given_options) as u(id))
+    or pg_catalog.cardinality(v_given_choices) <> (
+       select count(distinct u.id) from pg_catalog.unnest(v_given_choices) as u(id))
+    or v_given_options && v_deleted_options
+    or v_given_choices && v_deleted_choices then
     raise exception using errcode = '22023', message = 'invalid_options', hint = 'options';
+  end if;
+
+  -- Deleted ids: this service's, or already gone (a retry); never another's.
+  if exists (
+    select 1 from public.service_options o
+    where o.id = any (v_deleted_options) and o.service_id <> p_service_id
+  ) or exists (
+    select 1
+    from public.service_option_choices c
+    join public.service_options o on o.id = c.option_id
+    where c.id = any (v_deleted_choices) and o.service_id <> p_service_id
+  ) then
+    raise exception using errcode = 'P0001', message = 'option_not_found', hint = 'options';
+  end if;
+
+  -- Nothing by omission: every existing group given or deleted, every
+  -- existing answer of a kept group given or deleted.
+  if exists (
+    select 1 from public.service_options o
+    where o.service_id = p_service_id
+      and not (o.id = any (v_given_options) or o.id = any (v_deleted_options))
+  ) or exists (
+    select 1
+    from public.service_option_choices c
+    where c.option_id = any (v_given_options)
+      and not (c.id = any (v_given_choices) or c.id = any (v_deleted_choices))
+  ) then
+    raise exception using errcode = 'P0001', message = 'options_incomplete', hint = 'options';
   end if;
 
   if v_service.duration_minutes + v_longest > 720 then
     raise exception using errcode = '22023', message = 'duration_too_long', hint = 'options';
   end if;
+  if v_service.price_cents::bigint + v_dearest > 2147483647 then
+    raise exception using errcode = '22023', message = 'price_too_high', hint = 'options';
+  end if;
 
-  -- Groups left out go (their answers with them).
+  -- Deletions asked for (answers of deleted groups go with them).
   delete from public.service_options o
-  where o.service_id = p_service_id
-    and o.id not in (
-      select (g ->> 'id')::uuid
-      from pg_catalog.jsonb_array_elements(p_options) g
-      where nullif(g ->> 'id', '') is not null
+  where o.service_id = p_service_id and o.id = any (v_deleted_options);
+  delete from public.service_option_choices c
+  where c.id = any (v_deleted_choices)
+    and c.option_id in (
+      select o.id from public.service_options o where o.service_id = p_service_id
     );
 
   for v_group in select value from pg_catalog.jsonb_array_elements(p_options) loop
@@ -804,14 +891,6 @@ begin
           display_order = v_group_index
       where o.id = v_option_id;
     end if;
-
-    delete from public.service_option_choices c
-    where c.option_id = v_option_id
-      and c.id not in (
-        select (x ->> 'id')::uuid
-        from pg_catalog.jsonb_array_elements(v_group -> 'choices') x
-        where nullif(x ->> 'id', '') is not null
-      );
 
     v_choice_index := 0;
     for v_choice in select value from pg_catalog.jsonb_array_elements(v_group -> 'choices') loop
@@ -933,8 +1012,83 @@ $$;
 
 revoke all on function private.normalized_options(jsonb, boolean) from public;
 
-revoke all on function public.set_service_options(uuid, uuid, integer, jsonb) from public, anon;
-grant execute on function public.set_service_options(uuid, uuid, integer, jsonb) to authenticated;
+revoke all on function public.set_service_options(uuid, uuid, integer, jsonb, uuid[], uuid[]) from public, anon;
+grant execute on function public.set_service_options(uuid, uuid, integer, jsonb, uuid[], uuid[]) to authenticated;
+
+-- Her catalogue, whole, as one document read in one snapshot: categories,
+-- services (active or not) and their options. One row whatever its size:
+-- a read capped by the API (PostgREST max_rows) can never truncate it, so
+-- an editor never believes a partial list is complete. `p_service_id`:
+-- that service only (no categories).
+--   { "categories": [{ id, name, visible, displayOrder, version }],
+--     "services": [{ id, name, description, durationMinutes, priceCents,
+--                    active, displayOrder, categoryId, version,
+--                    options: [{ id, question, required,
+--                                choices: [{ id, label, priceDeltaCents,
+--                                            durationDeltaMinutes }] }] }] }
+create function public.get_catalog(p_business_id uuid, p_service_id uuid default null)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.assert_catalog_access(p_business_id);
+  if p_service_id is not null and not exists (
+    select 1 from public.services s
+    where s.id = p_service_id and s.business_id = p_business_id
+  ) then
+    raise exception using errcode = 'P0002', message = 'service_not_found', hint = 'serviceId';
+  end if;
+
+  return pg_catalog.jsonb_build_object(
+    'categories', case when p_service_id is not null then '[]'::jsonb else (
+      select coalesce(
+        pg_catalog.jsonb_agg(
+          pg_catalog.jsonb_build_object(
+            'id', c.id,
+            'name', c.name,
+            'visible', c.visible,
+            'displayOrder', c.display_order,
+            'version', c.version
+          )
+          order by c.display_order, c.name, c.id
+        ),
+        '[]'::jsonb
+      )
+      from public.service_categories c
+      where c.business_id = p_business_id
+    ) end,
+    'services', (
+      select coalesce(
+        pg_catalog.jsonb_agg(
+          pg_catalog.jsonb_build_object(
+            'id', s.id,
+            'name', s.name,
+            'description', s.description,
+            'durationMinutes', s.duration_minutes,
+            'priceCents', s.price_cents,
+            'active', s.active,
+            'displayOrder', s.display_order,
+            'categoryId', s.category_id,
+            'version', s.version,
+            'options', private.public_service_options(s.id)
+          )
+          order by s.display_order, s.name, s.id
+        ),
+        '[]'::jsonb
+      )
+      from public.services s
+      where s.business_id = p_business_id
+        and (p_service_id is null or s.id = p_service_id)
+    )
+  );
+end;
+$$;
+
+revoke all on function public.get_catalog(uuid, uuid) from public, anon;
+grant execute on function public.get_catalog(uuid, uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- What the public sees and books
@@ -1265,6 +1419,86 @@ $$;
 
 revoke all on function public.get_available_slots(text, uuid, date, uuid[]) from public;
 grant execute on function public.get_available_slots(text, uuid, date, uuid[]) to anon, authenticated, service_role;
+
+-- Slots and the quote they are for, from one read: one STABLE function,
+-- so every statement sees the same snapshot. A change of the service
+-- between two separate reads (slots for 30 min, a quote for 75) cannot
+-- happen. The same rule (private.quote_options) and the same slot
+-- computation as the booking, which re-validates both under the schedule
+-- lock anyway.
+--   { "quote": { serviceName, durationMinutes, priceCents, currency, options },
+--     "slots": [{ startsAt, endsAt, localStartsAt, localEndsAt }] }
+create function public.get_public_availability(
+  p_slug text,
+  p_service_id uuid,
+  p_date date,
+  p_option_choice_ids uuid[] default null
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_business_id uuid := private.business_id_by_slug(p_slug);
+  v_offer record;
+  v_quote record;
+  v_duration integer;
+begin
+  if v_business_id is null then
+    raise exception using errcode = 'P0002', message = 'business_not_found';
+  end if;
+  if not private.service_publicly_bookable(v_business_id, p_service_id) then
+    raise exception using errcode = 'P0002', message = 'service_not_found';
+  end if;
+
+  select
+    b.timezone, s.name, s.duration_minutes, s.price_cents,
+    st.currency, st.slot_interval_minutes, st.buffer_minutes,
+    st.minimum_booking_notice_minutes, st.maximum_booking_advance_days
+  into v_offer
+  from public.businesses b
+  join public.business_settings st on st.business_id = b.id
+  join public.services s on s.business_id = b.id
+  where b.id = v_business_id and s.id = p_service_id;
+
+  select * into v_quote from private.quote_options(v_business_id, p_service_id, p_option_choice_ids);
+  v_duration := v_offer.duration_minutes + v_quote.duration_delta_minutes;
+  if v_duration > 720 then
+    raise exception using errcode = '22023', message = 'duration_too_long', hint = 'optionChoiceIds';
+  end if;
+
+  return pg_catalog.jsonb_build_object(
+    'quote', pg_catalog.jsonb_build_object(
+      'serviceName', v_offer.name,
+      'durationMinutes', v_duration,
+      'priceCents', v_offer.price_cents::bigint + v_quote.price_delta_cents,
+      'currency', v_offer.currency,
+      'options', v_quote.options
+    ),
+    'slots', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_build_object(
+          'startsAt', slot.starts_at,
+          'endsAt', slot.ends_at,
+          'localStartsAt', private.wall_clock(slot.starts_at, v_offer.timezone),
+          'localEndsAt', private.wall_clock(slot.ends_at, v_offer.timezone)
+        )
+        order by slot.starts_at
+      )
+      from private.compute_available_slots(
+        v_business_id, p_date, pg_catalog.now(), v_offer.timezone, v_duration,
+        v_offer.slot_interval_minutes, v_offer.buffer_minutes,
+        v_offer.minimum_booking_notice_minutes, v_offer.maximum_booking_advance_days
+      ) slot
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+revoke all on function public.get_public_availability(text, uuid, date, uuid[]) from public;
+grant execute on function public.get_public_availability(text, uuid, date, uuid[]) to anon, authenticated, service_role;
 
 -- Public booking: the answers, the server's price and duration, and what
 -- she was shown (optional guard). Same lock, idempotency and checks as

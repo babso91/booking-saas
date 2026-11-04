@@ -16,7 +16,11 @@ import {
   updateCategory,
   type CatalogServiceDto,
 } from "@/features/catalog/data/catalog";
-import { quote, type ServiceOption } from "@/features/catalog/model";
+import {
+  quote,
+  type OptionChoice,
+  type ServiceOption,
+} from "@/features/catalog/model";
 import type { SetServiceOptionsInput } from "@/features/catalog/schemas";
 import {
   createService as createServiceData,
@@ -382,7 +386,9 @@ describe("isolation between businesses", () => {
       expect(error).toBeNull();
       expect(data).toEqual([]);
     }
-    expect((await getCatalog(bruno.client, studioA.id)).categories).toEqual([]);
+    expect(await codeOf(() => getCatalog(bruno.client, studioA.id))).toBe(
+      "forbidden",
+    );
 
     // Writes through the functions: refused, nothing changed.
     const refused = [
@@ -535,10 +541,12 @@ describe("options", () => {
     expect(first.version).toBe(2);
 
     // Edit: a price changes, the optional group goes, a new answer comes.
-    const [longueur] = first.options as [ServiceOption, ServiceOption];
+    const [longueur, depose] = first.options as [ServiceOption, ServiceOption];
     const second = await setServiceOptions(alice.client, studio.id, {
       serviceId,
       expectedVersion: first.version,
+      // The optional group goes: deleted on purpose.
+      deletedOptionIds: [depose.id],
       options: [
         {
           id: longueur.id,
@@ -578,6 +586,8 @@ describe("options", () => {
     const retried = await setServiceOptions(alice.client, studio.id, {
       serviceId,
       expectedVersion: first.version,
+      // The optional group goes: deleted on purpose.
+      deletedOptionIds: [depose.id],
       options: [
         {
           id: longueur.id,
@@ -620,6 +630,7 @@ describe("options", () => {
         setServiceOptions(alice.client, studio.id, {
           serviceId,
           expectedVersion: second.version,
+          deletedOptionIds: [longueur.id],
           options: [0, 1, 2].map((index) => ({
             question: `Étape ${index}`,
             required: true,
@@ -648,6 +659,7 @@ describe("options", () => {
       serviceId,
       expectedVersion: second.version,
       options: [],
+      deletedOptionIds: [longueur.id],
     });
     expect(none.options).toEqual([]);
     const { rows } = await db.query(
@@ -1052,6 +1064,7 @@ describe("a catalogue changed between reading and booking", () => {
       serviceId,
       expectedVersion: raised.version,
       options: [{ ...longueur, choices: [longueur.choices[0]!] }, depose],
+      deletedChoiceIds: [volume],
     });
     expect(
       await codeOf(() =>
@@ -1098,7 +1111,7 @@ describe("a catalogue changed between reading and booking", () => {
       userId: alice.userId,
     });
     await edit.connection.query(
-      "select public.set_service_options($1, $2, $3, $4::jsonb)",
+      "select public.set_service_options($1, $2, $3, $4::jsonb, '{}'::uuid[], $5::uuid[])",
       [
         studio.id,
         serviceId,
@@ -1117,6 +1130,7 @@ describe("a catalogue changed between reading and booking", () => {
             choices: depose.choices,
           },
         ]),
+        [volume],
       ],
     );
     const tag = randomUUID();
@@ -1247,6 +1261,7 @@ describe("history", () => {
       serviceId,
       expectedVersion: renamed.version,
       options: [],
+      deletedOptionIds: current.options.map((option) => option.id),
     });
     await deleteCategory(alice.client, studio.id, category.id);
 
@@ -1699,5 +1714,266 @@ describe("the agenda: the same rule for her own bookings", () => {
       }),
     ).toBe("appointment_not_editable");
     expect(await edit(made.id!, { serviceId })).toBe("ok");
+  });
+});
+
+describe("a catalogue larger than one API page (PostgREST max_rows = 1000)", () => {
+  // 51 services × 20 answers = 1 020 answers: more than one page.
+  let studio: TestBusiness;
+  let services: string[];
+
+  const twenty = (prefix: string) => [
+    {
+      question: "Teinte",
+      required: true,
+      choices: Array.from({ length: 20 }, (_, index) => ({
+        label: `${prefix} ${index + 1}`,
+        priceDeltaCents: index * 100,
+        durationDeltaMinutes: 0,
+      })),
+    },
+  ];
+
+  beforeAll(async () => {
+    studio = await freshStudio();
+    services = [];
+    for (let index = 0; index < 51; index += 1) {
+      const id = await createService(studio.id, {
+        name: `Prestation ${index + 1}`,
+      });
+      await withOptions(alice, studio.id, id, twenty(`R${index + 1}`));
+      services.push(id);
+    }
+  }, 120_000);
+
+  it("is read whole: every answer of every service", async () => {
+    const { count } = await alice.client
+      .from("service_option_choices")
+      .select("id", { count: "exact", head: true })
+      .eq("business_id", studio.id);
+    expect(count).toBe(1020);
+    // A plain table read stops at one page (what the catalogue read did).
+    const { data: page } = await alice.client
+      .from("service_option_choices")
+      .select("id")
+      .eq("business_id", studio.id);
+    expect(page!.length).toBe(1000);
+
+    const catalog = await getCatalog(alice.client, studio.id);
+    expect(catalog.services).toHaveLength(51);
+    for (const service of catalog.services) {
+      expect(service.options[0]!.choices).toHaveLength(20);
+    }
+    const one = await getCatalogService(alice.client, studio.id, services[50]!);
+    expect(one.options[0]!.choices).toHaveLength(20);
+  });
+
+  it("an answer left out without being deleted is refused, nothing written", async () => {
+    const service = await getCatalogService(
+      alice.client,
+      studio.id,
+      services[50]!,
+    );
+    const [option] = service.options as [ServiceOption];
+    expect(
+      await codeOf(() =>
+        setServiceOptions(alice.client, studio.id, {
+          serviceId: service.id,
+          expectedVersion: service.version,
+          options: [{ ...option, choices: option.choices.slice(0, 19) }],
+        }),
+      ),
+    ).toBe("options_incomplete");
+    // A whole group left out without being deleted: refused too.
+    expect(
+      await codeOf(() =>
+        setServiceOptions(alice.client, studio.id, {
+          serviceId: service.id,
+          expectedVersion: service.version,
+          options: [],
+        }),
+      ),
+    ).toBe("options_incomplete");
+    expect(
+      await getCatalogService(alice.client, studio.id, service.id),
+    ).toEqual(service);
+  });
+
+  it("deleting and replacing on purpose are done exactly as asked", async () => {
+    const service = await getCatalogService(
+      alice.client,
+      studio.id,
+      services[49]!,
+    );
+    const [option] = service.options as [ServiceOption];
+    const last = option.choices[19]!;
+    const deleted = await setServiceOptions(alice.client, studio.id, {
+      serviceId: service.id,
+      expectedVersion: service.version,
+      options: [{ ...option, choices: option.choices.slice(0, 19) }],
+      deletedChoiceIds: [last.id],
+    });
+    expect(deleted.options[0]!.choices.map((choice) => choice.id)).toEqual(
+      option.choices.slice(0, 19).map((choice) => choice.id),
+    );
+    const replaced = await setServiceOptions(alice.client, studio.id, {
+      serviceId: service.id,
+      expectedVersion: deleted.version,
+      options: [
+        {
+          question: "Nouvelle question",
+          required: false,
+          choices: [
+            { label: "Seule", priceDeltaCents: 0, durationDeltaMinutes: 0 },
+          ],
+        },
+      ],
+      deletedOptionIds: [option.id],
+    });
+    expect(replaced.options).toEqual([
+      expect.objectContaining({
+        question: "Nouvelle question",
+        required: false,
+      }),
+    ]);
+    // A retry of that request, once applied: answered as it is.
+    expect(
+      await setServiceOptions(alice.client, studio.id, {
+        serviceId: service.id,
+        expectedVersion: deleted.version,
+        options: [
+          {
+            question: "Nouvelle question",
+            required: false,
+            choices: [
+              { label: "Seule", priceDeltaCents: 0, durationDeltaMinutes: 0 },
+            ],
+          },
+        ],
+        deletedOptionIds: [option.id],
+      }),
+    ).toEqual(replaced);
+  });
+});
+
+describe("ids are compared as uuids", () => {
+  it("the same answer id in another case is the same id: refused before any write", async () => {
+    const studio = await freshStudio();
+    const serviceId = await createService(studio.id);
+    const service = await withOptions(alice, studio.id, serviceId, lashOptions);
+    const [longueur, depose] = service.options as [
+      ServiceOption,
+      ServiceOption,
+    ];
+    const [naturelle, volume] = longueur.choices as [
+      OptionChoice,
+      OptionChoice,
+    ];
+    const { error } = await alice.client.rpc("set_service_options", {
+      p_business_id: studio.id,
+      p_service_id: serviceId,
+      p_expected_version: service.version,
+      p_options: [
+        {
+          ...longueur,
+          choices: [
+            { ...naturelle, id: naturelle.id.toUpperCase() },
+            { ...naturelle, id: naturelle.id.toLowerCase(), label: "Doublon" },
+            volume,
+          ],
+        },
+        depose,
+      ],
+    });
+    expect(error?.message).toBe("invalid_options");
+    // The same group id twice, in two spellings.
+    const twice = await alice.client.rpc("set_service_options", {
+      p_business_id: studio.id,
+      p_service_id: serviceId,
+      p_expected_version: service.version,
+      p_options: [
+        { ...longueur, id: longueur.id.toUpperCase() },
+        {
+          id: longueur.id.toLowerCase(),
+          question: "Doublon",
+          required: false,
+          choices: [
+            { label: "Nouvelle", priceDeltaCents: 0, durationDeltaMinutes: 0 },
+          ],
+        },
+        depose,
+      ],
+    });
+    expect(twice.error?.message).toBe("invalid_options");
+    expect(await getCatalogService(alice.client, studio.id, serviceId)).toEqual(
+      service,
+    );
+  });
+});
+
+describe("the total price fits what an appointment can store", () => {
+  const MAX = 2_147_483_647;
+
+  it("options that would overflow it are refused when written", async () => {
+    const studio = await freshStudio();
+    const serviceId = await createService(studio.id, {
+      priceCents: MAX - 1000,
+    });
+    expect(
+      await codeOf(() =>
+        withOptions(alice, studio.id, serviceId, [
+          {
+            question: "Supplément",
+            required: false,
+            choices: [
+              { label: "Oui", priceDeltaCents: 1001, durationDeltaMinutes: 0 },
+            ],
+          },
+        ]),
+      ),
+    ).toBe("validation_error");
+    // Exactly at the limit: accepted, and booked without overflow.
+    const fits = await withOptions(alice, studio.id, serviceId, [
+      {
+        question: "Supplément",
+        required: false,
+        choices: [
+          { label: "Oui", priceDeltaCents: 1000, durationDeltaMinutes: 0 },
+        ],
+      },
+    ]);
+    expect(
+      await quotePublicService(anonClient(), studio.slug, serviceId, [
+        choiceId(fits, "Oui"),
+      ]),
+    ).toMatchObject({ priceCents: MAX });
+  });
+
+  it("raising the service's price past it, with options, is refused", async () => {
+    const studio = await freshStudio();
+    const serviceId = await createService(studio.id, { priceCents: 5000 });
+    const service = await withOptions(alice, studio.id, serviceId, [
+      {
+        question: "Supplément",
+        required: false,
+        choices: [
+          { label: "Oui", priceDeltaCents: 5000, durationDeltaMinutes: 0 },
+        ],
+      },
+    ]);
+    const { error } = await db
+      .query("update public.services set price_cents = $2 where id = $1", [
+        serviceId,
+        MAX - 4999,
+      ])
+      .then(
+        () => ({ error: null }),
+        (caught: { message: string }) => ({ error: caught.message }),
+      );
+    expect(error).toBe("price_too_high");
+    expect(
+      (await getCatalogService(alice.client, studio.id, serviceId)).priceCents,
+    ).toBe(5000);
+    void service;
   });
 });

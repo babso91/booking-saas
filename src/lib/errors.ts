@@ -36,6 +36,8 @@ export const appErrorMessages = {
     "Cette catégorie a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   category_deleted:
     "Cette catégorie a déjà été créée, puis supprimée. Elle n’a pas été recréée.",
+  options_incomplete:
+    "Les options de cette prestation n’ont pas été chargées en entier, ou ont changé. Rechargez-la avant d’enregistrer.",
   options_required:
     "Choisissez une réponse pour chaque option obligatoire de cette prestation.",
   option_choice_unavailable:
@@ -190,6 +192,7 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   category_not_found: 404,
   stale_category: 409,
   category_deleted: 410,
+  options_incomplete: 409,
   options_required: 422,
   option_choice_unavailable: 409,
   quote_changed: 409,

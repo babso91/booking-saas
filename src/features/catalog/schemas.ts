@@ -63,21 +63,45 @@ const optionSchema = z.object({
   choices: z.array(choiceSchema).min(1).max(catalogLimits.maxChoices),
 });
 
-/** All the options of a service, in order (what is left out is deleted). */
+const idsSchema = (max: number) =>
+  z
+    .array(z.uuid())
+    .max(max)
+    .refine(
+      (ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length,
+      {
+        message: "Un identifiant apparaît plusieurs fois.",
+      },
+    );
+
+/**
+ * All the options of a service, in order. Nothing is deleted by omission:
+ * an existing group or answer left out must be listed in `deletedOptionIds`
+ * / `deletedChoiceIds`, otherwise the save is refused (`options_incomplete`),
+ * so an editor that loaded the options partially can never delete what it
+ * did not see.
+ */
 export const setServiceOptionsSchema = z.object({
   serviceId: z.uuid(),
   expectedVersion: versionSchema,
   options: z.array(optionSchema).max(catalogLimits.maxOptions),
+  deletedOptionIds: idsSchema(100).default([]),
+  deletedChoiceIds: idsSchema(1000).default([]),
 });
 
 /** The answers chosen when booking: one id per answered group. */
 export const optionChoiceIdsSchema = z
   .array(z.uuid())
   .max(50)
-  .refine((ids) => new Set(ids).size === ids.length, {
-    message: "Une réponse apparaît plusieurs fois.",
-  });
+  .refine(
+    (ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length,
+    { message: "Une réponse apparaît plusieurs fois." },
+  );
 
 export type CreateCategoryInput = z.output<typeof createCategorySchema>;
 export type UpdateCategoryInput = z.output<typeof updateCategorySchema>;
-export type SetServiceOptionsInput = z.output<typeof setServiceOptionsSchema>;
+/** Without deletions: `deletedOptionIds` / `deletedChoiceIds` default to none. */
+export type SetServiceOptionsInput = Omit<
+  z.output<typeof setServiceOptionsSchema>,
+  "deletedOptionIds" | "deletedChoiceIds"
+> & { deletedOptionIds?: string[]; deletedChoiceIds?: string[] };

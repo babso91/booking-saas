@@ -142,6 +142,11 @@ export const errorCopy: Record<
     message:
       "Cette catégorie avait déjà été créée, puis supprimée. Elle n’a pas été recréée.",
   },
+  options_incomplete: {
+    title: "Options à recharger",
+    message:
+      "Les options n’ont pas été chargées en entier ou ont changé. Recharge la prestation avant d’enregistrer.",
+  },
   options_required: {
     title: "Option à choisir",
     message: "Choisis une réponse pour chaque option obligatoire.",

@@ -10,11 +10,7 @@ import type {
   SetServiceOptionsInput,
   UpdateCategoryInput,
 } from "@/features/catalog/schemas";
-import {
-  getService,
-  listServices,
-  type ServiceDto,
-} from "@/features/services/data/services";
+import type { ServiceDto } from "@/features/services/data/services";
 import { AppException, appErrorMessages } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
@@ -64,103 +60,51 @@ function toCategoryDto(row: CategoryRow): CategoryDto {
   };
 }
 
+type CatalogDocument = {
+  categories: CategoryDto[];
+  services: (Omit<CatalogServiceDto, "options"> & {
+    options: ServiceOption[];
+  })[];
+};
+
+/**
+ * Her catalogue, or one service of it, as one document read in one
+ * snapshot (public.get_catalog). One row whatever its size: the API's row
+ * cap (PostgREST max_rows) can never truncate it. An editor still never
+ * deletes by omission (setServiceOptions): what it did not receive is
+ * refused, not removed.
+ */
+async function readCatalog(
+  client: AppSupabaseClient,
+  businessId: string,
+  serviceId?: string,
+): Promise<CatalogDocument> {
+  const { data, error } = await client.rpc("get_catalog", {
+    p_business_id: businessId,
+    p_service_id: serviceId,
+  });
+  if (error) throw databaseException(error);
+  return data as CatalogDocument;
+}
+
+/** Her categories, in her order. */
 export async function listCategories(
   client: AppSupabaseClient,
   businessId: string,
 ): Promise<CategoryDto[]> {
-  const { data, error } = await client
-    .from("service_categories")
-    .select(CATEGORY_COLUMNS)
-    .eq("business_id", businessId)
-    .order("display_order")
-    .order("name")
-    .order("id");
-  if (error) throw databaseException(error);
-  return data.map(toCategoryDto);
-}
-
-/** The options of these services, by service id, in her order. */
-async function optionsOf(
-  client: AppSupabaseClient,
-  businessId: string,
-  serviceIds: string[],
-): Promise<Map<string, ServiceOption[]>> {
-  const byService = new Map<string, ServiceOption[]>();
-  if (serviceIds.length === 0) return byService;
-
-  const { data: options, error } = await client
-    .from("service_options")
-    .select("id, service_id, question, required, display_order")
-    .eq("business_id", businessId)
-    .in("service_id", serviceIds)
-    .order("display_order")
-    .order("id");
-  if (error) throw databaseException(error);
-
-  const optionIds = options.map((option) => option.id);
-  const { data: choices, error: choicesError } = optionIds.length
-    ? await client
-        .from("service_option_choices")
-        .select(
-          "id, option_id, label, price_delta_cents, duration_delta_minutes, display_order",
-        )
-        .eq("business_id", businessId)
-        .in("option_id", optionIds)
-        .order("display_order")
-        .order("id")
-    : { data: [], error: null };
-  if (choicesError) throw databaseException(choicesError);
-
-  const byOption = new Map<string, ServiceOption>();
-  for (const option of options) {
-    const entry: ServiceOption = {
-      id: option.id,
-      question: option.question,
-      required: option.required,
-      choices: [],
-    };
-    byOption.set(option.id, entry);
-    const list = byService.get(option.service_id) ?? [];
-    list.push(entry);
-    byService.set(option.service_id, list);
-  }
-  for (const choice of choices) {
-    byOption.get(choice.option_id)?.choices.push({
-      id: choice.id,
-      label: choice.label,
-      priceDeltaCents: choice.price_delta_cents,
-      durationDeltaMinutes: choice.duration_delta_minutes,
-    });
-  }
-  return byService;
+  return (await readCatalog(client, businessId)).categories;
 }
 
 /**
- * Her whole catalogue: categories, services (active or not) and options.
- * Not one snapshot: a write between the reads is possible; each service's
- * `version` (which changes with its options) is what an edit is checked
- * against.
+ * Her whole catalogue: categories, services (active or not) and options,
+ * complete and from one snapshot. Each service's `version` (which changes
+ * with its options) is what an edit is checked against.
  */
 export async function getCatalog(
   client: AppSupabaseClient,
   businessId: string,
 ): Promise<CatalogDto> {
-  const [categories, services] = await Promise.all([
-    listCategories(client, businessId),
-    listServices(client, businessId),
-  ]);
-  const options = await optionsOf(
-    client,
-    businessId,
-    services.map((service) => service.id),
-  );
-  return {
-    categories,
-    services: services.map((service) => ({
-      ...service,
-      options: options.get(service.id) ?? [],
-    })),
-  };
+  return readCatalog(client, businessId);
 }
 
 export async function getCatalogService(
@@ -168,9 +112,9 @@ export async function getCatalogService(
   businessId: string,
   serviceId: string,
 ): Promise<CatalogServiceDto> {
-  const service = await getService(client, businessId, serviceId);
-  const options = await optionsOf(client, businessId, [serviceId]);
-  return { ...service, options: options.get(serviceId) ?? [] };
+  const [service] = (await readCatalog(client, businessId, serviceId)).services;
+  if (!service) throw new AppException("not_found");
+  return service;
 }
 
 async function getCategory(
@@ -268,8 +212,10 @@ export async function deleteCategory(
 
 /**
  * Replaces the options of a service, as a whole, if it is still at
- * `expectedVersion` (`stale_service` otherwise). Answers the service with
- * its new options and version.
+ * `expectedVersion` (`stale_service` otherwise). Nothing is deleted by
+ * omission: a group or answer left out must be in `deletedOptionIds` /
+ * `deletedChoiceIds`, or the save is refused (`options_incomplete`).
+ * Answers the service with its new options and version.
  */
 export async function setServiceOptions(
   client: AppSupabaseClient,
@@ -291,6 +237,8 @@ export async function setServiceOptions(
         durationDeltaMinutes: choice.durationDeltaMinutes,
       })),
     })),
+    p_deleted_option_ids: input.deletedOptionIds ?? [],
+    p_deleted_choice_ids: input.deletedChoiceIds ?? [],
   });
   if (error) throw databaseException(error);
   return getCatalogService(client, businessId, input.serviceId);
@@ -339,5 +287,49 @@ export async function quotePublicService(
     priceCents: data.price_cents,
     currency: data.currency,
     options: data.options as OptionSnapshot[],
+  };
+}
+
+export type PublicAvailability = {
+  quote: PublicQuote;
+  /** For exactly `quote.durationMinutes`: same read of the catalogue. */
+  slots: {
+    startsAt: string;
+    endsAt: string;
+    localStartsAt: string;
+    localEndsAt: string;
+  }[];
+};
+
+/**
+ * Slots and the quote they are for, from one read of the catalogue
+ * (public.get_public_availability): they always agree. The booking
+ * re-validates both under the schedule lock.
+ */
+export async function getPublicAvailability(
+  client: AppSupabaseClient,
+  query: {
+    slug: string;
+    serviceId: string;
+    date: string;
+    optionChoiceIds?: string[];
+  },
+): Promise<PublicAvailability> {
+  const { data, error } = await client.rpc("get_public_availability", {
+    p_slug: query.slug,
+    p_service_id: query.serviceId,
+    p_date: query.date,
+    p_option_choice_ids: query.optionChoiceIds ?? [],
+  });
+  if (error) throw databaseException(error);
+  const answer = data as PublicAvailability;
+  return {
+    quote: answer.quote,
+    slots: answer.slots.map((slot) => ({
+      startsAt: new Date(slot.startsAt).toISOString(),
+      endsAt: new Date(slot.endsAt).toISOString(),
+      localStartsAt: slot.localStartsAt,
+      localEndsAt: slot.localEndsAt,
+    })),
   };
 }

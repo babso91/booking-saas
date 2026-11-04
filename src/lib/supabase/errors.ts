@@ -27,6 +27,8 @@ const domainMessages: Record<string, AppErrorCode> = {
   category_not_found: "category_not_found",
   stale_category: "stale_category",
   options_required: "options_required",
+  options_incomplete: "options_incomplete",
+  price_too_high: "validation_error",
   option_choice_unavailable: "option_choice_unavailable",
   quote_changed: "quote_changed",
   invalid_options: "validation_error",

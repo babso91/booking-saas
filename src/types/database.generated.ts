@@ -995,6 +995,12 @@ isOneToOne: false
               "ends_at": string,"local_ends_at": string,"local_starts_at": string,"starts_at": string
             }[]
                            },
+"get_catalog":
+{ Args: { "p_business_id": string,"p_service_id"?: string }; Returns: Json
+                           },
+"get_public_availability":
+{ Args: { "p_date": string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_slug": string }; Returns: Json
+                           },
 "get_public_business":
 { Args: { "p_slug": string }; Returns: {
               "cancellation_policy": string,"currency": string,"description": string,"location": string,"logo_path": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"name": string,"slot_interval_minutes": number,"slug": string,"timezone": string,"today": string
@@ -1092,7 +1098,7 @@ isOneToOne: false
             }[]
                            },
 "set_service_options":
-{ Args: { "p_business_id": string,"p_expected_version": number,"p_options": Json,"p_service_id": string }; Returns: number
+{ Args: { "p_business_id": string,"p_deleted_choice_ids"?: (string)[],"p_deleted_option_ids"?: (string)[],"p_expected_version": number,"p_options": Json,"p_service_id": string }; Returns: number
                            },
 "update_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_expected_version": number,"p_name"?: string,"p_visible"?: boolean }; Returns: {
