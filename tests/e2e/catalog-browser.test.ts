@@ -41,15 +41,19 @@ const VARIANTS = [
 async function publicCatalog(slug: string) {
   const response = await fetch(`${APP}/api/public/businesses/${slug}`);
   expect(response.ok).toBe(true);
-  return (await response.json()) as {
-    services: { name: string }[];
-    catalog: {
-      groups: {
-        category: { name: string } | null;
-        services: { name: string }[];
-      }[];
+  // The route answers { data: { business, services, catalog } }.
+  const { data } = (await response.json()) as {
+    data: {
+      services: { name: string }[];
+      catalog: {
+        groups: {
+          category: { name: string } | null;
+          services: { name: string }[];
+        }[];
+      };
     };
   };
+  return data;
 }
 
 const saveDialog = async (page: Page) => {
