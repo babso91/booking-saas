@@ -746,24 +746,29 @@ function ServiceRow({
         >
           Modifier
         </button>
-        <button
-          type="button"
-          onClick={() => onMove(-1)}
-          disabled={locked || index === 0}
-          aria-label={`Monter ${service.name}`}
-          className={small}
-        >
-          ↑
-        </button>
-        <button
-          type="button"
-          onClick={() => onMove(1)}
-          disabled={locked || index === count - 1}
-          aria-label={`Descendre ${service.name}`}
-          className={small}
-        >
-          ↓
-        </button>
+        {/* Alone in its section: nowhere to go, no arrows to read. */}
+        {count > 1 ? (
+          <>
+            <button
+              type="button"
+              onClick={() => onMove(-1)}
+              disabled={locked || index === 0}
+              aria-label={`Monter ${service.name}`}
+              className={small}
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              onClick={() => onMove(1)}
+              disabled={locked || index === count - 1}
+              aria-label={`Descendre ${service.name}`}
+              className={small}
+            >
+              ↓
+            </button>
+          </>
+        ) : null}
         <button
           type="button"
           onClick={onDelete}
