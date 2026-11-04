@@ -258,7 +258,7 @@ describe("days and slots", () => {
     ).toBeTruthy();
     expect(
       screen
-        .getByRole("button", { name: dayLabel(today) })
+        .getByRole("button", { name: new RegExp(`, ${dayLabel(today)}$`) })
         .getAttribute("aria-pressed"),
     ).toBe("true");
   });
@@ -294,7 +294,11 @@ describe("days and slots", () => {
     renderPage();
     await chooseService();
     const tomorrow = addDays(today, 1);
-    fireEvent.click(screen.getByRole("button", { name: dayLabel(tomorrow) }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(`, ${dayLabel(tomorrow)}$`),
+      }),
+    );
     // Tomorrow answers first, then today's late answer arrives.
     second.resolve(
       await ok({

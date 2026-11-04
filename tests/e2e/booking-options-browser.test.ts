@@ -141,7 +141,7 @@ describe.each(VARIANTS)(
         .waitFor();
       const tomorrow = addDays(businessToday("Europe/Paris"), 1);
       await page
-        .getByRole("button", { name: dayLabel(tomorrow), exact: true })
+        .getByRole("button", { name: new RegExp(`, ${dayLabel(tomorrow)}$`) })
         .click();
       const slots = page.getByRole("list", {
         name: `Créneaux du ${dayLabel(tomorrow)}`,

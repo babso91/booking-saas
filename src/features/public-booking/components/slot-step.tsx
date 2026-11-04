@@ -144,7 +144,6 @@ export function SlotStep({
                 type="button"
                 onClick={() => flow.actions.chooseDate(day)}
                 aria-pressed={selected}
-                aria-label={dayLabel(day)}
                 className={cn(
                   "flex min-w-0 cursor-pointer flex-col items-center gap-0.5 rounded-2xl border px-0.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
                   selected
@@ -159,6 +158,9 @@ export function SlotStep({
                   {parts.day}
                 </span>
                 <span className="text-[11.5px] opacity-80">{parts.month}</span>
+                {/* Its name starts with what is written (voice control),
+                    then says the day in full. */}
+                <span className="sr-only">, {dayLabel(day)}</span>
               </button>
             );
           })}
