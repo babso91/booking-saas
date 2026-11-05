@@ -21,13 +21,31 @@ import { SlotStep } from "./slot-step";
 export function PublicBooking({
   business,
   services,
+  embedded = false,
+  initialServiceId,
 }: {
   business: PublicBusiness;
   services: PublicService[];
+  /**
+   * Inside her mini-site's booking sheet: the steps only (the site already
+   * says who she is), in a <div> rather than the page's <main>.
+   */
+  embedded?: boolean;
+  /** The service she tapped on her mini-site: its slots open at once. */
+  initialServiceId?: string;
 }) {
   const flow = useBookingFlow({ business, services });
   const heading = useRef<HTMLHeadingElement>(null);
   const opened = useRef(false);
+  const asked = useRef(initialServiceId);
+
+  // Once, on arrival: the same action as a tap on that service.
+  useEffect(() => {
+    if (!asked.current) return;
+    flow.actions.chooseService(asked.current);
+    asked.current = undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
+  }, []);
 
   // Each step change moves focus to its title (not on arrival).
   useEffect(() => {
@@ -39,26 +57,35 @@ export function PublicBooking({
     heading.current?.scrollIntoView?.({ block: "start" });
   }, [flow.step]);
 
+  const Root = embedded ? "div" : "main";
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-xl flex-col gap-7 px-4 pt-8 pb-16 sm:px-6 sm:pt-12">
-      <header className="flex flex-col gap-2">
-        <p className="text-[13px] font-medium tracking-wide text-ink-muted uppercase">
-          Réservation en ligne
-        </p>
-        <h1 className="font-display text-[36px] leading-none wrap-anywhere text-ink sm:text-[44px]">
-          {business.name}
-        </h1>
-        {business.location ? (
-          <p className="text-[14.5px] wrap-anywhere text-ink-soft">
-            {business.location}
+    <Root
+      className={
+        embedded
+          ? "flex w-full flex-col gap-7"
+          : "mx-auto flex min-h-dvh w-full max-w-xl flex-col gap-7 px-4 pt-8 pb-16 sm:px-6 sm:pt-12"
+      }
+    >
+      {embedded ? null : (
+        <header className="flex flex-col gap-2">
+          <p className="text-[13px] font-medium tracking-wide text-ink-muted uppercase">
+            Réservation en ligne
           </p>
-        ) : null}
-        {business.description ? (
-          <p className="text-[14.5px] leading-relaxed wrap-anywhere whitespace-pre-line text-ink-soft">
-            {business.description}
-          </p>
-        ) : null}
-      </header>
+          <h1 className="font-display text-[36px] leading-none wrap-anywhere text-ink sm:text-[44px]">
+            {business.name}
+          </h1>
+          {business.location ? (
+            <p className="text-[14.5px] wrap-anywhere text-ink-soft">
+              {business.location}
+            </p>
+          ) : null}
+          {business.description ? (
+            <p className="text-[14.5px] leading-relaxed wrap-anywhere whitespace-pre-line text-ink-soft">
+              {business.description}
+            </p>
+          ) : null}
+        </header>
+      )}
 
       {flow.gone ? (
         <Notice tone="warning" title="Réservation indisponible">
@@ -87,6 +114,6 @@ export function PublicBooking({
           ) : null}
         </>
       )}
-    </main>
+    </Root>
   );
 }

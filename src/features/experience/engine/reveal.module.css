@@ -1,0 +1,91 @@
+/*
+ * Reveals on scroll, as progressive enhancement. Nothing here hides
+ * anything until the site's root is ARMED, which only happens in the
+ * browser after hydration, with IntersectionObserver available and motion
+ * not reduced (site.tsx). Without JavaScript, before hydration, or if it
+ * fails, every element is simply visible.
+ *
+ * Armed: elements already on screen are marked revealed at once (no
+ * flash); the others start in their hidden pose, out of sight, and take
+ * their revealed pose when they come into view. The pose and timing
+ * follow the site's motion language (--reveal-d, --reveal-ease, step).
+ */
+
+.armed [data-reveal] {
+  transition-duration: var(--reveal-d, 1s);
+  transition-timing-function: var(--reveal-ease, ease-out);
+  transition-delay: var(--reveal-delay, 0s);
+}
+
+/* Cut: a hard-edged wipe from the top (a mask: the box stays observable). */
+.armed[data-reveal-kind="cut"] [data-reveal] {
+  mask-image: linear-gradient(#000, #000);
+  mask-repeat: no-repeat;
+  mask-position: top;
+  mask-size: 100% 100%;
+  transition-property: mask-size;
+}
+.armed[data-reveal-kind="cut"] [data-reveal]:not([data-revealed]) {
+  mask-size: 100% 0%;
+}
+
+/* Snap: a springy pop. */
+.armed[data-reveal-kind="snap"] [data-reveal] {
+  transition-property: opacity, transform;
+}
+.armed[data-reveal-kind="snap"] [data-reveal]:not([data-revealed]) {
+  opacity: 0;
+  transform: translateY(30px) scale(0.86);
+}
+
+/* Bloom: a slow rise out of blur. */
+.armed[data-reveal-kind="bloom"] [data-reveal] {
+  transition-property: opacity, transform, filter;
+}
+.armed[data-reveal-kind="bloom"] [data-reveal]:not([data-revealed]) {
+  opacity: 0;
+  transform: translateY(26px);
+  filter: blur(6px);
+}
+
+/* The order within a group: index × the language's step. */
+.armed [data-reveal-index="1"] {
+  --reveal-delay: calc(1 * var(--reveal-step));
+}
+.armed [data-reveal-index="2"] {
+  --reveal-delay: calc(2 * var(--reveal-step));
+}
+.armed [data-reveal-index="3"] {
+  --reveal-delay: calc(3 * var(--reveal-step));
+}
+.armed [data-reveal-index="4"] {
+  --reveal-delay: calc(4 * var(--reveal-step));
+}
+.armed [data-reveal-index="5"] {
+  --reveal-delay: calc(5 * var(--reveal-step));
+}
+.armed [data-reveal-index="6"] {
+  --reveal-delay: calc(6 * var(--reveal-step));
+}
+.armed [data-reveal-index="7"] {
+  --reveal-delay: calc(7 * var(--reveal-step));
+}
+.armed [data-reveal-index="8"] {
+  --reveal-delay: calc(8 * var(--reveal-step));
+}
+
+/* Already revealed when armed (on screen): no transition, no flash. */
+.armed [data-revealed="now"] {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .armed [data-reveal],
+  .armed [data-reveal]:not([data-revealed]) {
+    transition: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+    mask-size: 100% 100%;
+  }
+}
