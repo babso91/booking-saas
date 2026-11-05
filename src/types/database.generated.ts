@@ -669,13 +669,13 @@ isOneToOne: false
                   ]
                 },"site_assets": {
                   Row: {
-                    "business_id": string,"byte_size": number | null,"content_type": string | null,"created_at": string,"height": number | null,"id": string,"status": string,"width": number | null
+                    "business_id": string,"byte_size": number | null,"content_type": string | null,"created_at": string,"created_by": string | null,"height": number | null,"id": string,"revoked_at": string | null,"revoked_reason": string | null,"status": string,"width": number | null
                   }
                   Insert: {
-                    "business_id": string,"byte_size"?: number | null,"content_type"?: string | null,"created_at"?: string,"height"?: number | null,"id"?: string,"status"?: string,"width"?: number | null
+                    "business_id": string,"byte_size"?: number | null,"content_type"?: string | null,"created_at"?: string,"created_by"?: string | null,"height"?: number | null,"id"?: string,"revoked_at"?: string | null,"revoked_reason"?: string | null,"status"?: string,"width"?: number | null
                   }
                   Update: {
-                    "business_id"?: string,"byte_size"?: number | null,"content_type"?: string | null,"created_at"?: string,"height"?: number | null,"id"?: string,"status"?: string,"width"?: number | null
+                    "business_id"?: string,"byte_size"?: number | null,"content_type"?: string | null,"created_at"?: string,"created_by"?: string | null,"height"?: number | null,"id"?: string,"revoked_at"?: string | null,"revoked_reason"?: string | null,"status"?: string,"width"?: number | null
                   }
                   Relationships: [
                     {
@@ -683,6 +683,12 @@ isOneToOne: false
       columns: ["business_id"]
 isOneToOne: false
       referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "site_assets_created_by_fkey"
+      columns: ["created_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
       referencedColumns: ["id"]
     }
                   ]
@@ -979,6 +985,9 @@ isOneToOne: false
               "business_id": string,"business_name": string,"slug": string,"timezone": string
             }[]
                            },
+"confirm_site_asset":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string,"p_byte_size": number,"p_content_type": string,"p_height": number,"p_width": number }; Returns: undefined
+                           },
 "create_public_booking":
 { Args: { "p_client_ip": unknown,"p_email": string,"p_expected_duration_minutes"?: number,"p_expected_price_cents"?: number,"p_first_name": string,"p_last_name"?: string,"p_option_choice_ids"?: (string)[],"p_phone"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
               "appointment_id": string,"business_name": string,"currency": string,"duration_minutes": number,"ends_at": string,"options": Json,"price_cents": number,"replayed": boolean,"service_name": string,"starts_at": string,"status": string,"timezone": string
@@ -993,6 +1002,9 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_name": string,"p_request_id": string,"p_visible"?: boolean }; Returns: {
               "category_id": string,"status": string
             }[]
+                           },
+"create_site_asset":
+{ Args: { "p_actor": string,"p_business_id": string,"p_byte_size": number,"p_content_type": string }; Returns: string
                            },
 "crm_assert_member":
 { Args: { "p_business_id": string }; Returns: undefined
@@ -1050,6 +1062,12 @@ isOneToOne: false
 "delete_service_category":
 { Args: { "p_business_id": string,"p_category_id": string }; Returns: undefined
                            },
+"delete_site_asset":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: string
+                           },
+"discard_site_asset":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: undefined
+                           },
 "email_outbox_claim":
 { Args: { "p_business_id"?: string,"p_limit"?: number,"p_per_business"?: number }; Returns: Json
                            },
@@ -1091,7 +1109,7 @@ isOneToOne: false
                            },
 "get_public_site":
 { Args: { "p_slug": string }; Returns: {
-              "config": Json,"number": number,"plan": string,"published_at": string,"schema_version": number,"version_id": string
+              "config": Json,"number": number,"plan": string,"published_at": string,"schema_version": number,"unavailable_assets": (string)[],"version_id": string
             }[]
                            },
 "has_business_role":
@@ -1135,6 +1153,12 @@ isOneToOne: false
 "loyalty_update_reward":
 { Args: { "p_active": boolean,"p_business_id": string,"p_description": string,"p_expected_version": number,"p_name": string,"p_points_required": number,"p_reward_id": string,"p_reward_value": number,"p_service_id": string }; Returns: number
                            },
+"member_site_photo":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: boolean
+                           },
+"public_site_photo":
+{ Args: { "p_asset_id": string,"p_slug": string }; Returns: string
+                           },
 "publish_site":
 { Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number }; Returns: {
               "created": boolean,"number": number,"published_at": string,"version_id": string
@@ -1174,6 +1198,12 @@ isOneToOne: false
       } },
 "restore_site_version":
 { Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number,"p_version_id": string }; Returns: number
+                           },
+"revoke_site_asset":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: undefined
+                           },
+"revoke_site_asset_for_privacy":
+{ Args: { "p_asset_id": string,"p_business_id": string }; Returns: undefined
                            },
 "save_member_preferences":
 { Args: { "p_business_id": string,"p_changes": Json,"p_expected_incarnation": string,"p_expected_version": number,"p_membership_id": string }; Returns: {

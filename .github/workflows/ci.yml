@@ -40,11 +40,12 @@ jobs:
           cache: npm
       - run: npm ci
       # Applies every migration from scratch on a real Supabase stack
-      # (PostgreSQL, Auth, PostgREST, Mailpit for confirmation emails).
+      # (PostgreSQL, Auth, PostgREST, Storage for the mini-site photos,
+      # Mailpit for confirmation emails).
       - name: Start local Supabase
         run: >-
           npx supabase start
-          -x studio,imgproxy,vector,logflare,realtime,storage-api,edge-runtime,supavisor,postgres-meta
+          -x studio,imgproxy,vector,logflare,realtime,edge-runtime,supavisor,postgres-meta
       - name: Generated types match the migrated schema
         run: |
           npm run db:types

@@ -36,6 +36,16 @@ export const appErrorMessages = {
     "Certains textes du site ne seraient pas lisibles. Corrigez les couleurs avant de publier.",
   site_asset_unavailable:
     "Une photo du site n’est pas (ou plus) disponible. Choisissez-en une autre.",
+  site_asset_in_use:
+    "Cette photo est utilisée par le brouillon ou une version publiée. Retirez-la, ou révoquez-la.",
+  site_photo_not_found: "Cette photo est introuvable.",
+  site_photo_revoked:
+    "Cette photo a été révoquée. Elle ne peut plus être utilisée.",
+  site_photo_unsupported:
+    "Ce fichier n’est pas une photo JPEG, PNG, WebP ou AVIF.",
+  site_photo_too_large: "Cette photo est trop lourde (10 Mo au plus).",
+  site_photo_invalid:
+    "Cette photo est trop petite (320 px au moins de côté) ou trop allongée.",
   stale_service:
     "Cette prestation a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_deleted:
@@ -202,6 +212,12 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   site_version_not_found: 404,
   site_unreadable: 422,
   site_asset_unavailable: 409,
+  site_asset_in_use: 409,
+  site_photo_not_found: 404,
+  site_photo_revoked: 410,
+  site_photo_unsupported: 415,
+  site_photo_too_large: 413,
+  site_photo_invalid: 422,
   stale_service: 409,
   service_deleted: 410,
   category_not_found: 404,

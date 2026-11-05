@@ -21,7 +21,7 @@ Le laboratoire proposait une ligne `draft` parmi les versions. Le SaaS sépare p
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `public.sites`         | une ligne par établissement : `plan` (`core` \| `signature`), le brouillon (`draft_config`, `draft_schema_version`, `draft_revision`), `published_version_id`                                                                             |
 | `public.site_versions` | une ligne par **publication** : `number` (1, 2, 3… par site), `schema_version`, `config` figée, auteur, date, `restored_from` (la version d'origine quand une restauration a été publiée). **Jamais modifiée ni supprimée** (déclencheur) |
-| `public.site_assets`   | les photos de l'établissement (métadonnées) : seules celles-ci peuvent être référencées par une configuration                                                                                                                             |
+| `public.site_assets`   | les photos de l'établissement : `pending` (envoyée, pas vérifiée), `ready` (vérifiée, déclinaisons produites), `revoked` (révoquée, définitif). Seules celles-ci peuvent être référencées par une configuration (§ 8)                     |
 
 - **Brouillon :** privé, modifiable par les membres de l'établissement seulement. `draft_revision` est le jeton de comparaison : une écriture fondée sur une révision dépassée est refusée (`stale_site_draft`).
 - **Publication :** copie atomique du brouillon dans une nouvelle version, et bascule de `published_version_id` dans la même transaction. Le public ne voit jamais d'état intermédiaire.
@@ -59,7 +59,7 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 - **Scènes :** une liste ordonnée sans doublon. `opening` et `services` sont toujours présentes et ne peuvent pas être masquées (`hidden`).
 - **Textes :** texte brut uniquement, sans HTML ni caractère de contrôle, avec des longueurs bornées (nom 80, activité 80, lieu 80, introduction 600, titre d'œuvre 80, note 300, portrait : nom 80, rôle 80, texte 1 200).
 - **Couleurs :** `#rrggbb`.
-- **Photos :** jamais une URL. Une photo est `{ "asset": "<uuid>" }`, une photo de `site_assets` **de cet établissement** et prête (`ready`), vérifiée par la base à chaque enregistrement. Les points focaux sont indexés par l'identifiant de l'asset, `x` et `y` de 0 à 100.
+- **Photos :** jamais une URL. Une photo est `{ "asset": "<uuid>" }`, une photo de `site_assets` **de cet établissement**, prête (`ready`) ou révoquée (`revoked`, dessinée sans photo : c'est le cas d'une ancienne version restaurée), vérifiée par la base à chaque enregistrement. Une photo en attente, inconnue ou d'un autre établissement est refusée (`site_asset_unavailable`). Les points focaux sont indexés par l'identifiant de l'asset, `x` et `y` de 0 à 100.
 - **Œuvres :** de 0 à 24.
 - **Taille :** 256 Kio au plus pour le document.
 - **Évolution :** `schema_version` est stocké avec chaque brouillon et chaque version. Une version 2 viendra avec des fonctions de migration pures (1 → 2) appliquées à la lecture, sans réécrire l'historique.
@@ -92,7 +92,17 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 - **Nouvelle tentative :** une écriture identique à l'état courant, depuis une révision dépassée, renvoie l'état courant sans rien écrire.
 - **Publier** sans modification depuis la dernière publication ne crée pas de nouvelle version : la réponse est la version publiée actuelle.
 
-**Lecture publique** (sans session) : `getPublishedSite(slug)` pour le rendu serveur, ou `GET /api/public/businesses/[slug]/site`. Elle renvoie `{ versionId, number, publishedAt, plan, schemaVersion, config }` ; `site_not_published` (404) sans publication.
+**Photos** (§ 8) :
+
+| Action                                                   | Réponse                                                                 | Erreurs propres                                                                                                                         |
+| -------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `createSitePhotoUploadAction({ contentType, byteSize })` | `{ assetId, path, token, signedUrl }` : où envoyer l'original           | `validation_error` (type, taille), `rate_limited`                                                                                       |
+| `confirmSitePhotoAction({ assetId })`                    | `SitePhotoDto` prête (type réel, dimensions redressées)                 | `site_photo_not_found` (pas encore reçue), `site_photo_unsupported`, `site_photo_too_large`, `site_photo_invalid`, `site_photo_revoked` |
+| `listSitePhotosAction()`                                 | `SitePhotoDto[]` (en attente, prêtes, révoquées ; plus récente d'abord) | —                                                                                                                                       |
+| `deleteSitePhotoAction({ assetId })`                     | `{ deleted }` (`false` : photo déjà révoquée, rien à supprimer)         | `site_asset_in_use`, `site_photo_not_found`                                                                                             |
+| `revokeSitePhotoAction({ assetId })`                     | rien : révoquée, fichiers supprimés                                     | `site_photo_not_found`                                                                                                                  |
+
+**Lecture publique** (sans session) : `getPublishedSite(slug)` pour le rendu serveur, ou `GET /api/public/businesses/[slug]/site`. Elle renvoie `{ versionId, number, publishedAt, plan, schemaVersion, config, unavailableAssets }` ; `site_not_published` (404) sans publication. `unavailableAssets` : les photos de `config` révoquées depuis la publication, que le rendu dessine **sans photo**.
 
 ## 7. Garanties de concurrence
 
@@ -102,24 +112,73 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 
 ## 8. Photos (PR 2)
 
-**Décision (4 novembre 2026) : bucket privé et proxy du SaaS**, avec vérification de la version publiée et cache maîtrisé. Pas d'URL signée exposée au public.
+**Décisions (4 et 5 novembre 2026) : bucket privé et proxy du SaaS**, WebP seul, cache CDN court, révocation explicite. Pas d'URL signée exposée au public.
 
-- **Stockage :** bucket Supabase Storage **privé** `site-photos`, sous `<business_id>/<asset_id>/…`.
-  - Aucune politique pour les rôles de l'API : le navigateur n'écrit qu'avec une URL d'envoi signée, émise par le serveur après vérification de l'appartenance.
-  - Seul le service lit.
-- **Envoi :**
-  1. `createSitePhotoUploadAction({ contentType, byteSize })` crée l'asset `pending` et une URL d'envoi signée (JPEG, PNG, WebP ou HEIC/HEIF, 10 Mo au plus). Le nombre d'envois en attente par établissement est plafonné.
-  2. Le navigateur envoie l'original.
-  3. `confirmSitePhotoAction({ assetId })` relit le fichier côté serveur et vérifie le type réel (décodage, pas l'extension), la taille et les dimensions. Il produit les déclinaisons puis passe l'asset à `ready`. Un fichier refusé est supprimé.
-- **Déclinaisons, produites une fois à l'envoi :** WebP en 480, 828 et 1200 px de large, orientation corrigée, métadonnées (EXIF, GPS) retirées.
-- **Proxy public :** `GET /api/public/businesses/[slug]/site/photos/[assetId]/[width]`.
-  - Une requête par photo et par taille. La base vérifie que la photo est **référencée par la version publiée** de cet établissement ; sinon 404, même pour une photo existante du brouillon.
-  - Cache : `Cache-Control: public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800`. Les URL sont stables, car une photo ne change jamais : une nouvelle photo, c'est un nouvel asset.
-- **Suppression :** refusée tant que la photo est référencée par le brouillon ou par **n'importe quelle** version de l'historique, pour que la restauration reste possible. Sinon, l'asset et ses fichiers sont supprimés.
-- **Aperçu du studio (membres) :** `GET /api/sites/photos/[assetId]/[width]` sert les mêmes déclinaisons des photos de **son** établissement, qu'elles soient publiées ou non.
-  - Session obligatoire, asset `ready` de l'établissement de la session.
-  - `Cache-Control: private, max-age=300` : jamais de cache CDN, aucune URL signée exposée.
-- **CI :** `storage-api` est démarré (aujourd'hui exclu).
+### Stockage
+
+- Bucket Supabase Storage **privé** `site-photos` (10 Mo au plus par fichier ; JPEG, PNG, WebP, AVIF), sous `<business_id>/<asset_id>/` : `original` le temps de la vérification, puis `w480.webp`, `w828.webp`, `w1200.webp`.
+- **Aucune politique** pour les rôles de l'API : ni le public ni une professionnelle connectée ne lit, ne liste ni n'écrit le bucket directement (testé). Le navigateur n'écrit qu'avec une URL d'envoi signée, pour **un seul chemin**, sans écrasement, émise par le serveur après vérification de l'appartenance. Seul le service lit et supprime.
+- **L'original n'est pas conservé** : il porte les métadonnées de l'appareil (EXIF, GPS). Il est supprimé dès que les déclinaisons existent. Si un autre format est voulu plus tard (AVIF), il faudra conserver un maître nettoyé (sans métadonnées) : décision à prendre à ce moment-là.
+
+### Envoi et conversion
+
+1. `createSitePhotoUploadAction({ contentType, byteSize })` crée l'asset `pending` et l'URL d'envoi signée. Au plus 20 envois en attente par établissement sur 24 h (`rate_limited`).
+2. Le navigateur envoie l'original : `storage.from("site-photos").uploadToSignedUrl(path, token, file)`.
+3. `confirmSitePhotoAction({ assetId })` relit le fichier côté serveur (`sharp` 0.35 / libvips 8.18, `src/features/sites/photos/process.ts`) :
+   - **type réel par décodage**, jamais l'extension ni le type déclaré (un PNG déclaré JPEG est enregistré PNG ; SVG, GIF, HTML, fichier tronqué : refusés) ;
+   - taille (10 Mo), **bombe de décompression** refusée à la lecture de l'en-tête (plus de 50 Mpx), côté court d'au moins 320 px, rapport d'au plus 4:1 ;
+   - **orientation EXIF appliquée** (pixels redressés, testé sur le contenu), conversion sRGB, **aucune métadonnée conservée** (EXIF, GPS, XMP, ICC, commentaires), première image seulement pour une image animée ;
+   - déclinaisons **WebP 480, 828 et 1200 px** (jamais agrandies), puis `ready`.
+
+   Un fichier refusé est oublié (asset et fichiers). Confirmer avant l'arrivée du fichier répond `site_photo_not_found` et laisse l'asset en attente. Confirmer une photo prête renvoie la même réponse.
+
+**iPhone et HEIC (vérifié dans l'environnement cible, 5 novembre 2026) :** le `sharp` précompilé (le même binaire Linux x64 en local, en CI et sur l'hébergement) lit l'AVIF mais **ne décode pas le HEIC** (HEVC, brevets). Le serveur refuse donc `image/heic` et `image/heif` dès la création, avec un message qui guide vers la photothèque.
+
+- **Le studio doit** déclarer `accept="image/jpeg,image/png,image/webp"` sur son sélecteur de fichier : iOS convertit alors la photo HEIC en JPEG au moment du choix.
+- **À vérifier sur un vrai iPhone** avant la mise en production (pas possible ici) : sélection depuis la photothèque et depuis l'appareil photo, photo en portrait (orientation), Live Photo, mode HDR. Le serveur, lui, est testé sur un JPEG d'appareil photo tourné avec GPS.
+
+### Diffusion publique
+
+`GET /api/public/businesses/[slug]/site/photos/[assetId]/[width]` (`width` : 480, 828 ou 1200).
+
+- **À chaque exécution** (chaque absence du cache), la base vérifie : la photo est `ready` (pas révoquée), de cet établissement, et **référencée par sa version publiée**. Sinon 404, même pour une photo existante du brouillon, d'une ancienne version ou d'un autre établissement. Le bucket ne décide jamais : un fichier remis par erreur sous le chemin d'une photo révoquée n'est pas servi (testé).
+- **Cache :** `Cache-Control: public, max-age=0, s-maxage=300`.
+  - CDN : **5 minutes au plus** ; pas de `stale-while-revalidate`.
+  - Navigateur : aucune copie fraîche prolongée (`max-age=0`).
+  - 404, 503 et toute erreur : `no-store`, jamais mis en cache.
+  - Les URL sont naturellement versionnées : une photo ne change jamais, une nouvelle photo est un nouvel asset.
+- En-têtes : `Content-Type: image/webp`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Vercel-Cache-Tag: site-photo-<assetId>`.
+
+### Aperçu du studio (membres)
+
+`GET /api/sites/photos/[assetId]/[width]` : les mêmes déclinaisons des photos `ready` de **son** établissement, publiées ou non.
+
+- Session obligatoire ; l'établissement vient de la session, jamais de la requête.
+- `Cache-Control: private, max-age=300` : le cache de son navigateur seulement, **jamais un cache partagé**. Refus, absence de session et 404 : `no-store`.
+
+### Suppression et révocation
+
+- **Supprimer** (`deleteSitePhotoAction`) : seulement une photo que rien ne référence, ni le brouillon ni **aucune** version (photo ou point focal) ; sinon `site_asset_in_use`. L'asset et ses fichiers disparaissent.
+- **Révoquer** (`revokeSitePhotoAction`), quelles que soient ses références : **définitif et idempotent**.
+  1. La base passe l'asset à `revoked` (date, motif) : dès cet instant, les deux proxys refusent la photo.
+  2. Ses fichiers (original et déclinaisons) sont supprimés. Une nouvelle tentative supprime ce qui resterait.
+  - **L'historique n'est jamais réécrit** : les versions publiées gardent la référence. Le rendu dessine son emplacement sans photo (`unavailableAssets`).
+  - **Pas de résurrection** : restaurer puis republier une ancienne version la réaffiche sans photo (testé) ; une photo révoquée ne redevient jamais prête, ni ne peut être confirmée, ni supprimée pour être recréée. Renvoyer la même image crée un nouvel asset.
+  - Une révocation pendant la conversion gagne : les déclinaisons écrites entre-temps sont supprimées (testé).
+- **Demande de confidentialité** (personne photographiée, demande d'effacement) : `revokeSitePhotoForPrivacy(service, businessId, assetId)` par le service, sans membre, motif `privacy`. Même effet. Le premier motif reste.
+- **Délai réel :** le serveur ne sert plus la photo dès la révocation. Une copie déjà dans un cache CDN peut encore être servie **jusqu'à 5 minutes** ; aucun navigateur n'en garde de copie fraîche. **Aucune suppression instantanée n'est promise** tant que la purge n'est pas testée.
+
+### Purge ciblée et durées plus longues (étude, rien de branché)
+
+- **Possible sur l'hébergement :** chaque réponse publique porte `Vercel-Cache-Tag: site-photo-<assetId>`. La révocation pourrait appeler `dangerouslyDeleteByTag` (`@vercel/functions`) ou l'API `POST /v1/edge-cache/dangerously-delete-by-tags`. Attention : `invalidateByTag` **sert encore la copie périmée** pendant le rafraîchissement, il ne convient donc pas à une révocation.
+- **Avant d'allonger le cache CDN,** il faudra : tester la purge sur un déploiement de prévisualisation (révoquer, puis mesurer le délai de disparition dans plusieurs régions) ; décider du comportement si la purge échoue (réessai, alerte) ; et garder une durée de secours bornée.
+- Le versionnement des URL ne règle pas la révocation : l'URL d'une photo révoquée reste la même ; c'est la base qui la refuse.
+
+### Hors périmètre de la PR 2
+
+- Photos en attente jamais confirmées : leurs originaux restent jusqu'à un nettoyage périodique, à ajouter (tâche planifiée).
+- Fichiers d'un établissement supprimé : même nettoyage.
+- Photos de démonstration des univers : jamais enregistrées ni publiées (§ 10).
 
 ### Étude de performance et de coût (mesures du 4 novembre 2026)
 
@@ -131,28 +190,17 @@ Mesures avec `sharp` 0.35 / libvips 8.18, sur 4 cœurs, pour une photo de 12 Mpx
 | AVIF, effort 0                   | —                              | 0,48 s      | 28 Ko       |
 | AVIF, effort 4                   | 19,6 s                         | 2,9 s       | 20 à 300 Ko |
 
-- **Formats :** WebP seul en V1. Il est lisible par tous les navigateurs visés, et son poids est proche de l'AVIF à effort raisonnable. L'AVIF de qualité coûte jusqu'à 30 fois plus de calcul (près de 20 s par photo dans le cas pessimiste) : trop pour une action serveur, qui risque le dépassement de délai. Il pourra être ajouté plus tard par un traitement en arrière-plan, sans changer les URL.
-- **Pas de transformation à la volée** (imgproxy, optimiseur d'images de la plateforme) : les déclinaisons sont calculées une seule fois, à l'envoi, et le coût par vue est nul.
-- **Coût par vue :**
-  - avec le cache CDN, le proxy (une fonction) ne s'exécute qu'en cas d'absence du cache : environ une fois par photo, par taille et par région CDN et par jour, puis en revalidation ;
-  - chaque exécution fait une lecture de la base (référence publiée) et une lecture du stockage ;
-  - le transfert est celui de la photo servie (25 à 210 Ko selon la taille).
-- **Performance :**
-  - **succès de cache** : le temps du CDN, sans exécution ;
-  - **absence de cache** : démarrage de fonction, une requête SQL et une lecture du stockage. On peut estimer 0,2 à 0,6 s, à mesurer sur l'hébergement réel ;
-  - **photo d'ouverture** (élément LCP) : elle peut être préchauffée juste après une publication, par une requête de fond sur ses trois tailles.
-- **Confidentialité contre cache :**
-  - une photo retirée de la version publiée reste servie par le CDN au plus 24 h, puis le temps d'une revalidation qui répond 404 ;
-  - un navigateur la garde au plus 1 h ;
-  - pour un retrait immédiat (demande légale), il faudra une purge manuelle du CDN, hors V1.
-- **Stockage :** l'original (jusqu'à 10 Mo) plus environ 30 à 320 Ko de déclinaisons par photo. L'original est conservé, pour pouvoir produire d'autres formats plus tard.
+- **Formats :** WebP seul en V1 (décision du 5 novembre 2026), qualité 80. L'AVIF de qualité coûte jusqu'à 30 fois plus de calcul : trop pour une action serveur.
+- **Pas de transformation à la volée** : les déclinaisons sont calculées une seule fois, à l'envoi.
+- **Coût par vue :** avec 5 minutes de CDN, le proxy s'exécute au plus une fois par photo, par taille, par région et par tranche de 5 minutes de trafic. Chaque exécution fait une requête SQL et une lecture du stockage. À mesurer sur l'hébergement réel avant tout réglage.
+- **Stockage :** 30 à 320 Ko de déclinaisons par photo (l'original n'est pas conservé).
 
 ## 9. Découpage
 
 | PR               | Contenu                                                                                                                                                                                                                                                                                                                                                  |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **1** (celle-ci) | `sites`, `site_versions`, `site_assets` (métadonnées). Brouillon avec révision, publication atomique, historique immuable, restauration, lecture publique de la version publiée, forfait côté serveur, validation (schéma, registre, textes, couleurs, appartenance des photos, lisibilité). Tests multi-tenant, concurrence, publication, restauration. |
-| **2**            | Photos réelles : Storage, politiques, envoi signé, vérification du type, déclinaisons, accès public limité à la version publiée, CI avec `storage-api`.                                                                                                                                                                                                  |
+| **2**            | Photos réelles : bucket privé, envoi signé, vérification du type réel, déclinaisons WebP, aperçu des membres, diffusion publique limitée à la version publiée (cache CDN de 5 min), suppression, révocation, CI avec `storage-api`.                                                                                                                      |
 | **UI**           | Studio branché sur les actions ; rendu public : lentille du forfait, `ensureReadable`, catalogue et réservation existants.                                                                                                                                                                                                                               |
 
 ## 10. Décisions produit (validées le 4 novembre 2026)
@@ -162,9 +210,16 @@ Mesures avec `sharp` 0.35 / libvips 8.18, sur 4 cœurs, pour une photo de 12 Mpx
 - **Publier un brouillon inchangé** ne crée pas de nouvelle version.
 - **Lisibilité :** les corrections se font dans le studio (`ensureReadable`), et la vérification à la publication, côté serveur, est obligatoire.
 
+Validées le 5 novembre 2026 :
+
+- **Photos de démonstration :** elles servent uniquement à montrer l'allure des univers dans le studio. Jamais enregistrées dans la configuration d'une professionnelle, jamais publiées. Les compositions artistiques sont préservées, avec des états « sans photo » élégants.
+- **Formats :** WebP seul en V1 (480, 828, 1200 px, produits à l'envoi), pas d'AVIF.
+- **Cache public :** CDN 5 minutes au plus, `max-age=0`, pas de `stale-while-revalidate`, aucun cache partagé des aperçus, des refus ni des 404, vérification serveur à chaque absence du cache. Pas d'allongement avant une étude de purge testée (§ 8).
+- **Révocation :** mécanisme explicite, définitif, sans réécrire l'historique ; une version restaurée affiche un état sans photo (§ 8).
+
 ## 11. Validation du contrat par Claude UI
 
-**État : validé des deux côtés (5 novembre 2026)**, après deux ajustements demandés par Claude UI. Une décision produit reste ouverte (photos de démonstration).
+**État : validé des deux côtés (5 novembre 2026)**, après deux ajustements demandés par Claude UI. La décision produit sur les photos de démonstration est prise (§ 10).
 
 Claude UI a vérifié la conversion de la `SiteConfig` du laboratoire champ par champ : elle est sans perte. Le champ `design` du studio devient `config.universe`. Le catalogue, les saisies de montants et le forfait figé ne sont volontairement pas publiés. Seules les photos de démonstration (identifiants Unsplash) ne sont pas des `{ asset }`.
 
@@ -178,9 +233,4 @@ Claude UI a vérifié la conversion de la `SiteConfig` du laboratoire champ par 
 | 6. Photos                                              | contesté : aucun moyen d'afficher dans le studio les photos du brouillon                                                                             | accepté : route réservée aux membres, sans cache partagé (§ 8), livrée avec la PR 2                      |
 | 7. Catalogue et réservation par leurs routes           | accepté (PR UI #39 et #42 déjà conformes)                                                                                                            | —                                                                                                        |
 
-**Décision produit ouverte, les photos de démonstration des univers :**
-
-- **Recommandation (Claude UI, et backend d'accord) :** ne jamais les enregistrer ni les publier en V1. Elles servent seulement d'aperçu dans le studio, et les scènes ont un vrai état « sans photo ».
-- **Autre option :** un registre fermé `{ stock: "<id>" }` de photos sous licence. Cela demande une extension du format et des droits d'usage.
-
-Claude UI ne branche le studio sur les actions qu'une fois cette décision prise.
+**Photos de démonstration des univers : décidé (5 novembre 2026).** Elles ne servent qu'à l'aperçu dans le studio, ne sont jamais enregistrées ni publiées, et les scènes ont un vrai état « sans photo ». Claude UI peut brancher le studio sur les actions.
