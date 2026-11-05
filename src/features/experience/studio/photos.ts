@@ -1,4 +1,6 @@
-import type { PhotoWidth } from "../engine/engine";
+import { createContext, useContext } from "react";
+
+import type { PhotoSource, PhotoWidth } from "../engine/engine";
 
 // Photos in her studio (docs/SITE_PUBLISHING_CONTRACT.md § 8, § 10).
 //
@@ -17,7 +19,7 @@ export const isDemo = (id: string | null | undefined) =>
 export const demo = (unsplashId: string) => `${DEMO}${unsplashId}`;
 
 /** Where a photo of her studio's preview is served. */
-export function studioPhoto(id: string, width: PhotoWidth | number) {
+export function studioPhoto(id: string, width: PhotoWidth) {
   if (isDemo(id))
     return `https://images.unsplash.com/photo-${id.slice(DEMO.length)}?auto=format&fit=crop&w=${width}&q=72`;
   return `/api/sites/photos/${encodeURIComponent(id)}/${width}`;
@@ -57,3 +59,10 @@ export function photoErrorText(code: string): string {
       return "La photo n’a pas pu être enregistrée. Réessaie.";
   }
 }
+
+/**
+ * Where her studio's panel shows her photos: the same place as its preview
+ * (a design preview's in-memory server keeps them elsewhere).
+ */
+export const StudioPhotos = createContext<PhotoSource>(studioPhoto);
+export const useStudioPhoto = () => useContext(StudioPhotos);

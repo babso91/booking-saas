@@ -3,6 +3,7 @@ import type { SitePlan } from "@/features/sites/data/sites";
 import { renderedFor } from "@/features/sites/universes";
 
 import type { SiteConfig } from "../engine/config";
+import { canonical } from "./canonical";
 
 // Three things are kept apart (docs/SITE_PUBLISHING_CONTRACT.md § 3):
 //   1. the SAVED configuration: everything the professional set, never
@@ -65,8 +66,8 @@ export function effective(config: SiteConfig, plan: Plan): SiteConfig {
 export function dormant(config: SiteConfig) {
   const lens = effective(config, "core");
   return (
-    JSON.stringify(lens.tokens) !== JSON.stringify(config.tokens) ||
-    JSON.stringify(lens.sections) !== JSON.stringify(config.sections) ||
+    canonical(lens.tokens) !== canonical(config.tokens) ||
+    canonical(lens.sections) !== canonical(config.sections) ||
     lens.booking !== config.booking ||
     lens.quickBook !== config.quickBook
   );

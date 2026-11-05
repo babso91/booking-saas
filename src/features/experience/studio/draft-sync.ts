@@ -7,6 +7,7 @@ import type { SiteConfig as SavedConfig } from "@/features/sites/config";
 
 import type { SiteConfig } from "../engine/config";
 import { renderConfigOf } from "../engine/from-site";
+import { canonical } from "./canonical";
 import { savedConfigOf } from "./saved";
 
 // Her draft, saved by itself (docs/SITE_PUBLISHING_CONTRACT.md § 2, § 6,
@@ -59,12 +60,12 @@ export function useDraftSync({
 }) {
   const last = useRef<Saved>({
     revision: initialRevision,
-    json: initialSaved ? JSON.stringify(initialSaved) : "",
+    json: initialSaved ? canonical(initialSaved) : "",
   });
   const [status, setStatus] = useState<DraftStatus>({ kind: "saved" });
   /** What the server holds, as rendered state (last.current, for actions). */
   const [savedJson, setSavedJson] = useState(() =>
-    initialSaved ? JSON.stringify(initialSaved) : "",
+    initialSaved ? canonical(initialSaved) : "",
   );
   const [revision, setRevision] = useState(initialRevision);
   const inFlight = useRef<Promise<number | null> | null>(null);
@@ -81,64 +82,69 @@ export function useDraftSync({
   }, []);
 
   const outgoing = (config: SiteConfig) => savedConfigOf(config);
-  const dirty = JSON.stringify(outgoing(value)) !== savedJson;
+  const dirty = canonical(outgoing(value)) !== savedJson;
   const blocked = status.kind === "conflict";
   /** Waiting for her to stop, or her next save. */
   const shown: DraftStatus =
     status.kind === "saved" && dirty ? { kind: "pending" } : status;
 
   /**
-   * Sends her draft now (if it differs from what is saved). Resolves to
+   * Sends her draft now (if it differs from what is saved), or `now`.
+   * Resolves to
    * the revision it is saved at, or null when it is not (said in status).
    */
-  const flush = useCallback((): Promise<number | null> => {
-    if (inFlight.current) return inFlight.current;
-    const config = outgoing(latest.current);
-    const json = JSON.stringify(config);
-    if (json === last.current.json && last.current.revision > 0)
-      return Promise.resolve(last.current.revision);
-    const run = (async () => {
-      setStatus({ kind: "saving" });
-      const result = await save(last.current.revision, config);
-      if (!alive.current) return null;
-      if (result.ok) {
-        last.current = { revision: result.data.revision, json };
-        setSavedJson(json);
-        setRevision(result.data.revision);
-        const more =
-          JSON.stringify(outgoing(latest.current)) !== last.current.json;
-        // More since: the wait below starts again (savedJson changed).
-        setStatus({ kind: more ? "pending" : "saved" });
-        return result.data.revision;
-      }
-      if (result.error.code === "stale_site_draft") {
-        const now = await read();
+  const flush = useCallback(
+    (now?: SiteConfig): Promise<number | null> => {
+      if (inFlight.current) return inFlight.current;
+      // `now`: a draft just set (publishing), not rendered yet.
+      const config = outgoing(now ?? latest.current);
+      const json = canonical(config);
+      if (json === last.current.json && last.current.revision > 0)
+        return Promise.resolve(last.current.revision);
+      const run = (async () => {
+        setStatus({ kind: "saving" });
+        const result = await save(last.current.revision, config);
         if (!alive.current) return null;
-        if (!now.ok) {
-          setStatus({ kind: "error", error: now.error });
+        if (result.ok) {
+          last.current = { revision: result.data.revision, json };
+          setSavedJson(json);
+          setRevision(result.data.revision);
+          const more =
+            canonical(outgoing(latest.current)) !== last.current.json;
+          // More since: the wait below starts again (savedJson changed).
+          setStatus({ kind: more ? "pending" : "saved" });
+          return result.data.revision;
+        }
+        if (result.error.code === "stale_site_draft") {
+          const now = await read();
+          if (!alive.current) return null;
+          if (!now.ok) {
+            setStatus({ kind: "error", error: now.error });
+            return null;
+          }
+          const theirs = now.data;
+          if (!theirs?.config) {
+            setStatus({ kind: "error", error: result.error });
+            return null;
+          }
+          setStatus({
+            kind: "conflict",
+            theirs: renderConfigOf(theirs.config),
+            revision: theirs.revision,
+          });
           return null;
         }
-        const theirs = now.data;
-        if (!theirs?.config) {
-          setStatus({ kind: "error", error: result.error });
-          return null;
-        }
-        setStatus({
-          kind: "conflict",
-          theirs: renderConfigOf(theirs.config),
-          revision: theirs.revision,
-        });
+        setStatus({ kind: "error", error: result.error });
         return null;
-      }
-      setStatus({ kind: "error", error: result.error });
-      return null;
-    })();
-    inFlight.current = run;
-    void run.finally(() => {
-      inFlight.current = null;
-    });
-    return run;
-  }, [read, save]);
+      })();
+      inFlight.current = run;
+      void run.finally(() => {
+        inFlight.current = null;
+      });
+      return run;
+    },
+    [read, save],
+  );
 
   // A moment after she stops changing it, while nothing blocks.
   useEffect(() => {
@@ -178,7 +184,7 @@ export function useDraftSync({
     /** Conflict: the saved draft replaces hers in the studio. */
     takeTheirs: () => {
       if (status.kind !== "conflict") return;
-      const json = JSON.stringify(outgoing(status.theirs));
+      const json = canonical(outgoing(status.theirs));
       last.current = { revision: status.revision, json };
       setSavedJson(json);
       setRevision(status.revision);
@@ -187,8 +193,8 @@ export function useDraftSync({
     },
     /** Another draft the server now holds (a restored version). */
     adopt: (config: SavedConfig, at: number) => {
-      last.current = { revision: at, json: JSON.stringify(config) };
-      setSavedJson(JSON.stringify(config));
+      last.current = { revision: at, json: canonical(config) };
+      setSavedJson(canonical(config));
       setRevision(at);
       replace(renderConfigOf(config));
       setStatus({ kind: "saved" });

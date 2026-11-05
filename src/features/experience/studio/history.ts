@@ -76,6 +76,8 @@ export function useHistory<T>(initial: T) {
       dispatch({ type: "set", value, key, at: Date.now() }),
     undo: () => dispatch({ type: "undo" }),
     redo: () => dispatch({ type: "redo" }),
+    /** Another value to start from (taken from elsewhere): no undo to it. */
+    reset: (value: T) => dispatch({ type: "reset", value }),
     canUndo: state.past.length > 0,
     canRedo: state.future.length > 0,
     /** Every state still reachable: past, present, future. */

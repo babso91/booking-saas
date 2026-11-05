@@ -25,8 +25,9 @@ import {
   shapes,
   typePairs,
 } from "../engine/tokens";
+import { canonical } from "./canonical";
 import { PhotoEditor, type UploadOutcome } from "./photo-editor";
-import { studioPhoto as photo } from "./photos";
+import { useStudioPhoto } from "./photos";
 import { can, dormant, plans, type Plan } from "./plans";
 import { universes, type Universe, type UniverseId } from "./universes";
 
@@ -178,6 +179,7 @@ export function Studio({
   /** The last thing done, said briefly (published, restored…). */
   flash: string | null;
 }) {
+  const photo = useStudioPhoto();
   const [tab, setTab] = useState<Tab>("universe");
   const config = draft.value;
   const creative = plan === "signature";
@@ -192,8 +194,7 @@ export function Studio({
   const tips = advice.filter((item) => item.level === "tip");
   // Her design only: her catalogue is published at once, in Prestations.
   const changed =
-    published === null ||
-    JSON.stringify(config) !== JSON.stringify(published.config);
+    published === null || canonical(config) !== canonical(published.config);
   const tabs: { id: Tab; label: string }[] = [
     { id: "catalog", label: "Prestations" },
     { id: "universe", label: "Univers" },
@@ -347,6 +348,13 @@ export function Studio({
                 aria-hidden="true"
               />
               <div className="flex items-center gap-2 px-4 pt-2 md:pt-[max(env(safe-area-inset-top),14px)]">
+                <Link
+                  href="/app"
+                  aria-label="Revenir à mon espace"
+                  className="-ml-2 flex size-11 shrink-0 items-center justify-center rounded-full text-[18px] hover:bg-black/5"
+                >
+                  ←
+                </Link>
                 <div className="min-w-0 flex-1">
                   <p className="text-[15px] font-semibold">Studio</p>
                   <p className="truncate text-[12px] text-black/55">

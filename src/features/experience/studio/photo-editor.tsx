@@ -8,7 +8,7 @@ import {
   MAX_PHOTO_BYTES,
   PHOTO_ACCEPT,
   photoErrorText,
-  studioPhoto as photo,
+  useStudioPhoto,
 } from "./photos";
 
 // The photo editor of the studio. The whole photo is shown, and she
@@ -49,6 +49,7 @@ export function PhotoEditor({
   onUpload: (file: File) => Promise<UploadOutcome>;
   onBack: () => void;
 }) {
+  const photo = useStudioPhoto();
   const pad = useRef<HTMLDivElement>(null);
   const file = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -301,7 +302,7 @@ export function PhotoEditor({
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={photo(item, 200)}
+                src={photo(item, 480)}
                 alt=""
                 className="h-full w-full object-cover"
                 loading="lazy"

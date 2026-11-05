@@ -23,6 +23,8 @@ import {
   EngineProvider,
   revealVariables,
   useEngine,
+  type EngineEdit,
+  type PhotoWidth,
 } from "./engine/engine";
 import revealStyles from "./engine/reveal.module.css";
 import {
@@ -49,8 +51,10 @@ export function MiniSite({
   config,
   catalog,
   photoBase,
+  photoSource,
   booking: bookable,
   fontClasses,
+  edit,
 }: {
   config: SiteConfig;
   catalog: ShowcaseGroup[];
@@ -59,6 +63,10 @@ export function MiniSite({
    * proxy for her clients; the members' preview in her studio).
    */
   photoBase: string;
+  /** Her studio's own resolver (demo photos of its preview included). */
+  photoSource?: (id: string, width: PhotoWidth) => string;
+  /** In her studio: the preview is the editor (a photo opens it). */
+  edit?: EngineEdit;
   /**
    * For the real booking (its flow reads these); null in a design preview,
    * where no booking is ever taken.
@@ -99,7 +107,10 @@ export function MiniSite({
           value={{
             config,
             catalog,
-            photos: (asset, width) => `${photoBase}/${asset}/${width}`,
+            photos:
+              photoSource ??
+              ((asset, width) => `${photoBase}/${asset}/${width}`),
+            edit,
             book: (service) =>
               setBooking(service ? { serviceId: service.id } : {}),
           }}

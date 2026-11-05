@@ -194,4 +194,28 @@ describe("her draft, saved by itself", () => {
     expect(JSON.stringify(save.mock.calls[0]![1])).not.toMatch(/demo:/);
     expect(save.mock.calls[0]![1].content.cover).toBeNull();
   });
+
+  it("her draft read back in the server's key order is not a change", async () => {
+    // PostgreSQL's jsonb gives her configuration back with its keys sorted.
+    const sorted = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? value.map(sorted)
+        : value && typeof value === "object"
+          ? Object.fromEntries(
+              Object.entries(value)
+                .sort(([a], [b]) => b.length - a.length || (a < b ? 1 : -1))
+                .map(([key, item]) => [key, sorted(item)]),
+            )
+          : value;
+    const server: Server = {
+      revision: 3,
+      config: sorted(savedConfigOf(base)) as SavedConfig,
+      down: false,
+    };
+    const { hook, save, wait } = mount(server);
+    expect(hook.result.current.dirty).toBe(false);
+    await wait(SAVE_DELAY_MS * 3);
+    expect(save).not.toHaveBeenCalled();
+    expect(hook.result.current.status.kind).toBe("saved");
+  });
 });
