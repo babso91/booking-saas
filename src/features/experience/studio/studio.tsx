@@ -1339,8 +1339,10 @@ function Choice<T extends string>({
   onChange: (value: T) => void;
 }) {
   return (
-    <div>
-      <p className="text-[13px] text-black/55">{label}</p>
+    <div role="group" aria-label={label}>
+      <p className="text-[13px] text-black/55" aria-hidden="true">
+        {label}
+      </p>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {options.map((option) => (
           <Chip

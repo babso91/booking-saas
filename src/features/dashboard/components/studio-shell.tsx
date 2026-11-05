@@ -9,6 +9,7 @@ import {
   ChevronRightIcon,
   ClockIcon,
   GiftIcon,
+  GlobeIcon,
   PaletteIcon,
   SparkIcon,
 } from "@/components/ui/icons";
@@ -50,6 +51,7 @@ const more: {
   { section: "loyalty", label: "Fidélité", icon: GiftIcon, phoneOnly: true },
   { section: "hours", label: "Horaires", icon: ClockIcon },
   { section: "calendar", label: "Google Calendar", icon: CalendarSyncIcon },
+  { section: "site", label: "Mon site", icon: GlobeIcon },
   { section: "appearance", label: "Apparence", icon: PaletteIcon },
 ];
 

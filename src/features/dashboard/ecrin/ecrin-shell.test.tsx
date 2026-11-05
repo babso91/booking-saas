@@ -97,6 +97,7 @@ describe("the Écrin frame", () => {
           "/app/clients",
           "/app/loyalty",
           "/app/services",
+          "/app/site",
           "/app/settings/appearance",
           "/app/settings/calendar",
           "/app/settings/hours",
