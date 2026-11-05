@@ -205,7 +205,8 @@ export async function publishSite(
     throw new AppException("site_unreadable", {
       fieldErrors: {
         palette: issues.map(
-          (issue) => `${issue.where} : ${issue.ratio}:1 (4,5:1 au moins).`,
+          (issue) =>
+            `${issue.plan === "core" ? "Core" : "Signature"} — ${issue.where} : ${issue.ratio}:1 (4,5:1 au moins).`,
         ),
       },
     });

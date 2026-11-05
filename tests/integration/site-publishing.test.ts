@@ -601,6 +601,35 @@ describe("validation", () => {
     }
   });
 
+  it("readable as saved but not under Core's lens: refused, for Core", async () => {
+    const studio = await studioOf(alice);
+    const writer = writerFor(studio, alice);
+    const base = sampleSiteConfig();
+    const config = {
+      ...base,
+      tokens: {
+        ...base.tokens,
+        palette: {
+          ...base.tokens.palette,
+          accent: "#4b1f8f",
+          onAccent: "#ffffff",
+        },
+      },
+    };
+    await saveSiteDraft(writer, { expectedRevision: 0, config });
+    try {
+      await publishSite(writer, 1);
+      throw new Error("published");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AppException);
+      expect((error as AppException).code).toBe("site_unreadable");
+      expect((error as AppException).fieldErrors?.palette).toEqual([
+        expect.stringMatching(/^Core — Le texte des boutons sur l’accent/),
+      ]);
+    }
+    expect(await listSiteVersions(alice.client, studio.id)).toEqual([]);
+  });
+
   it("an unreadable draft can be saved, never published", async () => {
     const studio = await studioOf(alice);
     const writer = writerFor(studio, alice);

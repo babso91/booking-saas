@@ -34,7 +34,7 @@ Le laboratoire proposait une ligne `draft` parmi les versions. Le SaaS sépare p
 - **Rien n'est jamais détruit ni réécrit par un changement de forfait :**
   - le brouillon peut contenir des réglages Signature en sommeil, même en Core ;
   - une version publiée garde sa configuration complète.
-- **Les droits sont une lentille appliquée au rendu** (`effective(config, plan, univers)` du laboratoire), côté serveur, sur la version publiée et avec le forfait **actuel** : repasser en Core cesse immédiatement de rendre les réglages Signature, et repasser en Signature les rend sans republier. La lecture publique renvoie la configuration publiée **et** le forfait actuel. Le rendu (Claude UI, composant serveur) applique la lentille, puis le filet de lisibilité `ensureReadable`.
+- **Les droits sont une lentille appliquée au rendu** (`renderedFor(config, plan)` et `coreLens(config)` de `src/features/sites/universes.ts`, l'`effective` du laboratoire, en une seule copie partagée par le serveur, le moteur et le rendu public), côté serveur, sur la version publiée et avec le forfait **actuel** : repasser en Core cesse immédiatement de rendre les réglages Signature, et repasser en Signature les rend sans republier. La lecture publique renvoie la configuration publiée **et** le forfait actuel. Le rendu (Claude UI, composant serveur) applique la lentille, puis le filet de lisibilité `ensureReadable`.
 
 ## 4. Format de configuration (`schema_version` 1)
 
@@ -67,16 +67,15 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 ## 5. Lisibilité (« l'art est libre, la lisibilité ne l'est pas »)
 
 - **Le studio** applique `ensureReadable` avant de publier, et montre les corrections (comportement du laboratoire).
-- **Le serveur vérifie à la publication**, sans corriger en silence, les couples de texte de la palette, au contraste WCAG d'au moins 4,5:1 :
+- **Le serveur vérifie à la publication**, sans jamais corriger en silence, les couples de texte de la palette au contraste WCAG d'au moins 4,5:1 :
   - encre sur fond nuit ;
   - encre sur fond jour ;
   - texte sur accent ;
   - secondaire sur fond nuit.
-
-  Sinon, refus `site_unreadable` (422), avec la liste des couples en défaut. Le bouton de réservation (`cta`) n'a pas besoin de contrôle : son texte est calculé (noir ou blanc), et toute couleur atteint au moins 4,58:1 avec l'un des deux.
-
+- **Pour les deux rendus possibles** : la palette enregistrée (Signature) **et** la palette vue par la lentille Core (`coreLens`, `src/features/sites/universes.ts` : la palette conçue de l'univers, avec l'accent de la professionnelle). Le forfait peut changer sans republication, donc une version publiée doit se lire sous les deux forfaits. Sinon, refus `site_unreadable` (422), avec chaque couple en défaut et le forfait concerné (« Core — Le texte des boutons sur l'accent : 2,1:1 »).
+- **Le bouton de réservation** (`cta`) n'a pas besoin de contrôle : son texte est calculé (noir ou blanc), et toute couleur atteint au moins 4,58:1 avec l'un des deux.
 - **Le brouillon** peut rester illisible : l'expérimentation est libre, seule la publication est bloquée.
-- **Le rendu public** applique quand même `ensureReadable` : une configuration enregistrée autrement ne peut pas produire un site illisible. Les couples dérivés (secondaire sur fond jour, cartes) sont calculés par le moteur, et garantis par `ensureReadable`.
+- **Le rendu public** applique quand même `ensureReadable`. Les couples dérivés (secondaire sur fond jour, cartes) sont calculés par le moteur et garantis par `ensureReadable`.
 
 ## 6. Interface (Server Actions, membres de l'établissement)
 
@@ -117,6 +116,9 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
   - Une requête par photo et par taille. La base vérifie que la photo est **référencée par la version publiée** de cet établissement ; sinon 404, même pour une photo existante du brouillon.
   - Cache : `Cache-Control: public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800`. Les URL sont stables, car une photo ne change jamais : une nouvelle photo, c'est un nouvel asset.
 - **Suppression :** refusée tant que la photo est référencée par le brouillon ou par **n'importe quelle** version de l'historique, pour que la restauration reste possible. Sinon, l'asset et ses fichiers sont supprimés.
+- **Aperçu du studio (membres) :** `GET /api/sites/photos/[assetId]/[width]` sert les mêmes déclinaisons des photos de **son** établissement, qu'elles soient publiées ou non.
+  - Session obligatoire, asset `ready` de l'établissement de la session.
+  - `Cache-Control: private, max-age=300` : jamais de cache CDN, aucune URL signée exposée.
 - **CI :** `storage-api` est démarré (aujourd'hui exclu).
 
 ### Étude de performance et de coût (mesures du 4 novembre 2026)
@@ -162,21 +164,23 @@ Mesures avec `sharp` 0.35 / libvips 8.18, sur 4 cœurs, pour une photo de 12 Mpx
 
 ## 11. Validation du contrat par Claude UI
 
-**État : en attente de la réponse de Claude UI.** Un document écrit d'un seul côté n'est pas un contrat d'intégration. Claude UI doit confirmer ou contester chaque point ci-dessous, et chaque écart est tranché avant le branchement du studio.
+**État : validé des deux côtés (5 novembre 2026)**, après deux ajustements demandés par Claude UI. Une décision produit reste ouverte (photos de démonstration).
 
-1. **Format `schema_version` 1** (§ 4), et en particulier :
-   - les photos en `{ asset }`, jamais d'URL ;
-   - les points focaux indexés par identifiant d'asset ;
-   - le registre fermé ;
-   - `opening` et `services` toujours présents.
-2. **Écart avec le laboratoire** : le brouillon est séparé, l'historique immuable, et la restauration se fait dans le brouillon (§ 2).
-3. **Lentille du forfait au rendu** (`effective`) puis `ensureReadable`, appliquées par le rendu public sur la version publiée, avec le forfait **actuel** (§ 3).
-4. **Lisibilité** : `ensureReadable` dans le studio avant publication, et refus `site_unreadable` (liste des couples) côté serveur (§ 5).
-5. **Actions, réponses et codes d'erreur** du § 6, avec la révision attendue et les relances.
-6. **Photos** (§ 8) :
-   - envoi en deux temps (URL signée, puis confirmation) ;
-   - déclinaisons WebP 480, 828 et 1200 ;
-   - URL publiques du proxy ;
-   - aucune URL du brouillon publique ;
-   - suppression refusée tant qu'une version la référence.
-7. **Catalogue et réservation** : uniquement par leurs routes existantes, jamais dans la configuration (§ 1).
+Claude UI a vérifié la conversion de la `SiteConfig` du laboratoire champ par champ : elle est sans perte. Le champ `design` du studio devient `config.universe`. Le catalogue, les saisies de montants et le forfait figé ne sont volontairement pas publiés. Seules les photos de démonstration (identifiants Unsplash) ne sont pas des `{ asset }`.
+
+| Point                                                  | Réponse de Claude UI                                                                                                                                 | Suite                                                                                                    |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 1. Format `schema_version` 1                           | accepté                                                                                                                                              | photos de démonstration : décision produit ci-dessous                                                    |
+| 2. Brouillon séparé, historique immuable, restauration | accepté (annuler et rétablir restent locaux ; sauvegarde automatique avec `expectedRevision` ; sur `stale_site_draft`, rechargement et écart montré) | —                                                                                                        |
+| 3. Lentille du forfait au rendu                        | accepté, à condition que les palettes conçues soient dans un module partagé                                                                          | fait : `src/features/sites/universes.ts` (`universeDesigns`, `coreLens`, `renderedFor`), une seule copie |
+| 4. Lisibilité                                          | contesté : le serveur ne vérifiait que la palette enregistrée, pas le rendu Core                                                                     | corrigé : vérification sous les deux forfaits, forfait indiqué dans `site_unreadable` (§ 5)              |
+| 5. Actions et codes du § 6                             | accepté                                                                                                                                              | —                                                                                                        |
+| 6. Photos                                              | contesté : aucun moyen d'afficher dans le studio les photos du brouillon                                                                             | accepté : route réservée aux membres, sans cache partagé (§ 8), livrée avec la PR 2                      |
+| 7. Catalogue et réservation par leurs routes           | accepté (PR UI #39 et #42 déjà conformes)                                                                                                            | —                                                                                                        |
+
+**Décision produit ouverte, les photos de démonstration des univers :**
+
+- **Recommandation (Claude UI, et backend d'accord) :** ne jamais les enregistrer ni les publier en V1. Elles servent seulement d'aperçu dans le studio, et les scènes ont un vrai état « sans photo ».
+- **Autre option :** un registre fermé `{ stock: "<id>" }` de photos sous licence. Cela demande une extension du format et des droits d'usage.
+
+Claude UI ne branche le studio sur les actions qu'une fois cette décision prise.

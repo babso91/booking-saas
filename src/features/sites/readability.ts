@@ -1,7 +1,9 @@
 import type { SiteConfig, SitePalette } from "@/features/sites/config";
+import { coreLens } from "@/features/sites/universes";
 
 // What the server checks before publishing (docs/SITE_PUBLISHING_CONTRACT.md
-// § 5): the palette's text pairs a scene renders, at WCAG 4.5:1. The
+// § 5): the palette's text pairs a scene renders, at WCAG 4.5:1, in the
+// render of each plan (the saved palette, and Core's lens of it). The
 // booking button's text is computed (black or white), and any colour reads
 // at 4.58:1 or more with one of them: nothing to refuse there. The studio corrects with the
 // engine's ensureReadable before publishing; the server only verifies, it
@@ -51,20 +53,43 @@ const pairs: {
 ];
 
 export type ReadabilityIssue = {
+  /**
+   * The plan whose render has this pair: `signature` renders the saved
+   * palette, `core` the universe's designed palette with her accent
+   * (coreLens). Her plan can change without publishing again: both are
+   * checked.
+   */
+  plan: "core" | "signature";
   where: string;
   /** The measured ratio, rounded to two decimals. */
   ratio: number;
 };
 
-/** What would make the published site unreadable; empty when it reads. */
-export function readabilityIssues(config: SiteConfig): ReadabilityIssue[] {
-  const palette = config.tokens.palette;
+function paletteIssues(
+  palette: SitePalette,
+  plan: ReadabilityIssue["plan"],
+): ReadabilityIssue[] {
   const issues: ReadabilityIssue[] = [];
   for (const pair of pairs) {
     const ratio = contrast(palette[pair.text], palette[pair.on]);
     if (ratio < MIN_CONTRAST) {
-      issues.push({ where: pair.where, ratio: Math.round(ratio * 100) / 100 });
+      issues.push({
+        plan,
+        where: pair.where,
+        ratio: Math.round(ratio * 100) / 100,
+      });
     }
   }
   return issues;
+}
+
+/**
+ * What would make the published site unreadable, under either plan; empty
+ * when both renders read.
+ */
+export function readabilityIssues(config: SiteConfig): ReadabilityIssue[] {
+  return [
+    ...paletteIssues(config.tokens.palette, "signature"),
+    ...paletteIssues(coreLens(config).tokens.palette, "core"),
+  ];
 }

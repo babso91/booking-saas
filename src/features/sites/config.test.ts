@@ -89,9 +89,11 @@ describe("readability", () => {
     expect(contrast("#777777", "#777777")).toBeCloseTo(1, 5);
   });
 
-  it("names every unreadable pair, and nothing for a readable palette", () => {
+  it("names every unreadable pair and its plan, nothing for a readable palette", () => {
     expect(readabilityIssues(sampleSiteConfig())).toEqual([]);
     const base = sampleSiteConfig();
+    // Her own palette (no longer a designed one): Signature renders it as
+    // saved; Core renders the universe's palette with her accent.
     const issues = readabilityIssues({
       ...base,
       tokens: {
@@ -99,13 +101,37 @@ describe("readability", () => {
         palette: {
           ...base.tokens.palette,
           ink: "#222222",
-          onAccent: "#7020c0",
+          onAccent: "#ff5533",
         },
       },
     });
-    expect(issues.map((issue) => issue.where)).toEqual([
-      "Le texte sur le fond nuit",
-      "Le texte des boutons sur l’accent",
+    expect(issues.map((issue) => [issue.plan, issue.where])).toEqual([
+      ["signature", "Le texte sur le fond nuit"],
+      ["signature", "Le texte des boutons sur l’accent"],
+    ]);
+  });
+
+  it("an accent readable as saved but not under Core's lens is refused for Core", () => {
+    const base = sampleSiteConfig();
+    // Signature: white on a dark violet reads. Core: Mila's designed palette
+    // keeps its own text colour on her accent (#0b0b0b on violet): it does not.
+    const config = {
+      ...base,
+      tokens: {
+        ...base.tokens,
+        palette: {
+          ...base.tokens.palette,
+          accent: "#4b1f8f",
+          onAccent: "#ffffff",
+        },
+      },
+    };
+    expect(readabilityIssues(config)).toEqual([
+      {
+        plan: "core",
+        where: "Le texte des boutons sur l’accent",
+        ratio: expect.any(Number),
+      },
     ]);
   });
 });
