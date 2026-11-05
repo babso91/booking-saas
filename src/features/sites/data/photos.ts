@@ -45,15 +45,82 @@ function storageException(cause: unknown): AppException {
   return new AppException("internal", { cause });
 }
 
-async function removeFiles(
+/**
+ * What a purge deletes: the original only (a photo made ready), or every
+ * file of the photo (revoked, deleted, discarded).
+ */
+export type SitePhotoPurgeScope = "original" | "all";
+
+/**
+ * Runs a purge the database recorded with its decision: deletes the files,
+ * then marks it done. Throws `site_photo_cleanup_pending` when the files
+ * could not be deleted: the purge stays recorded (attempt counted) and is
+ * retried, by the same action again or by processSitePhotoPurges.
+ */
+async function purgeFiles(
   service: AppSupabaseClient,
   businessId: string,
   assetId: string,
+  scope: SitePhotoPurgeScope,
 ) {
   const { error } = await service.storage
     .from(SITE_PHOTO_BUCKET)
-    .remove(sitePhotoFiles(businessId, assetId));
-  if (error) throw storageException(error);
+    .remove(
+      scope === "original"
+        ? [originalPath(businessId, assetId)]
+        : sitePhotoFiles(businessId, assetId),
+    );
+  if (error) {
+    const { error: countError } = await service.rpc("fail_site_photo_purge", {
+      p_business_id: businessId,
+      p_asset_id: assetId,
+      p_scope: scope,
+    });
+    if (countError)
+      console.error("Site photo purge count failed", countError.code);
+    throw new AppException("site_photo_cleanup_pending", { cause: error });
+  }
+  const { error: doneError } = await service.rpc("complete_site_photo_purge", {
+    p_business_id: businessId,
+    p_asset_id: assetId,
+    p_scope: scope,
+  });
+  if (doneError) {
+    throw new AppException("site_photo_cleanup_pending", { cause: doneError });
+  }
+}
+
+/**
+ * Retries the purges left by a failed or interrupted removal (requested
+ * before `before`, so that removals still in flight are left to their
+ * action), the oldest first. For the periodic cleanup.
+ */
+export async function processSitePhotoPurges(
+  service: AppSupabaseClient,
+  options: { before: Date; limit: number },
+): Promise<{ done: number; failed: number }> {
+  const { data, error } = await service.rpc("pending_site_photo_purges", {
+    p_before: options.before.toISOString(),
+    p_limit: options.limit,
+  });
+  if (error) throw databaseException(error);
+  let done = 0;
+  let failed = 0;
+  for (const purge of data) {
+    try {
+      await purgeFiles(
+        service,
+        purge.business_id,
+        purge.asset_id,
+        purge.scope as SitePhotoPurgeScope,
+      );
+      done += 1;
+    } catch (cause) {
+      if (!(cause instanceof AppException)) throw cause;
+      failed += 1;
+    }
+  }
+  return { done, failed };
 }
 
 export type SitePhotoStatus = "pending" | "ready" | "revoked";
@@ -113,9 +180,13 @@ async function discard(writer: SiteWriter, assetId: string) {
     p_actor: writer.actor,
     p_asset_id: assetId,
   });
-  if (error) console.error("Site photo discard failed", error.code);
-  await removeFiles(writer.service, writer.businessId, assetId).catch(
-    (cause: unknown) => console.error("Site photo files removal failed", cause),
+  if (error) {
+    console.error("Site photo discard failed", error.code);
+    return;
+  }
+  // The purge is recorded with the discard: retried later if this fails.
+  await purgeFiles(writer.service, writer.businessId, assetId, "all").catch(
+    () => console.error("Site photo files removal failed; purge kept"),
   );
 }
 
@@ -158,7 +229,9 @@ function toDto(row: {
  * Verifies the original she sent (decoded: its real type, size and
  * dimensions), makes its derivatives, then makes the photo ready and deletes
  * the original. A refused file is forgotten (photo and files). Idempotent
- * once ready.
+ * once ready. Answers only once the original is gone:
+ * `site_photo_cleanup_pending` otherwise (the photo is ready, its original's
+ * deletion is recorded; confirming again retries it).
  */
 export async function confirmSitePhoto(
   writer: SiteWriter,
@@ -175,7 +248,12 @@ export async function confirmSitePhoto(
 
   const asset = await readAsset(service, businessId, assetId);
   if (!asset) throw new AppException("site_photo_not_found");
-  if (asset.status === "ready") return asset;
+  if (asset.status === "ready") {
+    // A previous confirmation may have left its original: deleted now (a
+    // no-op once gone).
+    await purgeFiles(service, businessId, assetId, "original");
+    return asset;
+  }
   if (asset.status === "revoked") throw new AppException("site_photo_revoked");
 
   const bucket = service.storage.from(SITE_PHOTO_BUCKET);
@@ -217,22 +295,23 @@ export async function confirmSitePhoto(
     });
     if (error) throw databaseException(error);
   } catch (error) {
-    // Revoked meanwhile: its files go. Otherwise the original stays, she
-    // may confirm again.
+    // Revoked or deleted meanwhile: its purge is recorded, its files go
+    // (the derivatives just written included). Otherwise the original
+    // stays, she may confirm again.
     const current = await readAsset(service, businessId, assetId).catch(
-      () => null,
+      () => undefined,
     );
-    if (current?.status !== "pending") {
-      await removeFiles(service, businessId, assetId).catch(() => undefined);
+    if (current === null || current?.status === "revoked") {
+      await purgeFiles(service, businessId, assetId, "all").catch(() =>
+        console.error("Site photo files removal failed; purge kept"),
+      );
     }
     throw error;
   }
 
-  // The original (with its metadata) is not kept.
-  const { error: removeError } = await bucket.remove([
-    originalPath(businessId, assetId),
-  ]);
-  if (removeError) console.error("Site photo original removal failed");
+  // The original (with its metadata) is not kept: its purge was recorded
+  // with the confirmation; no success is answered while it remains.
+  await purgeFiles(service, businessId, assetId, "original");
 
   const ready = await readAsset(service, businessId, assetId);
   if (!ready) throw new AppException("site_photo_not_found");
@@ -256,7 +335,8 @@ export async function listSitePhotos(
 
 /**
  * Deletes a photo nothing refers to, and its files (`site_asset_in_use`
- * otherwise: revoke it). A revoked photo stays revoked.
+ * otherwise: revoke it). A revoked photo stays revoked. If its files could
+ * not be deleted (`site_photo_cleanup_pending`), calling it again retries.
  */
 export async function deleteSitePhoto(
   writer: SiteWriter,
@@ -268,7 +348,7 @@ export async function deleteSitePhoto(
     p_asset_id: assetId,
   });
   if (error) throw databaseException(error);
-  await removeFiles(writer.service, writer.businessId, assetId);
+  await purgeFiles(writer.service, writer.businessId, assetId, "all");
   return { deleted: data === "deleted" };
 }
 
@@ -276,7 +356,7 @@ export async function deleteSitePhoto(
  * Revokes a photo for good, wherever it is used, then deletes its files.
  * From this moment the proxies refuse it; shared caches may keep a copy for
  * up to five minutes (contract § 8). Idempotent: called again, it deletes
- * any file left.
+ * any file left (`site_photo_cleanup_pending` until they are gone).
  */
 export async function revokeSitePhoto(
   writer: SiteWriter,
@@ -288,7 +368,7 @@ export async function revokeSitePhoto(
     p_asset_id: assetId,
   });
   if (error) throw databaseException(error);
-  await removeFiles(writer.service, writer.businessId, assetId);
+  await purgeFiles(writer.service, writer.businessId, assetId, "all");
 }
 
 /** The same, for a privacy request handled by the service (no member). */
@@ -302,7 +382,7 @@ export async function revokeSitePhotoForPrivacy(
     p_asset_id: assetId,
   });
   if (error) throw databaseException(error);
-  await removeFiles(service, businessId, assetId);
+  await purgeFiles(service, businessId, assetId, "all");
 }
 
 async function readDerivative(

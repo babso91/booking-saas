@@ -94,13 +94,13 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 
 **Photos** (§ 8) :
 
-| Action                                                   | Réponse                                                                 | Erreurs propres                                                                                                                         |
-| -------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `createSitePhotoUploadAction({ contentType, byteSize })` | `{ assetId, path, token, signedUrl }` : où envoyer l'original           | `validation_error` (type, taille), `rate_limited`                                                                                       |
-| `confirmSitePhotoAction({ assetId })`                    | `SitePhotoDto` prête (type réel, dimensions redressées)                 | `site_photo_not_found` (pas encore reçue), `site_photo_unsupported`, `site_photo_too_large`, `site_photo_invalid`, `site_photo_revoked` |
-| `listSitePhotosAction()`                                 | `SitePhotoDto[]` (en attente, prêtes, révoquées ; plus récente d'abord) | —                                                                                                                                       |
-| `deleteSitePhotoAction({ assetId })`                     | `{ deleted }` (`false` : photo déjà révoquée, rien à supprimer)         | `site_asset_in_use`, `site_photo_not_found`                                                                                             |
-| `revokeSitePhotoAction({ assetId })`                     | rien : révoquée, fichiers supprimés                                     | `site_photo_not_found`                                                                                                                  |
+| Action                                                   | Réponse                                                                 | Erreurs propres                                                                                                                                                       |
+| -------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createSitePhotoUploadAction({ contentType, byteSize })` | `{ assetId, path, token, signedUrl }` : où envoyer l'original           | `validation_error` (type, taille), `rate_limited`                                                                                                                     |
+| `confirmSitePhotoAction({ assetId })`                    | `SitePhotoDto` prête (type réel, dimensions redressées)                 | `site_photo_not_found` (pas encore reçue), `site_photo_unsupported`, `site_photo_too_large`, `site_photo_invalid`, `site_photo_revoked`, `site_photo_cleanup_pending` |
+| `listSitePhotosAction()`                                 | `SitePhotoDto[]` (en attente, prêtes, révoquées ; plus récente d'abord) | —                                                                                                                                                                     |
+| `deleteSitePhotoAction({ assetId })`                     | `{ deleted }` (`false` : photo déjà révoquée, rien à supprimer)         | `site_asset_in_use`, `site_photo_not_found`, `site_photo_cleanup_pending`                                                                                             |
+| `revokeSitePhotoAction({ assetId })`                     | rien : révoquée, fichiers supprimés                                     | `site_photo_not_found`, `site_photo_cleanup_pending`                                                                                                                  |
 
 **Lecture publique** (sans session) : `getPublishedSite(slug)` pour le rendu serveur, ou `GET /api/public/businesses/[slug]/site`. Elle renvoie `{ versionId, number, publishedAt, plan, schemaVersion, config, unavailableAssets }` ; `site_not_published` (404) sans publication. `unavailableAssets` : les photos de `config` révoquées depuis la publication, que le rendu dessine **sans photo**.
 
@@ -118,7 +118,7 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 
 - Bucket Supabase Storage **privé** `site-photos` (10 Mo au plus par fichier ; JPEG, PNG, WebP, AVIF), sous `<business_id>/<asset_id>/` : `original` le temps de la vérification, puis `w480.webp`, `w828.webp`, `w1200.webp`.
 - **Aucune politique** pour les rôles de l'API : ni le public ni une professionnelle connectée ne lit, ne liste ni n'écrit le bucket directement (testé). Le navigateur n'écrit qu'avec une URL d'envoi signée, pour **un seul chemin**, sans écrasement, émise par le serveur après vérification de l'appartenance. Seul le service lit et supprime.
-- **L'original n'est pas conservé** : il porte les métadonnées de l'appareil (EXIF, GPS). Il est supprimé dès que les déclinaisons existent. Si un autre format est voulu plus tard (AVIF), il faudra conserver un maître nettoyé (sans métadonnées) : décision à prendre à ce moment-là.
+- **L'original n'est pas conservé** (décision validée le 5 novembre 2026) : il porte les métadonnées de l'appareil (EXIF, GPS). Il est supprimé dès que les déclinaisons existent, et la confirmation **ne répond jamais « prête » tant qu'il reste** (§ « Fichiers à supprimer »). Si un autre format est voulu plus tard (AVIF), il faudra conserver un maître nettoyé (sans métadonnées) : décision à prendre à ce moment-là.
 
 ### Envoi et conversion
 
@@ -134,8 +134,8 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 
 **iPhone et HEIC (vérifié dans l'environnement cible, 5 novembre 2026) :** le `sharp` précompilé (le même binaire Linux x64 en local, en CI et sur l'hébergement) lit l'AVIF mais **ne décode pas le HEIC** (HEVC, brevets). Le serveur refuse donc `image/heic` et `image/heif` dès la création, avec un message qui guide vers la photothèque.
 
-- **Le studio doit** déclarer `accept="image/jpeg,image/png,image/webp"` sur son sélecteur de fichier : iOS convertit alors la photo HEIC en JPEG au moment du choix.
-- **À vérifier sur un vrai iPhone** avant la mise en production (pas possible ici) : sélection depuis la photothèque et depuis l'appareil photo, photo en portrait (orientation), Live Photo, mode HDR. Le serveur, lui, est testé sur un JPEG d'appareil photo tourné avec GPS.
+- **Le studio doit** déclarer `accept="image/jpeg,image/png,image/webp"` sur son sélecteur de fichier : iOS **devrait** alors convertir la photo HEIC en JPEG au moment du choix.
+- **Ce point n'est PAS résolu par cet attribut seul.** L'import depuis un iPhone reste **non validé** tant qu'il n'a pas été essayé sur de vrais appareils (pas possible ici) : sélection depuis la photothèque, depuis l'appareil photo et depuis Fichiers, photo en portrait (orientation), Live Photo, mode HDR, et au moins deux versions d'iOS. Si iOS envoie quand même du HEIC dans un de ces cas, le serveur le refuse proprement (`site_photo_unsupported`) : il faudra alors une conversion côté navigateur ou un décodeur HEVC côté serveur, à décider. Le serveur, lui, est testé sur un JPEG d'appareil photo tourné avec GPS.
 
 ### Diffusion publique
 
@@ -166,7 +166,28 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
   - **Pas de résurrection** : restaurer puis republier une ancienne version la réaffiche sans photo (testé) ; une photo révoquée ne redevient jamais prête, ni ne peut être confirmée, ni supprimée pour être recréée. Renvoyer la même image crée un nouvel asset.
   - Une révocation pendant la conversion gagne : les déclinaisons écrites entre-temps sont supprimées (testé).
 - **Demande de confidentialité** (personne photographiée, demande d'effacement) : `revokeSitePhotoForPrivacy(service, businessId, assetId)` par le service, sans membre, motif `privacy`. Même effet. Le premier motif reste.
-- **Délai réel :** le serveur ne sert plus la photo dès la révocation. Une copie déjà dans un cache CDN peut encore être servie **jusqu'à 5 minutes** ; aucun navigateur n'en garde de copie fraîche. **Aucune suppression instantanée n'est promise** tant que la purge n'est pas testée.
+
+### Limite de cache : jusqu'à 5 minutes après une révocation
+
+- **Ce qui est immédiat :** dès que la révocation est enregistrée, le serveur refuse la photo (404) sur les deux routes, et ses fichiers sont supprimés (ou leur suppression est enregistrée, voir ci-dessous).
+- **Ce qui ne l'est pas :** une copie déjà présente dans le cache du CDN peut encore être servie **pendant 5 minutes au plus** après la révocation (`s-maxage=300`), dans chaque région du CDN qui l'avait en cache. Passé ce délai, le CDN redemande au serveur, qui répond 404 (jamais mis en cache).
+- **Navigateurs :** aucune copie fraîche (`max-age=0`). L'aperçu de la professionnelle peut rester 5 minutes dans **son propre** navigateur (`private, max-age=300`).
+- **Ce que l'on dit aux professionnelles et aux personnes photographiées :** « la photo n'est plus servie par nos serveurs immédiatement, et disparaît de partout en 5 minutes au plus ». **Aucune suppression instantanée n'est promise** tant que la purge ciblée n'est pas branchée et testée sur l'hébergement réel.
+
+### Fichiers à supprimer : enregistrés avec la décision
+
+Toute décision qui rend des fichiers inutiles enregistre leur suppression (`site_photo_purges`, inaccessible aux rôles de l'API) **dans la même transaction** :
+
+| Décision                                            | Fichiers à supprimer                   |
+| --------------------------------------------------- | -------------------------------------- |
+| photo confirmée (`ready`)                           | l'original (`original`)                |
+| révocation (membre ou confidentialité)              | tous (`all`)                           |
+| suppression, fichier refusé, établissement supprimé | tous (`all`, déclencheur sur la ligne) |
+
+- Le service supprime les fichiers, **puis** marque la suppression faite. Si le stockage échoue, la suppression reste enregistrée (tentatives comptées) et l'action répond `site_photo_cleanup_pending` (503) : **jamais de succès silencieux**.
+- **Reprise par la même action :** confirmer, révoquer ou supprimer à nouveau termine la suppression (une suppression déjà faite répond `deleted` tant que ses fichiers restent à supprimer).
+- **Reprise sans action** (processus interrompu, professionnelle partie) : `processSitePhotoPurges(service, { before, limit })` reprend les suppressions enregistrées avant `before` (pour ne pas doubler une action en cours), la plus ancienne d'abord.
+- Testé de façon déterministe : stockage en échec à la confirmation (l'original avec EXIF/GPS reste, rien n'est déclaré prêt, puis il est supprimé), interruption après confirmation, révocation, suppression, fichier refusé, établissement supprimé, et un établissement ne peut ni voir ni terminer la suppression d'un autre.
 
 ### Purge ciblée et durées plus longues (étude, rien de branché)
 
@@ -174,11 +195,16 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 - **Avant d'allonger le cache CDN,** il faudra : tester la purge sur un déploiement de prévisualisation (révoquer, puis mesurer le délai de disparition dans plusieurs régions) ; décider du comportement si la purge échoue (réessai, alerte) ; et garder une durée de secours bornée.
 - Le versionnement des URL ne règle pas la révocation : l'URL d'une photo révoquée reste la même ; c'est la base qui la refuse.
 
-### Hors périmètre de la PR 2
+### Politique de nettoyage (PR séparée, prête avant la bêta réelle)
 
-- Photos en attente jamais confirmées : leurs originaux restent jusqu'à un nettoyage périodique, à ajouter (tâche planifiée).
-- Fichiers d'un établissement supprimé : même nettoyage.
-- Photos de démonstration des univers : jamais enregistrées ni publiées (§ 10).
+Cette PR fournit la garantie (chaque suppression est enregistrée et rejouable) ; une PR suivante branche le nettoyage périodique, **requis avant la bêta réelle** :
+
+1. **Suppressions résiduelles** : une tâche planifiée appelle `processSitePhotoPurges` (par exemple toutes les 15 minutes, `before` = maintenant − 10 minutes), avec alerte sur les suppressions qui échouent plusieurs fois (`attempts`).
+2. **Envois abandonnés** : photos `pending` de plus de 24 h (envoi jamais fait, jamais confirmé, ou conversion interrompue après l'écriture des déclinaisons) → abandonnées, ce qui enregistre la suppression de tous leurs fichiers.
+3. **Fichiers orphelins** : un inventaire périodique du bucket supprime les dossiers `<business_id>/<asset_id>/` sans photo ni suppression enregistrée (un fichier écrit après un échec non prévu).
+4. **Originaux résiduels** : contrôle qu'aucune photo `ready` n'a encore de fichier `original` au-delà de quelques minutes (sinon, suppression enregistrée et alerte).
+
+Photos de démonstration des univers : jamais enregistrées ni publiées (§ 10).
 
 ### Étude de performance et de coût (mesures du 4 novembre 2026)
 

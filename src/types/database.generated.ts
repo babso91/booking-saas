@@ -692,6 +692,19 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"site_photo_purges": {
+                  Row: {
+                    "asset_id": string,"attempts": number,"business_id": string,"last_attempt_at": string | null,"requested_at": string,"scope": string
+                  }
+                  Insert: {
+                    "asset_id": string,"attempts"?: number,"business_id": string,"last_attempt_at"?: string | null,"requested_at"?: string,"scope": string
+                  }
+                  Update: {
+                    "asset_id"?: string,"attempts"?: number,"business_id"?: string,"last_attempt_at"?: string | null,"requested_at"?: string,"scope"?: string
+                  }
+                  Relationships: [
+                    
+                  ]
                 },"site_versions": {
                   Row: {
                     "business_id": string,"config": NonNullable<Json>,"id": string,"number": number,"published_at": string,"published_by": string | null,"restored_from": string | null,"schema_version": number,"site_id": string
@@ -985,6 +998,9 @@ isOneToOne: false
               "business_id": string,"business_name": string,"slug": string,"timezone": string
             }[]
                            },
+"complete_site_photo_purge":
+{ Args: { "p_asset_id": string,"p_business_id": string,"p_scope": string }; Returns: undefined
+                           },
 "confirm_site_asset":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string,"p_byte_size": number,"p_content_type": string,"p_height": number,"p_width": number }; Returns: undefined
                            },
@@ -1083,6 +1099,9 @@ isOneToOne: false
 "email_outbox_release":
 { Args: { "p_claim_id": string,"p_id": string }; Returns: boolean
                            },
+"fail_site_photo_purge":
+{ Args: { "p_asset_id": string,"p_business_id": string,"p_scope": string }; Returns: undefined
+                           },
 "get_available_slots":
 { Args: { "p_date": string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_slug": string }; Returns: {
               "ends_at": string,"local_ends_at": string,"local_starts_at": string,"starts_at": string
@@ -1155,6 +1174,11 @@ isOneToOne: false
                            },
 "member_site_photo":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: boolean
+                           },
+"pending_site_photo_purges":
+{ Args: { "p_before": string,"p_limit": number }; Returns: {
+              "asset_id": string,"attempts": number,"business_id": string,"scope": string
+            }[]
                            },
 "public_site_photo":
 { Args: { "p_asset_id": string,"p_slug": string }; Returns: string

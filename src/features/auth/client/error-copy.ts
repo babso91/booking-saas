@@ -167,6 +167,11 @@ export const errorCopy: Record<
     title: "Photo trop lourde",
     message: "Choisis une photo de 10 Mo au plus.",
   },
+  site_photo_cleanup_pending: {
+    title: "Presque terminé",
+    message:
+      "Des fichiers de la photo n’ont pas encore pu être supprimés. Réessaie : leur suppression sera reprise.",
+  },
   site_photo_invalid: {
     title: "Photo trop petite",
     message: "Choisis une photo d’au moins 320 px de côté, pas trop allongée.",
