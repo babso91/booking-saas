@@ -67,10 +67,17 @@ export const serverStudioActions: StudioActions = {
     );
     if (!created.ok) return created;
     const { assetId, path, token } = created.data;
-    const sent = await createBrowserSupabaseClient()
-      .storage.from("site-photos")
-      .uploadToSignedUrl(path, token, file, { contentType: type });
-    if (sent.error) return { ok: false, error: { code: "network" } };
+    // The file goes straight to her private bucket. Whatever stops it on
+    // the way (the connection, the client itself) is said as a failure to
+    // send: she can try again, never left waiting.
+    try {
+      const sent = await createBrowserSupabaseClient()
+        .storage.from("site-photos")
+        .uploadToSignedUrl(path, token, file, { contentType: type });
+      if (sent.error) return { ok: false, error: { code: "network" } };
+    } catch {
+      return { ok: false, error: { code: "network" } };
+    }
     const confirmed = await callAction(() =>
       confirmSitePhotoAction({ assetId }),
     );

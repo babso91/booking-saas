@@ -76,6 +76,9 @@ export default async function setup(project: TestProject) {
       NEXT_PUBLIC_APP_URL: APP_URL,
       NEXT_PUBLIC_SUPABASE_URL: env.apiUrl,
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: env.anonKey,
+      // The local stack's own key: the actions that write through the
+      // service (her site's draft, publishing, her photos) need it.
+      SUPABASE_SERVICE_ROLE_KEY: env.serviceRoleKey,
     },
   });
 

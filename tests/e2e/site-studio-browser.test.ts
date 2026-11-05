@@ -72,11 +72,27 @@ async function studioPage(
   return { page, errors, consoleErrors };
 }
 
-const saved = (page: Page) =>
-  page
-    .getByRole("status")
-    .filter({ hasText: "Brouillon enregistré" })
-    .waitFor({ timeout: 15_000 });
+async function saved(page: Page) {
+  try {
+    await page
+      .getByRole("status")
+      .filter({ hasText: "Brouillon enregistré" })
+      .waitFor({ timeout: 15_000 });
+  } catch (error) {
+    // What she saw instead (an error, a conflict, another page).
+    const seen = await page
+      .evaluate(() =>
+        (
+          document.querySelector('[aria-label="Studio de création"]') ??
+          document.body
+        ).textContent?.slice(0, 600),
+      )
+      .catch(() => "(page unreadable)");
+    throw new Error(`Draft not saved at ${page.url()}: ${seen}`, {
+      cause: error,
+    });
+  }
+}
 
 async function chooseUniverse(page: Page, name: RegExp) {
   await page.getByRole("button", { name: "Univers", exact: true }).click();
