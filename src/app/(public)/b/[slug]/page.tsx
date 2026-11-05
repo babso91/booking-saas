@@ -69,8 +69,7 @@ export default async function PublicBookingPage({
         config={publicView(page.site)}
         catalog={showcaseOf(page.catalog)}
         photoBase={publicPhotoBase(page.business.slug)}
-        business={page.business}
-        services={page.services}
+        booking={{ business: page.business, services: page.services }}
         fontClasses={siteFontClasses}
       />
     );

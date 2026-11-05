@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  motion,
-  useReducedMotion,
-  useScroll,
-  useTransform,
-} from "motion/react";
+import { motion, useScroll, useTransform } from "motion/react";
 import { useRef, type CSSProperties } from "react";
 
 import {
@@ -14,6 +9,7 @@ import {
   EditTarget,
   GradedPhoto,
   useEngine,
+  useLessMotion,
 } from "../engine/engine";
 import type { OpeningVariant } from "../engine/config";
 import styles from "./opening.module.css";
@@ -24,7 +20,7 @@ import styles from "./opening.module.css";
 // Entrances are CSS animations (opening.module.css): the first frame is the
 // one most phones wait for, and a CSS animation starts with the first paint
 // instead of after hydration. Scroll effects stay with motion, and stop
-// under "reduce motion" (useReducedMotion).
+// under "reduce motion" (useLessMotion).
 
 type Entrance = { className: string; style: CSSProperties };
 
@@ -47,7 +43,7 @@ function enter(
 
 /** A scroll-driven value, or a still one when she asked for less motion. */
 function useParallax<T, S>(value: T, still: S): T | S {
-  return useReducedMotion() ? still : value;
+  return useLessMotion() ? still : value;
 }
 
 export function Opening({ variant }: { variant: OpeningVariant }) {

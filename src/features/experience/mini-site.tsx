@@ -49,8 +49,7 @@ export function MiniSite({
   config,
   catalog,
   photoBase,
-  business,
-  services,
+  booking: bookable,
   fontClasses,
 }: {
   config: SiteConfig;
@@ -60,9 +59,11 @@ export function MiniSite({
    * proxy for her clients; the members' preview in her studio).
    */
   photoBase: string;
-  /** For the real booking (its flow reads these). */
-  business: PublicBusiness;
-  services: PublicService[];
+  /**
+   * For the real booking (its flow reads these); null in a design preview,
+   * where no booking is ever taken.
+   */
+  booking: { business: PublicBusiness; services: PublicService[] } | null;
   /** The faces of the universes (fonts.ts), declared on the site's root. */
   fontClasses: string;
 }) {
@@ -148,8 +149,7 @@ export function MiniSite({
             {booking ? (
               <SiteBooking
                 key="booking"
-                business={business}
-                services={services}
+                booking={bookable}
                 initialServiceId={booking.serviceId}
                 onClose={() => setBooking(null)}
               />

@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  AnimatePresence,
-  motion,
-  useReducedMotion,
-  useScroll,
-  useTransform,
-} from "motion/react";
+import { AnimatePresence, motion, useScroll, useTransform } from "motion/react";
 import { useRef, useState } from "react";
 
 import type { Work as WorkItem, WorkVariant } from "../engine/config";
@@ -17,6 +11,7 @@ import {
   GradedPhoto,
   useEngine,
   useReveal,
+  useLessMotion,
 } from "../engine/engine";
 import { SitePortal, useModal } from "../engine/modal";
 
@@ -171,7 +166,7 @@ function DriftFrame({
   });
   const drift = useTransform(scrollYProgress, [0, 1], ["-9%", "9%"]);
   // No scroll-driven drift when she asked for less motion.
-  const y = useReducedMotion() ? "0%" : drift;
+  const y = useLessMotion() ? "0%" : drift;
   return (
     <motion.li ref={frame} className={offset ? "md:mt-40" : ""} {...reveal()}>
       <button

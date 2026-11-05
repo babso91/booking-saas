@@ -14,8 +14,9 @@ export const metadata = { title: "Mini-site · Aperçu" };
 
 // The real mini-site (engine, scenes, public view) on a fictional site and
 // catalogue, without database: to review the universes WITHOUT photos, as
-// a professional's site is before she adds hers. Booking is the real flow,
-// which cannot reach a database here.
+// a professional's site is before she adds hers. No booking is taken
+// here: "Réserver" says so (never a fake booking journey). Like every
+// preview, a 404 in production unless DASHBOARD_PREVIEW=1.
 // ?univers=mila|alma|nail-lab, ?forfait=core|signature,
 // ?oeuvres=1 (a gallery whose photos were all withdrawn).
 const UNIVERSES: UniverseId[] = ["mila", "alma", "nail-lab"];
@@ -54,21 +55,8 @@ export default async function MiniSitePreviewPage({
       })}
       catalog={showcaseOf(sampleCatalog)}
       photoBase="/apercu-sans-photo"
-      business={{
-        slug: "apercu",
-        name: saved.brand.name,
-        description: null,
-        location: saved.brand.location,
-        logoPath: null,
-        timezone: "Europe/Paris",
-        cancellationPolicy: null,
-        currency: "EUR",
-        slotIntervalMinutes: 15,
-        minimumBookingNoticeMinutes: 120,
-        maximumBookingAdvanceDays: 60,
-        today: "2026-11-05",
-      }}
-      services={[]}
+      // A design preview: no booking is ever taken here.
+      booking={null}
       fontClasses={siteFontClasses}
     />
   );

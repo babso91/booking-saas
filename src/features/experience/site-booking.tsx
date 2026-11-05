@@ -20,13 +20,12 @@ import { SitePortal, useModal } from "./engine/modal";
  * universe-styled one will render the same flow.
  */
 export function SiteBooking({
-  business,
-  services,
+  booking,
   initialServiceId,
   onClose,
 }: {
-  business: PublicBusiness;
-  services: PublicService[];
+  /** null: a design preview, where no booking is ever taken. */
+  booking: { business: PublicBusiness; services: PublicService[] } | null;
   initialServiceId?: string;
   onClose: () => void;
 }) {
@@ -85,12 +84,19 @@ export function SiteBooking({
         </div>
         <div className="flex-1 overflow-y-auto px-4 pt-5 pb-[max(env(safe-area-inset-bottom),24px)] sm:px-6">
           <div className="mx-auto w-full max-w-xl">
-            <PublicBooking
-              business={business}
-              services={services}
-              embedded
-              initialServiceId={initialServiceId}
-            />
+            {booking ? (
+              <PublicBooking
+                business={booking.business}
+                services={booking.services}
+                embedded
+                initialServiceId={initialServiceId}
+              />
+            ) : (
+              <p className="text-[15px] text-ink-soft">
+                Aperçu du design : la réservation n’est pas ouverte ici. Sur son
+                site publié, ce bouton ouvre sa vraie réservation.
+              </p>
+            )}
           </div>
         </div>
       </motion.div>

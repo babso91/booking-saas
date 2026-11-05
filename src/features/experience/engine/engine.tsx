@@ -3,6 +3,7 @@
 import {
   createContext,
   useContext,
+  useSyncExternalStore,
   type CSSProperties,
   type ElementType,
   type ReactNode,
@@ -266,6 +267,28 @@ export function revealVariables(motion: {
     "--reveal-ease": `cubic-bezier(${motion.ease.join(",")})`,
     "--reveal-step": motion.entrance === "bloom" ? "0.2s" : "0.08s",
   } as CSSProperties;
+}
+
+const LESS_MOTION = "(prefers-reduced-motion: reduce)";
+
+/**
+ * Whether she asked for less motion, safe for hydration: answers as the
+ * server did (it cannot know: no) while the page hydrates, then her real
+ * preference, and follows it if it changes. motion's useReducedMotion
+ * answers her preference at once on the client, so a scroll effect
+ * rendered still on the client and moving on the server made the
+ * hydrated attributes differ (a style React never patches).
+ */
+export function useLessMotion() {
+  return useSyncExternalStore(
+    (changed) => {
+      const query = window.matchMedia(LESS_MOTION);
+      query.addEventListener("change", changed);
+      return () => query.removeEventListener("change", changed);
+    },
+    () => window.matchMedia(LESS_MOTION).matches,
+    () => false,
+  );
 }
 
 /** "25 €", "12,50 €" (never "12,5 €"); a field typed wrong says so. */

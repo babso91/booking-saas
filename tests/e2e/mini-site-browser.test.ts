@@ -13,8 +13,27 @@ import { APP, Browser, db, professionalWithVisit } from "./support/studio";
 // studio will.
 
 const VARIANTS = [
-  { name: "phone 390", width: 390, phone: true },
-  { name: "computer", width: 1280, phone: false },
+  {
+    name: "phone 390, Mila",
+    width: 390,
+    phone: true,
+    reduced: false,
+    universe: "mila" as const,
+  },
+  {
+    name: "phone 320, Alma, less motion",
+    width: 320,
+    phone: true,
+    reduced: true,
+    universe: "alma" as const,
+  },
+  {
+    name: "computer, Nail Lab",
+    width: 1280,
+    phone: false,
+    reduced: false,
+    universe: "nail-lab" as const,
+  },
 ];
 
 async function saveDraft(
@@ -22,8 +41,9 @@ async function saveDraft(
   actor: string,
   revision: number,
   name: string,
+  universe: "mila" | "alma" | "nail-lab",
 ) {
-  const config = sampleSite("mila");
+  const config = sampleSite(universe);
   const { rows } = await db.query<{ revision: number }>(
     "select public.save_site_draft($1, $2, $3, 1, $4::jsonb) as revision",
     [
@@ -36,64 +56,83 @@ async function saveDraft(
   return rows[0]!.revision;
 }
 
-describe.each(VARIANTS)("her mini-site — $name", ({ name, width, phone }) => {
-  it("the published version, her catalogue, the real booking; never the draft", async () => {
-    const pro = await professionalWithVisit("Mila", "Lou");
-    const actor = pro.browser.member!.userId;
-    const { rows } = await db.query<{ slug: string }>(
-      "select slug from public.businesses where id = $1",
-      [pro.businessId],
-    );
-    const slug = rows[0]!.slug;
+describe.each(VARIANTS)(
+  "her mini-site — $name",
+  ({ name, width, phone, reduced, universe }) => {
+    it("the published version, her catalogue, the real booking; never the draft", async () => {
+      const pro = await professionalWithVisit("Mila", "Lou");
+      const actor = pro.browser.member!.userId;
+      const { rows } = await db.query<{ slug: string }>(
+        "select slug from public.businesses where id = $1",
+        [pro.businessId],
+      );
+      const slug = rows[0]!.slug;
 
-    const revision = await saveDraft(
-      pro.businessId,
-      actor,
-      0,
-      "Studio Lumière",
-    );
-    await db.query("select * from public.publish_site($1, $2, $3)", [
-      pro.businessId,
-      actor,
-      revision,
-    ]);
-    // A newer draft, never published: her clients never see it.
-    await saveDraft(pro.businessId, actor, revision, "Brouillon secret");
+      const revision = await saveDraft(
+        pro.businessId,
+        actor,
+        0,
+        "Studio Lumière",
+        universe,
+      );
+      await db.query("select * from public.publish_site($1, $2, $3)", [
+        pro.businessId,
+        actor,
+        revision,
+      ]);
+      // A newer draft, never published: her clients never see it.
+      await saveDraft(
+        pro.businessId,
+        actor,
+        revision,
+        "Brouillon secret",
+        universe,
+      );
 
-    const { page, errors } = await signedInPage(new Browser(), {
-      appearance: null,
-      width,
-      height: 860,
-      phone,
+      const { page, errors } = await signedInPage(new Browser(), {
+        appearance: null,
+        width,
+        height: 860,
+        phone,
+      });
+      // Every console error counts: a hydration mismatch is one.
+      const consoleErrors: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error") consoleErrors.push(message.text());
+      });
+      if (reduced) await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.goto(`${APP}/b/${slug}`);
+      await page.getByText("Studio Lumière").first().waitFor();
+      expect(await page.getByText("Brouillon secret").count()).toBe(0);
+      // Her real service, from her catalogue (get_public_catalog).
+      await page.getByText("Rehaussement de cils").first().waitFor();
+      // No photo yet: drawn in her universe's colours, never a broken image.
+      expect(await page.locator("img").count()).toBe(0);
+      expect(await page.locator("[data-no-photo]").count()).toBeGreaterThan(0);
+      expect(await noSideScroll(page)).toBe(true);
+      await expectAccessible(page, "mini-site");
+      await capture(page, `mini-site ${name}`);
+
+      // The real booking, from her site.
+      await page
+        .locator("[data-header-action]")
+        .getByRole("button", { name: "Réserver" })
+        .click();
+      const sheet = page.getByRole("dialog", {
+        name: "Réserver chez Studio Lumière",
+      });
+      await sheet
+        .getByRole("heading", { name: "Choisissez une prestation" })
+        .waitFor();
+      await sheet
+        .getByRole("button", { name: /Rehaussement de cils/ })
+        .waitFor();
+      await capture(page, `mini-site ${name} booking`);
+      await page.keyboard.press("Escape");
+      await sheet.waitFor({ state: "detached" });
+
+      expect(errors).toEqual([]);
+      expect(consoleErrors).toEqual([]);
     });
-    await page.goto(`${APP}/b/${slug}`);
-    await page.getByText("Studio Lumière").first().waitFor();
-    expect(await page.getByText("Brouillon secret").count()).toBe(0);
-    // Her real service, from her catalogue (get_public_catalog).
-    await page.getByText("Rehaussement de cils").first().waitFor();
-    // No photo yet: drawn in her universe's colours, never a broken image.
-    expect(await page.locator("img").count()).toBe(0);
-    expect(await page.locator("[data-no-photo]").count()).toBeGreaterThan(0);
-    expect(await noSideScroll(page)).toBe(true);
-    await expectAccessible(page, "mini-site");
-    await capture(page, `mini-site ${name}`);
-
-    // The real booking, from her site.
-    await page
-      .locator("[data-header-action]")
-      .getByRole("button", { name: "Réserver" })
-      .click();
-    const sheet = page.getByRole("dialog", {
-      name: "Réserver chez Studio Lumière",
-    });
-    await sheet
-      .getByRole("heading", { name: "Choisissez une prestation" })
-      .waitFor();
-    await sheet.getByRole("button", { name: /Rehaussement de cils/ }).waitFor();
-    await capture(page, `mini-site ${name} booking`);
-    await page.keyboard.press("Escape");
-    await sheet.waitFor({ state: "detached" });
-
-    expect(errors).toEqual([]);
-  });
-});
+  },
+);
