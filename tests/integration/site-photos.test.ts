@@ -19,6 +19,9 @@ import {
   SITE_PHOTO_BUCKET,
   confirmSitePhoto,
   createSitePhotoUpload,
+  deleteSitePhoto,
+  processSitePhotoPurges,
+  revokeSitePhoto,
   revokeSitePhotoForPrivacy,
   sitePhotoFiles,
 } from "@/features/sites/data/photos";
@@ -32,6 +35,7 @@ import {
 import { sampleSiteConfig } from "@/features/sites/site-fixture";
 import { AppException } from "@/lib/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import type { AppSupabaseClient } from "@/lib/supabase/types";
 import type { Database } from "@/types/database.generated";
 
 import {
@@ -893,5 +897,322 @@ describe("site photos: deletion", () => {
     expect(await assetRow(unused)).toBeNull();
     expect(await storedFiles(business.id, unused)).toEqual([]);
     expect(await assetRow(assetId)).toMatchObject({ status: "ready" });
+  });
+});
+
+/**
+ * The service client, except that deleting files in the photos' bucket
+ * fails while `removal.fails` (storage down, network cut): everything else
+ * is real.
+ */
+const removal = { fails: false, attempts: 0 };
+
+function serviceWithFlakyRemoval(): AppSupabaseClient {
+  const real = bookingClient();
+  const bind = (target: object, value: unknown) =>
+    typeof value === "function" ? value.bind(target) : value;
+  return new Proxy(real, {
+    get(target, property) {
+      if (property !== "storage") {
+        return bind(target, Reflect.get(target, property));
+      }
+      const storage = target.storage;
+      return new Proxy(storage, {
+        get(storageTarget, storageProperty) {
+          if (storageProperty !== "from") {
+            return bind(
+              storageTarget,
+              Reflect.get(storageTarget, storageProperty),
+            );
+          }
+          return (bucketName: string) => {
+            const bucket = storageTarget.from(bucketName);
+            return new Proxy(bucket, {
+              get(bucketTarget, bucketProperty) {
+                if (bucketProperty === "remove") {
+                  return async (paths: string[]) => {
+                    removal.attempts += 1;
+                    if (removal.fails) {
+                      return {
+                        data: null,
+                        error: new Error("storage unavailable (injected)"),
+                      };
+                    }
+                    return bucketTarget.remove(paths);
+                  };
+                }
+                return bind(
+                  bucketTarget,
+                  Reflect.get(bucketTarget, bucketProperty),
+                );
+              },
+            });
+          };
+        },
+      });
+    },
+  }) as AppSupabaseClient;
+}
+
+async function purgesOf(assetId: string) {
+  const { rows } = await db.query<{ scope: string; attempts: number }>(
+    "select scope, attempts from public.site_photo_purges where asset_id = $1 order by scope",
+    [assetId],
+  );
+  return rows;
+}
+
+describe("site photos: failed and interrupted file deletions", () => {
+  async function freshStudio(label: string) {
+    const owner = await createAccount(label);
+    alice = owner;
+    studioA = await createBusiness(owner.userId);
+    await signIn(owner);
+    return {
+      flaky: {
+        service: serviceWithFlakyRemoval(),
+        businessId: studioA.id,
+        actor: owner.userId,
+      } satisfies SiteWriter,
+      business: studioA,
+    };
+  }
+
+  it("the original cannot be deleted: no success answered, retried until gone", async () => {
+    const { flaky, business } = await freshStudio("purge-original");
+    const upload = await uploadPhoto(await phonePhoto());
+
+    removal.fails = true;
+    expect(await codeOf(() => confirmSitePhoto(flaky, upload.assetId))).toBe(
+      "site_photo_cleanup_pending",
+    );
+    // Ready (the conversion is done), but its original, with its EXIF and
+    // GPS, is still there and its deletion is recorded.
+    expect(await assetRow(upload.assetId)).toMatchObject({ status: "ready" });
+    expect(await storedFiles(business.id, upload.assetId)).toContain(
+      "original",
+    );
+    expect(await purgesOf(upload.assetId)).toEqual([
+      { scope: "original", attempts: 1 },
+    ]);
+    // Still failing: no success either, the attempt is counted.
+    expect(await codeOf(() => confirmSitePhoto(flaky, upload.assetId))).toBe(
+      "site_photo_cleanup_pending",
+    );
+    expect(await purgesOf(upload.assetId)).toEqual([
+      { scope: "original", attempts: 2 },
+    ]);
+
+    // Confirming again once storage answers: deleted, then ready.
+    removal.fails = false;
+    expect(await confirmSitePhoto(flaky, upload.assetId)).toMatchObject({
+      id: upload.assetId,
+      status: "ready",
+    });
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "w1200.webp",
+      "w480.webp",
+      "w828.webp",
+    ]);
+    expect(await purgesOf(upload.assetId)).toEqual([]);
+  });
+
+  it("interrupted after the confirmation: the cleanup deletes the original", async () => {
+    const { flaky, business } = await freshStudio("purge-interrupted");
+    const upload = await uploadPhoto(await phonePhoto());
+    // The process stops right after the confirmation (the removal never
+    // succeeds and nobody confirms again).
+    removal.fails = true;
+    await codeOf(() => confirmSitePhoto(flaky, upload.assetId));
+    removal.fails = false;
+    expect(await purgesOf(upload.assetId)).toHaveLength(1);
+
+    // Removals still in flight are left alone (requested after `before`).
+    const early = await processSitePhotoPurges(bookingClient(), {
+      before: new Date(Date.now() - 60 * 60 * 1000),
+      limit: 100,
+    });
+    expect(early).toEqual({ done: 0, failed: 0 });
+    expect(await storedFiles(business.id, upload.assetId)).toContain(
+      "original",
+    );
+
+    const later = await processSitePhotoPurges(bookingClient(), {
+      before: new Date(Date.now() + 1000),
+      limit: 500,
+    });
+    expect(later.failed).toBe(0);
+    expect(later.done).toBeGreaterThanOrEqual(1);
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "w1200.webp",
+      "w480.webp",
+      "w828.webp",
+    ]);
+    expect(await purgesOf(upload.assetId)).toEqual([]);
+    expect(await assetRow(upload.assetId)).toMatchObject({ status: "ready" });
+  });
+
+  it("revocation whose files cannot be deleted: not served, recorded, retried", async () => {
+    const { flaky, business } = await freshStudio("purge-revoke");
+    const assetId = await readyPhoto();
+    await publish(business, withCover(assetId));
+    expect((await publicPhoto(business.slug, assetId)).status).toBe(200);
+
+    removal.fails = true;
+    expect(await codeOf(() => revokeSitePhoto(flaky, assetId))).toBe(
+      "site_photo_cleanup_pending",
+    );
+    // Revoked all the same: never served again, even with its files there.
+    expect(await assetRow(assetId)).toMatchObject({ status: "revoked" });
+    expect((await publicPhoto(business.slug, assetId)).status).toBe(404);
+    expect((await previewPhoto(assetId)).status).toBe(404);
+    expect(await storedFiles(business.id, assetId)).toHaveLength(3);
+    expect(await purgesOf(assetId)).toEqual([{ scope: "all", attempts: 1 }]);
+
+    removal.fails = false;
+    await revokeSitePhoto(flaky, assetId);
+    expect(await storedFiles(business.id, assetId)).toEqual([]);
+    expect(await purgesOf(assetId)).toEqual([]);
+    expect(await assetRow(assetId)).toMatchObject({ status: "revoked" });
+  });
+
+  it("deletion whose files cannot be deleted: retrying the deletion finishes it", async () => {
+    const { flaky, business } = await freshStudio("purge-delete");
+    const assetId = await readyPhoto();
+
+    removal.fails = true;
+    expect(await codeOf(() => deleteSitePhoto(flaky, assetId))).toBe(
+      "site_photo_cleanup_pending",
+    );
+    expect(await assetRow(assetId)).toBeNull();
+    expect(await storedFiles(business.id, assetId)).toHaveLength(3);
+    expect(await purgesOf(assetId)).toEqual([{ scope: "all", attempts: 1 }]);
+    // Not served meanwhile: the photo no longer exists.
+    expect((await previewPhoto(assetId)).status).toBe(404);
+    // Another business cannot use the retry to learn about it, nor touch
+    // its purge.
+    const other = writerFor(studioB, bruno);
+    expect(await codeOf(() => deleteSitePhoto(other, assetId))).toBe(
+      "site_photo_not_found",
+    );
+    expect(await purgesOf(assetId)).toEqual([{ scope: "all", attempts: 1 }]);
+
+    removal.fails = false;
+    expect(await deleteSitePhoto(flaky, assetId)).toEqual({ deleted: true });
+    expect(await storedFiles(business.id, assetId)).toEqual([]);
+    expect(await purgesOf(assetId)).toEqual([]);
+    // Then gone for good: not found, as any unknown photo.
+    expect(await codeOf(() => deleteSitePhoto(flaky, assetId))).toBe(
+      "site_photo_not_found",
+    );
+  });
+
+  it("an original left, then the photo revoked: one deletion clears both", async () => {
+    const { flaky, business } = await freshStudio("purge-both");
+    const upload = await uploadPhoto(await phonePhoto());
+    removal.fails = true;
+    await codeOf(() => confirmSitePhoto(flaky, upload.assetId));
+    removal.fails = false;
+    expect(await purgesOf(upload.assetId)).toEqual([
+      { scope: "original", attempts: 1 },
+    ]);
+    await revokeSitePhoto(flaky, upload.assetId);
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([]);
+    expect(await purgesOf(upload.assetId)).toEqual([]);
+  });
+
+  it("a refused file whose removal fails: forgotten, its files left to the cleanup", async () => {
+    const { flaky, business } = await freshStudio("purge-discard");
+    const upload = await uploadPhoto(Buffer.from("not a photo at all"));
+    removal.fails = true;
+    expect(await codeOf(() => confirmSitePhoto(flaky, upload.assetId))).toBe(
+      "site_photo_unsupported",
+    );
+    removal.fails = false;
+    expect(await assetRow(upload.assetId)).toBeNull();
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "original",
+    ]);
+    expect(await purgesOf(upload.assetId)).toEqual([
+      { scope: "all", attempts: 1 },
+    ]);
+    await processSitePhotoPurges(bookingClient(), {
+      before: new Date(Date.now() + 1000),
+      limit: 500,
+    });
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([]);
+    expect(await purgesOf(upload.assetId)).toEqual([]);
+  });
+
+  it("a business deleted: its photos' files are recorded for deletion", async () => {
+    const { business } = await freshStudio("purge-business");
+    const ready = await readyPhoto();
+    const revoked = await readyPhoto();
+    await revokeSitePhotoAction({ assetId: revoked });
+    await db.query("delete from public.businesses where id = $1", [
+      business.id,
+    ]);
+    expect(await purgesOf(ready)).toEqual([{ scope: "all", attempts: 0 }]);
+    expect(await storedFiles(business.id, ready)).toHaveLength(3);
+    await processSitePhotoPurges(bookingClient(), {
+      before: new Date(Date.now() + 1000),
+      limit: 500,
+    });
+    expect(await storedFiles(business.id, ready)).toEqual([]);
+    expect(await purgesOf(ready)).toEqual([]);
+  });
+
+  it("a purge is completed only under its own business", async () => {
+    const { flaky, business } = await freshStudio("purge-scope");
+    const assetId = await readyPhoto();
+    removal.fails = true;
+    await codeOf(() => revokeSitePhoto(flaky, assetId));
+    removal.fails = false;
+    const service = bookingClient();
+    for (const name of [
+      "complete_site_photo_purge",
+      "fail_site_photo_purge",
+    ] as const) {
+      const { error } = await service.rpc(name, {
+        p_business_id: studioB.id,
+        p_asset_id: assetId,
+        p_scope: "all",
+      });
+      expect(error).toBeNull();
+    }
+    expect(await purgesOf(assetId)).toEqual([{ scope: "all", attempts: 1 }]);
+    await processSitePhotoPurges(service, {
+      before: new Date(Date.now() + 1000),
+      limit: 500,
+    });
+    expect(await storedFiles(business.id, assetId)).toEqual([]);
+    expect(await purgesOf(assetId)).toEqual([]);
+  });
+
+  it("nobody but the service sees or touches the purges", async () => {
+    const { error: read } = await anonClient()
+      .from("site_photo_purges" as never)
+      .select("*");
+    expect(read).not.toBeNull();
+    for (const [name, args] of [
+      [
+        "pending_site_photo_purges",
+        { p_before: new Date().toISOString(), p_limit: 10 },
+      ],
+      [
+        "complete_site_photo_purge",
+        { p_asset_id: randomUUID(), p_scope: "all" },
+      ],
+      ["fail_site_photo_purge", { p_asset_id: randomUUID(), p_scope: "all" }],
+    ] as const) {
+      const { error } = await anonClient().rpc(name as never, args as never);
+      expect(error).not.toBeNull();
+    }
+    await signIn(alice);
+    const member = await createServerSupabaseClient();
+    const { data } = await member
+      .from("site_photo_purges" as never)
+      .select("*");
+    expect(data ?? []).toEqual([]);
   });
 });

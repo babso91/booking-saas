@@ -155,6 +155,104 @@ $$;
 revoke all on function private.site_config_refers_to(jsonb, uuid) from public;
 
 -- ---------------------------------------------------------------------------
+-- Purges: the files to delete, recorded with the decision
+-- ---------------------------------------------------------------------------
+
+-- Every decision that makes files useless (a photo made ready: its
+-- original; revoked, deleted, discarded, or gone with its business: all its
+-- files) records a purge IN THE SAME TRANSACTION. The service deletes the
+-- files, then completes the purge; a purge left (failed or interrupted
+-- removal) is retried: by the same action called again, or by the cleanup
+-- of pending purges. No file outlives its decision unnoticed.
+create table public.site_photo_purges (
+  -- No foreign key: a purge outlives its photo and its business.
+  business_id uuid not null,
+  asset_id uuid not null,
+  -- original: the uploaded file (EXIF, GPS); all: every file of the photo.
+  scope text not null check (scope in ('original', 'all')),
+  requested_at timestamptz not null default now(),
+  attempts integer not null default 0 check (attempts >= 0),
+  last_attempt_at timestamptz,
+  primary key (asset_id, scope)
+);
+
+create index site_photo_purges_requested_idx
+  on public.site_photo_purges (requested_at);
+
+alter table public.site_photo_purges enable row level security;
+revoke all on table public.site_photo_purges from public, anon, authenticated;
+
+create function private.queue_site_photo_purge(p_business_id uuid, p_asset_id uuid, p_scope text)
+returns void
+language sql
+set search_path = ''
+as $$
+  insert into public.site_photo_purges (business_id, asset_id, scope)
+  values (p_business_id, p_asset_id, p_scope)
+  on conflict (asset_id, scope) do nothing;
+$$;
+
+revoke all on function private.queue_site_photo_purge(uuid, uuid, text) from public;
+
+-- A photo's row gone, however (deleted, discarded, its business deleted):
+-- its files are to be deleted.
+create function private.site_asset_deleted()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform private.queue_site_photo_purge(old.business_id, old.id, 'all');
+  return old;
+end;
+$$;
+
+create trigger site_assets_purge_files
+  after delete on public.site_assets
+  for each row execute function private.site_asset_deleted();
+
+-- The files of this purge are deleted: done. `all` covers `original`.
+create function public.complete_site_photo_purge(p_business_id uuid, p_asset_id uuid, p_scope text)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  delete from public.site_photo_purges p
+  where p.asset_id = p_asset_id
+    and p.business_id = p_business_id
+    and (p.scope = p_scope or p_scope = 'all');
+$$;
+
+-- A removal failed: kept, counted, retried later.
+create function public.fail_site_photo_purge(p_business_id uuid, p_asset_id uuid, p_scope text)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.site_photo_purges p
+  set attempts = p.attempts + 1, last_attempt_at = pg_catalog.now()
+  where p.asset_id = p_asset_id and p.business_id = p_business_id and p.scope = p_scope;
+$$;
+
+-- The purges requested before `p_before` (left by a failed or interrupted
+-- removal), the oldest first.
+create function public.pending_site_photo_purges(p_before timestamptz, p_limit integer)
+returns table (business_id uuid, asset_id uuid, scope text, attempts integer)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select p.business_id, p.asset_id, p.scope, p.attempts
+  from public.site_photo_purges p
+  where p.requested_at < p_before
+  order by p.requested_at, p.asset_id, p.scope
+  limit greatest(least(p_limit, 500), 0);
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Writes (the service, for a member)
 -- ---------------------------------------------------------------------------
 
@@ -205,7 +303,8 @@ end;
 $$;
 
 -- The file was verified by the server (real type, size, dimensions) and its
--- derivatives were made: the photo is ready. Only a pending photo.
+-- derivatives were made: the photo is ready, and its original is to be
+-- deleted (purge recorded). Only a pending photo.
 create function public.confirm_site_asset(
   p_business_id uuid,
   p_actor uuid,
@@ -244,6 +343,7 @@ begin
       width = p_width,
       height = p_height
   where a.id = p_asset_id;
+  perform private.queue_site_photo_purge(p_business_id, p_asset_id, 'original');
 end;
 $$;
 
@@ -266,8 +366,10 @@ end;
 $$;
 
 -- Deletes a photo nothing refers to: not the draft, not any published
--- version (site_asset_in_use: revoke it instead). A revoked photo stays as
--- a record (its files are already gone), so it can never come back.
+-- version (site_asset_in_use: revoke it instead); its files are to be
+-- deleted (the row's trigger records the purge). Called again once deleted
+-- while its purge is left: 'deleted' again, so the caller retries the files.
+-- A revoked photo stays as a record, so it can never come back.
 create function public.delete_site_asset(
   p_business_id uuid,
   p_actor uuid,
@@ -290,6 +392,12 @@ begin
   where a.id = p_asset_id and a.business_id = p_business_id
   for update;
   if not found then
+    if exists (
+      select 1 from public.site_photo_purges p
+      where p.asset_id = p_asset_id and p.business_id = p_business_id and p.scope = 'all'
+    ) then
+      return 'deleted';
+    end if;
     raise exception using errcode = 'P0002', message = 'site_photo_not_found', hint = 'assetId';
   end if;
   if v_status = 'revoked' then
@@ -317,7 +425,7 @@ $$;
 
 -- Revokes a photo, whatever refers to it. Final and idempotent; the first
 -- reason stays. Nothing published is rewritten: every render shows its
--- places without a photo. The caller then deletes its files.
+-- places without a photo. Its files are to be deleted (purge recorded).
 create function private.revoke_site_asset(p_business_id uuid, p_asset_id uuid, p_reason text)
 returns void
 language plpgsql
@@ -332,6 +440,7 @@ begin
   if not found then
     raise exception using errcode = 'P0002', message = 'site_photo_not_found', hint = 'assetId';
   end if;
+  perform private.queue_site_photo_purge(p_business_id, p_asset_id, 'all');
 end;
 $$;
 
@@ -465,7 +574,10 @@ begin
     'public.revoke_site_asset(uuid, uuid, uuid)',
     'public.revoke_site_asset_for_privacy(uuid, uuid)',
     'public.public_site_photo(text, uuid)',
-    'public.member_site_photo(uuid, uuid, uuid)'
+    'public.member_site_photo(uuid, uuid, uuid)',
+    'public.complete_site_photo_purge(uuid, uuid, text)',
+    'public.fail_site_photo_purge(uuid, uuid, text)',
+    'public.pending_site_photo_purges(timestamptz, integer)'
   ] loop
     execute pg_catalog.format('revoke all on function %s from public, anon, authenticated', v_signature);
     execute pg_catalog.format('grant execute on function %s to service_role', v_signature);

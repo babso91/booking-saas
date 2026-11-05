@@ -46,6 +46,8 @@ export const appErrorMessages = {
   site_photo_too_large: "Cette photo est trop lourde (10 Mo au plus).",
   site_photo_invalid:
     "Cette photo est trop petite (320 px au moins de côté) ou trop allongée.",
+  site_photo_cleanup_pending:
+    "L’opération est enregistrée, mais des fichiers de la photo n’ont pas encore pu être supprimés. Réessayez : leur suppression sera reprise.",
   stale_service:
     "Cette prestation a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_deleted:
@@ -218,6 +220,7 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   site_photo_unsupported: 415,
   site_photo_too_large: 413,
   site_photo_invalid: 422,
+  site_photo_cleanup_pending: 503,
   stale_service: 409,
   service_deleted: 410,
   category_not_found: 404,
