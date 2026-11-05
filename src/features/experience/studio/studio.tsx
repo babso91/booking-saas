@@ -702,7 +702,10 @@ export function Studio({
                                     }}
                                   />
                                 ) : (
-                                  <span className="absolute inset-0 flex items-center justify-center text-[26px] text-black/35">
+                                  <span
+                                    aria-hidden="true"
+                                    className="absolute inset-0 flex items-center justify-center text-[26px] text-black/35"
+                                  >
                                     +
                                   </span>
                                 )}

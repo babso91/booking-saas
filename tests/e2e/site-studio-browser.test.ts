@@ -226,9 +226,10 @@ describe("her studio — her photos and her plan", () => {
     await saved(page);
 
     await page.getByRole("button", { name: "Photos", exact: true }).click();
+    // Her cover's place: empty in her first draft (no photo of hers yet).
     await page
-      .locator('[aria-label="Studio de création"] button:has(img)')
-      .first()
+      .locator('[aria-label="Studio de création"]')
+      .getByRole("button", { name: "Couverture", exact: true })
       .click();
     const photo = await sharp({
       create: { width: 1600, height: 2000, channels: 3, background: "#c49a7a" },
