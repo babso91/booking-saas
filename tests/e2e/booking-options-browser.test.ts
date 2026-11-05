@@ -166,27 +166,55 @@ describe.each(VARIANTS)(
       await page.getByText(/^85,00\s€$/).waitFor();
       await check("review");
 
+      // The terminal state is the server's answer to the booking itself,
+      // read on the wire: a refusal fails here, with its code and body. (A
+      // role="alert" cannot serve: Next's route announcer is one, on every
+      // page, from the start.)
+      const answered = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/bookings" &&
+          response.request().method() === "POST",
+      );
       await page
         .getByRole("button", { name: /Confirmer la réservation/ })
         .click();
-      // Confirmed, or the refusal said in words (never a bare timeout).
-      const confirmed = page.getByRole("heading", {
-        name: "Rendez-vous confirmé",
-      });
-      // A refusal is an alert; a warning (rate limit) only shows as text:
-      // whatever it is, it is reported in words below, never a bare timeout.
-      await confirmed
-        .or(page.getByRole("alert"))
-        .first()
-        .waitFor()
-        .catch(() => undefined);
-      if (!(await confirmed.isVisible())) {
+      const response = await answered;
+      const body = (await response.json()) as {
+        data?: {
+          booking: {
+            appointmentId: string;
+            status: string;
+            replayed: boolean;
+            priceCents: number;
+            durationMinutes: number;
+            options: { label: string }[];
+          };
+        };
+        error?: { code: string };
+      };
+      if (response.status() !== 201 || !body.data) {
         await capture(page, `booking options ${name} refused`);
         throw new Error(
-          `Not booked: ${await page.locator("main").innerText()}`,
+          `Not booked: HTTP ${response.status()} ${JSON.stringify(body.error ?? body)}`,
         );
       }
-      await page.getByText("Volume", { exact: true }).waitFor();
+      expect(body.data.booking).toMatchObject({
+        status: "confirmed",
+        replayed: false,
+        priceCents: 8500,
+        durationMinutes: 120,
+      });
+      expect(body.data.booking.options.map((option) => option.label)).toEqual([
+        "Volume",
+        "Oui",
+      ]);
+      // Then what she sees: the confirmation, from that answer.
+      const main = page.getByRole("main");
+      await main
+        .getByRole("heading", { name: "Rendez-vous confirmé" })
+        .waitFor();
+      await main.getByText("Volume", { exact: true }).waitFor();
+      await main.getByText(/^85,00\s€$/).waitFor();
       await check("confirmed");
 
       // Booked as the server priced it, with her answers kept.
@@ -197,21 +225,24 @@ describe.each(VARIANTS)(
         minutes: number;
         labels: string[];
         local: string;
+        status: string;
       }>(
         `select a.id,
+              a.status,
               a.price_cents_snapshot as price,
               a.duration_minutes_snapshot as duration,
               extract(epoch from a.ends_at - a.starts_at)::int / 60 as minutes,
               array(select o->>'label' from jsonb_array_elements(a.options_snapshot) o) as labels,
               to_char(a.starts_at at time zone 'Europe/Paris', 'YYYY-MM-DD') as local
          from public.appointments a
-        where a.business_id = $1 and a.service_id = $2 and a.status = 'confirmed'
-          and a.price_cents_snapshot = 8500`,
-        [pro.businessId, pro.service],
+        where a.id = $1 and a.business_id = $2 and a.service_id = $3`,
+        [body.data.booking.appointmentId, pro.businessId, pro.service],
       );
+      // The row the answer named, as the server priced it.
       expect(booked.rows).toEqual([
         {
-          id: expect.any(String),
+          id: body.data.booking.appointmentId,
+          status: "confirmed",
           price: 8500,
           duration: 120,
           minutes: 120,
@@ -219,6 +250,15 @@ describe.each(VARIANTS)(
           local: tomorrow,
         },
       ]);
+
+      // And only one: tomorrow holds this booking and nothing else.
+      const tomorrowRows = await db.query(
+        `select 1 from public.appointments
+          where business_id = $1
+            and to_char(starts_at at time zone 'Europe/Paris', 'YYYY-MM-DD') = $2`,
+        [pro.businessId, tomorrow],
+      );
+      expect(tomorrowRows.rowCount).toBe(1);
 
       // In her agenda, with its totals.
       const agenda = await signedInPage(pro.browser, {
