@@ -109,6 +109,7 @@ let studioA: TestBusiness;
 let studioB: TestBusiness;
 
 beforeAll(async () => {
+  process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
   process.env.NEXT_PUBLIC_SUPABASE_URL = env.apiUrl;
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = env.anonKey;
   process.env.SUPABASE_SERVICE_ROLE_KEY = env.serviceRoleKey;
