@@ -1,75 +1,119 @@
 import type { Metadata, Viewport } from "next";
-import {
-  Archivo,
-  Hanken_Grotesk,
-  IBM_Plex_Mono,
-  Instrument_Serif,
-  Jost,
-  Marcellus,
-  Newsreader,
-} from "next/font/google";
+import localFont from "next/font/local";
 
 import { BookingHostProvider } from "@/components/shared/booking-host";
 import { bookingHost } from "@/lib/brand";
 
 import "./globals.css";
 
-const body = Hanken_Grotesk({
-  subsets: ["latin"],
+// Self-hosted faces (src/fonts, see its README): the build never depends on
+// a font service. Latin and latin-ext, under the SIL Open Font License.
+
+const hankenGrotesk = localFont({
+  src: "../fonts/hanken-grotesk.woff2",
+  weight: "100 900",
+  // Its own name, as the pages and tests read it.
+  declarations: [{ prop: "font-family", value: "'Hanken Grotesk'" }],
   variable: "--font-body",
   display: "swap",
+  fallback: ["sans-serif"],
 });
 
-const serif = Instrument_Serif({
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
+const instrumentSerif = localFont({
+  src: [
+    { path: "../fonts/instrument-serif.woff2", weight: "400", style: "normal" },
+    {
+      path: "../fonts/instrument-serif-italic.woff2",
+      weight: "400",
+      style: "italic",
+    },
+  ],
+  // Its own name, as the pages and tests read it.
+  declarations: [{ prop: "font-family", value: "'Instrument Serif'" }],
   variable: "--font-serif",
   display: "swap",
+  fallback: ["serif"],
+  adjustFontFallback: "Times New Roman",
 });
 
 // The professional area's Studio style. Not preloaded: only downloaded on
 // the pages that use it.
-const studio = Archivo({
-  subsets: ["latin"],
-  axes: ["wdth"],
+const archivo = localFont({
+  src: "../fonts/archivo.woff2",
+  weight: "100 900",
+  // Its own name, and its width axis as the pages use it.
+  declarations: [
+    { prop: "font-family", value: "'Archivo'" },
+    { prop: "font-stretch", value: "62% 125%" },
+  ],
   variable: "--font-studio",
   display: "swap",
   preload: false,
+  fallback: ["sans-serif"],
 });
 
 // The professional area's Écrin style: engraved lettering and a light sans.
 // Not preloaded either.
-const engraved = Marcellus({
-  subsets: ["latin"],
+const marcellus = localFont({
+  src: "../fonts/marcellus.woff2",
   weight: "400",
+  // Its own name, as the pages and tests read it.
+  declarations: [{ prop: "font-family", value: "'Marcellus'" }],
   variable: "--font-engraved",
   display: "swap",
   preload: false,
+  fallback: ["serif"],
+  adjustFontFallback: "Times New Roman",
 });
-const ecrinSans = Jost({
-  subsets: ["latin"],
+const jost = localFont({
+  src: "../fonts/jost.woff2",
+  weight: "100 900",
+  // Its own name, as the pages and tests read it.
+  declarations: [{ prop: "font-family", value: "'Jost'" }],
   variable: "--font-ecrin",
   display: "swap",
   preload: false,
+  fallback: ["sans-serif"],
 });
 
-// The professional area's Carnet style: a book face, and figures as a printer
-// sets folios. Not preloaded either.
-const carnetSerif = Newsreader({
-  subsets: ["latin"],
-  style: ["normal", "italic"],
-  axes: ["opsz"],
+// The professional area's Carnet style: a book face (with its optical
+// sizes), and figures as a printer sets folios. Not preloaded either.
+const newsreader = localFont({
+  src: [
+    { path: "../fonts/newsreader.woff2", weight: "200 800", style: "normal" },
+    {
+      path: "../fonts/newsreader-italic.woff2",
+      weight: "200 800",
+      style: "italic",
+    },
+  ],
+  // Its own name, as the pages and tests read it.
+  declarations: [{ prop: "font-family", value: "'Newsreader'" }],
   variable: "--font-carnet-serif",
   display: "swap",
   preload: false,
+  fallback: ["serif"],
+  adjustFontFallback: "Times New Roman",
 });
-const carnetMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
+const ibmPlexMono = localFont({
+  src: [
+    {
+      path: "../fonts/ibm-plex-mono-400.woff2",
+      weight: "400",
+      style: "normal",
+    },
+    {
+      path: "../fonts/ibm-plex-mono-500.woff2",
+      weight: "500",
+      style: "normal",
+    },
+  ],
+  // Its own name, as the pages and tests read it.
+  declarations: [{ prop: "font-family", value: "'IBM Plex Mono'" }],
   variable: "--font-carnet-mono",
   display: "swap",
   preload: false,
+  fallback: ["monospace"],
 });
 
 export const metadata: Metadata = {
@@ -92,7 +136,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="fr"
-      className={`${body.variable} ${serif.variable} ${studio.variable} ${engraved.variable} ${ecrinSans.variable} ${carnetSerif.variable} ${carnetMono.variable} h-full antialiased`}
+      className={`${hankenGrotesk.variable} ${instrumentSerif.variable} ${archivo.variable} ${marcellus.variable} ${jost.variable} ${newsreader.variable} ${ibmPlexMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
         <BookingHostProvider host={bookingHost()}>
