@@ -149,6 +149,7 @@ export function Studio({
   status,
   history,
   flash,
+  publicPath,
 }: {
   open: boolean;
   onOpen: (open: boolean) => void;
@@ -178,6 +179,8 @@ export function Studio({
   history: ReactNode;
   /** The last thing done, said briefly (published, restored…). */
   flash: string | null;
+  /** Her public page (/b/[slug]), where her published site is. */
+  publicPath: string;
 }) {
   const photo = useStudioPhoto();
   const [tab, setTab] = useState<Tab>("universe");
@@ -444,6 +447,7 @@ export function Studio({
               </div>
               {/* Where her draft stands: saved, saving, a conflict… */}
               <div className="px-4 pb-2">{status}</div>
+              {published ? <LiveLink path={publicPath} /> : null}
 
               {view === "draft" && photoSlot === null ? (
                 <nav
@@ -1371,6 +1375,50 @@ function Choice<T extends string>({
           </Chip>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Her site online: open it as her clients do, or copy its link. */
+function LiveLink({ path }: { path: string }) {
+  const [copied, setCopied] = useState<"yes" | "failed" | null>(null);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}${path}`);
+      setCopied("yes");
+    } catch {
+      setCopied("failed");
+    }
+    window.setTimeout(() => setCopied(null), 2500);
+  }
+
+  return (
+    <div className="flex items-center gap-1 px-3 pb-2 text-[13px]">
+      <a
+        href={path}
+        target="_blank"
+        rel="noopener"
+        className="flex h-9 min-w-0 items-center gap-1.5 rounded-full px-2 font-semibold text-[#2B3BFF] underline-offset-4 hover:underline"
+      >
+        <span className="truncate">Voir mon site en ligne</span>
+        <span aria-hidden="true">↗</span>
+        <span className="sr-only"> (nouvel onglet)</span>
+      </a>
+      <button
+        type="button"
+        onClick={copy}
+        className="h-9 shrink-0 cursor-pointer rounded-full bg-black/5 px-3 font-medium hover:bg-black/10"
+      >
+        Copier le lien
+      </button>
+      <span role="status" className="min-w-0 truncate text-black/55">
+        {copied === "yes"
+          ? "Copié"
+          : copied === "failed"
+            ? `Copie refusée : ${path}`
+            : ""}
+      </span>
     </div>
   );
 }

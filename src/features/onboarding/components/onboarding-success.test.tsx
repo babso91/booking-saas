@@ -7,7 +7,7 @@ import { OnboardingSuccess } from "./onboarding-success";
 const fresh = { activeServices: 0, openingRanges: 0 };
 
 describe("OnboardingSuccess (/app/welcome)", () => {
-  it("a new professional is led to her services first, then hours, then the agenda", () => {
+  it("a new professional is led to her services first, then hours, then her site", () => {
     render(<OnboardingSuccess businessName="Studio Mila" progress={fresh} />);
 
     expect(
@@ -20,7 +20,7 @@ describe("OnboardingSuccess (/app/welcome)", () => {
     expect(steps.map((link) => link.getAttribute("href"))).toEqual([
       "/app/services",
       "/app/settings/hours",
-      "/app",
+      "/app/site",
     ]);
     expect(
       screen
@@ -34,12 +34,27 @@ describe("OnboardingSuccess (/app/welcome)", () => {
     ).toBe("/app");
   });
 
-  it("never promises online booking that does not exist yet", () => {
+  it("says that services and hours open online booking, then offers her site", () => {
     render(<OnboardingSuccess businessName="Studio Mila" progress={fresh} />);
-    expect(screen.queryByRole("button", { name: /copier/i })).toBeNull();
-    expect(document.body.textContent).not.toMatch(/partage ton lien/i);
+    expect(document.body.textContent).not.toMatch(/arrive bientôt/i);
     expect(document.body.textContent).toMatch(
-      /La réservation en ligne par tes clientes arrive bientôt/,
+      /tes clientes pourront réserver en ligne/,
+    );
+    const site = screen.getByRole("link", { name: /Ton site/ });
+    expect(site.getAttribute("href")).toBe("/app/site");
+    expect(site.textContent).toMatch(/Créer/);
+  });
+
+  it("shows her site as online once a version is published", () => {
+    render(
+      <OnboardingSuccess
+        businessName="Studio Mila"
+        progress={fresh}
+        sitePublished
+      />,
+    );
+    expect(screen.getByRole("link", { name: /Ton site/ }).textContent).toMatch(
+      /En ligne/,
     );
   });
 

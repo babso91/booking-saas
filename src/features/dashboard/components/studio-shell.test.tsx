@@ -123,6 +123,7 @@ describe("every room is reachable, on a phone as on a computer", () => {
         "/app/settings/calendar",
         "/app/settings/hours",
         "/app/today",
+        "/b/atelier-maelys",
       ].sort(),
     );
   });

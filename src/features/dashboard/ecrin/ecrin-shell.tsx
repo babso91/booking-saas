@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
-import { BookingHost } from "@/components/shared/booking-host";
+import { PublicLink } from "@/components/shared/public-link";
 import {
   CalendarIcon,
   CalendarSyncIcon,
@@ -190,18 +190,7 @@ export function EcrinShell({
               <ChevronRightIcon size={18} className="text-ink-soft" />
             </Link>
           ))}
-          <p className="mt-2 flex flex-col gap-1 text-[13px] text-ink-soft">
-            <span className="flex items-center gap-2">
-              Ta page de réservation
-              <span className="rounded-full bg-sand px-2 py-0.5 text-[11px] text-ink-soft">
-                Bientôt
-              </span>
-            </span>
-            <span className="break-all">
-              <BookingHost />
-              /b/{business.slug}
-            </span>
-          </p>
+          <PublicLink slug={business.slug} className="mt-2" />
           <SignOutButton />
         </div>
       </Sheet>

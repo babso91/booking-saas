@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
-import { BookingHost } from "@/components/shared/booking-host";
+import { PublicLink } from "@/components/shared/public-link";
 import { BrandMark } from "@/components/shared/brand-mark";
 import {
   CalendarIcon,
@@ -305,26 +305,5 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
         </div>
       </Sheet>
     </div>
-  );
-}
-
-/**
- * The address of the future booking page. Online booking is not available
- * yet, so it is shown as such, not as a link to a page that cannot book.
- */
-function PublicLink({ slug }: { slug: string }) {
-  return (
-    <p className="flex flex-col gap-1 text-[13px] text-ink-muted">
-      <span className="flex items-center gap-2">
-        Ta page de réservation
-        <span className="rounded-full bg-sand px-2 py-0.5 text-[11px] font-medium text-ink-soft">
-          Bientôt
-        </span>
-      </span>
-      <span className="break-all text-ink-soft">
-        <BookingHost />
-        /b/{slug}
-      </span>
-    </p>
   );
 }

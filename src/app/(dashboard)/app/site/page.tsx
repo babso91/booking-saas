@@ -53,6 +53,7 @@ export default async function SiteStudioPage() {
       }
       catalog={catalog ? showcaseOf(catalog) : []}
       businessName={business.name}
+      slug={business.slug}
       photos={photos.map((photo) => ({ id: photo.id, status: photo.status }))}
       fontClasses={siteFontClasses}
     />

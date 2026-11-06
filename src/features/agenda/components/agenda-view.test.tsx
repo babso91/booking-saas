@@ -222,19 +222,15 @@ describe("loading", () => {
     );
   });
 
-  it("shows a real empty state, without promising online booking", async () => {
+  it("shows a real empty state, where online bookings also arrive", async () => {
     actions.getAgendaAction.mockResolvedValue(ok(agenda(TODAY, TODAY)));
     renderAgenda();
 
     expect(
       await screen.findByText("Ta journée est encore libre."),
     ).toBeTruthy();
-    // Online booking does not exist yet: no link to a page that cannot book.
-    expect(screen.queryByRole("link", { name: /\/b\// })).toBeNull();
     expect(
-      screen.getByText(
-        /La réservation en ligne par tes clientes arrive bientôt/,
-      ),
+      screen.getByText(/Ceux que tes clientes réservent en ligne y arrivent/),
     ).toBeTruthy();
     expect(
       screen.getByRole("button", { name: /Ajouter un rendez-vous/ }),

@@ -69,6 +69,7 @@ export function StudioPreview({
       plan={plan}
       catalog={catalog}
       businessName="Atelier Mila"
+      slug="atelier-mila"
       photos={[]}
       fontClasses={fontClasses}
       actions={actions}

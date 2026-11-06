@@ -51,6 +51,7 @@ export function SiteStudio({
   online: initialOnline,
   catalog,
   businessName,
+  slug,
   photos: initialPhotos,
   fontClasses,
   actions = serverStudioActions,
@@ -63,6 +64,8 @@ export function SiteStudio({
   online: { config: SavedConfig; number: number; publishedAt: string } | null;
   catalog: ShowcaseGroup[];
   businessName: string;
+  /** Her public page's address: /b/[slug]. */
+  slug: string;
   photos: StudioPhoto[];
   fontClasses: string;
   /** Her server; an in-memory one only in a design preview or a test. */
@@ -285,6 +288,7 @@ export function SiteStudio({
           library={library}
           onUpload={upload}
           flash={flash}
+          publicPath={`/b/${slug}`}
           status={
             <DraftState
               status={sync.status}
