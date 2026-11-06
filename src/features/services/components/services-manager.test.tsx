@@ -34,6 +34,7 @@ const { actions } = vi.hoisted(() => ({
     createCategoryAction: vi.fn(),
     updateCategoryAction: vi.fn(),
     reorderCategoriesAction: vi.fn(),
+    moveCategoryAction: vi.fn(),
     deleteCategoryAction: vi.fn(),
   },
 }));
@@ -45,6 +46,8 @@ vi.mock("@/features/catalog/actions/catalog", () => ({
     actions.updateCategoryAction(...args),
   reorderCategoriesAction: (...args: unknown[]) =>
     actions.reorderCategoriesAction(...args),
+  moveCategoryAction: (...args: unknown[]) =>
+    actions.moveCategoryAction(...args),
   deleteCategoryAction: (...args: unknown[]) =>
     actions.deleteCategoryAction(...args),
 }));
@@ -1425,37 +1428,55 @@ describe("her categories", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("reorders them with all of them; a list changed elsewhere is read again", async () => {
+  it("moves one a step from where it is now, and shows the order that results", async () => {
     const regard = category({ name: "Regard" });
     const mains = category({ name: "Mains" });
-    catalogCategories = [regard, mains];
+    const pieds = category({ name: "Pieds" });
+    catalogCategories = [regard, mains, pieds];
     await renderManager([]);
-    actions.reorderCategoriesAction.mockResolvedValueOnce(
+    // Another tab moved Pieds first meanwhile: the server answers the
+    // order with both moves, and that is what she sees.
+    actions.moveCategoryAction.mockResolvedValueOnce(
       ok([
-        { ...mains, displayOrder: 0 },
-        { ...regard, displayOrder: 1 },
+        { ...pieds, displayOrder: 0 },
+        { ...mains, displayOrder: 1 },
+        { ...regard, displayOrder: 2 },
       ]),
     );
     fireEvent.click(
       screen.getByRole("button", { name: "Descendre la catégorie Regard" }),
     );
     await flush();
-    expect(actions.reorderCategoriesAction).toHaveBeenCalledWith({
-      categoryIds: [mains.id, regard.id],
+    // Only her move is sent, never a whole order read earlier.
+    expect(actions.moveCategoryAction).toHaveBeenCalledWith({
+      categoryId: regard.id,
+      offset: 1,
     });
     expect(
       screen
         .getAllByRole("heading", { level: 2 })
         .map((heading) => heading.textContent),
-    ).toEqual(["Mains", "Regard"]);
-    actions.reorderCategoriesAction.mockResolvedValueOnce(
-      fail("validation_error"),
+    ).toEqual(["Pieds", "Mains", "Regard"]);
+    expect(screen.getByText("Regard : position 3 sur 3.")).toBeTruthy();
+  });
+
+  it("a category deleted elsewhere: said, and the list read again", async () => {
+    const regard = category({ name: "Regard" });
+    const mains = category({ name: "Mains" });
+    catalogCategories = [regard, mains];
+    await renderManager([]);
+    actions.moveCategoryAction.mockResolvedValueOnce(
+      fail("category_not_found"),
     );
+    const reads = actions.getCatalogAction.mock.calls.length;
     fireEvent.click(
-      screen.getByRole("button", { name: "Monter la catégorie Regard" }),
+      screen.getByRole("button", { name: "Descendre la catégorie Regard" }),
     );
     await flush();
-    expect(screen.getByText(/Ta liste a changé entre-temps/)).toBeTruthy();
+    expect(
+      screen.getByText(/Cette catégorie a été supprimée entre-temps/),
+    ).toBeTruthy();
+    expect(actions.getCatalogAction.mock.calls.length).toBeGreaterThan(reads);
   });
 
   it("a service moves within its section; the complete list is sent", async () => {
