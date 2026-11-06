@@ -101,7 +101,7 @@ export async function professionalWithVisit(name: string, client: string) {
     body: JSON.stringify({ email, password: PASSWORD, email_confirm: true }),
   });
   expect(created.ok).toBe(true);
-  await inviteAccount(email);
+  await inviteAccount(email, ((await created.json()) as { id: string }).id);
 
   const browser = new Browser();
   const signIn = await browser

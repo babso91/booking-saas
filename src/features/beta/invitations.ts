@@ -52,28 +52,33 @@ export async function assertInvitation(
   if (state !== "valid") throw new AppException(refusal[state]);
 }
 
+export type InvitedAccount =
+  | { state: "none" }
+  | { state: "unconfirmed"; userId: string }
+  | { state: "confirmed"; userId: string };
+
 /**
- * Once her account exists: accepts the invitation for the account of
- * `email` (found by the database), which gets beta access. Idempotent for
- * that account. Throws as assertInvitation does.
+ * The account of the invited address, if any (throws as assertInvitation
+ * when the invitation is not valid for it). An `unconfirmed` account may
+ * have been created by anyone, with any password: it must be made hers
+ * before it is accepted (secureUnconfirmedAccount).
  */
-export async function acceptInvitation(
+export async function invitedAccount(
   service: AppSupabaseClient,
   token: string | undefined,
   email: string,
-): Promise<void> {
-  const { data, error } = await service.rpc("accept_beta_invitation", {
-    p_token_hash: hashOf(token),
-    p_email: email,
-  });
+): Promise<InvitedAccount> {
+  const { data, error } = await service
+    .rpc("beta_invited_account", {
+      p_token_hash: hashOf(token),
+      p_email: email,
+    })
+    .single();
   if (error) throw databaseException(error);
-  const state = (data ?? "invalid") as
-    InvitationState | "accepted" | "account_missing";
-  if (state === "accepted") return;
-  if (state === "account_missing") {
-    throw new AppException("internal", {
-      message: "Invitation accepted before its account exists.",
-    });
+  const state = data.state as InvitationState | InvitedAccount["state"];
+  if (state === "none") return { state };
+  if (state === "unconfirmed" || state === "confirmed") {
+    return { state, userId: data.user_id! };
   }
   throw new AppException(
     state === "valid" ? "invitation_invalid" : refusal[state],
@@ -81,27 +86,62 @@ export async function acceptInvitation(
 }
 
 /**
- * The same, when Auth's answer leaves unsure whether her account exists:
- * accepted if it does, nothing otherwise. Never throws (the caller has its
- * own answer to give); a failure is logged without the address or token.
+ * An unconfirmed account of the invited address gets HER password (a third
+ * party may have created it first with theirs: Auth keeps the first
+ * password on a repeated sign-up), then the invitation, which drops any
+ * session it had. It counts once she confirms her address.
  */
-export async function acceptInvitationIfAccount(
+export async function secureUnconfirmedAccount(
   service: AppSupabaseClient,
   token: string | undefined,
   email: string,
+  account: {
+    userId: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
+  },
 ): Promise<void> {
-  try {
-    const { data, error } = await service.rpc("accept_beta_invitation", {
-      p_token_hash: hashOf(token),
-      p_email: email,
+  const { error } = await service.auth.admin.updateUserById(account.userId, {
+    password: account.password,
+    user_metadata: {
+      first_name: account.firstName ?? null,
+      last_name: account.lastName ?? null,
+    },
+  });
+  if (error) {
+    throw new AppException("internal", {
+      message: "Account not secured.",
+      cause: error,
     });
-    if (error) console.error("Beta invitation acceptance failed", error.code);
-    else if (data !== "accepted" && data !== "account_missing") {
-      console.warn("Beta invitation not accepted", data);
-    }
-  } catch (cause) {
-    console.error("Beta invitation acceptance failed", cause);
   }
+  await acceptInvitationFor(service, token, email, account.userId);
+}
+
+/**
+ * Accepts the invitation for `userId`, the account of the invited address,
+ * made hers by the caller (her password set, or proven). Idempotent for that
+ * account. Throws as assertInvitation does.
+ */
+export async function acceptInvitationFor(
+  service: AppSupabaseClient,
+  token: string | undefined,
+  email: string,
+  userId: string,
+): Promise<void> {
+  const { data, error } = await service.rpc("accept_beta_invitation", {
+    p_token_hash: hashOf(token),
+    p_email: email,
+    p_user_id: userId,
+  });
+  if (error) throw databaseException(error);
+  const state = (data ?? "invalid") as
+    InvitationState | "accepted" | "account_mismatch";
+  if (state === "accepted") return;
+  if (state === "account_mismatch" || state === "valid") {
+    throw new AppException("invitation_invalid");
+  }
+  throw new AppException(refusal[state]);
 }
 
 /** May the signed-in user create her business? */

@@ -3,11 +3,12 @@
 import { revalidatePath } from "next/cache";
 
 import {
+  sendConfirmation,
   signInWithPassword,
   signOut,
-  signUpWithPassword,
   type SignUpOutcome,
 } from "@/features/auth/data/credentials";
+import { authException } from "@/features/auth/data/auth-errors";
 import {
   destinationFor,
   getSessionState,
@@ -16,10 +17,11 @@ import {
 } from "@/features/auth/data/session";
 import { authCallbackUrl } from "@/features/auth/data/redirects";
 import {
-  acceptInvitation,
-  acceptInvitationIfAccount,
+  acceptInvitationFor,
   assertInvitation,
   hasBetaAccess,
+  invitedAccount,
+  secureUnconfirmedAccount,
 } from "@/features/beta/invitations";
 import { signInSchema, signUpSchema } from "@/features/auth/schemas/auth";
 import { getPublicEnv } from "@/lib/env/public";
@@ -58,9 +60,12 @@ export type SignUpResult = SignUpOutcome & { next: SessionDestination | null };
  * docs/BETA_ACCESS.md): `invitationToken` must be a valid invitation for
  * `email` (`beta_invitation_required`, `invitation_invalid`,
  * `invitation_expired`, `invitation_used`, `invitation_email_mismatch`
- * otherwise; nothing is created). `status: "signed_in"` → go to `next`
- * ("/onboarding"). `status: "confirmation_required"` → show "check your
- * inbox"; `next` is null.
+ * otherwise; nothing is created). Her account is made by the server, with
+ * her password; one made before by anyone, not confirmed, is made hers
+ * (her password, its sessions dropped); a confirmed one answers
+ * `email_taken` (she signs in with her invitation). The answer is always
+ * `status: "confirmation_required"`: a link to confirm her address is sent
+ * (the proof that the mailbox is hers); her access counts once she does.
  */
 export async function signUpAction(
   input: unknown,
@@ -78,39 +83,75 @@ export async function signUpAction(
     await assertInvitation(service, invitationToken, account.email);
 
     const client = await createServerSupabaseClient();
-    let outcome: SignUpOutcome;
-    try {
-      outcome = await signUpWithPassword(
-        client,
-        account,
-        authCallbackUrl(getPublicEnv().NEXT_PUBLIC_APP_URL),
+    // Her account is made by the server, at once and only if none exists
+    // (a public sign-up would keep the password of an account a third
+    // party made first: Auth keeps the first password).
+    const created = await service.auth.admin.createUser({
+      email: account.email,
+      password: account.password,
+      email_confirm: false,
+      user_metadata: {
+        first_name: account.firstName ?? null,
+        last_name: account.lastName ?? null,
+      },
+    });
+    let userId = created.data.user?.id;
+    if (created.error) {
+      if (created.error.code !== "email_exists")
+        throw authException(created.error);
+      const existing = await invitedAccount(
+        service,
+        invitationToken,
+        account.email,
       );
-    } catch (error) {
-      // Auth refused (an account already there: a first attempt interrupted
-      // after Auth created it, or one made before her invitation; a retry
-      // too soon; a simultaneous attempt). If the invited address has an
-      // account, it gets its access all the same (found by the database,
-      // never taken from the caller); then Auth's answer is hers.
-      await acceptInvitationIfAccount(service, invitationToken, account.email);
-      throw error;
+      // Confirmed already: its password is not proven here; she signs in
+      // with her invitation (signInAction). Nothing is given.
+      if (existing.state !== "unconfirmed")
+        throw new AppException("email_taken");
+      // Not confirmed: anyone may have made it. It gets HER password and
+      // her names, and drops every session (secureUnconfirmedAccount).
+      userId = existing.userId;
+      await secureUnconfirmedAccount(service, invitationToken, account.email, {
+        userId,
+        password: account.password,
+        firstName: account.firstName,
+        lastName: account.lastName,
+      });
+    } else {
+      await acceptInvitationFor(
+        service,
+        invitationToken,
+        account.email,
+        userId!,
+      );
     }
-    // Accepted for the account of the invited address, once (idempotent: a
-    // retry of this same sign-up answers the same).
-    await acceptInvitation(service, invitationToken, account.email);
 
-    if (outcome.status === "confirmation_required") {
-      return { ...outcome, next: null };
-    }
-
-    revalidatePath("/", "layout");
-    return { ...outcome, next: "/onboarding" };
+    // The proof that the mailbox is hers: a confirmation link, sent now
+    // (setting a password voids an earlier one), for this device (PKCE).
+    // Her access counts once she follows it.
+    await sendConfirmation(
+      client,
+      account.email,
+      authCallbackUrl(getPublicEnv().NEXT_PUBLIC_APP_URL),
+    );
+    return {
+      status: "confirmation_required" as const,
+      email: account.email,
+      next: null,
+    };
   });
 }
 
-/** Signs in and tells the UI where to go: "/onboarding" or "/app". */
+/**
+ * Signs in and tells the UI where to go: "/onboarding" or "/app". With
+ * `invitationToken` (her account existed before her invitation): once her
+ * password is proven on her confirmed account, the invitation is accepted
+ * for it and every other session of the account is ended; `invitation`
+ * says what happened (`accepted`, or why not).
+ */
 export async function signInAction(
   input: unknown,
-): Promise<ActionResult<{ next: SessionDestination }>> {
+): Promise<ActionResult<{ next: SessionDestination; invitation?: string }>> {
   return run(async () => {
     const parsed = signInSchema.safeParse(input);
 
@@ -118,13 +159,41 @@ export async function signInAction(
       throw validationException(parsed.error);
     }
 
+    const { invitationToken, ...credentials } = parsed.data;
     const client = await createServerSupabaseClient();
-    await signInWithPassword(client, parsed.data);
+    await signInWithPassword(client, credentials);
+
+    let invitation: string | undefined;
+    if (invitationToken) {
+      invitation = await acceptOnSignIn(client, invitationToken);
+    }
     const state = await getSessionState(client);
 
     revalidatePath("/", "layout");
-    return { next: destinationFor(state) };
+    return invitation
+      ? { next: destinationFor(state), invitation }
+      : { next: destinationFor(state) };
   });
+}
+
+async function acceptOnSignIn(
+  client: AppSupabaseClient,
+  invitationToken: string,
+): Promise<string> {
+  const { data } = await client.auth.getUser();
+  const user = data.user;
+  if (!user?.email || !user.email_confirmed_at) return "invitation_invalid";
+  const service = createAdminSupabaseClient() as AppSupabaseClient;
+  try {
+    await acceptInvitationFor(service, invitationToken, user.email, user.id);
+  } catch (error) {
+    if (error instanceof AppException) return error.code;
+    throw error;
+  }
+  // Whoever else held a session of this account loses it.
+  const { error } = await client.auth.signOut({ scope: "others" });
+  if (error) console.error("Other sessions not ended", error.code);
+  return "accepted";
 }
 
 export async function signOutAction(): Promise<

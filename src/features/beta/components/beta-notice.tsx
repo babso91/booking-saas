@@ -50,8 +50,9 @@ export function BetaNotice({ reason }: { reason: "signup" | "onboarding" }) {
       >
         La bêta est ouverte sur invitation, et ce compte n’en a pas encore : la
         création de ton espace serait refusée. Si tu as reçu un lien
-        d’invitation, déconnecte-toi puis ouvre-le, avec l’adresse à laquelle il
-        t’a été envoyé.
+        d’invitation pour cette adresse, déconnecte-toi, ouvre-le, puis choisis
+        « Se connecter » avec ton mot de passe : l’invitation suit, et ton
+        compte la reçoit.
       </AuthHeading>
       <div className="animate-rise [animation-delay:120ms]">
         <SignOutButton />

@@ -12,20 +12,25 @@ Migration : `supabase/migrations/20261107090000_beta_invitations.sql`.
 1. **L'opérateur autorise une adresse** avec `scripts/beta-invite.mjs`. La commande crée une invitation et **affiche** son lien. **Rien n'est envoyé** : c'est l'opérateur qui transmet le lien.
 2. **La professionnelle ouvre son lien** `/signup?invitation=inv_…` et choisit elle-même son mot de passe, dans le formulaire d'inscription existant.
 3. **Le serveur vérifie l'invitation avant de créer le compte** : elle doit être valide, liée à cette adresse, non expirée et non utilisée. Sinon, aucun compte n'est créé.
-4. **Une fois le compte créé, l'invitation est acceptée pour le compte de l'adresse invitée.** C'est la base qui trouve ce compte : l'identifiant n'est jamais pris de l'appelant. Le compte reçoit alors l'accès bêta.
-5. **Elle confirme son email** (lien de Supabase Auth), puis suit l'onboarding existant, puis arrive sur `/app`.
+4. **Le serveur crée son compte**, avec son mot de passe, d'un seul geste : la création échoue si un compte existe déjà, ce qui supprime toute fenêtre de course. Un compte non confirmé déjà présent (créé par n'importe qui) reçoit son mot de passe et perd ses sessions. Un compte confirmé n'obtient rien : elle se connecte avec son lien. L'invitation est ensuite acceptée pour ce compte, et la base vérifie qu'il s'agit bien du compte de l'adresse invitée.
+5. **Un lien de confirmation lui est envoyé** (Supabase Auth, flux PKCE de son appareil). Définir un mot de passe invalide un lien précédent, d'où l'envoi à ce moment. Son accès compte une fois l'adresse confirmée ; elle suit ensuite l'onboarding existant, puis arrive sur `/app`.
 
 ## Garanties
 
-- **Pas d'établissement sans accès.** Un déclencheur sur `public.businesses` refuse toute création au nom d'un utilisateur sans accès bêta (`beta_invitation_required`). C'est vrai quel que soit le chemin : l'action, un appel direct à `complete_onboarding` avec sa session, ou un futur chemin. Un compte créé directement auprès de Supabase Auth, sans passer par le produit, ne peut donc rien créer. Le service et le propriétaire de la base ne sont pas concernés.
+- **Pas d'établissement sans accès.** Un déclencheur sur `public.businesses` refuse tout établissement créé par l'API (session d'un utilisateur ou rôle service) pour un utilisateur sans accès bêta (`beta_invitation_required`). L'utilisateur est celui de la session, ou, quand le service agit sans session (`auth.uid()` NULL), celui qu'il désigne comme créateur. Sans personne, la création est refusée. C'est vrai quel que soit le chemin : l'action, un appel direct à `complete_onboarding`, une insertion par le service. Seul le SQL du propriétaire de la base (migrations, administration explicite) n'est pas concerné.
+- **L'accès ne compte qu'une fois l'adresse confirmée** : c'est la preuve que la personne détient la boîte mail invitée.
+- **Un compte créé d'abord par un tiers** (audit Codex). N'importe qui peut créer auprès d'Auth un compte non confirmé pour n'importe quelle adresse, et Auth garde le premier mot de passe lors d'une nouvelle inscription (vérifié).
+  - **Compte non confirmé** : à l'inscription avec son lien, le serveur lui donne **son** mot de passe (API d'administration d'Auth) et supprime toute session de ce compte, puis accepte l'invitation. L'accès compte dès qu'elle confirme son adresse. Le mot de passe du tiers est refusé (testé).
+  - **Compte déjà confirmé** : l'inscription ne lui donne rien (`email_taken`). Elle se connecte avec son mot de passe **et** son lien (`/login?invitation=`) : l'invitation est acceptée, et toutes les autres sessions du compte sont fermées (testé). Un tiers qui connaît le mot de passe n'a pas le lien ; elle a le lien et son propre mot de passe.
+  - **Limite connue** : un compte confirmé dont elle ne connaît pas le mot de passe, parce qu'un tiers l'a créé et qu'elle a cliqué sur l'email d'Auth, reste sans accès. Le produit n'a pas encore de réinitialisation de mot de passe : l'opérateur supprime ce compte (il n'a ni accès ni établissement), puis elle s'inscrit avec son lien.
 - **Le jeton** : 32 octets aléatoires, préfixe `inv_`, en base64url. **Seul son SHA-256 est stocké** : le lien ne peut pas être reconstitué depuis la base. Il n'est jamais journalisé.
-- **Une adresse par invitation, une durée de 1 à 30 jours** (7 par défaut). Une nouvelle invitation pour la même adresse révoque la précédente, si celle-ci n'a pas encore été acceptée.
+- **Une adresse par invitation, une durée de 1 à 30 jours** (7 par défaut). Une nouvelle invitation pour la même adresse révoque la précédente si elle n'a pas encore été acceptée. Les émissions simultanées sont sérialisées par un verrou sur l'adresse, et un index unique garantit une seule invitation en attente par adresse (testé sur un entrelacement déterministe).
 - **Usage unique.** L'acceptation se fait sous verrou de la ligne de l'invitation. Des tentatives simultanées l'acceptent une seule fois, pour un seul compte (testé). Une fois l'établissement créé, le lien répond `invitation_used`.
 - **Reprise après interruption.** Relancer l'inscription avec le même lien, pour la même adresse, avant la création de l'établissement, redonne l'accès :
-  - si le compte n'est pas encore confirmé, Auth renvoie l'email de confirmation, ou demande de patienter (`rate_limited`) ;
-  - si le compte est déjà confirmé, la réponse est `email_taken`, et elle se connecte.
+  - si le compte n'est pas encore confirmé, il reçoit de nouveau son mot de passe, et un nouveau lien de confirmation part (ou Auth demande de patienter : `rate_limited`) ;
+  - si le compte est déjà confirmé, la réponse est `email_taken`, et elle se connecte avec son lien (voir plus haut).
 
-  Dans tous ces cas, l'accès est donné.
+  Pour un compte non confirmé, l'accès est donné dans tous ces cas.
 
 - **Aucun mot de passe** dans nos tables, aucun mot de passe choisi par l'opérateur : Supabase Auth seul les gère.
 - **Comptes existants.** Tous les comptes présents au moment de la migration reçoivent l'accès (`source = 'existing'`). Leurs établissements ne sont pas touchés (test de montée de version).
@@ -58,7 +63,8 @@ APP_URL=https://<domaine de l'application> \
 
 ## Pour Claude UI (adaptations minimales faites ici)
 
-- **`/signup`** lit `?invitation=` et le passe à `SignupForm` (`invitationToken`), qui l'envoie à `signUpAction`. Rien d'autre ne change visuellement : les refus s'affichent dans l'encart d'erreur existant, avec les textes de `error-copy.ts`.
+- **`/signup`** lit `?invitation=` et le passe à `SignupForm` (`invitationToken`), qui l'envoie à `signUpAction`.
+- **`/login`** lit aussi `?invitation=` et le passe à `LoginForm`, puis à `signInAction`. Celle-ci renvoie `invitation: 'accepted'` ou le code du refus. Les liens « Me connecter », « Se connecter » et « Crée ton espace » gardent l'invitation. Rien d'autre ne change visuellement : les refus s'affichent dans l'encart d'erreur existant, avec les textes de `error-copy.ts`.
 - **`getOnboardingStatusAction`** renvoie maintenant `betaAccess: boolean` pour `onboarding_required`. À `false`, l'onboarding sera refusé : la page peut l'annoncer avant que la professionnelle remplisse le formulaire. Aujourd'hui, l'erreur `beta_invitation_required` s'affiche seulement à la validation.
 - **À considérer, sans urgence :**
   - un `/signup` sans invitation pourrait dire d'emblée « bêta sur invitation » ;

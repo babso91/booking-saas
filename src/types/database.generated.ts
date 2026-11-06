@@ -693,7 +693,7 @@ isOneToOne: false
           }
           Functions: {
             "accept_beta_invitation":
-{ Args: { "p_email": string,"p_token_hash": string }; Returns: string
+{ Args: { "p_email": string,"p_token_hash": string,"p_user_id": string }; Returns: string
                            },
 "agenda_create_appointment":
 { Args: { "p_business_id": string,"p_client_email"?: string,"p_client_first_name"?: string,"p_client_id"?: string,"p_client_last_name"?: string,"p_client_phone"?: string,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_request_id"?: string,"p_service_id": string,"p_starts_at": string }; Returns: {
@@ -705,6 +705,11 @@ isOneToOne: false
                            },
 "agenda_update_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_starts_at"?: string }; Returns: string
+                           },
+"beta_invited_account":
+{ Args: { "p_email": string,"p_token_hash": string }; Returns: {
+              "state": string,"user_id": string
+            }[]
                            },
 "business_time":
 { Args: { "p_business_id": string,"p_dates"?: (string)[],"p_instants"?: (string)[],"p_locals"?: (string)[],"p_open_ranges"?: boolean }; Returns: Json

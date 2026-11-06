@@ -98,6 +98,10 @@ describe("SignupForm", () => {
       password: "correct-horse-battery",
       invitationToken: "inv_abc",
     });
+    // Her account may exist already: the sign-in link keeps her invitation.
+    expect(
+      screen.getByRole("link", { name: "Se connecter" }).getAttribute("href"),
+    ).toBe("/login?invitation=inv_abc");
   });
 
   it.each([
