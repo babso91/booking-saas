@@ -139,17 +139,23 @@ grant select on public.site_assets to authenticated;
 
 -- The acting member (the server passes the session's user): a member of
 -- the business, or forbidden.
+-- Her membership is checked AND held until the write commits: the row is
+-- locked FOR SHARE, so removing her from the business waits for the write
+-- in progress (and a write started after her removal began waits for it,
+-- then finds no membership). The check and the mutation are one moment.
 create function private.assert_site_actor(p_business_id uuid, p_actor uuid)
 returns void
 language plpgsql
-stable
 set search_path = ''
 as $$
 begin
-  if p_business_id is null or p_actor is null or not exists (
-    select 1 from public.business_members m
-    where m.business_id = p_business_id and m.user_id = p_actor
-  ) then
+  if p_business_id is null or p_actor is null then
+    raise exception using errcode = '42501', message = 'forbidden';
+  end if;
+  perform 1 from public.business_members m
+  where m.business_id = p_business_id and m.user_id = p_actor
+  for share;
+  if not found then
     raise exception using errcode = '42501', message = 'forbidden';
   end if;
 end;
@@ -246,7 +252,6 @@ begin
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'expectedRevision';
   end if;
   perform private.assert_site_document(p_schema_version, p_config);
-  perform private.assert_site_assets(p_business_id, p_config);
 
   insert into public.sites (business_id) values (p_business_id)
   on conflict (business_id) do nothing;
@@ -255,6 +260,10 @@ begin
   from public.sites s
   where s.business_id = p_business_id
   for update;
+
+  -- Her photos, checked under the site's lock: a photo deleted while this
+  -- save waited for the lock (its deletion holds that lock) is seen gone.
+  perform private.assert_site_assets(p_business_id, p_config);
 
   if v_site.draft_config = p_config and v_site.draft_schema_version = p_schema_version then
     return v_site.draft_revision;
