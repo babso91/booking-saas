@@ -123,6 +123,39 @@ du design ; on le modifie dans Prestations.
 **Navigation.** « Mon site » apparaît dans les quatre navigations, à côté
 d'« Apparence ». Le studio a un retour « ← » vers l'espace.
 
+**Un studio, une activité (audit Codex).** La session décide de l'activité à
+chaque appel. Un studio resté ouvert pendant que la session passe à une autre
+activité (un autre compte connecté dans un autre onglet) aurait donc pu
+envoyer sa sauvegarde, sa publication ou sa photo à cette autre activité,
+pour peu que les révisions coïncident.
+
+- Le studio n'appelle plus les actions du contrat directement, mais
+  `server-actions.ts`.
+- Chaque appel porte l'activité pour laquelle le studio a été ouvert
+  (`studioActionsFor(businessId)`).
+- Le serveur la compare à celle de la session et refuse
+  (`site_business_changed`, 409) avant toute lecture ou écriture.
+- Les actions du contrat (`features/sites/actions`) sont inchangées.
+- Test : `tests/integration/studio-business-isolation.test.ts`, sauvegarde
+  tardive A → B à révision identique.
+
+**Sauvegardes en ordre (audit Codex).** `flush(config)` attend la
+sauvegarde en cours, puis envoie `config` lui-même sur la révision obtenue.
+Il renvoie la révision à laquelle **ce** brouillon est enregistré : la
+publication ne reçoit jamais celle d'un brouillon antérieur. Deux
+sauvegardes ne partent jamais en même temps, et rien n'est envoyé pendant un
+conflit tant qu'elle n'a pas choisi.
+
+**Quitter le studio dans l'application.** Une navigation côté client ne
+déclenche pas `beforeunload`.
+
+- Les liens du studio (« ← », « Prestations ») attendent l'enregistrement.
+  S'il échoue, elle choisit de rester ou de partir.
+- Toute autre sortie (Précédent) envoie au démontage ce qui n'est pas encore
+  enregistré.
+- Tests : `draft-sync.test.tsx` et e2e « back to her space right after a
+  change ».
+
 ## 3. Aperçu de conception `/apercu/mon-site`
 
 C'est le même studio, branché sur un serveur en mémoire

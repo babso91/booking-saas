@@ -30,6 +30,8 @@ export const appErrorMessages = {
   stale_site_draft:
     "Le brouillon du site a été modifié entre-temps. Rechargez-le avant de réessayer.",
   site_not_found: "Ce site n’a pas encore de brouillon.",
+  site_business_changed:
+    "Cette page appartient à une autre activité que celle de la session : rien n’a été enregistré. Rechargez la page.",
   site_not_published: "Ce site n’est pas encore publié.",
   site_version_not_found: "Cette version du site n’existe pas.",
   site_unreadable:
@@ -210,6 +212,7 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   service_unavailable: 409,
   stale_site_draft: 409,
   site_not_found: 404,
+  site_business_changed: 409,
   site_not_published: 404,
   site_version_not_found: 404,
   site_unreadable: 422,

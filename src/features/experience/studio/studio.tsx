@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 
 import Link from "next/link";
 
@@ -149,6 +149,7 @@ export function Studio({
   status,
   history,
   flash,
+  onLeave,
 }: {
   open: boolean;
   onOpen: (open: boolean) => void;
@@ -178,6 +179,8 @@ export function Studio({
   history: ReactNode;
   /** The last thing done, said briefly (published, restored…). */
   flash: string | null;
+  /** On her links out of the studio: her draft is saved first. */
+  onLeave: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const photo = useStudioPhoto();
   const [tab, setTab] = useState<Tab>("universe");
@@ -350,6 +353,7 @@ export function Studio({
               <div className="flex items-center gap-2 px-4 pt-2 md:pt-[max(env(safe-area-inset-top),14px)]">
                 <Link
                   href="/app"
+                  onClick={onLeave}
                   aria-label="Revenir à mon espace"
                   className="-ml-2 flex size-11 shrink-0 items-center justify-center rounded-full text-[18px] hover:bg-black/5"
                 >
@@ -550,7 +554,7 @@ export function Studio({
               ) : current === "history" ? (
                 history
               ) : current === "catalog" ? (
-                <CatalogPanel catalog={catalog} />
+                <CatalogPanel catalog={catalog} onLeave={onLeave} />
               ) : (
                 <div className="flex flex-col gap-4">
                   {!creative && dormant(config) ? (
@@ -1097,7 +1101,13 @@ export function Studio({
  * by every universe and plan, changed in Prestations and published there
  * at once (never with her design).
  */
-function CatalogPanel({ catalog }: { catalog: ShowcaseGroup[] }) {
+function CatalogPanel({
+  catalog,
+  onLeave,
+}: {
+  catalog: ShowcaseGroup[];
+  onLeave: (event: MouseEvent<HTMLAnchorElement>) => void;
+}) {
   const count = catalog.reduce((sum, group) => sum + group.services.length, 0);
   return (
     <div className="flex flex-col gap-3">
@@ -1154,6 +1164,7 @@ function CatalogPanel({ catalog }: { catalog: ShowcaseGroup[] }) {
       )}
       <Link
         href="/app/services"
+        onClick={onLeave}
         className="flex h-11 items-center justify-center rounded-full bg-[#141414] px-4 text-[14px] font-semibold text-white"
       >
         Modifier mes prestations
