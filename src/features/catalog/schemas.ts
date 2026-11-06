@@ -37,6 +37,12 @@ export const reorderCategoriesSchema = z.object({
     }),
 });
 
+/** One step up (-1) or down (1), from where it is when applied. */
+export const moveCategorySchema = z.object({
+  categoryId: z.uuid(),
+  offset: z.union([z.literal(-1), z.literal(1)]),
+});
+
 export const deleteCategorySchema = z.object({ categoryId: z.uuid() });
 
 const choiceSchema = z.object({
