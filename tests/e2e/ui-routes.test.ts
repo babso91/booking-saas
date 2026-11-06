@@ -61,7 +61,7 @@ const admin = createClient<Database>(env.apiUrl, env.serviceRoleKey, {
 });
 
 /** A confirmed account signed in in a fresh browser. */
-async function signedInBrowser() {
+async function signedInBrowser({ invited = true } = {}) {
   const email = `ui-${randomUUID().slice(0, 8)}@test.local`;
   const { error } = await admin.auth.admin.createUser({
     email,
@@ -70,7 +70,7 @@ async function signedInBrowser() {
   });
   expect(error).toBeNull();
   // An invited professional (private beta).
-  await inviteAccount(email);
+  if (invited) await inviteAccount(email);
 
   const browser = new Browser();
   const signIn = await browser
@@ -106,9 +106,15 @@ describe("UI routes against the real backend", () => {
     expect(login.status).toBe(200);
     expect(login.html).toContain("Bon retour.");
 
+    // Without an invitation, the private beta is said, with no form.
     const signup = await browser.get("/signup");
     expect(signup.status).toBe(200);
-    expect(signup.html).toContain("Créer mon compte");
+    expect(signup.html).toContain("Bêta privée");
+    expect(signup.html).not.toContain("Créer mon compte");
+    // With one, the form (the server checks the token on submit).
+    const invited = await browser.get("/signup?invitation=inv_example");
+    expect(invited.status).toBe(200);
+    expect(invited.html).toContain("Créer mon compte");
 
     expectRedirect(await browser.get("/app"), "/login");
     expectRedirect(await browser.get("/app/welcome"), "/login");
@@ -117,6 +123,16 @@ describe("UI routes against the real backend", () => {
     // Public booking page for an unknown slug: rendered or "not found",
     // never a redirect to /login and never a server error.
     expect([200, 404]).toContain((await browser.get("/b/nobody-here")).status);
+  });
+
+  it("signed in without beta access: told before any onboarding step", async () => {
+    const { browser } = await signedInBrowser({ invited: false });
+
+    const onboarding = await browser.get("/onboarding");
+    expect(onboarding.status).toBe(200);
+    expect(onboarding.html).toContain("Ton compte attend son");
+    expect(onboarding.html).not.toContain("Chargement de ton espace");
+    expectRedirect(await browser.get("/app"), "/onboarding");
   });
 
   it("signed in without business: only /onboarding is reachable", async () => {
