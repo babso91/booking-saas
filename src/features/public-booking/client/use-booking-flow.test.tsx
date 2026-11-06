@@ -41,7 +41,18 @@ const fetchMock = vi.fn((input: RequestInfo | URL) => {
     return new Promise<Response>((done) => (answerBooking = done));
   return Promise.resolve(
     respond({
-      data: { date: today, timezone: business.timezone, slots: [slot] },
+      data: {
+        date: today,
+        timezone: business.timezone,
+        slots: [slot],
+        quote: {
+          serviceName: service.name,
+          durationMinutes: service.durationMinutes,
+          priceCents: service.priceCents,
+          currency: "EUR",
+          options: [],
+        },
+      },
     }),
   );
 });
@@ -53,7 +64,18 @@ beforeEach(() => {
 
 async function reviewed() {
   const hook = renderHook(() =>
-    useBookingFlow({ business, services: [service] }),
+    useBookingFlow({
+      business,
+      catalog: {
+        currency: "EUR",
+        groups: [
+          {
+            category: null,
+            services: [{ ...service, options: [] }],
+          },
+        ],
+      },
+    }),
   );
   await act(async () => hook.result.current.actions.chooseService(service.id));
   act(() => hook.result.current.actions.chooseSlot(slot));

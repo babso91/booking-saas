@@ -3,10 +3,8 @@
 import { motion } from "motion/react";
 import { useRef } from "react";
 
-import type {
-  PublicBusiness,
-  PublicService,
-} from "@/features/public-booking/client/api";
+import type { PublicCatalog } from "@/features/catalog/model";
+import type { PublicBusiness } from "@/features/public-booking/client/api";
 import { PublicBooking } from "@/features/public-booking/components/public-booking";
 
 import { Detail, Display, useEngine } from "./engine/engine";
@@ -25,7 +23,7 @@ export function SiteBooking({
   onClose,
 }: {
   /** null: a design preview, where no booking is ever taken. */
-  booking: { business: PublicBusiness; services: PublicService[] } | null;
+  booking: { business: PublicBusiness; catalog: PublicCatalog } | null;
   initialServiceId?: string;
   onClose: () => void;
 }) {
@@ -87,7 +85,7 @@ export function SiteBooking({
             {booking ? (
               <PublicBooking
                 business={booking.business}
-                services={booking.services}
+                catalog={booking.catalog}
                 embedded
                 initialServiceId={initialServiceId}
               />

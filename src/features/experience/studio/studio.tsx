@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import Link from "next/link";
 
-import type { ShowcaseGroup } from "../catalog/model";
+import { startingAt, type ShowcaseGroup } from "../catalog/model";
 import type {
   GradeId,
   MotionId,
@@ -1120,20 +1120,34 @@ function CatalogPanel({ catalog }: { catalog: ShowcaseGroup[] }) {
               </p>
             ) : null}
             <ul className="divide-y divide-black/10 rounded-2xl bg-white">
-              {group.services.map((service) => (
-                <li
-                  key={service.id}
-                  className="flex items-baseline justify-between gap-3 px-3 py-2.5"
-                >
-                  <span className="min-w-0 text-[14px] font-medium wrap-anywhere">
-                    {service.name}
-                  </span>
-                  <span className="shrink-0 text-[13px] text-black/60 tabular-nums">
-                    {minutes(service.durationMinutes)} ·{" "}
-                    {euros(service.priceCents)}
-                  </span>
-                </li>
-              ))}
+              {group.services.map((service) => {
+                // As her site and her booking page say it.
+                const from = startingAt(service);
+                return (
+                  <li
+                    key={service.id}
+                    className="flex items-baseline justify-between gap-3 px-3 py-2.5"
+                  >
+                    <span className="min-w-0 text-[14px] font-medium wrap-anywhere">
+                      {service.name}
+                      {service.options.length ? (
+                        <span className="block text-[12.5px] font-normal text-black/55">
+                          Options :{" "}
+                          {service.options
+                            .map((option) => option.question)
+                            .join(" · ")}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="shrink-0 text-[13px] text-black/60 tabular-nums">
+                      {from.durationVaries ? "dès " : ""}
+                      {minutes(from.durationMinutes)} ·{" "}
+                      {from.priceVaries ? "dès " : ""}
+                      {euros(from.priceCents)}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))

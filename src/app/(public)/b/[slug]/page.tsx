@@ -2,10 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
-import {
-  getPublicBusiness,
-  listPublicServices,
-} from "@/features/businesses/data/public-business";
+import { getPublicBusiness } from "@/features/businesses/data/public-business";
 import { businessSlugSchema } from "@/features/businesses/schemas/slug";
 import { getPublicCatalog } from "@/features/catalog/data/catalog";
 import { showcaseOf } from "@/features/experience/catalog/model";
@@ -17,13 +14,14 @@ import { getPublishedSite } from "@/features/sites/data/sites";
 import { AppException } from "@/lib/errors";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
 
-// The public page of one business. Its profile and active services are
-// read like GET /api/public/businesses/:slug does (same public RPCs,
-// session-less, nothing private); availability and booking go through the
-// public routes from the browser.
+// The public page of one business. Its profile and its catalogue are read
+// like GET /api/public/businesses/:slug does (same public RPCs,
+// session-less, nothing private): categories, bookable services and their
+// options, as get_public_catalog projects them. Availability, quotes and
+// booking go through the public routes from the browser.
 //
 // With a published mini-site: her site, as her clients see it (publicView),
-// her catalogue as the server projects it, and the same booking. Without
+// with the same catalogue and the same booking (options included). Without
 // one: the booking page, as before. A draft is never read here.
 const readPublicPage = cache(async (slug: string) => {
   const parsed = businessSlugSchema.safeParse(slug);
@@ -31,16 +29,16 @@ const readPublicPage = cache(async (slug: string) => {
   const client = createPublicSupabaseClient();
   const business = await getPublicBusiness(client, parsed.data);
   if (!business) return null;
-  const [services, site] = await Promise.all([
-    listPublicServices(client, parsed.data),
+  const [catalog, site] = await Promise.all([
+    getPublicCatalog(client, parsed.data),
     getPublishedSite(client, parsed.data).catch((error: unknown) => {
       if (error instanceof AppException && error.code === "site_not_published")
         return null;
       throw error;
     }),
   ]);
-  const catalog = site ? await getPublicCatalog(client, parsed.data) : null;
-  return { business, services, site, catalog };
+  if (!catalog) return null;
+  return { business, catalog, site };
 });
 
 export async function generateMetadata({
@@ -63,16 +61,18 @@ export default async function PublicBookingPage({
   const page = await readPublicPage((await params).slug);
   if (!page) notFound();
 
-  if (page.site && page.catalog)
+  if (page.site)
     return (
       <MiniSite
         config={publicView(page.site)}
         catalog={showcaseOf(page.catalog)}
         photoBase={publicPhotoBase(page.business.slug)}
-        booking={{ business: page.business, services: page.services }}
+        // The same booking as her booking page: her catalogue, options
+        // included, priced and timed by the server.
+        booking={{ business: page.business, catalog: page.catalog }}
         fontClasses={siteFontClasses}
       />
     );
 
-  return <PublicBooking business={page.business} services={page.services} />;
+  return <PublicBooking business={page.business} catalog={page.catalog} />;
 }

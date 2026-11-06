@@ -3,13 +3,18 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 
-import type { CatalogService, ShowcaseGroup } from "../catalog/model";
+import {
+  startingAt,
+  type CatalogService,
+  type ShowcaseGroup,
+} from "../catalog/model";
 import type { ServicesVariant } from "../engine/config";
 import {
   Detail,
   Display,
   Note,
   type EngineEdit,
+  euros,
   minutes,
   price,
   useEngine,
@@ -99,6 +104,20 @@ function OptionsNote({ service }: { service: CatalogService }) {
   );
 }
 
+// Her price and duration as her booking page says them: at least, "dès"
+// when an answer can add to them (startingAt).
+function priceOf(service: CatalogService) {
+  const from = startingAt(service);
+  return from.priceVaries
+    ? `dès ${euros(from.priceCents)}`
+    : price(from.priceCents);
+}
+
+function minutesOf(service: CatalogService) {
+  const from = startingAt(service);
+  return `${from.durationVaries ? "dès " : ""}${minutes(from.durationMinutes)}`;
+}
+
 function PriceIndex({ index }: { index: number }) {
   const { catalog, book, edit, motion: language } = useEngine();
   const [open, setOpen] = useState<string | null>(null);
@@ -157,7 +176,7 @@ function PriceIndex({ index }: { index: number }) {
                       >
                         {service.name}
                       </Display>
-                      <Detail>{price(service.priceCents)}</Detail>
+                      <Detail>{priceOf(service)}</Detail>
                     </button>
                     <AnimatePresence initial={false}>
                       {expanded ? (
@@ -178,9 +197,7 @@ function PriceIndex({ index }: { index: number }) {
                               ) : null}
                               <OptionsNote service={service} />
                               <div className="flex flex-wrap items-center justify-between gap-3">
-                                <Note>
-                                  Durée {minutes(service.durationMinutes)}
-                                </Note>
+                                <Note>Durée {minutesOf(service)}</Note>
                                 <button
                                   type="button"
                                   onClick={() => book(service)}
@@ -264,7 +281,7 @@ function Shelf() {
                 >
                   <div>
                     <span className="text-[var(--u-soft-card)]">
-                      <Note>{minutes(service.durationMinutes)} pour vous</Note>
+                      <Note>{minutesOf(service)} pour vous</Note>
                     </span>
                     <Display
                       as="h4"
@@ -285,7 +302,7 @@ function Shelf() {
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-[17px] tabular-nums">
-                      {price(service.priceCents)}
+                      {priceOf(service)}
                     </span>
                     <button
                       type="button"
@@ -371,9 +388,9 @@ function Tiles() {
                     style={{ borderRadius: "var(--s-radius)" }}
                   >
                     <span className="flex items-start justify-between gap-4">
-                      <Detail>{minutes(service.durationMinutes)}</Detail>
+                      <Detail>{minutesOf(service)}</Detail>
                       <span className="flex size-16 shrink-0 items-center justify-center rounded-full border-2 border-current text-[14px] font-semibold tabular-nums transition-transform duration-300 group-hover:rotate-12">
-                        {price(service.priceCents)}
+                        {priceOf(service)}
                       </span>
                     </span>
                     <span>

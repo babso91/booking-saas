@@ -18,6 +18,7 @@ const service = {
   priceCents: 6500,
   active: true,
   displayOrder: 0,
+  categoryId: null,
   version: 1,
 };
 
@@ -46,7 +47,13 @@ describe("service form", () => {
 
   it("checks what the backend refuses (name, 5 to 720 minutes, price), in words", () => {
     expect(
-      checkService({ name: "  ", description: "", duration: "3", price: "x" }),
+      checkService({
+        name: "  ",
+        description: "",
+        duration: "3",
+        price: "x",
+        category: "",
+      }),
     ).toEqual({
       ok: false,
       errors: {
@@ -56,7 +63,13 @@ describe("service form", () => {
       },
     });
     expect(
-      checkService({ name: "a", description: "", duration: "721", price: "1" }),
+      checkService({
+        name: "a",
+        description: "",
+        duration: "721",
+        price: "1",
+        category: "",
+      }),
     ).toMatchObject({
       ok: false,
       errors: { duration: "Durée limitée à 12 heures." },
@@ -67,6 +80,7 @@ describe("service form", () => {
         description: "",
         duration: "60",
         price: "100001",
+        category: "",
       }),
     ).toMatchObject({ ok: false, errors: { price: "Prix trop élevé." } });
     expect(
@@ -75,6 +89,7 @@ describe("service form", () => {
         description: "  ",
         duration: "120",
         price: "110",
+        category: "cat-1",
       }),
     ).toEqual({
       ok: true,
@@ -83,6 +98,7 @@ describe("service form", () => {
         description: null,
         durationMinutes: 120,
         priceCents: 11000,
+        categoryId: "cat-1",
       },
     });
   });
@@ -99,16 +115,31 @@ describe("service form", () => {
     expect(serviceChanges(service, same.command)).toEqual({});
   });
 
+  it("moving it to a category, or out of one, is a change like any other", () => {
+    const into = checkService({ ...draftFromService(service), category: "c" });
+    if (!into.ok) throw new Error("valid");
+    expect(serviceChanges(service, into.command)).toEqual({ categoryId: "c" });
+    const inCategory = { ...service, categoryId: "c" };
+    expect(draftFromService(inCategory).category).toBe("c");
+    const out = checkService({ ...draftFromService(inCategory), category: "" });
+    if (!out.ok) throw new Error("valid");
+    expect(serviceChanges(inCategory, out.command)).toEqual({
+      categoryId: null,
+    });
+  });
+
   it("names the refused fields of a write, never with the backend's text", () => {
     expect(
       serviceFieldErrors({
         "changes.durationMinutes": ["backend"],
         priceCents: ["backend"],
         unknown: ["backend"],
+        "changes.categoryId": ["backend"],
       }),
     ).toEqual({
       duration: "Durée entre 5 minutes et 12 heures.",
       price: "Vérifie le prix.",
+      category: "Cette catégorie n’existe plus : choisis-en une autre.",
     });
   });
 });
