@@ -249,7 +249,7 @@ Avec seulement des groupes **facultatifs**, le parcours actuel réserve la prest
 
 **Pourquoi ce n'est pas un risque aujourd'hui.** Aucun écran ne crée encore d'options : le formulaire de prestations du dashboard ne les connaît pas. Seuls `setServiceOptionsAction` et la RPC `set_service_options` peuvent en écrire.
 
-**Conditions d'activation, avant toute ouverture réelle des options aux professionnelles :**
+**Conditions d’activation, avant toute ouverture réelle des options aux professionnelles** (1 à 5 remplies par la PR 2 de `docs/EXPERIENCE_ENGINE_INTEGRATION.md`) :
 
 1. Le parcours public (Claude UI) utilise `catalog` de `GET /api/public/businesses/[slug]`. Pour chaque prestation à options, il affiche les groupes, préselectionne la première réponse des groupes obligatoires et met à jour le prix et la durée.
 2. Il passe `optionChoiceIds` aux créneaux et relit les créneaux à chaque changement de réponse (la durée change). Il affiche le `quote` du serveur.
@@ -263,7 +263,7 @@ Tant que les conditions 1 à 5 ne sont pas remplies, ne pas exposer l'éditeur d
 ## 11. Limites
 
 - **Interface non branchée** :
-  - le formulaire de prestations du dashboard ignore encore catégories et options ;
+  - le dashboard gère les catégories (`docs/EXPERIENCE_ENGINE_INTEGRATION.md`, PR 1) mais pas encore les options : leur éditeur attend la réservation publique (§ 10) ;
   - la réservation publique actuelle (un ancien client) ne connaît pas les options. Une prestation avec un groupe obligatoire y répondrait `options_required` à la réservation et aux créneaux, tant que le branchement n'est pas fait.
 - **Transfert pro-config** (`src/features/pro-config/transfer/`) : il exporte les prestations sans leurs catégories ni leurs options (format v1). À étendre avant un transfert réel de pilotes qui utilisent ces fonctions.
 - **Autres affichages :**

@@ -4,7 +4,7 @@ import { AppException } from "@/lib/errors";
 import { sampleSiteConfig } from "@/features/sites/site-fixture";
 
 const { data, sites, catalog } = vi.hoisted(() => ({
-  data: { getPublicBusiness: vi.fn(), listPublicServices: vi.fn() },
+  data: { getPublicBusiness: vi.fn() },
   sites: { getPublishedSite: vi.fn() },
   catalog: { getPublicCatalog: vi.fn() },
 }));
@@ -27,50 +27,49 @@ import PublicBookingPage, { generateMetadata } from "./page";
 const params = (slug: string) => ({ params: Promise.resolve({ slug }) });
 const notPublished = () =>
   Promise.reject(new AppException("site_not_published"));
+const emptyCatalog = { currency: "EUR", groups: [] };
 
 beforeEach(() => {
   data.getPublicBusiness.mockReset();
-  data.listPublicServices.mockReset();
   sites.getPublishedSite.mockReset();
   catalog.getPublicCatalog.mockReset();
   data.getPublicBusiness.mockResolvedValue({
     slug: "studio-mila",
     name: "Studio Mila",
   });
-  data.listPublicServices.mockResolvedValue([]);
+  catalog.getPublicCatalog.mockResolvedValue(emptyCatalog);
   sites.getPublishedSite.mockImplementation(notPublished);
 });
 
 describe("/b/[slug]", () => {
-  it("an unknown business is a 404 page, its services never read", async () => {
+  it("an unknown business is a 404 page, nothing else read", async () => {
     data.getPublicBusiness.mockResolvedValue(null);
     await expect(PublicBookingPage(params("inconnu") as never)).rejects.toThrow(
       "NEXT_NOT_FOUND",
     );
-    expect(data.listPublicServices).not.toHaveBeenCalled();
+    expect(catalog.getPublicCatalog).not.toHaveBeenCalled();
     expect(sites.getPublishedSite).not.toHaveBeenCalled();
   });
 
   it("an invalid address is a 404 page, nothing read", async () => {
     await expect(
-      PublicBookingPage(params("Not a slug!") as never),
+      PublicBookingPage(params("../admin") as never),
     ).rejects.toThrow("NEXT_NOT_FOUND");
     expect(data.getPublicBusiness).not.toHaveBeenCalled();
   });
 
-  it("without a published site: the booking page, as before", async () => {
+  it("without a published site: the booking page with her catalogue, as before", async () => {
     const metadata = await generateMetadata(params("studio-mila") as never);
     expect(metadata.title).toBe("Réserver chez Studio Mila");
     const page = await PublicBookingPage(params("studio-mila") as never);
     expect(page.props).toMatchObject({
       business: { slug: "studio-mila" },
-      services: [],
+      catalog: emptyCatalog,
     });
     expect(page.props).not.toHaveProperty("config");
-    expect(catalog.getPublicCatalog).not.toHaveBeenCalled();
   });
 
-  it("with one: her published site, through her current plan, revoked photos drawn without one", async () => {
+  it("with one: her published site, through her current plan, booking on the same catalogue", async () => {
     const config = sampleSiteConfig({
       content: {
         cover: { asset: "11111111-1111-4111-8111-111111111111" },
@@ -94,13 +93,17 @@ describe("/b/[slug]", () => {
       unavailableAssets: ["22222222-2222-4222-8222-222222222222"],
     });
     const groups = [{ category: null, services: [] }];
-    catalog.getPublicCatalog.mockResolvedValue({ currency: "EUR", groups });
+    const read = { currency: "EUR", groups };
+    catalog.getPublicCatalog.mockResolvedValue(read);
     expect((await generateMetadata(params("studio-mila") as never)).title).toBe(
       "Studio Mila",
     );
     const page = await PublicBookingPage(params("studio-mila") as never);
     expect(page.props).toMatchObject({
       catalog: groups,
+      // Her booking: the catalogue as the server projects it, options
+      // included, never a list of services of its own.
+      booking: { business: { slug: "studio-mila" }, catalog: read },
       photoBase: "/api/public/businesses/studio-mila/site/photos",
       fontClasses: "fonts",
       config: {

@@ -4,37 +4,44 @@ import { useEffect, useRef } from "react";
 
 import { Notice } from "@/components/ui/notice";
 
-import type { PublicBusiness, PublicService } from "../client/api";
+import type { PublicCatalog } from "@/features/catalog/model";
+
+import type { PublicBusiness } from "../client/api";
 import { useBookingFlow } from "../client/use-booking-flow";
 import { BookingConfirmation } from "./booking-confirmation";
 import { ContactStep } from "./contact-step";
+import { OptionsStep } from "./options-step";
 import { PendingNotice } from "./pending-notice";
 import { ReviewStep } from "./review-step";
 import { ServiceStep } from "./service-step";
 import { SlotStep } from "./slot-step";
 
 /**
- * The functional public booking page: the business, then the four steps
- * and the confirmation. Presentation only, over useBookingFlow (which holds
+ * The functional public booking page: the business, then the steps (with
+ * "Options" for a service that has some) and the confirmation. Presentation only, over useBookingFlow (which holds
  * every booking rule), so another presentation can replace this one.
  */
 export function PublicBooking({
   business,
-  services,
+  catalog,
   embedded = false,
   initialServiceId,
 }: {
   business: PublicBusiness;
-  services: PublicService[];
+  /** As get_public_catalog projects it: services, categories, options. */
+  catalog: PublicCatalog;
   /**
    * Inside her mini-site's booking sheet: the steps only (the site already
    * says who she is), in a <div> rather than the page's <main>.
    */
   embedded?: boolean;
-  /** The service she tapped on her mini-site: its slots open at once. */
+  /**
+   * The service she tapped on her mini-site: opened at once, on its
+   * options when it has some, else on its slots.
+   */
   initialServiceId?: string;
 }) {
-  const flow = useBookingFlow({ business, services });
+  const flow = useBookingFlow({ business, catalog });
   const heading = useRef<HTMLHeadingElement>(null);
   const opened = useRef(false);
   const asked = useRef(initialServiceId);
@@ -97,6 +104,8 @@ export function PublicBooking({
           {flow.step !== "done" ? <PendingNotice flow={flow} /> : null}
           {flow.step === "service" ? (
             <ServiceStep flow={flow} headingRef={heading} />
+          ) : flow.step === "options" ? (
+            <OptionsStep flow={flow} headingRef={heading} />
           ) : flow.step === "slot" ? (
             <SlotStep flow={flow} headingRef={heading} />
           ) : flow.step === "contact" ? (

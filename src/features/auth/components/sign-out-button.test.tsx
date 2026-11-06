@@ -57,6 +57,7 @@ describe("SignOutButton", () => {
       description: "",
       duration: "60",
       price: "40",
+      category: "",
     };
     const base = {
       id: "service-1",
@@ -66,6 +67,7 @@ describe("SignOutButton", () => {
       priceCents: 4000,
       active: true,
       displayOrder: 0,
+      categoryId: null,
       version: 1,
     };
     writePendingCreation(creationKey(scope), {

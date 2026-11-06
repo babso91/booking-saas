@@ -10,7 +10,7 @@ import { dayLabel, dayParts, wallTime } from "../client/business-time";
 import type { BookingFlow } from "../client/use-booking-flow";
 import {
   linkAction,
-  serviceLine,
+  QuoteLine,
   StepHeading,
   TimeZoneNote,
 } from "./booking-parts";
@@ -46,7 +46,11 @@ export function SlotStep({
   return (
     <section aria-labelledby="booking-slot" className="flex flex-col gap-5">
       <div id="booking-slot">
-        <StepHeading step={2} total={4} headingRef={headingRef}>
+        <StepHeading
+          step={flow.stepNumber("slot")}
+          total={flow.stepCount}
+          headingRef={headingRef}
+        >
           Choisissez un créneau
         </StepHeading>
       </div>
@@ -55,21 +59,46 @@ export function SlotStep({
         <p className="text-[15px] font-semibold wrap-anywhere text-ink">
           {service.name}
         </p>
-        <p className="text-[14px] text-ink-soft">
-          {serviceLine(
-            service.durationMinutes,
-            service.priceCents,
-            service.currency,
-          )}
-        </p>
-        <button
-          type="button"
-          className={cn(linkAction, "mt-1 self-start")}
-          onClick={() => flow.actions.goTo("service")}
-        >
-          Changer de prestation
-        </button>
+        {slots.status === "ready" && slots.quote.options.length > 0 ? (
+          <ul className="text-[14px] text-ink-soft">
+            {slots.quote.options.map((option) => (
+              <li key={option.optionId} className="wrap-anywhere">
+                {option.question} : {option.label}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {/* The server's quote for these answers; the slots are for it. */}
+        <div aria-live="polite">
+          <QuoteLine slots={slots} />
+        </div>
+        <div className="mt-1 flex flex-wrap gap-x-5 gap-y-2">
+          {service.options.length > 0 ? (
+            <button
+              type="button"
+              className={linkAction}
+              onClick={() => flow.actions.goTo("options")}
+            >
+              Changer les options
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={linkAction}
+            onClick={() => flow.actions.goTo("service")}
+          >
+            Changer de prestation
+          </button>
+        </div>
       </div>
+
+      {notice === "quote_changed" ? (
+        <Notice tone="warning" title="Le prix ou la durée a changé">
+          L’établissement vient de modifier cette prestation : rien n’a été
+          réservé. Le prix et la durée affichés sont à jour ; choisissez votre
+          créneau pour continuer, vos coordonnées sont conservées.
+        </Notice>
+      ) : null}
 
       {notice === "slot_unavailable" ? (
         <Notice tone="warning" title="Ce créneau n’est plus disponible">
@@ -115,7 +144,6 @@ export function SlotStep({
                 type="button"
                 onClick={() => flow.actions.chooseDate(day)}
                 aria-pressed={selected}
-                aria-label={dayLabel(day)}
                 className={cn(
                   "flex min-w-0 cursor-pointer flex-col items-center gap-0.5 rounded-2xl border px-0.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
                   selected
@@ -130,6 +158,9 @@ export function SlotStep({
                   {parts.day}
                 </span>
                 <span className="text-[11.5px] opacity-80">{parts.month}</span>
+                {/* Its name starts with what is written (voice control),
+                    then says the day in full. */}
+                <span className="sr-only">, {dayLabel(day)}</span>
               </button>
             );
           })}

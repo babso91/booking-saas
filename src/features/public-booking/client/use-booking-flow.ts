@@ -13,6 +13,10 @@ import {
   requestKeyFor,
   type RequestKey,
 } from "@/features/agenda/client/request-id";
+import type {
+  PublicCatalog,
+  PublicCatalogService,
+} from "@/features/catalog/model";
 
 import {
   fetchAvailability,
@@ -22,7 +26,7 @@ import {
   type BookingCommand,
   type BookingError,
   type PublicBusiness,
-  type PublicService,
+  type Quote,
   type Slot,
 } from "./api";
 import { addDays, businessToday, wallDate } from "./business-time";
@@ -65,14 +69,29 @@ import {
 // - idempotency_conflict is never retried with a new id automatically: a
 //   new request is the customer's explicit choice.
 // - Success is only shown from the backend's answer, which is authoritative.
+// - Options (docs/CATALOG_CONTRACT.md § 8, § 10): her catalogue is shown as
+//   the server projects it (get_public_catalog). A required group starts on
+//   its first answer (the server never picks one), an optional one on none.
+//   Every change of answers reads the slots again, with the quote they are
+//   for: price and duration are always the server's, never added up here.
+//   The booking sends the answers and the quote she saw (expected*): if the
+//   server comes to another, nothing is booked (quote_changed) and the new
+//   quote is shown before she confirms again.
 
-export type BookingStep = "service" | "slot" | "contact" | "review" | "done";
+export type BookingStep =
+  "service" | "options" | "slot" | "contact" | "review" | "done";
+
+/** A service of her catalogue, with the catalogue's currency. */
+export type BookableService = PublicCatalogService & { currency: string };
 
 export type SlotsState =
   | { status: "idle" }
   | { status: "loading"; date: string }
-  | { status: "ready"; date: string; slots: Slot[] }
+  | { status: "ready"; date: string; slots: Slot[]; quote: Quote }
   | { status: "error"; date: string; error: BookingError };
+
+/** Her answer to each group of the chosen service (null: none). */
+export type Answers = Record<string, string | null>;
 
 export type SubmitState =
   | { status: "idle" }
@@ -80,7 +99,14 @@ export type SubmitState =
   | { status: "failed"; error: BookingError };
 
 /** Why the journey came back to an earlier step. */
-export type FlowNotice = "slot_unavailable" | "service_unavailable" | null;
+export type FlowNotice =
+  | "slot_unavailable"
+  | "service_unavailable"
+  /** An answer was withdrawn or a group became required: chosen again. */
+  | "options_changed"
+  /** The price or duration changed since it was shown: shown again. */
+  | "quote_changed"
+  | null;
 
 /** Answers that say for sure nothing was booked by this request. */
 const DEFINITE = new Set<BookingError["code"]>([
@@ -90,19 +116,63 @@ const DEFINITE = new Set<BookingError["code"]>([
   "validation_error",
   "rate_limited",
   "idempotency_conflict",
+  "options_required",
+  "option_choice_unavailable",
+  "quote_changed",
 ]);
+
+/** Every service of the catalogue, in its order. */
+export const servicesOf = (catalog: PublicCatalog): BookableService[] =>
+  catalog.groups.flatMap((group) =>
+    group.services.map((service) => ({
+      ...service,
+      currency: catalog.currency,
+    })),
+  );
+
+/**
+ * Her answers for this service: those still valid kept; a required group
+ * without one starts on its first answer, an optional one on none.
+ */
+export function answersFor(
+  service: Pick<PublicCatalogService, "options">,
+  kept: Answers = {},
+): Answers {
+  return Object.fromEntries(
+    service.options.map((option) => {
+      const previous = kept[option.id];
+      const valid = option.choices.some((choice) => choice.id === previous);
+      return [
+        option.id,
+        valid ? previous! : option.required ? option.choices[0]!.id : null,
+      ];
+    }),
+  );
+}
+
+/** The answers as the server takes them: one id per answered group. */
+export const choiceIdsOf = (
+  service: Pick<PublicCatalogService, "options">,
+  answers: Answers,
+) =>
+  service.options
+    .map((option) => answers[option.id])
+    .filter((id): id is string => typeof id === "string");
 
 export function useBookingFlow({
   business,
-  services: initialServices,
+  catalog: initialCatalog,
 }: {
   business: PublicBusiness;
-  services: PublicService[];
+  /** As get_public_catalog projects it: the only source of what is offered. */
+  catalog: PublicCatalog;
 }) {
   const slug = business.slug;
-  const [services, setServices] = useState(initialServices);
+  const [catalog, setCatalog] = useState(initialCatalog);
+  const services = useMemo(() => servicesOf(catalog), [catalog]);
   const [step, setStep] = useState<BookingStep>("service");
   const [serviceId, setServiceId] = useState<string | null>(null);
+  const [answers, setAnswers] = useState<Answers>({});
   // The business-local date by the server's clock; the device's only as a
   // fallback (a page rendered before the server answered it).
   const [today] = useState(
@@ -111,6 +181,8 @@ export function useBookingFlow({
   const [date, setDate] = useState(today);
   const [slots, setSlots] = useState<SlotsState>({ status: "idle" });
   const [slot, setSlot] = useState<Slot | null>(null);
+  /** The quote shown with the chosen slot: what she agrees to. */
+  const [slotQuote, setSlotQuote] = useState<Quote | null>(null);
   const [contact, setContact] = useState<Contact>(EMPTY_CONTACT);
   const [contactErrors, setContactErrors] = useState<
     Partial<Record<ContactField, string>>
@@ -139,6 +211,11 @@ export function useBookingFlow({
   const alive = useRef(true);
   /** The id of the last content sent (kept while the content is). */
   const lastKey = useRef<RequestKey | null>(null);
+  /** Her answers as last rendered (read by answers that come back later). */
+  const latestAnswers = useRef<Answers>({});
+  useEffect(() => {
+    latestAnswers.current = answers;
+  });
 
   useEffect(() => {
     alive.current = true;
@@ -160,13 +237,23 @@ export function useBookingFlow({
     [today, business.maximumBookingAdvanceDays],
   );
 
+  const choiceIds = service ? choiceIdsOf(service, answers) : [];
+  const hasOptions = (service?.options.length ?? 0) > 0;
   const command: BookingCommand | null =
-    service && slot
+    service && slot && slotQuote
       ? {
           slug,
           serviceId: service.id,
           startsAt: slot.startsAt,
           ...canonicalContact(contact),
+          // Without options: exactly the body of before (same replay key).
+          ...(hasOptions
+            ? {
+                optionChoiceIds: choiceIds,
+                expectedPriceCents: slotQuote.priceCents,
+                expectedDurationMinutes: slotQuote.durationMinutes,
+              }
+            : {}),
         }
       : null;
   const fingerprint = command ? fingerprintOf(command) : null;
@@ -178,31 +265,51 @@ export function useBookingFlow({
     fingerprint !== null &&
     pending.key.fingerprint !== fingerprint;
 
-  function loadSlots(forService: string, forDate: string) {
+  /**
+   * The slots of a day for these answers, with their quote. `then`: what
+   * to do with that answer once it is the latest (a refused quote).
+   */
+  function loadSlots(
+    forService: string,
+    forDate: string,
+    forChoices: string[],
+    then?: (slots: Slot[], quote: Quote) => void,
+  ) {
     const read = (reads.current += 1);
     readAbort.current?.abort();
     const controller = new AbortController();
     readAbort.current = controller;
     setSlots({ status: "loading", date: forDate });
-    void fetchAvailability(slug, forService, forDate, controller.signal).then(
-      (result) => {
-        // Only the latest read applies (another day or service since).
-        if (!alive.current || read !== reads.current) return;
-        if (result.ok) {
-          setSlots({
-            status: "ready",
-            date: forDate,
-            slots: result.data.slots,
-          });
-        } else if (result.error.code === "service_not_found") {
-          serviceGone();
-        } else if (result.error.code === "business_not_found") {
-          setGone(true);
-        } else {
-          setSlots({ status: "error", date: forDate, error: result.error });
-        }
-      },
-    );
+    void fetchAvailability(
+      slug,
+      forService,
+      forDate,
+      forChoices,
+      controller.signal,
+    ).then((result) => {
+      // Only the latest read applies (another day, service or answer since).
+      if (!alive.current || read !== reads.current) return;
+      if (result.ok) {
+        setSlots({
+          status: "ready",
+          date: forDate,
+          slots: result.data.slots,
+          quote: result.data.quote,
+        });
+        then?.(result.data.slots, result.data.quote);
+      } else if (result.error.code === "service_not_found") {
+        serviceGone();
+      } else if (result.error.code === "business_not_found") {
+        setGone(true);
+      } else if (
+        result.error.code === "options_required" ||
+        result.error.code === "option_choice_unavailable"
+      ) {
+        optionsChanged(forService);
+      } else {
+        setSlots({ status: "error", date: forDate, error: result.error });
+      }
+    });
   }
 
   /** The chosen service is no longer offered: the list is read again. */
@@ -210,40 +317,104 @@ export function useBookingFlow({
     reads.current += 1;
     readAbort.current?.abort();
     setServiceId(null);
+    setAnswers({});
     setSlot(null);
+    setSlotQuote(null);
     setSlots({ status: "idle" });
     setNotice("service_unavailable");
     setStep("service");
     void fetchPublicBusiness(slug).then((result) => {
       if (!alive.current) return;
-      if (result.ok) setServices(result.data.services);
+      if (result.ok) setCatalog(result.data.catalog);
       else if (result.error.code === "business_not_found") setGone(true);
     });
   }
 
-  function chooseService(id: string) {
-    if (sending.current || !services.some((item) => item.id === id)) return;
-    setServiceId(id);
+  /**
+   * Its options changed since they were read (an answer withdrawn, a group
+   * now required): the catalogue is read again, her still valid answers
+   * kept, and she chooses again. Nothing is picked for her silently: the
+   * step shows what changed before she goes on.
+   */
+  function optionsChanged(forService: string) {
+    reads.current += 1;
+    readAbort.current?.abort();
     setSlot(null);
+    setSlotQuote(null);
+    setSlots({ status: "idle" });
+    setNotice("options_changed");
+    setStep("options");
+    void fetchPublicBusiness(slug).then((result) => {
+      if (!alive.current) return;
+      if (!result.ok) {
+        if (result.error.code === "business_not_found") setGone(true);
+        return;
+      }
+      setCatalog(result.data.catalog);
+      const fresh = servicesOf(result.data.catalog).find(
+        (item) => item.id === forService,
+      );
+      if (!fresh) return serviceGone();
+      // Her answers as they are when the catalogue comes back.
+      const next = answersFor(fresh, latestAnswers.current);
+      setAnswers(next);
+      loadSlots(forService, date, choiceIdsOf(fresh, next));
+    });
+  }
+
+  function chooseService(id: string) {
+    const chosen = services.find((item) => item.id === id);
+    if (sending.current || !chosen) return;
+    const next = answersFor(chosen);
+    setServiceId(id);
+    setAnswers(next);
+    setSlot(null);
+    setSlotQuote(null);
+    setNotice(null);
+    setStep(chosen.options.length > 0 ? "options" : "slot");
+    loadSlots(id, date, choiceIdsOf(chosen, next));
+  }
+
+  /** Her answer to one group (null: none, for an optional one). */
+  function chooseAnswer(optionId: string, choiceId: string | null) {
+    if (sending.current || !service) return;
+    const option = service.options.find((item) => item.id === optionId);
+    if (!option) return;
+    if (choiceId === null && option.required) return;
+    if (choiceId && !option.choices.some((choice) => choice.id === choiceId))
+      return;
+    const next = { ...answers, [optionId]: choiceId };
+    setAnswers(next);
+    setSlot(null);
+    setSlotQuote(null);
+    setNotice(null);
+    // The duration changes with the answers: the slots too.
+    loadSlots(service.id, date, choiceIdsOf(service, next));
+  }
+
+  /** On to the slots, once the quote of these answers is known. */
+  function submitOptions() {
+    if (sending.current || !service || slots.status !== "ready") return;
     setNotice(null);
     setStep("slot");
-    loadSlots(id, date);
   }
 
   function chooseDate(next: string) {
-    if (sending.current || !serviceId || !days.includes(next)) return;
+    if (sending.current || !service || !days.includes(next)) return;
     setDate(next);
     setSlot(null);
-    loadSlots(serviceId, next);
+    setSlotQuote(null);
+    loadSlots(service.id, next, choiceIds);
   }
 
   function refreshSlots() {
-    if (serviceId) loadSlots(serviceId, date);
+    if (service) loadSlots(service.id, date, choiceIds);
   }
 
   function chooseSlot(next: Slot) {
-    if (sending.current) return;
+    if (sending.current || slots.status !== "ready") return;
     setSlot(next);
+    setSlotQuote(slots.quote);
     setNotice(null);
     setStep("contact");
   }
@@ -269,10 +440,11 @@ export function useBookingFlow({
   /** Back to an earlier step (never while a booking is being sent). */
   function goTo(target: Exclude<BookingStep, "done">) {
     if (sending.current) return;
-    if (target === "slot" && !serviceId) return;
+    if ((target === "slot" || target === "options") && !service) return;
+    if (target === "options" && !hasOptions) return;
     if ((target === "contact" || target === "review") && !slot) return;
     setStep(target);
-    if (target === "slot") refreshSlots();
+    if (target === "slot" || target === "options") refreshSlots();
   }
 
   /** Books what was reviewed (or resends the same unconfirmed request). */
@@ -318,7 +490,9 @@ export function useBookingFlow({
     setBooking(null);
     setBookedSlot(null);
     setServiceId(null);
+    setAnswers({});
     setSlot(null);
+    setSlotQuote(null);
     setSlots({ status: "idle" });
     setSubmit({ status: "idle" });
     setNotice(null);
@@ -362,11 +536,49 @@ export function useBookingFlow({
         restoreContact(sent);
         setServiceId(sent.serviceId);
         setSlot(null);
+        setSlotQuote(null);
         setDate(days.includes(day) ? day : date);
         setNotice("slot_unavailable");
         setSubmit({ status: "idle" });
         setStep("slot");
-        loadSlots(sent.serviceId, days.includes(day) ? day : date);
+        loadSlots(
+          sent.serviceId,
+          days.includes(day) ? day : date,
+          sent.optionChoiceIds ?? [],
+        );
+        return;
+      }
+      case "options_required":
+      case "option_choice_unavailable":
+        restoreContact(sent);
+        setSubmit({ status: "idle" });
+        optionsChanged(sent.serviceId);
+        return;
+      case "quote_changed": {
+        // Read the quote again for the same answers and day. Same slot
+        // still offered: the review shows the new price and duration
+        // before she confirms again; otherwise she chooses another slot.
+        const day = wallDate(request.localStartsAt);
+        const onDay = days.includes(day) ? day : date;
+        restoreContact(sent);
+        setSubmit({ status: "idle" });
+        setNotice("quote_changed");
+        setSlot(null);
+        setSlotQuote(null);
+        setDate(onDay);
+        setStep("slot");
+        loadSlots(
+          sent.serviceId,
+          onDay,
+          sent.optionChoiceIds ?? [],
+          (fresh, quote) => {
+            const same = fresh.find((item) => item.startsAt === sent.startsAt);
+            if (!same) return;
+            setSlot(same);
+            setSlotQuote(quote);
+            setStep("review");
+          },
+        );
         return;
       }
       case "service_not_found":
@@ -404,11 +616,23 @@ export function useBookingFlow({
     });
   }
 
+  // Her steps: "options" only for a service that has some.
+  const steps: Exclude<BookingStep, "done">[] = hasOptions
+    ? ["service", "options", "slot", "contact", "review"]
+    : ["service", "slot", "contact", "review"];
+
   return {
     business,
+    catalog,
     services,
     step,
+    /** Where a step is in her journey (1-based), and how many there are. */
+    stepNumber: (of: Exclude<BookingStep, "done">) => steps.indexOf(of) + 1,
+    stepCount: steps.length,
     service,
+    answers,
+    /** The quote of the chosen slot: what the review shows and sends. */
+    slotQuote,
     today,
     days,
     date,
@@ -434,6 +658,8 @@ export function useBookingFlow({
     blockedByPending,
     actions: {
       chooseService,
+      chooseAnswer,
+      submitOptions,
       chooseDate,
       refreshSlots,
       chooseSlot,

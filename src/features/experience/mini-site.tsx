@@ -10,10 +10,8 @@ import {
   type RefObject,
 } from "react";
 
-import type {
-  PublicBusiness,
-  PublicService,
-} from "@/features/public-booking/client/api";
+import type { PublicCatalog } from "@/features/catalog/model";
+import type { PublicBusiness } from "@/features/public-booking/client/api";
 
 import type { ShowcaseGroup } from "./catalog/model";
 import type { SiteConfig } from "./engine/config";
@@ -63,7 +61,7 @@ export function MiniSite({
    * For the real booking (its flow reads these); null in a design preview,
    * where no booking is ever taken.
    */
-  booking: { business: PublicBusiness; services: PublicService[] } | null;
+  booking: { business: PublicBusiness; catalog: PublicCatalog } | null;
   /** The faces of the universes (fonts.ts), declared on the site's root. */
   fontClasses: string;
 }) {
