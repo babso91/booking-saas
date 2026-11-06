@@ -15,7 +15,7 @@ import {
 } from "../client/business-time";
 import { canonicalContact } from "../client/contact";
 import type { BookingFlow } from "../client/use-booking-flow";
-import { Facts, linkAction, StepHeading } from "./booking-parts";
+import { answerRows, Facts, linkAction, StepHeading } from "./booking-parts";
 
 /** Step 4: everything that will be booked, then the confirmation. */
 export function ReviewStep({
@@ -25,23 +25,46 @@ export function ReviewStep({
   flow: BookingFlow;
   headingRef: Ref<HTMLHeadingElement>;
 }) {
-  const { business, service, slot, contact, submit, isSending, pending } = flow;
-  if (!service || !slot) return null;
+  const {
+    business,
+    service,
+    slot,
+    slotQuote: quote,
+    contact,
+    submit,
+    isSending,
+    pending,
+    notice,
+  } = flow;
+  if (!service || !slot || !quote) return null;
   const details = canonicalContact(contact);
   const failure = submit.status === "failed" ? submit.error : null;
 
   return (
     <section aria-labelledby="booking-review" className="flex flex-col gap-5">
       <div id="booking-review">
-        <StepHeading step={4} total={4} headingRef={headingRef}>
+        <StepHeading
+          step={flow.stepNumber("review")}
+          total={flow.stepCount}
+          headingRef={headingRef}
+        >
           Vérifiez et confirmez
         </StepHeading>
       </div>
 
+      {notice === "quote_changed" ? (
+        <Notice tone="warning" title="Le prix ou la durée a changé">
+          L’établissement vient de modifier cette prestation : rien n’a été
+          réservé. Voici le prix et la durée à jour ; confirmez à nouveau si
+          cela vous convient.
+        </Notice>
+      ) : null}
+
       <Facts
         rows={[
           ["Établissement", business.name],
-          ["Prestation", service.name],
+          ["Prestation", quote.serviceName],
+          ...answerRows(quote.options),
           [
             "Date",
             <span key="date" className="first-letter:uppercase">
@@ -52,8 +75,9 @@ export function ReviewStep({
             "Heure",
             `${wallTime(slot.localStartsAt)} (heure de ${zoneCity(business.timezone)})`,
           ],
-          ["Durée", durationLabel(service.durationMinutes)],
-          ["Prix", formatPrice(service.priceCents, service.currency)],
+          // The server's quote: what is booked, and sent as expected.
+          ["Durée", durationLabel(quote.durationMinutes)],
+          ["Prix", formatPrice(quote.priceCents, quote.currency)],
           [
             "Vos coordonnées",
             [
@@ -67,6 +91,16 @@ export function ReviewStep({
         ]}
       />
       <div className="flex flex-wrap gap-x-5 gap-y-2">
+        {service.options.length > 0 ? (
+          <button
+            type="button"
+            className={linkAction}
+            disabled={isSending}
+            onClick={() => flow.actions.goTo("options")}
+          >
+            Changer les options
+          </button>
+        ) : null}
         <button
           type="button"
           className={linkAction}
