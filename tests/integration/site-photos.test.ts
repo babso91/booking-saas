@@ -1435,3 +1435,224 @@ describe("site photos: the periodic cleanup", () => {
     ).toHaveLength(0);
   });
 });
+
+describe("site photos: a conversion outliving its photo (Codex counter-audit)", () => {
+  async function lateStudio(label: string) {
+    const owner = await createAccount(label);
+    alice = owner;
+    studioA = await createBusiness(owner.userId);
+    await signIn(owner);
+    return {
+      owner,
+      business: studioA,
+      flaky: {
+        service: serviceWithFlakyRemoval(),
+        businessId: studioA.id,
+        actor: owner.userId,
+      } satisfies SiteWriter,
+    };
+  }
+
+  /** An upload sent long ago: its URL has expired. */
+  async function sentLongAgo(assetId: string) {
+    await db.query(
+      "update public.site_assets set created_at = now() - interval '3 hours' where id = $1",
+      [assetId],
+    );
+  }
+
+  const hasConversions = async () =>
+    (
+      await db.query(
+        "select to_regclass('public.site_photo_conversions') is not null as exists",
+      )
+    ).rows[0].exists as boolean;
+
+  /** The conversion's deadline has passed: nothing may write for it. */
+  async function conversionDeadlinePassed(assetId: string) {
+    if (!(await hasConversions())) return;
+    await db.query(
+      "update public.site_photo_conversions set deadline = now() - interval '1 second' where asset_id = $1",
+      [assetId],
+    );
+  }
+
+  async function conversionsOf(assetId: string) {
+    if (!(await hasConversions())) return 0;
+    const { rows } = await db.query<{ n: number }>(
+      "select count(*)::int as n from public.site_photo_conversions where asset_id = $1",
+      [assetId],
+    );
+    return rows[0]!.n;
+  }
+
+  /** The periodic cleanup, everything due included. */
+  const cleanUp = (service: AppSupabaseClient = bookingClient()) =>
+    runSitePhotoMaintenance(service, { now: new Date(Date.now() + 120_000) });
+
+  it.each(["deleted", "revoked"] as const)(
+    "%s during a slow conversion, its purge closed, the catch-up failing: the late files are deleted after the deadline",
+    async (outcome) => {
+      const { owner, business, flaky } = await lateStudio(`late-${outcome}`);
+      const upload = await uploadPhoto(await phonePhoto());
+      await sentLongAgo(upload.assetId);
+      // Converted; before its files are written, she removes the photo from
+      // another tab: its files are deleted, its purge done and closed (the
+      // upload URL expired long ago). Then Storage fails for a while.
+      afterConversion.run = async () => {
+        const writer = writerFor(business, owner);
+        if (outcome === "deleted") {
+          expect(await deleteSitePhoto(writer, upload.assetId)).toEqual({
+            deleted: true,
+          });
+        } else {
+          await revokeSitePhoto(writer, upload.assetId);
+        }
+        expect(await purgesOf(upload.assetId)).toEqual([]);
+        removal.fails = true;
+      };
+      try {
+        expect(
+          await codeOf(() => confirmSitePhoto(flaky, upload.assetId)),
+        ).toBe(
+          outcome === "deleted" ? "site_photo_not_found" : "site_photo_revoked",
+        );
+      } finally {
+        removal.fails = false;
+      }
+      // The late WebP files are there, for a photo gone or revoked.
+      expect(await storedFiles(business.id, upload.assetId)).toEqual([
+        "w1200.webp",
+        "w480.webp",
+        "w828.webp",
+      ]);
+
+      // Cleanups before the deadline: the obligation stays.
+      await cleanUp();
+      await cleanUp();
+      // After it, Storage still down: the files stay, recorded, retried.
+      await conversionDeadlinePassed(upload.assetId);
+      removal.fails = true;
+      try {
+        await cleanUp(serviceWithFlakyRemoval());
+      } finally {
+        removal.fails = false;
+      }
+      expect(await conversionsOf(upload.assetId)).toBe(0);
+      expect(await purgesOf(upload.assetId)).toMatchObject([{ scope: "all" }]);
+      // Storage back: gone, and the cleanups repeated change nothing more.
+      await cleanUp();
+      expect(await storedFiles(business.id, upload.assetId)).toEqual([]);
+      await cleanUp();
+      await cleanUp();
+      expect(await storedFiles(business.id, upload.assetId)).toEqual([]);
+      expect(await purgesOf(upload.assetId)).toEqual([]);
+    },
+  );
+
+  it("the cleanup during her conversion leaves her photo: her confirmation finishes", async () => {
+    const { business } = await lateStudio("late-abandoned");
+    const upload = await uploadPhoto(await phonePhoto());
+    await sentLongAgo(upload.assetId);
+    afterConversion.run = async () => {
+      await cleanUp();
+    };
+    expect(
+      await confirmSitePhotoAction({ assetId: upload.assetId }),
+    ).toMatchObject({ ok: true, data: { status: "ready" } });
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "w1200.webp",
+      "w480.webp",
+      "w828.webp",
+    ]);
+    // Its obligation, settled after the deadline: a ready photo keeps its
+    // files.
+    await conversionDeadlinePassed(upload.assetId);
+    await cleanUp();
+    expect(await conversionsOf(upload.assetId)).toBe(0);
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "w1200.webp",
+      "w480.webp",
+      "w828.webp",
+    ]);
+  });
+
+  it("the process dies after writing a file: the photo and every file go once the deadline has passed", async () => {
+    const { owner, business } = await lateStudio("late-killed");
+    const upload = await uploadPhoto(await phonePhoto());
+    await sentLongAgo(upload.assetId);
+    // What the conversion did before the process was killed.
+    const { error } = await bookingClient().rpc("begin_site_photo_conversion", {
+      p_business_id: business.id,
+      p_actor: owner.userId,
+      p_asset_id: upload.assetId,
+    });
+    expect(error).toBeNull();
+    await admin.storage
+      .from(SITE_PHOTO_BUCKET)
+      .upload(
+        `${business.id}/${upload.assetId}/w480.webp`,
+        Buffer.from("webp"),
+        { contentType: "image/webp" },
+      );
+    // Before the deadline: it may still finish, nothing is removed.
+    await cleanUp();
+    expect(await assetRow(upload.assetId)).toMatchObject({ status: "pending" });
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "original",
+      "w480.webp",
+    ]);
+    // After: forgotten, every file deleted, nothing left to do.
+    await conversionDeadlinePassed(upload.assetId);
+    await cleanUp();
+    expect(await assetRow(upload.assetId)).toBeNull();
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([]);
+    expect(await conversionsOf(upload.assetId)).toBe(0);
+    expect(await purgesOf(upload.assetId)).toEqual([]);
+  });
+
+  it("too close to its deadline, the conversion writes nothing; confirming again works", async () => {
+    const { business } = await lateStudio("late-deadline");
+    const upload = await uploadPhoto(await phonePhoto());
+    afterConversion.run = async () => {
+      await db.query(
+        "update public.site_photo_conversions set deadline = now() + interval '1 minute' where asset_id = $1",
+        [upload.assetId],
+      );
+    };
+    expect(
+      await confirmSitePhotoAction({ assetId: upload.assetId }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "original",
+    ]);
+    expect(await assetRow(upload.assetId)).toMatchObject({ status: "pending" });
+    expect(
+      await confirmSitePhotoAction({ assetId: upload.assetId }),
+    ).toMatchObject({ ok: true, data: { status: "ready" } });
+  });
+
+  it("nobody but the service sees or records a conversion", async () => {
+    const { owner, business } = await lateStudio("late-rights");
+    const upload = await uploadPhoto(await phonePhoto());
+    const member = await bookingClient().rpc("begin_site_photo_conversion", {
+      p_business_id: business.id,
+      p_actor: bruno.userId,
+      p_asset_id: upload.assetId,
+    });
+    expect(member.error?.message).toBe("forbidden");
+    for (const client of [anonClient()]) {
+      const { error } = await client.rpc("begin_site_photo_conversion", {
+        p_business_id: business.id,
+        p_actor: owner.userId,
+        p_asset_id: upload.assetId,
+      });
+      expect(error).not.toBeNull();
+      const read = await client
+        .from("site_photo_conversions" as never)
+        .select();
+      expect(read.error ?? read.data).toBeTruthy();
+      expect(read.data ?? []).toEqual([]);
+    }
+  });
+});

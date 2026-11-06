@@ -242,7 +242,6 @@ create trigger site_assets_purge_files
   for each row execute function private.site_asset_deleted();
 
 -- The files of this purge are deleted: done. `all` covers `original`.
--- The files of this purge are deleted: done. `all` covers `original`.
 -- Forgotten only once the upload URL can no longer write (not_before);
 -- until then kept, done, for the cleanup to run it once more after.
 create function public.complete_site_photo_purge(p_business_id uuid, p_asset_id uuid, p_scope text)
@@ -296,6 +295,139 @@ as $$
   limit greatest(least(p_limit, 500), 0);
 $$;
 
+-- Conversions in progress (Codex counter-audit). The service writes a
+-- photo's derivatives with its own key, which no deadline limits: a
+-- conversion slowed down (a paused or overloaded process) could write them
+-- after the photo was deleted or revoked and its purge done and forgotten,
+-- and nothing would ever delete them. So each conversion records here,
+-- before reading the original, an obligation that outlives the photo: until
+-- `deadline` the converter may write; it checks, before each file, that at
+-- least the margin is left (site_photo_conversion_time_left). Once the
+-- deadline has passed, the cleanup settles it (expire_site_photo_conversions)
+-- in one transaction: the photo gone or revoked, a purge of all its files is
+-- recorded again (and run as any other purge, retried until done); the
+-- obligation is forgotten only then.
+create table public.site_photo_conversions (
+  -- No foreign key: it outlives its photo and its business.
+  asset_id uuid primary key,
+  business_id uuid not null,
+  started_at timestamptz not null default pg_catalog.now(),
+  deadline timestamptz not null
+);
+
+create index site_photo_conversions_deadline_idx
+  on public.site_photo_conversions (deadline);
+
+alter table public.site_photo_conversions enable row level security;
+revoke all on table public.site_photo_conversions from public, anon, authenticated;
+
+-- How long a conversion may write, and the least time it must have left to
+-- write one more file (a file is a few hundred kB: seconds).
+create function private.site_photo_conversion_lease()
+returns interval
+language sql
+immutable
+set search_path = ''
+as $$ select interval '15 minutes' $$;
+
+create function private.site_photo_conversion_margin()
+returns interval
+language sql
+immutable
+set search_path = ''
+as $$ select interval '5 minutes' $$;
+
+revoke all on function private.site_photo_conversion_lease() from public;
+revoke all on function private.site_photo_conversion_margin() from public;
+
+-- Before converting a pending photo of hers: the obligation is recorded (or
+-- extended, a second attempt). Answers the deadline.
+create function public.begin_site_photo_conversion(
+  p_business_id uuid,
+  p_actor uuid,
+  p_asset_id uuid
+)
+returns timestamptz
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_status text;
+  v_deadline timestamptz := pg_catalog.now() + private.site_photo_conversion_lease();
+begin
+  perform private.assert_site_actor(p_business_id, p_actor);
+  select a.status into v_status
+  from public.site_assets a
+  where a.id = p_asset_id and a.business_id = p_business_id
+  for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'site_photo_not_found', hint = 'assetId';
+  end if;
+  if v_status = 'revoked' then
+    raise exception using errcode = 'P0001', message = 'site_photo_revoked', hint = 'assetId';
+  end if;
+  insert into public.site_photo_conversions (asset_id, business_id, deadline)
+  values (p_asset_id, p_business_id, v_deadline)
+  on conflict (asset_id) do update
+  set deadline = greatest(public.site_photo_conversions.deadline, excluded.deadline);
+  return v_deadline;
+end;
+$$;
+
+-- May the converter still write a file? true while at least the margin is
+-- left before its deadline (the photo's state does not matter: a file
+-- written for a photo gone is deleted when the obligation is settled).
+create function public.site_photo_conversion_writable(p_business_id uuid, p_asset_id uuid)
+returns boolean
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.site_photo_conversions c
+    where c.asset_id = p_asset_id and c.business_id = p_business_id
+      and c.deadline - private.site_photo_conversion_margin() > pg_catalog.now()
+  );
+$$;
+
+-- The cleanup: settles the conversions past their deadline (no file can be
+-- written for them any more), the oldest first. The photo gone or revoked:
+-- all its files are to be deleted, recorded again even if a purge was done
+-- (and forgotten) meanwhile. Ready or pending: nothing (a pending photo's
+-- files go with it, when it is confirmed or forgotten). Answers how many.
+create function public.expire_site_photo_conversions(p_limit integer)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_conversion record;
+  v_status text;
+  v_count integer := 0;
+begin
+  for v_conversion in
+    select c.asset_id, c.business_id from public.site_photo_conversions c
+    where c.deadline <= pg_catalog.now()
+    order by c.deadline
+    limit greatest(least(p_limit, 500), 0)
+    for update skip locked
+  loop
+    select a.status into v_status from public.site_assets a where a.id = v_conversion.asset_id;
+    if not found or v_status = 'revoked' then
+      perform private.queue_site_photo_purge(
+        v_conversion.business_id, v_conversion.asset_id, 'all', '-infinity'::timestamptz
+      );
+    end if;
+    delete from public.site_photo_conversions c where c.asset_id = v_conversion.asset_id;
+    v_count := v_count + 1;
+  end loop;
+  return v_count;
+end;
+$$;
+
 -- Uploads abandoned: photos still pending after their upload URL expired
 -- (never sent, never confirmed, or a conversion interrupted after writing
 -- derivatives). Forgotten, the oldest first; their files are recorded for
@@ -313,6 +445,11 @@ begin
     select a.id from public.site_assets a
     where a.status = 'pending'
       and a.created_at < pg_catalog.now() - private.site_photo_upload_window()
+      -- Not while it is being converted: her confirmation may still finish.
+      and not exists (
+        select 1 from public.site_photo_conversions c
+        where c.asset_id = a.id and c.deadline > pg_catalog.now()
+      )
     order by a.created_at
     limit greatest(least(p_limit, 500), 0)
     for update skip locked
@@ -656,7 +793,10 @@ begin
     'public.discard_abandoned_site_assets(integer)',
     'public.complete_site_photo_purge(uuid, uuid, text)',
     'public.fail_site_photo_purge(uuid, uuid, text)',
-    'public.pending_site_photo_purges(timestamptz, integer)'
+    'public.pending_site_photo_purges(timestamptz, integer)',
+    'public.begin_site_photo_conversion(uuid, uuid, uuid)',
+    'public.site_photo_conversion_writable(uuid, uuid)',
+    'public.expire_site_photo_conversions(integer)'
   ] loop
     execute pg_catalog.format('revoke all on function %s from public, anon, authenticated', v_signature);
     execute pg_catalog.format('grant execute on function %s to service_role', v_signature);

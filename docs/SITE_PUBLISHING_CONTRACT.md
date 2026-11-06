@@ -193,6 +193,12 @@ Toute décision qui rend des fichiers inutiles enregistre leur suppression (`sit
   - D'où la garantie : chaque suppression porte `not_before` = création de la photo + 2 h 10 min. Une suppression faite plus tôt reste enregistrée comme faite (`last_done_at`).
   - Le nettoyage la rejoue une fois `not_before` passé, quand plus aucune écriture n'est possible, puis l'oublie.
   - Testé : rejeu après confirmation, après révocation et après suppression ; le fichier rejoué disparaît après expiration.
+- **Conversion tardive** (contre-audit Codex, reproduit). Le service écrit les déclinaisons WebP avec sa propre clé, qu'aucune échéance ne limite. Scénario : une conversion ralentie écrit ses fichiers après la suppression ou la révocation de la photo ; la purge correspondante est déjà faite et oubliée ; Storage échoue au rattrapage. Les fichiers restaient alors à jamais invisibles pour le nettoyage. D'où une **obligation de conversion durable** (`site_photo_conversions`, sans clé étrangère : elle survit à la photo et à l'établissement) :
+  - **Avant de lire l'original,** la conversion enregistre son obligation, avec une échéance à 15 min (`begin_site_photo_conversion`, sous verrou de la photo).
+  - **Avant chaque fichier,** elle vérifie qu'il reste au moins 5 min avant l'échéance (`site_photo_conversion_writable`). Sinon elle n'écrit rien et répond `conflict` : confirmer de nouveau relance une conversion.
+  - **Après l'échéance seulement,** le nettoyage solde l'obligation (`expire_site_photo_conversions`), en une transaction : si la photo a disparu ou est révoquée, la suppression de **tous** ses fichiers est enregistrée de nouveau, même si une suppression a déjà été faite et oubliée. L'obligation n'est oubliée qu'à ce moment-là. Une photo prête ou en attente garde ses fichiers.
+  - Le rattrapage immédiat (suppression dans le `catch`) reste un premier essai : son échec ne perd plus rien.
+  - Testé : suppression puis révocation pendant une conversion lente, purge déjà refermée, rattrapage en échec, puis Storage encore en panne au premier nettoyage (fichiers supprimés ensuite, nettoyages répétés sans effet) ; processus tué après l'écriture d'un fichier ; conversion trop proche de son échéance (rien d'écrit, nouvelle confirmation réussie) ; droits (service seul).
 - Testé de façon déterministe : stockage en échec à la confirmation (l'original avec EXIF/GPS reste, rien n'est déclaré prêt, puis il est supprimé), interruption après confirmation, révocation, suppression, fichier refusé, établissement supprimé, et un établissement ne peut ni voir ni terminer la suppression d'un autre.
 
 ### Purge ciblée et durées plus longues (étude, rien de branché)
@@ -203,16 +209,17 @@ Toute décision qui rend des fichiers inutiles enregistre leur suppression (`sit
 
 ### Nettoyage périodique (`GET /api/cron/site-photos`)
 
-Route protégée par `Authorization: Bearer $CRON_SECRET`, comme les autres tâches planifiées. Elle est **à planifier toutes les 15 minutes au déploiement** (rien n'est planifié aujourd'hui). Elle fait deux choses (`runSitePhotoMaintenance`) :
+Route protégée par `Authorization: Bearer $CRON_SECRET`, comme les autres tâches planifiées. Elle est **à planifier toutes les 15 minutes au déploiement** (rien n'est planifié aujourd'hui). Elle fait trois choses (`runSitePhotoMaintenance`) :
 
-1. **Envois abandonnés** : les photos encore `pending` après expiration de leur URL d'envoi (2 h 10 min) sont oubliées. Cela couvre l'envoi jamais fait, la confirmation jamais faite, et la conversion interrompue après l'écriture des déclinaisons. Leurs fichiers sont enregistrés pour suppression.
-2. **Suppressions dues** : celles qui ont échoué ou ont été interrompues, et celles faites tôt, à rejouer après expiration de l'URL. Les suppressions demandées dans la dernière minute sont laissées à l'action en cours. Les échecs répétés sont journalisés (`attempts`).
+1. **Envois abandonnés** : les photos encore `pending` après expiration de leur URL d'envoi (2 h 10 min) sont oubliées, sauf pendant une conversion en cours (sa confirmation peut encore aboutir). Cela couvre l'envoi jamais fait, la confirmation jamais faite, et la conversion interrompue après l'écriture des déclinaisons. Leurs fichiers sont enregistrés pour suppression.
+2. **Conversions échues** : elles sont soldées, comme décrit plus haut. La réponse indique combien (`conversions`).
+3. **Suppressions dues** : celles qui ont échoué ou ont été interrompues, et celles faites tôt, à rejouer après expiration de l'URL. Les suppressions demandées dans la dernière minute sont laissées à l'action en cours. Les échecs répétés sont journalisés (`attempts`).
 
 Testé : envoi abandonné supprimé, envoi récent laissé, route refusée sans secret ou avec un mauvais secret.
 
 Restent à faire avant d'ouvrir largement :
 
-- l'inventaire du bucket, pour les dossiers sans photo ni suppression enregistrée (un fichier écrit après une panne imprévue) ;
+- l'inventaire du bucket, pour les dossiers sans photo ni suppression enregistrée. Risque résiduel : une conversion figée plus de 5 min entre sa dernière vérification et l'arrivée de son écriture chez Storage, ou une écriture faite hors du code de conversion ;
 - une alerte sur les suppressions qui échouent plusieurs fois.
 
 Photos de démonstration des univers : jamais enregistrées ni publiées (§ 10).

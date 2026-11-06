@@ -692,6 +692,19 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"site_photo_conversions": {
+                  Row: {
+                    "asset_id": string,"business_id": string,"deadline": string,"started_at": string
+                  }
+                  Insert: {
+                    "asset_id": string,"business_id": string,"deadline": string,"started_at"?: string
+                  }
+                  Update: {
+                    "asset_id"?: string,"business_id"?: string,"deadline"?: string,"started_at"?: string
+                  }
+                  Relationships: [
+                    
+                  ]
                 },"site_photo_purges": {
                   Row: {
                     "asset_id": string,"attempts": number,"business_id": string,"last_attempt_at": string | null,"last_done_at": string | null,"not_before": string,"requested_at": string,"scope": string
@@ -796,6 +809,9 @@ isOneToOne: false
                            },
 "agenda_update_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_starts_at"?: string }; Returns: string
+                           },
+"begin_site_photo_conversion":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: string
                            },
 "business_time":
 { Args: { "p_business_id": string,"p_dates"?: (string)[],"p_instants"?: (string)[],"p_locals"?: (string)[],"p_open_ranges"?: boolean }; Returns: Json
@@ -1102,6 +1118,9 @@ isOneToOne: false
 "email_outbox_release":
 { Args: { "p_claim_id": string,"p_id": string }; Returns: boolean
                            },
+"expire_site_photo_conversions":
+{ Args: { "p_limit": number }; Returns: number
+                           },
 "fail_site_photo_purge":
 { Args: { "p_asset_id": string,"p_business_id": string,"p_scope": string }; Returns: undefined
                            },
@@ -1250,6 +1269,9 @@ isOneToOne: false
                            },
 "set_site_plan":
 { Args: { "p_business_id": string,"p_plan": string }; Returns: undefined
+                           },
+"site_photo_conversion_writable":
+{ Args: { "p_asset_id": string,"p_business_id": string }; Returns: boolean
                            },
 "update_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_expected_version": number,"p_name"?: string,"p_visible"?: boolean }; Returns: {

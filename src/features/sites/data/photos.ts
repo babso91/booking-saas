@@ -256,6 +256,15 @@ export async function confirmSitePhoto(
   }
   if (asset.status === "revoked") throw new AppException("site_photo_revoked");
 
+  // Before anything is written: the obligation to delete what this
+  // conversion may write, should the photo go meanwhile (settled by the
+  // cleanup after its deadline, whatever happens to this process).
+  const { error: beginError } = await service.rpc(
+    "begin_site_photo_conversion",
+    { p_business_id: businessId, p_actor: writer.actor, p_asset_id: assetId },
+  );
+  if (beginError) throw databaseException(beginError);
+
   const bucket = service.storage.from(SITE_PHOTO_BUCKET);
   const { data: blob, error: downloadError } = await bucket.download(
     originalPath(businessId, assetId),
@@ -277,6 +286,7 @@ export async function confirmSitePhoto(
 
   try {
     for (const derivative of processed.derivatives) {
+      await assertStillWritable(service, businessId, assetId);
       const { error } = await bucket.upload(
         derivativePath(businessId, assetId, derivative.width),
         derivative.data,
@@ -297,7 +307,8 @@ export async function confirmSitePhoto(
   } catch (error) {
     // Revoked or deleted meanwhile: its purge is recorded, its files go
     // (the derivatives just written included). Otherwise the original
-    // stays, she may confirm again.
+    // stays, she may confirm again. Only a first attempt: if it fails, the
+    // conversion's obligation has them deleted after its deadline.
     const current = await readAsset(service, businessId, assetId).catch(
       () => undefined,
     );
@@ -316,6 +327,29 @@ export async function confirmSitePhoto(
   const ready = await readAsset(service, businessId, assetId);
   if (!ready) throw new AppException("site_photo_not_found");
   return ready;
+}
+
+/**
+ * One more file may be written only while the conversion's deadline is far
+ * enough (site_photo_conversion_writable): after it, the cleanup may have
+ * settled it, and a file written then would be seen by nobody. `conflict`
+ * otherwise: confirming again starts a new conversion.
+ */
+async function assertStillWritable(
+  service: AppSupabaseClient,
+  businessId: string,
+  assetId: string,
+) {
+  const { data, error } = await service.rpc("site_photo_conversion_writable", {
+    p_business_id: businessId,
+    p_asset_id: assetId,
+  });
+  if (error) throw databaseException(error);
+  if (data !== true) {
+    throw new AppException("conflict", {
+      message: "La conversion a pris trop de temps. Réessayez.",
+    });
+  }
 }
 
 /** Her photos (pending, ready and revoked), the latest first. */
@@ -435,25 +469,42 @@ export async function readMemberSitePhoto(
 
 /**
  * The periodic cleanup (GET /api/cron/site-photos): forgets the uploads
- * abandoned once their upload URL has expired, then runs every purge due
- * (left by a failure or an interruption, or done early and due again now
- * that the upload URL can no longer write). Purges requested in the last
- * minute are left to the action that recorded them.
+ * abandoned once their upload URL has expired (not while being converted),
+ * settles the conversions past their deadline (a photo gone or revoked
+ * meanwhile: all its files recorded for deletion again, files a late
+ * conversion wrote included), then runs every purge due (left by a failure
+ * or an interruption, or done early and due again now that nothing can
+ * write any more). Purges requested in the last minute are left to the
+ * action that recorded them.
  */
 export async function runSitePhotoMaintenance(
   service: AppSupabaseClient,
   options: { limit?: number; now?: Date } = {},
-): Promise<{ abandoned: number; done: number; failed: number }> {
+): Promise<{
+  abandoned: number;
+  conversions: number;
+  done: number;
+  failed: number;
+}> {
   const limit = options.limit ?? 200;
   const { data: abandoned, error } = await service.rpc(
     "discard_abandoned_site_assets",
     { p_limit: limit },
   );
   if (error) throw databaseException(error);
+  const { data: conversions, error: conversionsError } = await service.rpc(
+    "expire_site_photo_conversions",
+    { p_limit: limit },
+  );
+  if (conversionsError) throw databaseException(conversionsError);
   const now = options.now ?? new Date();
   const purges = await processSitePhotoPurges(service, {
     before: new Date(now.getTime() - 60_000),
     limit,
   });
-  return { abandoned: abandoned ?? 0, ...purges };
+  return {
+    abandoned: abandoned ?? 0,
+    conversions: conversions ?? 0,
+    ...purges,
+  };
 }
