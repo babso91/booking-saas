@@ -10,6 +10,7 @@ import {
   getCatalog,
   getCatalogService,
   getPublicCatalog,
+  moveCategory,
   quotePublicService,
   reorderCategories,
   setServiceOptions,
@@ -380,6 +381,121 @@ describe("categories", () => {
       moved.version,
     );
     expect(back.categoryId).toBeNull();
+  });
+});
+
+// Codex's audit of #39: two tabs reordering different categories, each from
+// the order it read, erased each other's move (the whole order replaced).
+// Her arrows now move one category a step, applied to the order as it is.
+describe("two tabs moving categories", () => {
+  async function threeCategories() {
+    const studio = await freshStudio();
+    const make = (name: string) =>
+      createCategory(alice.client, studio.id, {
+        name,
+        visible: true,
+        requestId: randomUUID(),
+      });
+    const regard = await make("Regard");
+    const mains = await make("Mains");
+    const pieds = await make("Pieds");
+    const names = async () =>
+      (await getCatalog(alice.client, studio.id)).categories.map(
+        (category) => category.name,
+      );
+    expect(await names()).toEqual(["Regard", "Mains", "Pieds"]);
+    return { studio, regard, mains, pieds, names };
+  }
+
+  it("the whole order sent from a stale reading erased the other tab's move", async () => {
+    const { studio, regard, mains, pieds, names } = await threeCategories();
+    // Both tabs read Regard, Mains, Pieds. Tab 1 moves Pieds up.
+    await reorderCategories(alice.client, studio.id, [
+      regard.id,
+      pieds.id,
+      mains.id,
+    ]);
+    // Tab 2, from its reading, moves Regard down: its whole order wins.
+    await reorderCategories(alice.client, studio.id, [
+      mains.id,
+      regard.id,
+      pieds.id,
+    ]);
+    // Tab 1's move is gone: Pieds is last again.
+    expect(await names()).toEqual(["Mains", "Regard", "Pieds"]);
+  });
+
+  it("with moves, both are kept, whatever each tab read", async () => {
+    const { studio, regard, pieds, names } = await threeCategories();
+    // Tab 1 (read Regard, Mains, Pieds): Pieds up.
+    await moveCategory(alice.client, studio.id, {
+      categoryId: pieds.id,
+      offset: -1,
+    });
+    expect(await names()).toEqual(["Regard", "Pieds", "Mains"]);
+    // Tab 2 (same stale reading): Regard down, from where it is now.
+    const answered = await moveCategory(alice.client, studio.id, {
+      categoryId: regard.id,
+      offset: 1,
+    });
+    // Both moves applied: Pieds before Mains (tab 1), Regard one step down
+    // (tab 2); the answer is the order that results.
+    expect(await names()).toEqual(["Pieds", "Regard", "Mains"]);
+    expect(answered.map((category) => category.name)).toEqual([
+      "Pieds",
+      "Regard",
+      "Mains",
+    ]);
+  });
+
+  it("simultaneous moves are applied one after the other; none is lost", async () => {
+    const { studio, regard, pieds, names } = await threeCategories();
+    await Promise.all([
+      moveCategory(alice.client, studio.id, {
+        categoryId: pieds.id,
+        offset: -1,
+      }),
+      moveCategory(alice.client, studio.id, {
+        categoryId: regard.id,
+        offset: 1,
+      }),
+    ]);
+    // Either order of application gives a result holding both moves.
+    expect([
+      ["Mains", "Pieds", "Regard"],
+      ["Pieds", "Regard", "Mains"],
+    ]).toContainEqual(await names());
+  });
+
+  it("first stays first, last stays last; another business's category is refused", async () => {
+    const { studio, regard, pieds, names } = await threeCategories();
+    await moveCategory(alice.client, studio.id, {
+      categoryId: regard.id,
+      offset: -1,
+    });
+    await moveCategory(alice.client, studio.id, {
+      categoryId: pieds.id,
+      offset: 1,
+    });
+    expect(await names()).toEqual(["Regard", "Mains", "Pieds"]);
+    expect(
+      await codeOf(() =>
+        moveCategory(alice.client, studio.id, {
+          categoryId: randomUUID(),
+          offset: 1,
+        }),
+      ),
+    ).toBe("category_not_found");
+    // Bruno cannot move Alice's categories.
+    expect(
+      await codeOf(() =>
+        moveCategory(bruno.client, studio.id, {
+          categoryId: regard.id,
+          offset: 1,
+        }),
+      ),
+    ).not.toBe("ok");
+    expect(await names()).toEqual(["Regard", "Mains", "Pieds"]);
   });
 });
 

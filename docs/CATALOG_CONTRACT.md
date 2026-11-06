@@ -108,7 +108,7 @@ Le rendez-vous garde `service_name_snapshot`, `price_cents_snapshot` et `duratio
 
 ## 7. Clients écrits avant les options
 
-- **Une prestation sans options se réserve exactement comme avant :** mêmes créneaux, même prix, même durée, même empreinte d'idempotence, `options: []`.
+- **Une prestation sans options se réserve comme avant :** mêmes créneaux, même prix, même durée, `options: []`. Le client y envoie aussi le devis accepté (`expected*`), contrôlé par le serveur comme pour une prestation à options. Une demande sans `expected*` reste acceptée telle quelle, par exemple une demande en attente renvoyée à l'identique.
 - **`GET /api/public/businesses/[slug]`** garde `services` tel quel. Une prestation d'une catégorie masquée n'y figure plus.
 - **Une prestation avec un groupe obligatoire** ne se réserve pas sans réponse (`options_required`), même pour un ancien client. Le serveur ne choisit jamais une réponse à sa place, car cela changerait le prix. Avec seulement des groupes facultatifs, un ancien client réserve la prestation de base.
 
@@ -138,6 +138,15 @@ type ServiceOption = { id; question; required; choices: OptionChoice[] };
 type OptionChoice = { id; label; priceDeltaCents; durationDeltaMinutes };
 ```
 
+**Déplacer une catégorie (`moveCategoryAction`, migration `20261108090000_category_move.sql`, audit Codex de #39).**
+
+- Avant, les flèches envoyaient l'ordre complet calculé depuis la lecture de l'onglet (`reorder_service_categories`). Deux onglets qui déplaçaient des catégories différentes s'effaçaient donc en silence : le dernier gagnait.
+- Désormais, `move_service_category(p_business_id, p_category_id, p_offset ∈ {-1, 1})` déplace la catégorie d'un cran depuis sa place **au moment où le déplacement s'applique**. Il prend le verrou d'agenda, comme les autres écritures du catalogue.
+- Deux déplacements s'appliquent l'un après l'autre, chacun sur le résultat du précédent, et les deux sont gardés. La réponse est l'ordre obtenu.
+- Déjà première ou dernière : rien ne change. Catégorie inconnue : `category_not_found`.
+- `reorder_service_categories` reste inchangé et n'est plus utilisé par l'écran.
+- Tests : `service-catalog.test.ts` « two tabs moving categories », qui contient la reproduction, le cas séquentiel depuis une lecture périmée et le cas simultané.
+
 **`options` de `setServiceOptionsAction`.** C'est la liste complète, dans l'ordre :
 
 - `id` absent ou `null` crée un groupe ou une réponse, et un `id` existant le garde ;
@@ -148,19 +157,19 @@ type OptionChoice = { id; label; priceDeltaCents; durationDeltaMinutes };
 
 **Correspondance avec le laboratoire** (`catalog/model.ts`) :
 
-| Laboratoire                              | Produit                                                                                                                                                         |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Category { id, name, visible }`         | `CategoryDto` (+ `version`, `displayOrder`)                                                                                                                     |
-| `CatalogService.categoryId`, `options`   | `ServiceDto.categoryId`, `CatalogServiceDto.options`                                                                                                            |
-| ordre des tableaux                       | `displayOrder` ; réordonner : `reorderCategoriesAction`, `reorderServicesAction` (liste complète des prestations)                                               |
-| `ServiceOption { question, choices }`    | `+ required`                                                                                                                                                    |
-| « la première réponse est le défaut »    | **côté interface seulement** : préselectionner la première réponse d'un groupe obligatoire. Le serveur n'applique jamais de défaut : il faut envoyer la réponse |
-| au moins 2 réponses par option           | au moins 1 (un groupe facultatif à une réponse est une case à cocher)                                                                                           |
-| `removeCategory(…, keepServices: false)` | supprimer ou désactiver chaque prestation, puis `deleteCategoryAction`                                                                                          |
-| `showcase()`                             | `get_public_catalog` (même projection), voir ci-dessous                                                                                                         |
-| `quote(service, picks)`                  | `quote(service, choiceIds)` de `src/features/catalog/model.ts` (affichage) ; le serveur fait foi                                                                |
-| `validate()`                             | `src/features/catalog/schemas.ts` (Zod), refusé aussi par la base                                                                                               |
-| brouillon / « Publier » du catalogue     | effet immédiat à l'enregistrement (§ 4, § 9)                                                                                                                    |
+| Laboratoire                              | Produit                                                                                                                                                                       |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Category { id, name, visible }`         | `CategoryDto` (+ `version`, `displayOrder`)                                                                                                                                   |
+| `CatalogService.categoryId`, `options`   | `ServiceDto.categoryId`, `CatalogServiceDto.options`                                                                                                                          |
+| ordre des tableaux                       | `displayOrder` ; déplacer une catégorie d'un cran : `moveCategoryAction` (audit Codex, voir ci-dessous) ; liste complète : `reorderCategoriesAction`, `reorderServicesAction` |
+| `ServiceOption { question, choices }`    | `+ required`                                                                                                                                                                  |
+| « la première réponse est le défaut »    | **côté interface seulement** : préselectionner la première réponse d'un groupe obligatoire. Le serveur n'applique jamais de défaut : il faut envoyer la réponse               |
+| au moins 2 réponses par option           | au moins 1 (un groupe facultatif à une réponse est une case à cocher)                                                                                                         |
+| `removeCategory(…, keepServices: false)` | supprimer ou désactiver chaque prestation, puis `deleteCategoryAction`                                                                                                        |
+| `showcase()`                             | `get_public_catalog` (même projection), voir ci-dessous                                                                                                                       |
+| `quote(service, picks)`                  | `quote(service, choiceIds)` de `src/features/catalog/model.ts` (affichage) ; le serveur fait foi                                                                              |
+| `validate()`                             | `src/features/catalog/schemas.ts` (Zod), refusé aussi par la base                                                                                                             |
+| brouillon / « Publier » du catalogue     | effet immédiat à l'enregistrement (§ 4, § 9)                                                                                                                                  |
 
 ### Réservation publique (routes HTTP)
 

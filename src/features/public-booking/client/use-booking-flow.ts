@@ -74,9 +74,11 @@ import {
 //   its first answer (the server never picks one), an optional one on none.
 //   Every change of answers reads the slots again, with the quote they are
 //   for: price and duration are always the server's, never added up here.
-//   The booking sends the answers and the quote she saw (expected*): if the
-//   server comes to another, nothing is booked (quote_changed) and the new
-//   quote is shown before she confirms again.
+//   Every booking sends the quote she saw (expected*), with or without
+//   options: if the server comes to another, nothing is booked
+//   (quote_changed) and the new quote is shown before she confirms again.
+//   An answer for a choice she has left since (another service, answer or
+//   day) never applies.
 
 export type BookingStep =
   "service" | "options" | "slot" | "contact" | "review" | "done";
@@ -246,14 +248,13 @@ export function useBookingFlow({
           serviceId: service.id,
           startsAt: slot.startsAt,
           ...canonicalContact(contact),
-          // Without options: exactly the body of before (same replay key).
-          ...(hasOptions
-            ? {
-                optionChoiceIds: choiceIds,
-                expectedPriceCents: slotQuote.priceCents,
-                expectedDurationMinutes: slotQuote.durationMinutes,
-              }
-            : {}),
+          ...(hasOptions ? { optionChoiceIds: choiceIds } : {}),
+          // What she accepted, always: with or without options, a price or
+          // a duration that changed since is refused by the server
+          // (quote_changed), never booked silently. A request already
+          // pending from before is resent as it was (resendPending).
+          expectedPriceCents: slotQuote.priceCents,
+          expectedDurationMinutes: slotQuote.durationMinutes,
         }
       : null;
   const fingerprint = command ? fingerprintOf(command) : null;
@@ -337,7 +338,7 @@ export function useBookingFlow({
    * step shows what changed before she goes on.
    */
   function optionsChanged(forService: string) {
-    reads.current += 1;
+    const read = (reads.current += 1);
     readAbort.current?.abort();
     setSlot(null);
     setSlotQuote(null);
@@ -350,6 +351,9 @@ export function useBookingFlow({
         if (result.error.code === "business_not_found") setGone(true);
         return;
       }
+      // She chose another service, answer or day meanwhile: this late
+      // answer is for a choice she left, and must not replace its quote.
+      if (read !== reads.current) return;
       setCatalog(result.data.catalog);
       const fresh = servicesOf(result.data.catalog).find(
         (item) => item.id === forService,
