@@ -76,6 +76,8 @@ export const appErrorMessages = {
     "Cette invitation a déjà été utilisée. Connectez-vous avec votre compte.",
   invitation_email_mismatch:
     "Cette invitation est liée à une autre adresse email. Utilisez l’adresse à laquelle vous l’avez reçue.",
+  session_revocation_failed:
+    "Les autres connexions à ce compte n’ont pas pu être fermées : l’invitation n’a pas été activée. Réessayez dans quelques instants.",
   slug_taken:
     "Cette adresse de page est déjà utilisée. Choisissez-en une autre.",
   slug_reserved: "Cette adresse de page est réservée. Choisissez-en une autre.",
@@ -225,6 +227,7 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   invitation_expired: 410,
   invitation_used: 409,
   invitation_email_mismatch: 403,
+  session_revocation_failed: 503,
   slug_taken: 409,
   slug_reserved: 409,
   calendar_not_configured: 503,

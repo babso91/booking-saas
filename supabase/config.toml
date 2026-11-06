@@ -257,6 +257,13 @@ otp_expiry = 3600
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
 
+# The recovery link: sent to an invited address whose account existed
+# already (docs/BETA_ACCESS.md). The same subject and text are to be set on
+# the hosted project (Authentication > Email Templates > Reset Password).
+[auth.email.template.recovery]
+subject = "Choisis ton mot de passe"
+content_path = "./supabase/templates/recovery.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true

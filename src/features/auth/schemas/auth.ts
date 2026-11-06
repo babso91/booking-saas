@@ -41,5 +41,10 @@ export const signInSchema = z.object({
   invitationToken: z.string().trim().max(200).optional(),
 });
 
+/** /invitation: her own password, after her recovery link. */
+export const completeInvitationSchema = z.object({
+  password: passwordSchema,
+});
+
 export type SignUpInput = z.output<typeof signUpSchema>;
 export type SignInInput = z.output<typeof signInSchema>;

@@ -65,6 +65,24 @@ export async function sendConfirmation(
   }
 }
 
+/**
+ * Sends a recovery link to `email`, for this device's PKCE flow: following
+ * it proves the mailbox is hers (it also confirms the address) and opens a
+ * session whose `amr` says `recovery`. Lands on `redirectTo`.
+ */
+export async function sendRecovery(
+  client: AppSupabaseClient,
+  email: string,
+  redirectTo: string,
+): Promise<void> {
+  const { error } = await client.auth.resetPasswordForEmail(email, {
+    redirectTo,
+  });
+  if (error) {
+    throw authException(error);
+  }
+}
+
 export async function signInWithPassword(
   client: AppSupabaseClient,
   input: SignInInput,
