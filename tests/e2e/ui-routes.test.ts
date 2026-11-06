@@ -63,14 +63,14 @@ const admin = createClient<Database>(env.apiUrl, env.serviceRoleKey, {
 /** A confirmed account signed in in a fresh browser. */
 async function signedInBrowser() {
   const email = `ui-${randomUUID().slice(0, 8)}@test.local`;
-  const { error } = await admin.auth.admin.createUser({
+  const { data, error } = await admin.auth.admin.createUser({
     email,
     password: PASSWORD,
     email_confirm: true,
   });
   expect(error).toBeNull();
   // An invited professional (private beta).
-  await inviteAccount(email);
+  await inviteAccount(email, data.user!.id);
 
   const browser = new Browser();
   const signIn = await browser

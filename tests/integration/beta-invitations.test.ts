@@ -28,6 +28,25 @@ import {
   env,
   uniqueSlug,
 } from "./support/fixtures";
+import {
+  closeTransaction,
+  openTransaction,
+  outcome,
+  type OpenTransaction,
+} from "./support/transactions";
+
+/** Resolves once backend `pid` waits on a lock, or has finished its statement. */
+async function waitUntilBlockedOrDone(pid: number) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const { rows } = await db.query(
+      "select 1 from pg_stat_activity where pid = $1 and (wait_event_type = 'Lock' or state = 'idle in transaction')",
+      [pid],
+    );
+    if (rows.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Backend ${pid} neither blocked nor finished`);
+}
 
 // The private beta (supabase/migrations/20261107090000_beta_invitations.sql,
 // docs/BETA_ACCESS.md), against the real Auth and PostgreSQL: the Server
@@ -464,18 +483,29 @@ describe("beta invitations: concurrency and interruptions", () => {
     const email = uniqueEmail("rush");
     const invitation = await invite(email);
     await anonClient().auth.signUp({ email, password: PASSWORD });
+    const [userId] = await accountsFor(email);
     const results = await Promise.all(
       Array.from({ length: 6 }, () =>
         bookingClient().rpc("accept_beta_invitation", {
           p_token_hash: hashInvitationToken(invitation.token),
           p_email: email,
+          p_user_id: userId!,
         }),
       ),
     );
     expect(results.map((result) => result.data)).toEqual(
       Array(6).fill("accepted"),
     );
-    const [userId] = await accountsFor(email);
+    // For another account than the invited address's: refused.
+    const { data: other } = await bookingClient().rpc(
+      "accept_beta_invitation",
+      {
+        p_token_hash: hashInvitationToken(invitation.token),
+        p_email: email,
+        p_user_id: randomUUID(),
+      },
+    );
+    expect(other).toBe("account_mismatch");
     expect(await invitationRow(invitation.id)).toMatchObject({
       accepted_by: userId,
     });
@@ -508,13 +538,19 @@ describe("beta invitations: concurrency and interruptions", () => {
     expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
   });
 
-  it("interrupted after she confirmed her email: the link gives access, she signs in", async () => {
+  it("her account existed, confirmed: her password plus her link give access; other sessions end", async () => {
     const email = uniqueEmail("confirmed");
     const invitation = await invite(email);
     await anonClient().auth.signUp({ email, password: PASSWORD });
     await confirmEmail(email);
+    // Another session of that account, opened before (another device).
+    const elsewhere = anonClient();
+    await elsewhere.auth.signInWithPassword({ email, password: PASSWORD });
+    const { data: before } = await elsewhere.auth.getSession();
+
     device = new Device();
-    // Her account exists and is confirmed: Auth says so; her access is given.
+    // Signing up again: Auth says the account exists; nothing is given
+    // (its password is not proven by a sign-up).
     expect(
       codeOf(
         await signUpAction({
@@ -525,9 +561,51 @@ describe("beta invitations: concurrency and interruptions", () => {
       ),
     ).toBe("email_taken");
     const [userId] = await accountsFor(email);
+    expect(await accessOf(userId!)).toBeNull();
+
+    // She signs in with her password and her link: accepted.
+    device = new Device();
+    expect(
+      await signInAction({
+        email,
+        password: PASSWORD,
+        invitationToken: invitation.token,
+      }),
+    ).toEqual({
+      ok: true,
+      data: { next: "/onboarding", invitation: "accepted" },
+    });
     expect(await accessOf(userId!)).toMatchObject({ source: "invitation" });
-    await signInOnNewDevice(email);
+    // The other session is over: its refresh token no longer works.
+    const refreshed = await anonClient().auth.refreshSession({
+      refresh_token: before.session!.refresh_token,
+    });
+    expect(refreshed.error).not.toBeNull();
     expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
+  });
+
+  it("signing in with someone else's link gives nothing", async () => {
+    const owner = uniqueEmail("link-owner");
+    const other = uniqueEmail("link-other");
+    const invitation = await invite(owner);
+    await admin.auth.admin.createUser({
+      email: other,
+      password: PASSWORD,
+      email_confirm: true,
+    });
+    device = new Device();
+    expect(
+      await signInAction({
+        email: other,
+        password: PASSWORD,
+        invitationToken: invitation.token,
+      }),
+    ).toMatchObject({
+      ok: true,
+      data: { invitation: "invitation_email_mismatch" },
+    });
+    const [otherId] = await accountsFor(other);
+    expect(await accessOf(otherId!)).toBeNull();
   });
 
   it("retried after onboarding started on another device: the same answer, one business", async () => {
@@ -566,5 +644,200 @@ describe("beta invitations: concurrency and interruptions", () => {
       [userId],
     );
     expect(rows[0].n).toBe(1);
+  });
+});
+
+describe("beta invitations: an account a third party created first (Codex audit)", () => {
+  const THIRD_PARTY = "third-party-password-1";
+
+  it("unconfirmed, made with the invitee's address: after her link and her confirmation, only HER password opens it", async () => {
+    const email = uniqueEmail("prey");
+    const invitation = await invite(email);
+    // A third party creates the account first, straight at Auth.
+    const { error } = await anonClient().auth.signUp({
+      email,
+      password: THIRD_PARTY,
+    });
+    expect(error).toBeNull();
+
+    // The invitee follows her link and chooses her password.
+    device = new Device();
+    const answer = await signUpAction({
+      email,
+      password: PASSWORD,
+      invitationToken: invitation.token,
+    });
+    expect(["ok", "rate_limited"]).toContain(codeOf(answer));
+    // She proves her address (the confirmation link of her mailbox).
+    await confirmEmail(email);
+
+    const thirdParty = await anonClient().auth.signInWithPassword({
+      email,
+      password: THIRD_PARTY,
+    });
+    expect(thirdParty.error?.message).toMatch(/Invalid login credentials/);
+    expect(await signInOnNewDevice(email)).toBe("/onboarding");
+    expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
+  });
+
+  it("confirmed with a third party's password: her link gives that account nothing", async () => {
+    const email = uniqueEmail("confirmed-prey");
+    const invitation = await invite(email);
+    await anonClient().auth.signUp({ email, password: THIRD_PARTY });
+    // Confirmed (she clicked Auth's own email, sent for the third party).
+    await confirmEmail(email);
+
+    device = new Device();
+    expect(
+      codeOf(
+        await signUpAction({
+          email,
+          password: PASSWORD,
+          invitationToken: invitation.token,
+        }),
+      ),
+    ).toBe("email_taken");
+    // The third party signs in: no beta access, no business.
+    device = new Device();
+    const result = await signInAction({ email, password: THIRD_PARTY });
+    expect(result.ok).toBe(true);
+    expect(codeOf(await completeOnboardingAction(onboarding()))).toBe(
+      "beta_invitation_required",
+    );
+    const [userId] = await accountsFor(email);
+    expect(await accessOf(userId!)).toBeNull();
+  });
+});
+
+describe("beta invitations: issued again at once, and the service acting for a user (Codex audit)", () => {
+  it("re-issued at the same moment: exactly one invitation stays valid for the address", async () => {
+    const email = uniqueEmail("reissued");
+    const create = (connection: OpenTransaction["connection"], token: string) =>
+      connection.query(
+        "select public.create_beta_invitation($1, $2, now() + interval '7 days')",
+        [email, hashInvitationToken(token)],
+      );
+    const [first, second] = [
+      generateInvitationToken(),
+      generateInvitationToken(),
+    ];
+    // Two operators issue her invitation at once: the first creation is not
+    // committed yet when the second runs.
+    const one = await openTransaction({ role: "service_role" });
+    const two = await openTransaction({ role: "service_role" });
+    await create(one.connection, first);
+    const pending = outcome(create(two.connection, second));
+    await waitUntilBlockedOrDone(two.pid);
+    await closeTransaction(one, "commit");
+    expect(await pending).toBe("ok");
+    await closeTransaction(two, "commit");
+
+    const { rows } = await db.query<{ n: number }>(
+      "select count(*)::int as n from private.beta_invitations where email = $1 and revoked_at is null and accepted_at is null",
+      [email],
+    );
+    expect(rows[0]!.n).toBe(1);
+    const states = [];
+    for (const token of [first, second]) {
+      const { data } = await bookingClient().rpc("check_beta_invitation", {
+        p_token_hash: hashInvitationToken(token),
+        p_email: email,
+      });
+      states.push(data);
+    }
+    // The later one wins: the first link no longer works.
+    expect(states).toEqual(["invalid", "valid"]);
+  });
+
+  it("re-issued many times at once: still exactly one", async () => {
+    const email = uniqueEmail("reissued-many");
+    await Promise.all(Array.from({ length: 8 }, () => invite(email)));
+    const { rows } = await db.query<{ n: number }>(
+      "select count(*)::int as n from private.beta_invitations where email = $1 and revoked_at is null and accepted_at is null",
+      [email],
+    );
+    expect(rows[0]!.n).toBe(1);
+  });
+
+  it("a business inserted by the service for a user without access: refused (auth.uid() is null there)", async () => {
+    const { data } = await admin.auth.admin.createUser({
+      email: uniqueEmail("service-for"),
+      password: PASSWORD,
+      email_confirm: true,
+    });
+    const userId = data.user!.id;
+    const { error } = await bookingClient()
+      .from("businesses")
+      .insert({
+        name: "Par le service",
+        slug: uniqueSlug("svc"),
+        contact_email: "svc@test.local",
+        timezone: "Europe/Paris",
+        created_by: userId,
+      } as never);
+    expect(error?.message).toBe("beta_invitation_required");
+    // Nor without anyone to act for.
+    const { error: anonymous } = await bookingClient()
+      .from("businesses")
+      .insert({
+        name: "Sans personne",
+        slug: uniqueSlug("svc"),
+        contact_email: "svc@test.local",
+        timezone: "Europe/Paris",
+      } as never);
+    expect(anonymous?.message).toBe("beta_invitation_required");
+
+    // For a user who has access: the service may (an operator's tooling).
+    const invited = uniqueEmail("service-ok");
+    const invitation = await invite(invited);
+    device = new Device();
+    await signUpAction({
+      email: invited,
+      password: PASSWORD,
+      invitationToken: invitation.token,
+    });
+    await confirmEmail(invited);
+    const [invitedId] = await accountsFor(invited);
+    const { error: allowed } = await bookingClient()
+      .from("businesses")
+      .insert({
+        name: "Pour une invitée",
+        slug: uniqueSlug("svc"),
+        contact_email: "svc@test.local",
+        timezone: "Europe/Paris",
+        created_by: invitedId,
+      } as never);
+    expect(allowed).toBeNull();
+  });
+
+  it("the access counts only once her address is confirmed", async () => {
+    const email = uniqueEmail("unproven");
+    const invitation = await invite(email);
+    device = new Device();
+    await signUpAction({
+      email,
+      password: PASSWORD,
+      invitationToken: invitation.token,
+    });
+    const [userId] = await accountsFor(email);
+    expect(await accessOf(userId!)).toMatchObject({ source: "invitation" });
+    const asHer = async () => {
+      const transaction = await openTransaction({
+        role: "authenticated",
+        userId,
+      });
+      try {
+        const { rows } = await transaction.connection.query<{
+          allowed: boolean;
+        }>("select public.my_beta_access() as allowed");
+        return rows[0]!.allowed;
+      } finally {
+        await closeTransaction(transaction, "rollback");
+      }
+    };
+    // Even with her JWT (were she able to get one), not yet.
+    expect(await asHer()).toBe(false);
+    await confirmEmail(email);
+    expect(await asHer()).toBe(true);
   });
 });

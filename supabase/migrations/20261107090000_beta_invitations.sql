@@ -39,6 +39,12 @@ create table private.beta_invitations (
 
 create index beta_invitations_email_idx on private.beta_invitations (email);
 
+-- At most one invitation pending per address: re-issuing revokes the
+-- previous one first (create_beta_invitation, under the address's lock).
+create unique index beta_invitations_one_pending_idx
+  on private.beta_invitations (email)
+  where accepted_at is null and revoked_at is null;
+
 -- The accounts allowed to create a business.
 create table private.beta_access (
   user_id uuid primary key references auth.users (id) on delete cascade,
@@ -60,6 +66,8 @@ revoke all on table private.beta_access from public, anon, authenticated;
 -- The gate
 -- ---------------------------------------------------------------------------
 
+-- Access counts only once the account's address is confirmed: proof that
+-- whoever uses it holds the invited mailbox.
 create function private.has_beta_access(p_user_id uuid)
 returns boolean
 language sql
@@ -67,23 +75,37 @@ stable
 security definer
 set search_path = ''
 as $$
-  select exists (select 1 from private.beta_access a where a.user_id = p_user_id);
+  select exists (
+    select 1
+    from private.beta_access a
+    join auth.users u on u.id = a.user_id
+    where a.user_id = p_user_id and u.email_confirmed_at is not null
+  );
 $$;
 
 revoke all on function private.has_beta_access(uuid) from public;
 
--- A business created on behalf of a signed-in user (complete_onboarding, or
--- anything else running with her JWT) requires her beta access. The service
--- and the database owner (no user in the request) are not concerned.
+-- A business created through the API requires beta access for the user it
+-- is created for: the signed-in user (auth.uid(), complete_onboarding or
+-- anything running with her JWT), or, for the service acting for someone
+-- (auth.uid() null), the user it names as its creator. Created through the
+-- API for nobody: refused. Only the database owner's own SQL (migrations,
+-- an operator's explicit administration) is not concerned.
 create function private.businesses_require_beta_access()
 returns trigger
 language plpgsql
+security definer
 set search_path = ''
 as $$
 declare
-  v_user uuid := auth.uid();
+  v_api boolean := pg_catalog.current_setting('role', true) in ('anon', 'authenticated', 'service_role')
+    or session_user::text in ('anon', 'authenticated', 'service_role', 'authenticator');
+  v_user uuid := coalesce(auth.uid(), case when v_api then new.created_by end);
 begin
-  if v_user is not null and not private.has_beta_access(v_user) then
+  if v_api and (v_user is null or not private.has_beta_access(v_user)) then
+    raise exception using errcode = 'P0001', message = 'beta_invitation_required';
+  end if;
+  if not v_api and auth.uid() is not null and not private.has_beta_access(auth.uid()) then
     raise exception using errcode = 'P0001', message = 'beta_invitation_required';
   end if;
   return new;
@@ -143,6 +165,11 @@ begin
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'expiresAt';
   end if;
 
+  -- Two issues for the same address at once are serialised: the later one
+  -- revokes the earlier, committed one.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('beta_invitation:' || v_email, 0)
+  );
   update private.beta_invitations i
   set revoked_at = pg_catalog.now()
   where i.email = v_email and i.accepted_at is null and i.revoked_at is null;
@@ -235,12 +262,49 @@ as $$
   select s.state from private.beta_invitation_state(p_token_hash, p_email, false) s;
 $$;
 
--- Once her account exists: the invitation is accepted for THE account of
--- the invited address (looked up here, never taken from the caller), which
--- gets beta access. Under the invitation's row lock: two attempts at once
--- accept it once. Accepting again for the same account is answered the same
--- (a retry after an interruption). Answers the state, 'accepted' on success.
-create function public.accept_beta_invitation(p_token_hash text, p_email text)
+-- The account of the invited address, for the server to make it safe before
+-- accepting: 'none', 'unconfirmed' (its password may be a third party's:
+-- anyone can create an unconfirmed account for any address, and Auth keeps
+-- the first password on a repeated sign-up) or 'confirmed'. Only for a valid
+-- invitation of that address; otherwise the invitation's state.
+create function public.beta_invited_account(p_token_hash text, p_email text)
+returns table (state text, user_id uuid)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_state text;
+  v_email text;
+  v_user auth.users%rowtype;
+begin
+  select s.state, s.email into v_state, v_email
+  from private.beta_invitation_state(p_token_hash, p_email, false) s;
+  if v_state <> 'valid' then
+    return query select v_state, null::uuid;
+    return;
+  end if;
+  select * into v_user from auth.users u where pg_catalog.lower(u.email) = v_email;
+  if not found then
+    return query select 'none'::text, null::uuid;
+  elsif v_user.email_confirmed_at is null then
+    return query select 'unconfirmed'::text, v_user.id;
+  else
+    return query select 'confirmed'::text, v_user.id;
+  end if;
+end;
+$$;
+
+-- Accepts the invitation for `p_user_id`, which must be the account of the
+-- invited address. The caller has first made that account hers: her own
+-- password set on an unconfirmed account (sign-up), or her password proven
+-- on a confirmed one (sign-in). An unconfirmed account loses every session
+-- it may have. Under the invitation's row lock: accepted once; again for the
+-- same account, the same answer (a retry). The access counts once the
+-- address is confirmed (has_beta_access). Answers 'accepted' or the
+-- invitation's state ('account_mismatch' for another account).
+create function public.accept_beta_invitation(p_token_hash text, p_email text, p_user_id uuid)
 returns text
 language plpgsql
 security definer
@@ -250,7 +314,7 @@ declare
   v_state text;
   v_invitation_id uuid;
   v_email text;
-  v_account uuid;
+  v_user auth.users%rowtype;
 begin
   select s.state, s.invitation_id, s.email into v_state, v_invitation_id, v_email
   from private.beta_invitation_state(p_token_hash, p_email, true) s;
@@ -258,19 +322,23 @@ begin
     return v_state;
   end if;
 
-  select u.id into v_account from auth.users u where pg_catalog.lower(u.email) = v_email;
-  if v_account is null then
-    -- Her account does not exist (yet): nothing accepted.
-    return 'account_missing';
+  select * into v_user from auth.users u where pg_catalog.lower(u.email) = v_email;
+  if not found or v_user.id is distinct from p_user_id then
+    return 'account_mismatch';
+  end if;
+
+  if v_user.email_confirmed_at is null then
+    delete from auth.sessions s where s.user_id = v_user.id;
+    delete from auth.refresh_tokens t where t.user_id = v_user.id::text;
   end if;
 
   update private.beta_invitations i
   set accepted_at = coalesce(i.accepted_at, pg_catalog.now()),
-      accepted_by = v_account
+      accepted_by = v_user.id
   where i.id = v_invitation_id;
 
   insert into private.beta_access (user_id, source, invitation_id)
-  values (v_account, 'invitation', v_invitation_id)
+  values (v_user.id, 'invitation', v_invitation_id)
   on conflict (user_id) do nothing;
   return 'accepted';
 end;
@@ -284,7 +352,8 @@ begin
     'public.create_beta_invitation(text, text, timestamptz, text)',
     'public.revoke_beta_invitation(uuid)',
     'public.check_beta_invitation(text, text)',
-    'public.accept_beta_invitation(text, text)'
+    'public.beta_invited_account(text, text)',
+    'public.accept_beta_invitation(text, text, uuid)'
   ] loop
     execute pg_catalog.format('revoke all on function %s from public, anon, authenticated', v_signature);
     execute pg_catalog.format('grant execute on function %s to service_role', v_signature);

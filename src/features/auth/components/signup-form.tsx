@@ -34,6 +34,10 @@ export function SignupForm({
   invitationToken?: string;
 } = {}) {
   const router = useRouter();
+  // Her invitation follows her to the sign-in (an account already there).
+  const loginHref = invitationToken
+    ? { pathname: "/login" as const, query: { invitation: invitationToken } }
+    : ("/login" as const);
   const [values, setValues] = useState({ email: "", password: "" });
   const [fieldErrors, setFieldErrors] = useState<FieldErrors<Field>>({});
   const [formError, setFormError] = useState<UiError | null>(null);
@@ -158,7 +162,7 @@ export function SignupForm({
             action={
               formError.code === "email_taken" ? (
                 <Link
-                  href="/login"
+                  href={loginHref}
                   className="text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4"
                 >
                   Me connecter
@@ -233,7 +237,7 @@ export function SignupForm({
       <p className="animate-rise text-center text-[15px] text-ink-soft [animation-delay:120ms]">
         Déjà un compte ?{" "}
         <Link
-          href="/login"
+          href={loginHref}
           className="font-semibold text-ink underline decoration-line-strong decoration-1 underline-offset-4 transition-colors hover:decoration-ink"
         >
           Se connecter

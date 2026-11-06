@@ -45,6 +45,29 @@ describe("LoginForm", () => {
     },
   );
 
+  it("passes her invitation to the server with her sign-in", async () => {
+    signInAction.mockResolvedValue({
+      ok: true,
+      data: { next: "/onboarding", invitation: "accepted" },
+    });
+    render(<LoginForm invitationToken="inv_abc" />);
+    await submit();
+
+    expect(signInAction).toHaveBeenCalledWith({
+      email: "mila@studio.fr",
+      password: "correct-horse",
+      invitationToken: "inv_abc",
+    });
+    await waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/onboarding"),
+    );
+    expect(
+      screen
+        .getByRole("link", { name: "Crée ton espace" })
+        .getAttribute("href"),
+    ).toBe("/signup?invitation=inv_abc");
+  });
+
   it("renders invalid credentials calmly, without backend text", async () => {
     signInAction.mockResolvedValue({
       ok: false,

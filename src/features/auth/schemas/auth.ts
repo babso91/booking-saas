@@ -37,6 +37,8 @@ export const signInSchema = z.object({
   email: emailSchema,
   // No length rule on sign-in: never reveal the password policy of an account.
   password: z.string().min(1, "Le mot de passe est obligatoire.").max(72),
+  /** Her invitation, when her account existed before it (private beta). */
+  invitationToken: z.string().trim().max(200).optional(),
 });
 
 export type SignUpInput = z.output<typeof signUpSchema>;
