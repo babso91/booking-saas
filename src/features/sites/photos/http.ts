@@ -3,12 +3,14 @@ import "server-only";
 // The proxies' answers (docs/SITE_PUBLISHING_CONTRACT.md § 8). Public: the
 // CDN may keep a photo five minutes at most and browsers revalidate every
 // time (no stale-while-revalidate), so a revoked or unpublished photo stops
-// being served within five minutes without any purge. Preview: the
-// browser's own cache only, never a shared one. Anything else (refused,
+// being served within five minutes without any purge. Preview: never
+// stored anywhere, not even by her browser. Anything else (refused,
 // missing, failed) is never stored anywhere.
 
 export const PUBLIC_PHOTO_CACHE = "public, max-age=0, s-maxage=300";
-export const PRIVATE_PHOTO_CACHE = "private, max-age=300";
+// The preview is never stored, not even by her own browser: on a shared
+// computer, the next person signed in must not be shown it (Codex audit).
+export const PRIVATE_PHOTO_CACHE = "no-store";
 export const NO_STORE = "no-store";
 
 /**

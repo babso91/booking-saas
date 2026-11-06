@@ -432,3 +432,28 @@ export async function readMemberSitePhoto(
   if (!ready) return null;
   return readDerivative(writer.service, writer.businessId, assetId, width);
 }
+
+/**
+ * The periodic cleanup (GET /api/cron/site-photos): forgets the uploads
+ * abandoned once their upload URL has expired, then runs every purge due
+ * (left by a failure or an interruption, or done early and due again now
+ * that the upload URL can no longer write). Purges requested in the last
+ * minute are left to the action that recorded them.
+ */
+export async function runSitePhotoMaintenance(
+  service: AppSupabaseClient,
+  options: { limit?: number; now?: Date } = {},
+): Promise<{ abandoned: number; done: number; failed: number }> {
+  const limit = options.limit ?? 200;
+  const { data: abandoned, error } = await service.rpc(
+    "discard_abandoned_site_assets",
+    { p_limit: limit },
+  );
+  if (error) throw databaseException(error);
+  const now = options.now ?? new Date();
+  const purges = await processSitePhotoPurges(service, {
+    before: new Date(now.getTime() - 60_000),
+    limit,
+  });
+  return { abandoned: abandoned ?? 0, ...purges };
+}
