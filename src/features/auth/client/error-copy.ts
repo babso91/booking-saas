@@ -120,6 +120,31 @@ export const errorCopy: Record<
     title: "Prestation indisponible",
     message: "Cette prestation n’est pas disponible.",
   },
+  stale_site_draft: {
+    title: "Modifié entre-temps",
+    message: "Ton site a changé ailleurs. Recharge-le avant de réessayer.",
+  },
+  site_not_found: {
+    title: "Pas encore de brouillon",
+    message: "Enregistre ton site avant de le publier.",
+  },
+  site_not_published: {
+    title: "Pas encore publié",
+    message: "Ce site n’est pas encore en ligne.",
+  },
+  site_version_not_found: {
+    title: "Version introuvable",
+    message: "Cette version de ton site n’existe pas.",
+  },
+  site_unreadable: {
+    title: "Textes illisibles",
+    message:
+      "Certains textes ne se liraient pas. Corrige les couleurs avant de publier.",
+  },
+  site_asset_unavailable: {
+    title: "Photo indisponible",
+    message: "Une photo n’est plus disponible. Choisis-en une autre.",
+  },
   stale_service: {
     title: "Modifiée entre-temps",
     message: "Cette prestation a changé. Recharge-la avant de réessayer.",
