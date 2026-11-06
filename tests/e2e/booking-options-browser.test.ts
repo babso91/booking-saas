@@ -284,3 +284,116 @@ describe.each(VARIANTS)(
     });
   },
 );
+
+// Codex's audit of #42: a service WITHOUT options also sends the price and
+// duration she accepted, so a price raised between her review and her
+// confirmation is refused by the server (quote_changed), nothing booked,
+// and she is asked to agree to the new one.
+describe("a price raised before she confirms — service without options", () => {
+  it("nothing booked at the old price; the new one shown, then booked once she confirms again", async () => {
+    const pro = await professionalWithVisit("Nora", "Lou");
+    const { rows } = await db.query<{ slug: string; service: string }>(
+      `select b.slug, s.id as service
+         from public.businesses b
+         join public.services s on s.business_id = b.id
+        where b.id = $1`,
+      [pro.businessId],
+    );
+    const { slug, service } = rows[0]!;
+    await db.query("delete from public.business_hours where business_id = $1", [
+      pro.businessId,
+    ]);
+    for (let weekday = 0; weekday < 7; weekday += 1)
+      await db.query(
+        `insert into public.business_hours (business_id, weekday, starts_at, ends_at)
+         values ($1, $2, '08:00', '20:00')`,
+        [pro.businessId, weekday],
+      );
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 390,
+      height: 860,
+      phone: true,
+    });
+    await behindIngress(page.context(), "203.0.113.24");
+    await page.goto(`${APP}/b/${slug}`);
+    await page.getByRole("button", { name: /Rehaussement de cils/ }).click();
+    await page
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+    const tomorrow = addDays(businessToday("Europe/Paris"), 1);
+    await page
+      .getByRole("button", { name: new RegExp(`, ${dayLabel(tomorrow)}$`) })
+      .click();
+    await page
+      .getByRole("list", { name: `Créneaux du ${dayLabel(tomorrow)}` })
+      .getByRole("button")
+      .first()
+      .click();
+    await page.getByRole("heading", { name: "Vos coordonnées" }).waitFor();
+    await page.getByLabel(/^Prénom/).fill("Inès");
+    await page.getByLabel(/^Email/).fill(`ines-${slug}@client.test.local`);
+    await page.getByRole("button", { name: "Continuer" }).click();
+    await page
+      .getByRole("heading", { name: "Vérifiez et confirmez" })
+      .waitFor();
+    await page.getByText(/^60,00\s€$/).waitFor();
+
+    // The professional raises the price while the review is on screen.
+    await db.query(
+      "update public.services set price_cents = 7000 where id = $1",
+      [service],
+    );
+
+    const post = () =>
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/bookings" &&
+          response.request().method() === "POST",
+      );
+    const first = post();
+    await page
+      .getByRole("button", { name: /Confirmer la réservation/ })
+      .click();
+    const refused = await first;
+    expect(refused.request().postDataJSON()).toMatchObject({
+      expectedPriceCents: 6000,
+      expectedDurationMinutes: 75,
+    });
+    expect(refused.status()).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      error: { code: "quote_changed" },
+    });
+    // Nothing booked tomorrow (her visit going on now is today).
+    const none = await db.query(
+      `select 1 from public.appointments
+        where business_id = $1
+          and to_char(starts_at at time zone 'Europe/Paris', 'YYYY-MM-DD') = $2`,
+      [pro.businessId, tomorrow],
+    );
+    expect(none.rowCount).toBe(0);
+
+    // Asked again, with the new price, on the same slot.
+    await page.getByText("Le prix ou la durée a changé").waitFor();
+    await page.getByText(/^70,00\s€$/).waitFor();
+    await capture(page, "booking price raised before confirming");
+
+    const second = post();
+    await page
+      .getByRole("button", { name: /Confirmer la réservation/ })
+      .click();
+    const booked = await second;
+    expect(booked.request().postDataJSON()).toMatchObject({
+      expectedPriceCents: 7000,
+    });
+    expect(booked.status()).toBe(201);
+    const rowsBooked = await db.query<{ price: number }>(
+      `select price_cents_snapshot as price from public.appointments
+        where business_id = $1 and service_id = $2
+          and to_char(starts_at at time zone 'Europe/Paris', 'YYYY-MM-DD') = $3`,
+      [pro.businessId, service, tomorrow],
+    );
+    expect(rowsBooked.rows).toEqual([{ price: 7000 }]);
+    expect(errors).toEqual([]);
+  });
+});

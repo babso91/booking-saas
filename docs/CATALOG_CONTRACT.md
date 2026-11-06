@@ -108,7 +108,7 @@ Le rendez-vous garde `service_name_snapshot`, `price_cents_snapshot` et `duratio
 
 ## 7. Clients écrits avant les options
 
-- **Une prestation sans options se réserve exactement comme avant :** mêmes créneaux, même prix, même durée, même empreinte d'idempotence, `options: []`.
+- **Une prestation sans options se réserve comme avant :** mêmes créneaux, même prix, même durée, `options: []`. Le client y envoie aussi le devis accepté (`expected*`), contrôlé par le serveur comme pour une prestation à options. Une demande sans `expected*` reste acceptée telle quelle, par exemple une demande en attente renvoyée à l'identique.
 - **`GET /api/public/businesses/[slug]`** garde `services` tel quel. Une prestation d'une catégorie masquée n'y figure plus.
 - **Une prestation avec un groupe obligatoire** ne se réserve pas sans réponse (`options_required`), même pour un ancien client. Le serveur ne choisit jamais une réponse à sa place, car cela changerait le prix. Avec seulement des groupes facultatifs, un ancien client réserve la prestation de base.
 

@@ -388,6 +388,9 @@ describe("booking", () => {
         startsAt: `${today}T16:30:00.000Z`,
         firstName: "Inès",
         email: "ines.benali@exemple.fr",
+        // What she accepted, sent even without options.
+        expectedPriceCents: quoteOf(SERVICE_A).priceCents,
+        expectedDurationMinutes: quoteOf(SERVICE_A).durationMinutes,
         requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       },
     ]);
@@ -1042,7 +1045,7 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
     await screen.findByText("Les options ont changé");
   });
 
-  it("without options, the body is exactly the one of before (same replay key)", async () => {
+  it("without options, the price and duration she accepted are sent too (Codex audit)", async () => {
     renderCatalog();
     fireEvent.click(screen.getByRole("button", { name: /Rehaussement/ }));
     await screen.findByRole("heading", { name: "Choisissez un créneau" });
@@ -1060,6 +1063,8 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
     expect(Object.keys(bookingBodies()[0]!).sort()).toEqual(
       [
         "email",
+        "expectedDurationMinutes",
+        "expectedPriceCents",
         "firstName",
         "requestId",
         "serviceId",
@@ -1067,5 +1072,7 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
         "startsAt",
       ].sort(),
     );
+    // No answers to send: no optionChoiceIds.
+    expect(bookingBodies()[0]).not.toHaveProperty("optionChoiceIds");
   });
 });
