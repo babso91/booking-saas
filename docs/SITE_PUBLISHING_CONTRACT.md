@@ -107,6 +107,8 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 ## 7. Garanties de concurrence
 
 - **Écritures du brouillon :** comparaison sur `draft_revision`, sous verrou de ligne du site. Deux studios ouverts : l'un gagne, l'autre reçoit `stale_site_draft` et recharge.
+- **Appartenance tenue pendant l'écriture** (audit Codex) : la ligne d'appartenance du membre est verrouillée `FOR SHARE` jusqu'à la validation de l'écriture. Son retrait attend une écriture en cours, et une écriture commencée pendant un retrait l'attend, puis répond `forbidden` (testé par entrelacement déterministe).
+- **Photos vérifiées sous le verrou du site** : une photo supprimée pendant qu'une sauvegarde attendait le verrou est vue disparue (`site_asset_unavailable`). L'ordre des verrous est le même partout : l'appartenance, puis le site (testé).
 - **Publication :** sous verrou de ligne du site. Elle prend le brouillon **à la révision attendue**, insère la version (numéro suivant, unique par site) et bascule `published_version_id` dans la même transaction. Deux publications simultanées sont sérialisées, sans numéro perdu ni dupliqué.
 - **Lecture publique :** une seule requête, sur la version pointée. Une publication en cours n'est visible qu'une fois validée.
 
@@ -154,7 +156,7 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 `GET /api/sites/photos/[assetId]/[width]` : les mêmes déclinaisons des photos `ready` de **son** établissement, publiées ou non.
 
 - Session obligatoire ; l'établissement vient de la session, jamais de la requête.
-- `Cache-Control: private, max-age=300` : le cache de son navigateur seulement, **jamais un cache partagé**. Refus, absence de session et 404 : `no-store`.
+- `Cache-Control: no-store` (audit Codex) : l'aperçu n'est conservé nulle part, pas même par son navigateur. Sur un ordinateur partagé, la personne qui se connecte ensuite ne peut pas se le voir servir depuis le cache (testé dans Chromium : A, puis B sur le même navigateur). Refus, absence de session et 404 : `no-store` aussi.
 
 ### Suppression et révocation
 
@@ -171,7 +173,7 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 
 - **Ce qui est immédiat :** dès que la révocation est enregistrée, le serveur refuse la photo (404) sur les deux routes, et ses fichiers sont supprimés (ou leur suppression est enregistrée, voir ci-dessous).
 - **Ce qui ne l'est pas :** une copie déjà présente dans le cache du CDN peut encore être servie **pendant 5 minutes au plus** après la révocation (`s-maxage=300`), dans chaque région du CDN qui l'avait en cache. Passé ce délai, le CDN redemande au serveur, qui répond 404 (jamais mis en cache).
-- **Navigateurs :** aucune copie fraîche (`max-age=0`). L'aperçu de la professionnelle peut rester 5 minutes dans **son propre** navigateur (`private, max-age=300`).
+- **Navigateurs :** aucune copie fraîche (`max-age=0`). L'aperçu de la professionnelle n'est jamais conservé (`no-store`).
 - **Ce que l'on dit aux professionnelles et aux personnes photographiées :** « la photo n'est plus servie par nos serveurs immédiatement, et disparaît de partout en 5 minutes au plus ». **Aucune suppression instantanée n'est promise** tant que la purge ciblée n'est pas branchée et testée sur l'hébergement réel.
 
 ### Fichiers à supprimer : enregistrés avec la décision
@@ -186,7 +188,11 @@ Toute décision qui rend des fichiers inutiles enregistre leur suppression (`sit
 
 - Le service supprime les fichiers, **puis** marque la suppression faite. Si le stockage échoue, la suppression reste enregistrée (tentatives comptées) et l'action répond `site_photo_cleanup_pending` (503) : **jamais de succès silencieux**.
 - **Reprise par la même action :** confirmer, révoquer ou supprimer à nouveau termine la suppression (une suppression déjà faite répond `deleted` tant que ses fichiers restent à supprimer).
-- **Reprise sans action** (processus interrompu, professionnelle partie) : `processSitePhotoPurges(service, { before, limit })` reprend les suppressions enregistrées avant `before` (pour ne pas doubler une action en cours), la plus ancienne d'abord.
+- **Reprise sans action** (processus interrompu, professionnelle partie) : `processSitePhotoPurges(service, { before, limit })` reprend les suppressions jamais réussies et enregistrées avant `before` (pour ne pas doubler une action en cours), la plus ancienne d'abord.
+- **Rejeu de l'URL d'envoi** (audit Codex, reproduit sur Storage réel). L'URL d'envoi signée d'une photo reste valable **2 heures** (fixé par Storage, non réglable), et Storage l'accepte à nouveau dès que le chemin `original` est libéré : après la confirmation, la révocation ou la suppression. Personne ne peut l'empêcher pendant ces 2 heures, mais ce qu'elle écrit n'est jamais servi (seules les déclinaisons le sont).
+  - D'où la garantie : chaque suppression porte `not_before` = création de la photo + 2 h 10 min. Une suppression faite plus tôt reste enregistrée comme faite (`last_done_at`).
+  - Le nettoyage la rejoue une fois `not_before` passé, quand plus aucune écriture n'est possible, puis l'oublie.
+  - Testé : rejeu après confirmation, après révocation et après suppression ; le fichier rejoué disparaît après expiration.
 - Testé de façon déterministe : stockage en échec à la confirmation (l'original avec EXIF/GPS reste, rien n'est déclaré prêt, puis il est supprimé), interruption après confirmation, révocation, suppression, fichier refusé, établissement supprimé, et un établissement ne peut ni voir ni terminer la suppression d'un autre.
 
 ### Purge ciblée et durées plus longues (étude, rien de branché)
@@ -195,14 +201,19 @@ Toute décision qui rend des fichiers inutiles enregistre leur suppression (`sit
 - **Avant d'allonger le cache CDN,** il faudra : tester la purge sur un déploiement de prévisualisation (révoquer, puis mesurer le délai de disparition dans plusieurs régions) ; décider du comportement si la purge échoue (réessai, alerte) ; et garder une durée de secours bornée.
 - Le versionnement des URL ne règle pas la révocation : l'URL d'une photo révoquée reste la même ; c'est la base qui la refuse.
 
-### Politique de nettoyage (PR séparée, prête avant la bêta réelle)
+### Nettoyage périodique (`GET /api/cron/site-photos`)
 
-Cette PR fournit la garantie (chaque suppression est enregistrée et rejouable) ; une PR suivante branche le nettoyage périodique, **requis avant la bêta réelle** :
+Route protégée par `Authorization: Bearer $CRON_SECRET`, comme les autres tâches planifiées. Elle est **à planifier toutes les 15 minutes au déploiement** (rien n'est planifié aujourd'hui). Elle fait deux choses (`runSitePhotoMaintenance`) :
 
-1. **Suppressions résiduelles** : une tâche planifiée appelle `processSitePhotoPurges` (par exemple toutes les 15 minutes, `before` = maintenant − 10 minutes), avec alerte sur les suppressions qui échouent plusieurs fois (`attempts`).
-2. **Envois abandonnés** : photos `pending` de plus de 24 h (envoi jamais fait, jamais confirmé, ou conversion interrompue après l'écriture des déclinaisons) → abandonnées, ce qui enregistre la suppression de tous leurs fichiers.
-3. **Fichiers orphelins** : un inventaire périodique du bucket supprime les dossiers `<business_id>/<asset_id>/` sans photo ni suppression enregistrée (un fichier écrit après un échec non prévu).
-4. **Originaux résiduels** : contrôle qu'aucune photo `ready` n'a encore de fichier `original` au-delà de quelques minutes (sinon, suppression enregistrée et alerte).
+1. **Envois abandonnés** : les photos encore `pending` après expiration de leur URL d'envoi (2 h 10 min) sont oubliées. Cela couvre l'envoi jamais fait, la confirmation jamais faite, et la conversion interrompue après l'écriture des déclinaisons. Leurs fichiers sont enregistrés pour suppression.
+2. **Suppressions dues** : celles qui ont échoué ou ont été interrompues, et celles faites tôt, à rejouer après expiration de l'URL. Les suppressions demandées dans la dernière minute sont laissées à l'action en cours. Les échecs répétés sont journalisés (`attempts`).
+
+Testé : envoi abandonné supprimé, envoi récent laissé, route refusée sans secret ou avec un mauvais secret.
+
+Restent à faire avant d'ouvrir largement :
+
+- l'inventaire du bucket, pour les dossiers sans photo ni suppression enregistrée (un fichier écrit après une panne imprévue) ;
+- une alerte sur les suppressions qui échouent plusieurs fois.
 
 Photos de démonstration des univers : jamais enregistrées ni publiées (§ 10).
 

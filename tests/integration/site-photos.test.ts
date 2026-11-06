@@ -15,8 +15,10 @@ import {
   revokeSitePhotoAction,
 } from "@/features/sites/actions/sites";
 import type { SiteConfig } from "@/features/sites/config";
+import { GET as getCleanup } from "@/app/api/cron/site-photos/route";
 import {
   SITE_PHOTO_BUCKET,
+  runSitePhotoMaintenance,
   confirmSitePhoto,
   createSitePhotoUpload,
   deleteSitePhoto,
@@ -46,6 +48,20 @@ import {
   env,
   type TestBusiness,
 } from "./support/fixtures";
+import { closeTransaction, openTransaction } from "./support/transactions";
+
+/** Resolves once some backend waits for a lock held by `pid`. */
+async function waitUntilWaitingFor(pid: number) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const { rows } = await db.query(
+      "select 1 from pg_stat_activity where $1 = any (pg_blocking_pids(pid))",
+      [pid],
+    );
+    if (rows.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`nothing ever waited for backend ${pid}`);
+}
 
 // Mini-site photos (supabase/migrations/20261106090000_site_photos.sql,
 // docs/SITE_PUBLISHING_CONTRACT.md § 8), against the real local stack:
@@ -587,7 +603,7 @@ describe("site photos: private preview and public serving", () => {
     const response = await previewPhoto(assetId, "828");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/webp");
-    expect(response.headers.get("cache-control")).toBe("private, max-age=300");
+    expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("vercel-cache-tag")).toBeNull();
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     const meta = await sharp(
@@ -956,7 +972,7 @@ function serviceWithFlakyRemoval(): AppSupabaseClient {
 
 async function purgesOf(assetId: string) {
   const { rows } = await db.query<{ scope: string; attempts: number }>(
-    "select scope, attempts from public.site_photo_purges where asset_id = $1 order by scope",
+    "select scope, attempts from public.site_photo_purges where asset_id = $1 and last_done_at is null order by scope",
     [assetId],
   );
   return rows;
@@ -1214,5 +1230,208 @@ describe("site photos: failed and interrupted file deletions", () => {
       .from("site_photo_purges" as never)
       .select("*");
     expect(data ?? []).toEqual([]);
+  });
+});
+
+// --- Codex audit -------------------------------------------------------------
+
+/** The signed upload URL's 2 hours have passed (as far as the cleanup knows). */
+async function uploadWindowPassed(assetId: string) {
+  const { rows } = await db.query(
+    "select 1 from information_schema.columns where table_schema = 'public' and table_name = 'site_photo_purges' and column_name = 'not_before'",
+  );
+  if (rows.length === 0) return;
+  await db.query(
+    "update public.site_photo_purges set not_before = now() - interval '1 second' where asset_id = $1",
+    [assetId],
+  );
+}
+
+/** The periodic cleanup, run now. */
+async function cleanUpNow() {
+  return processSitePhotoPurges(bookingClient(), {
+    before: new Date(Date.now() + 1000),
+    limit: 500,
+  });
+}
+
+async function replay(upload: { path: string; token: string }) {
+  return anonClient()
+    .storage.from(SITE_PHOTO_BUCKET)
+    .uploadToSignedUrl(upload.path, upload.token, Buffer.from("replayed"), {
+      contentType: "image/jpeg",
+    });
+}
+
+describe("site photos: the signed upload URL replayed (Codex audit)", () => {
+  it("after confirmation: the replayed original is deleted once the URL has expired", async () => {
+    await signIn(alice);
+    const upload = await uploadPhoto(await phonePhoto());
+    expect(
+      await confirmSitePhotoAction({ assetId: upload.assetId }),
+    ).toMatchObject({
+      ok: true,
+    });
+    expect(await storedFiles(studioA.id, upload.assetId)).not.toContain(
+      "original",
+    );
+
+    // Storage accepts the same URL again while it is valid (2 hours): the
+    // path is free since the original was deleted.
+    expect((await replay(upload)).error).toBeNull();
+    expect(await storedFiles(studioA.id, upload.assetId)).toContain("original");
+
+    // Once the URL can no longer write, the cleanup deletes it for good.
+    await uploadWindowPassed(upload.assetId);
+    await cleanUpNow();
+    expect(await storedFiles(studioA.id, upload.assetId)).not.toContain(
+      "original",
+    );
+    // Never served, at any moment: only the derivatives are.
+    expect((await previewPhoto(upload.assetId, "480")).status).toBe(200);
+  });
+
+  it("after revocation: nothing written by the old URL survives its expiry", async () => {
+    await signIn(alice);
+    const upload = await uploadPhoto(await phonePhoto());
+    await confirmSitePhotoAction({ assetId: upload.assetId });
+    await revokeSitePhotoAction({ assetId: upload.assetId });
+    expect(await storedFiles(studioA.id, upload.assetId)).toEqual([]);
+
+    expect((await replay(upload)).error).toBeNull();
+    await uploadWindowPassed(upload.assetId);
+    await cleanUpNow();
+    expect(await storedFiles(studioA.id, upload.assetId)).toEqual([]);
+  });
+
+  it("after deletion: the same", async () => {
+    await signIn(alice);
+    const upload = await uploadPhoto(await phonePhoto());
+    await confirmSitePhotoAction({ assetId: upload.assetId });
+    expect(
+      await deleteSitePhotoAction({ assetId: upload.assetId }),
+    ).toMatchObject({
+      ok: true,
+    });
+    expect((await replay(upload)).error).toBeNull();
+    await uploadWindowPassed(upload.assetId);
+    await cleanUpNow();
+    expect(await storedFiles(studioA.id, upload.assetId)).toEqual([]);
+  });
+});
+
+describe("site photos: a save racing a deletion (Codex audit)", () => {
+  it("a photo deleted while the save waited for the site: the save is refused", async () => {
+    const owner = await createAccount("photo-race");
+    alice = owner;
+    const business = await createBusiness(owner.userId);
+    studioA = business;
+    const assetId = await readyPhoto();
+    const writer = writerFor(business, owner);
+    await saveSiteDraft(writer, {
+      expectedRevision: 0,
+      config: withCover(null),
+    });
+
+    // Her deletion of that photo (nothing refers to it yet) is in progress:
+    // it holds the site and has deleted the photo, not committed yet.
+    const deletion = await openTransaction({ role: "service_role" });
+    await deletion.connection.query(
+      "select public.delete_site_asset($1, $2, $3)",
+      [business.id, owner.userId, assetId],
+    );
+    // Meanwhile a save puts that photo on her cover.
+    const save = codeOf(() =>
+      saveSiteDraft(writer, {
+        expectedRevision: 1,
+        config: withCover(assetId),
+      }),
+    );
+    await waitUntilWaitingFor(deletion.pid);
+    await closeTransaction(deletion, "commit");
+
+    expect(await save).toBe("site_asset_unavailable");
+    const { rows } = await db.query(
+      "select draft_config -> 'content' -> 'cover' as cover from public.sites where business_id = $1",
+      [business.id],
+    );
+    expect(rows[0].cover).toBeNull();
+  });
+});
+
+describe("site photos: the periodic cleanup", () => {
+  it("an upload abandoned past its URL's expiry: forgotten, its files deleted", async () => {
+    await signIn(alice);
+    const upload = await uploadPhoto(await phonePhoto());
+    // Never confirmed; its upload URL is long expired.
+    await db.query(
+      "update public.site_assets set created_at = now() - interval '3 hours' where id = $1",
+      [upload.assetId],
+    );
+    // A pending upload still within its window: left alone.
+    const fresh = await uploadPhoto(await phonePhoto());
+
+    const result = await runSitePhotoMaintenance(bookingClient());
+    expect(result.abandoned).toBeGreaterThanOrEqual(1);
+    expect(await assetRow(upload.assetId)).toBeNull();
+    expect(await storedFiles(studioA.id, upload.assetId)).toEqual([]);
+    expect(await assetRow(fresh.assetId)).toMatchObject({ status: "pending" });
+    expect(await storedFiles(studioA.id, fresh.assetId)).toEqual(["original"]);
+  });
+
+  it("GET /api/cron/site-photos: the cleanup with the cron secret, nothing without", async () => {
+    process.env.CRON_SECRET = "site-photos-cron-secret-0123456789abcdef";
+    const refused = await getCleanup(
+      new Request("http://localhost:3000/api/cron/site-photos"),
+    );
+    expect(refused.status).toBe(401);
+    const wrong = await getCleanup(
+      new Request("http://localhost:3000/api/cron/site-photos", {
+        headers: { authorization: "Bearer not-the-secret" },
+      }),
+    );
+    expect(wrong.status).toBe(401);
+    const run = await getCleanup(
+      new Request("http://localhost:3000/api/cron/site-photos", {
+        headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+      }),
+    );
+    expect(run.status).toBe(200);
+    expect((await run.json()).data).toMatchObject({
+      abandoned: expect.any(Number),
+      done: expect.any(Number),
+      failed: 0,
+    });
+  });
+
+  it("a purge done early stays recorded until the upload URL has expired", async () => {
+    await signIn(alice);
+    const upload = await uploadPhoto(await phonePhoto());
+    await confirmSitePhotoAction({ assetId: upload.assetId });
+    const { rows } = await db.query(
+      "select scope, last_done_at is not null as done, not_before > now() + interval '1 hour' as later from public.site_photo_purges where asset_id = $1",
+      [upload.assetId],
+    );
+    expect(rows).toEqual([{ scope: "original", done: true, later: true }]);
+    // Not due yet: the cleanup leaves it.
+    await cleanUpNow();
+    expect(
+      (
+        await db.query(
+          "select 1 from public.site_photo_purges where asset_id = $1",
+          [upload.assetId],
+        )
+      ).rows,
+    ).toHaveLength(1);
+    await uploadWindowPassed(upload.assetId);
+    await cleanUpNow();
+    expect(
+      (
+        await db.query(
+          "select 1 from public.site_photo_purges where asset_id = $1",
+          [upload.assetId],
+        )
+      ).rows,
+    ).toHaveLength(0);
   });
 });

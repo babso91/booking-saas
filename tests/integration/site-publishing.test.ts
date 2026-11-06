@@ -30,6 +30,7 @@ import {
   closeTransaction,
   openTransaction,
   outcome,
+  waitUntilBlocked,
 } from "./support/transactions";
 
 // Mini-sites (supabase/migrations/20261105090000_site_publishing.sql,
@@ -649,5 +650,82 @@ describe("validation", () => {
     expect(
       await codeOf(() => getPublishedSite(anonClient(), studio.slug)),
     ).toBe("site_not_published");
+  });
+});
+
+describe("a member removed during a write (Codex audit)", () => {
+  const membership = (studioId: string, userId: string) =>
+    db.query(
+      "select count(*)::int as n from public.business_members where business_id = $1 and user_id = $2",
+      [studioId, userId],
+    );
+
+  it("removed while her save starts: the save waits for the removal, then is refused", async () => {
+    const studio = await studioOf(alice);
+    const writer = writerFor(studio, alice);
+    await saveSiteDraft(writer, {
+      expectedRevision: 0,
+      config: named("Avant"),
+    });
+
+    // The owner removes her (not committed yet).
+    const removal = await openTransaction();
+    await removal.connection.query(
+      "delete from public.business_members where business_id = $1 and user_id = $2",
+      [studio.id, alice.userId],
+    );
+    const save = codeOf(() =>
+      saveSiteDraft(writer, { expectedRevision: 1, config: named("Après") }),
+    );
+    // Her save waits for the removal, instead of trusting a membership
+    // that is being deleted.
+    await waitUntilWaitingFor(removal.pid);
+    await closeTransaction(removal, "commit");
+
+    expect(await save).toBe("forbidden");
+    const site = await getSite(bookingClient(), studio.id);
+    expect(site?.revision).toBe(1);
+    expect(site?.config?.brand.name).toBe("Avant");
+  });
+
+  it("removed while her save waits for the site: the removal waits for the save", async () => {
+    const studio = await studioOf(alice);
+    const writer = writerFor(studio, alice);
+    await saveSiteDraft(writer, { expectedRevision: 0, config: named("Un") });
+
+    // Another write holds the site: her save checks her membership, then
+    // waits for the site.
+    const other = await openTransaction();
+    await other.connection.query(
+      "select 1 from public.sites where business_id = $1 for update",
+      [studio.id],
+    );
+    const save = codeOf(() =>
+      saveSiteDraft(writer, { expectedRevision: 1, config: named("Deux") }),
+    );
+    await waitUntilWaitingFor(other.pid);
+
+    // Her removal now cannot slip between her check and her write.
+    const removal = await openTransaction();
+    const removing = outcome(
+      removal.connection.query(
+        "delete from public.business_members where business_id = $1 and user_id = $2",
+        [studio.id, alice.userId],
+      ),
+    );
+    await waitUntilBlocked(removal.pid);
+    await closeTransaction(other, "rollback");
+
+    // Her save happened before her removal, and only then was she removed.
+    expect(await save).toBe("ok");
+    expect(await removing).toBe("ok");
+    await closeTransaction(removal, "commit");
+    expect((await membership(studio.id, alice.userId)).rows[0].n).toBe(0);
+    // Removed: her next write is refused.
+    expect(
+      await codeOf(() =>
+        saveSiteDraft(writer, { expectedRevision: 2, config: named("Trois") }),
+      ),
+    ).toBe("forbidden");
   });
 });

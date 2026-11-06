@@ -173,6 +173,12 @@ create table public.site_photo_purges (
   requested_at timestamptz not null default now(),
   attempts integer not null default 0 check (attempts >= 0),
   last_attempt_at timestamptz,
+  -- Its files were deleted at that moment, but the photo's signed upload
+  -- URL could still write its original (Storage accepts it again once the
+  -- path is free, for 2 hours): the purge is run again once `not_before`
+  -- has passed, and only then forgotten (Codex audit).
+  last_done_at timestamptz,
+  not_before timestamptz not null default now(),
   primary key (asset_id, scope)
 );
 
@@ -182,17 +188,41 @@ create index site_photo_purges_requested_idx
 alter table public.site_photo_purges enable row level security;
 revoke all on table public.site_photo_purges from public, anon, authenticated;
 
-create function private.queue_site_photo_purge(p_business_id uuid, p_asset_id uuid, p_scope text)
+-- How long after a photo's creation its signed upload URL may still write:
+-- Storage's 2 hours, plus a margin for clocks and requests in flight.
+create function private.site_photo_upload_window()
+returns interval
+language sql
+immutable
+set search_path = ''
+as $$ select interval '2 hours 10 minutes' $$;
+
+revoke all on function private.site_photo_upload_window() from public;
+
+-- Records a purge of a photo created at `p_created_at`; it is final only
+-- once that photo's upload URL can no longer write. Recorded again (a
+-- revocation after the original's purge, say): to be run again now.
+create function private.queue_site_photo_purge(
+  p_business_id uuid,
+  p_asset_id uuid,
+  p_scope text,
+  p_created_at timestamptz
+)
 returns void
 language sql
 set search_path = ''
 as $$
-  insert into public.site_photo_purges (business_id, asset_id, scope)
-  values (p_business_id, p_asset_id, p_scope)
-  on conflict (asset_id, scope) do nothing;
+  insert into public.site_photo_purges (business_id, asset_id, scope, not_before)
+  values (
+    p_business_id, p_asset_id, p_scope,
+    greatest(pg_catalog.now(), p_created_at + private.site_photo_upload_window())
+  )
+  on conflict (asset_id, scope) do update
+  set last_done_at = null,
+      not_before = greatest(public.site_photo_purges.not_before, excluded.not_before);
 $$;
 
-revoke all on function private.queue_site_photo_purge(uuid, uuid, text) from public;
+revoke all on function private.queue_site_photo_purge(uuid, uuid, text, timestamptz) from public;
 
 -- A photo's row gone, however (deleted, discarded, its business deleted):
 -- its files are to be deleted.
@@ -202,7 +232,7 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  perform private.queue_site_photo_purge(old.business_id, old.id, 'all');
+  perform private.queue_site_photo_purge(old.business_id, old.id, 'all', old.created_at);
   return old;
 end;
 $$;
@@ -212,16 +242,27 @@ create trigger site_assets_purge_files
   for each row execute function private.site_asset_deleted();
 
 -- The files of this purge are deleted: done. `all` covers `original`.
+-- The files of this purge are deleted: done. `all` covers `original`.
+-- Forgotten only once the upload URL can no longer write (not_before);
+-- until then kept, done, for the cleanup to run it once more after.
 create function public.complete_site_photo_purge(p_business_id uuid, p_asset_id uuid, p_scope text)
 returns void
-language sql
+language plpgsql
 security definer
 set search_path = ''
 as $$
+begin
   delete from public.site_photo_purges p
   where p.asset_id = p_asset_id
     and p.business_id = p_business_id
+    and (p.scope = p_scope or p_scope = 'all')
+    and p.not_before <= pg_catalog.now();
+  update public.site_photo_purges p
+  set last_done_at = pg_catalog.now()
+  where p.asset_id = p_asset_id
+    and p.business_id = p_business_id
     and (p.scope = p_scope or p_scope = 'all');
+end;
 $$;
 
 -- A removal failed: kept, counted, retried later.
@@ -245,11 +286,42 @@ stable
 security definer
 set search_path = ''
 as $$
+  -- Due: never done yet (a failed or interrupted removal) and requested
+  -- before `p_before`; or done early, now that the upload URL has expired.
   select p.business_id, p.asset_id, p.scope, p.attempts
   from public.site_photo_purges p
-  where p.requested_at < p_before
+  where (p.last_done_at is null and p.requested_at < p_before)
+     or p.not_before <= pg_catalog.now()
   order by p.requested_at, p.asset_id, p.scope
   limit greatest(least(p_limit, 500), 0);
+$$;
+
+-- Uploads abandoned: photos still pending after their upload URL expired
+-- (never sent, never confirmed, or a conversion interrupted after writing
+-- derivatives). Forgotten, the oldest first; their files are recorded for
+-- deletion by the row's trigger. Answers how many.
+create function public.discard_abandoned_site_assets(p_limit integer)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_count integer;
+begin
+  with abandoned as (
+    select a.id from public.site_assets a
+    where a.status = 'pending'
+      and a.created_at < pg_catalog.now() - private.site_photo_upload_window()
+    order by a.created_at
+    limit greatest(least(p_limit, 500), 0)
+    for update skip locked
+  )
+  delete from public.site_assets a using abandoned
+  where a.id = abandoned.id;
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -343,7 +415,10 @@ begin
       width = p_width,
       height = p_height
   where a.id = p_asset_id;
-  perform private.queue_site_photo_purge(p_business_id, p_asset_id, 'original');
+  perform private.queue_site_photo_purge(
+    p_business_id, p_asset_id, 'original',
+    (select a.created_at from public.site_assets a where a.id = p_asset_id)
+  );
 end;
 $$;
 
@@ -395,6 +470,7 @@ begin
     if exists (
       select 1 from public.site_photo_purges p
       where p.asset_id = p_asset_id and p.business_id = p_business_id and p.scope = 'all'
+        and p.last_done_at is null
     ) then
       return 'deleted';
     end if;
@@ -440,7 +516,10 @@ begin
   if not found then
     raise exception using errcode = 'P0002', message = 'site_photo_not_found', hint = 'assetId';
   end if;
-  perform private.queue_site_photo_purge(p_business_id, p_asset_id, 'all');
+  perform private.queue_site_photo_purge(
+    p_business_id, p_asset_id, 'all',
+    (select a.created_at from public.site_assets a where a.id = p_asset_id)
+  );
 end;
 $$;
 
@@ -507,7 +586,6 @@ $$;
 create function public.member_site_photo(p_business_id uuid, p_actor uuid, p_asset_id uuid)
 returns boolean
 language plpgsql
-stable
 security definer
 set search_path = ''
 as $$
@@ -575,6 +653,7 @@ begin
     'public.revoke_site_asset_for_privacy(uuid, uuid)',
     'public.public_site_photo(text, uuid)',
     'public.member_site_photo(uuid, uuid, uuid)',
+    'public.discard_abandoned_site_assets(integer)',
     'public.complete_site_photo_purge(uuid, uuid, text)',
     'public.fail_site_photo_purge(uuid, uuid, text)',
     'public.pending_site_photo_purges(timestamptz, integer)'
