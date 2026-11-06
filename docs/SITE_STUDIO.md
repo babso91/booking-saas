@@ -8,19 +8,35 @@ c'est vérifié et ce qui reste ouvert.
 
 ## 1. Base et prérequis
 
-La PR est empilée. Chaque base doit être intégrée avant elle, dans cet
-ordre :
+La PR est empilée sur une seule base technique, qui contient `main`
+(`6328836`) et toutes les PR dont elle dépend. Les deux lignées se
+rejoignent dans #44 :
 
-| PR  | Branche                            | HEAD au départ | Apport utilisé ici                                                                                                                                       |
-| --- | ---------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #40 | `feat/site-publishing` (Cloud)     | via #43        | `sites`, `site_versions`, brouillon et révision, `stale_site_draft`, publication atomique, restauration, `plan` côté serveur, `renderedFor`              |
-| #43 | `feat/site-photos` (Cloud)         | `4ef106e`      | bucket privé `site-photos`, `createSitePhotoUploadAction`, `confirmSitePhotoAction`, `/api/sites/photos/[assetId]/[width]`, `site_photo_cleanup_pending` |
-| #44 | `feat/minisite-render` (Claude UI) | `c3eec5b`      | moteur et scènes Mila, Alma et Nail Lab, `MiniSite`, rendu public `/b/[slug]`, `useLessMotion`                                                           |
-| B   | `feat/site-studio`                 | cette PR       | le studio                                                                                                                                                |
+| PR  | Branche                            | HEAD inclus | Apport utilisé ici                                                                                                                                       |
+| --- | ---------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #39 | `feat/catalog-pro` (Claude UI)     | via #42     | catégories dans Prestations                                                                                                                              |
+| #42 | `feat/booking-options` (Claude UI) | `de5ae72`   | réservation publique sur le catalogue avec options : devis serveur, prix et durée                                                                        |
+| #40 | `feat/site-publishing` (Cloud)     | via #43     | `sites`, `site_versions`, brouillon et révision, `stale_site_draft`, publication atomique, restauration, `plan` côté serveur, `renderedFor`              |
+| #43 | `feat/site-photos` (Cloud)         | `4ef106e`   | bucket privé `site-photos`, `createSitePhotoUploadAction`, `confirmSitePhotoAction`, `/api/sites/photos/[assetId]/[width]`, `site_photo_cleanup_pending` |
+| #44 | `feat/minisite-render` (Claude UI) | `18092e5`   | moteur et scènes Mila, Alma et Nail Lab, `MiniSite`, rendu public `/b/[slug]`, `useLessMotion`, et #42 fusionnée                                         |
+| B   | `feat/site-studio`                 | cette PR    | le studio                                                                                                                                                |
 
-La base GitHub de la PR est `feat/minisite-render`. La CI de #44 est verte
-sur `c3eec5b`, c'est-à-dire #44 synchronisée avec #43 `4ef106e` (run
-42117631959).
+La base GitHub de la PR est `feat/minisite-render`. Les branches de Cloud
+(#40, #43) n'ont pas été modifiées.
+
+**#44 sur #42.** #42 a fait passer `PublicBooking` au catalogue public
+(catégories, prestations, options) ; #44 lui donnait encore une liste de
+prestations. #42 est fusionnée dans #44 (`18092e5`), avec l'adaptation de
+`/b/[slug]`, `MiniSite`, `SiteBooking` et `PublicBooking` :
+
+- `/b/[slug]` lit `get_public_catalog` une fois pour les deux pages : la
+  page de réservation sans mini-site (comme avant), le mini-site avec.
+- La réservation du mini-site est celle de la page :
+  `{ business, catalog }`, devis et prix du serveur. Une prestation touchée
+  sur le site s'ouvre sur ses options quand elle en a.
+- Le mini-site et le Studio disent le prix comme la page de réservation :
+  le minimum des réponses obligatoires, « dès » quand une réponse peut
+  l'augmenter (`startingAt`).
 
 Ce qui n'est pas utilisé :
 
@@ -181,8 +197,16 @@ S'y ajoutent :
 - **#44 :** l'écart d'hydratation d'Alma en mode « moins d'animations » a
   été corrigé (`useLessMotion`, instantané serveur stable) et vérifié sans
   erreur console. L'e2e de #44 l'exige désormais pour Alma à 320 px.
-- **Après intégration de #42 :** ajouter un parcours complet depuis le
-  mini-site jusqu'à la réservation confirmée, avec options, prix et durée
-  vérifiés dans PostgreSQL.
-- **Contrat § 10 :** l'éditeur d'options dans le studio attend que la
-  réservation publique avec options (#42) soit intégrée.
+- **Parcours complet avec options (fait, sur #44) :**
+  `tests/e2e/mini-site-booking-browser.test.ts`. Une prestation a une
+  option obligatoire et une facultative ; le site est publié ; une cliente
+  réserve depuis le mini-site. Le test vérifie le devis serveur, la
+  confirmation, puis le rendez-vous dans PostgreSQL (prix, durée, réponses,
+  jour) et dans l'agenda avec ses totaux. Il tourne à 390 px (Mila), 320 px
+  avec moins d'animations (Alma) et 1280 px (Nail Lab).
+- **Ancien parcours sans mini-site :** couvert par
+  `tests/e2e/booking-options-browser.test.ts` (#42), inchangé, et par le test
+  de page `/b/[slug]`.
+- **Contrat § 10 :** les options se modifient dans Prestations (#39/#42).
+  Le Studio les affiche en lecture seule ; un éditeur d'options dans le
+  Studio n'est pas prévu dans cette PR.
