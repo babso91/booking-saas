@@ -694,13 +694,13 @@ isOneToOne: false
                   ]
                 },"site_photo_purges": {
                   Row: {
-                    "asset_id": string,"attempts": number,"business_id": string,"last_attempt_at": string | null,"requested_at": string,"scope": string
+                    "asset_id": string,"attempts": number,"business_id": string,"last_attempt_at": string | null,"last_done_at": string | null,"not_before": string,"requested_at": string,"scope": string
                   }
                   Insert: {
-                    "asset_id": string,"attempts"?: number,"business_id": string,"last_attempt_at"?: string | null,"requested_at"?: string,"scope": string
+                    "asset_id": string,"attempts"?: number,"business_id": string,"last_attempt_at"?: string | null,"last_done_at"?: string | null,"not_before"?: string,"requested_at"?: string,"scope": string
                   }
                   Update: {
-                    "asset_id"?: string,"attempts"?: number,"business_id"?: string,"last_attempt_at"?: string | null,"requested_at"?: string,"scope"?: string
+                    "asset_id"?: string,"attempts"?: number,"business_id"?: string,"last_attempt_at"?: string | null,"last_done_at"?: string | null,"not_before"?: string,"requested_at"?: string,"scope"?: string
                   }
                   Relationships: [
                     
@@ -1080,6 +1080,9 @@ isOneToOne: false
                            },
 "delete_site_asset":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: string
+                           },
+"discard_abandoned_site_assets":
+{ Args: { "p_limit": number }; Returns: number
                            },
 "discard_site_asset":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: undefined
