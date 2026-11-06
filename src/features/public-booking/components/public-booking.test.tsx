@@ -244,6 +244,51 @@ describe("the business and its services", () => {
   });
 });
 
+describe("from her mini-site", () => {
+  it("a service tapped there opens on its required options, never straight on slots", async () => {
+    const catalog = catalogOf(services);
+    catalog.groups[0]!.services[0]!.options = [
+      {
+        id: "40000000-0000-4000-8000-000000000001",
+        question: "Longueur",
+        required: true,
+        choices: [
+          {
+            id: "50000000-0000-4000-8000-000000000001",
+            label: "Naturel",
+            priceDeltaCents: 0,
+            durationDeltaMinutes: 0,
+          },
+          {
+            id: "50000000-0000-4000-8000-000000000002",
+            label: "Volume",
+            priceDeltaCents: 1500,
+            durationDeltaMinutes: 20,
+          },
+        ],
+      },
+    ];
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalog}
+        embedded
+        initialServiceId={SERVICE_A}
+      />,
+    );
+    await flush();
+    // Her site already says who she is: the steps only.
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: /Personnalisez votre prestation/ }),
+    ).toBeTruthy();
+    expect(screen.getByText("Longueur")).toBeTruthy();
+    expect(
+      screen.queryByRole("heading", { name: "Choisissez un créneau" }),
+    ).toBeNull();
+  });
+});
+
 describe("days and slots", () => {
   it("lists the real slots of the business's today, as the business's wall clocks (never the device's)", async () => {
     renderPage();
