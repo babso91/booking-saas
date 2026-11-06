@@ -7,16 +7,40 @@ import { bookingHost } from "@/lib/brand";
 import "./globals.css";
 
 // Self-hosted faces (src/fonts, see its README): the build never depends on
-// a font service. Latin and latin-ext, under the SIL Open Font License.
+// a font service. Each face is two files, as Google Fonts serves them: latin,
+// and latin-ext downloaded only by a page that has one of its characters
+// (same family name, each with its unicode-range). SIL Open Font License.
 
 const hankenGrotesk = localFont({
   src: "../fonts/hanken-grotesk.woff2",
   weight: "100 900",
-  // Its own name, as the pages and tests read it.
-  declarations: [{ prop: "font-family", value: "'Hanken Grotesk'" }],
+  declarations: [
+    { prop: "font-family", value: "'Hanken Grotesk'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+    },
+  ],
   variable: "--font-body",
   display: "swap",
   fallback: ["sans-serif"],
+});
+const hankenGroteskExt = localFont({
+  src: "../fonts/hanken-grotesk-ext.woff2",
+  weight: "100 900",
+  declarations: [
+    { prop: "font-family", value: "'Hanken Grotesk'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+    },
+  ],
+  variable: "--font-body-ext",
+  display: "swap",
+  preload: false,
+  adjustFontFallback: false,
 });
 
 const instrumentSerif = localFont({
@@ -28,22 +52,58 @@ const instrumentSerif = localFont({
       style: "italic",
     },
   ],
-  // Its own name, as the pages and tests read it.
-  declarations: [{ prop: "font-family", value: "'Instrument Serif'" }],
+  declarations: [
+    { prop: "font-family", value: "'Instrument Serif'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+    },
+  ],
   variable: "--font-serif",
   display: "swap",
   fallback: ["serif"],
   adjustFontFallback: "Times New Roman",
 });
+const instrumentSerifExt = localFont({
+  src: [
+    {
+      path: "../fonts/instrument-serif-ext.woff2",
+      weight: "400",
+      style: "normal",
+    },
+    {
+      path: "../fonts/instrument-serif-italic-ext.woff2",
+      weight: "400",
+      style: "italic",
+    },
+  ],
+  declarations: [
+    { prop: "font-family", value: "'Instrument Serif'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+    },
+  ],
+  variable: "--font-serif-ext",
+  display: "swap",
+  preload: false,
+  adjustFontFallback: false,
+});
 
-// The professional area's Studio style. Not preloaded: only downloaded on
-// the pages that use it.
+// The professional area's Studio style, with its width axis. Not
+// preloaded: only downloaded on the pages that use it.
 const archivo = localFont({
   src: "../fonts/archivo.woff2",
   weight: "100 900",
-  // Its own name, and its width axis as the pages use it.
   declarations: [
     { prop: "font-family", value: "'Archivo'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+    },
     { prop: "font-stretch", value: "62% 125%" },
   ],
   variable: "--font-studio",
@@ -51,29 +111,91 @@ const archivo = localFont({
   preload: false,
   fallback: ["sans-serif"],
 });
+const archivoExt = localFont({
+  src: "../fonts/archivo-ext.woff2",
+  weight: "100 900",
+  declarations: [
+    { prop: "font-family", value: "'Archivo'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+    },
+    { prop: "font-stretch", value: "62% 125%" },
+  ],
+  variable: "--font-studio-ext",
+  display: "swap",
+  preload: false,
+  adjustFontFallback: false,
+});
 
 // The professional area's Écrin style: engraved lettering and a light sans.
 // Not preloaded either.
 const marcellus = localFont({
   src: "../fonts/marcellus.woff2",
   weight: "400",
-  // Its own name, as the pages and tests read it.
-  declarations: [{ prop: "font-family", value: "'Marcellus'" }],
+  declarations: [
+    { prop: "font-family", value: "'Marcellus'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+    },
+  ],
   variable: "--font-engraved",
   display: "swap",
   preload: false,
   fallback: ["serif"],
   adjustFontFallback: "Times New Roman",
 });
+const marcellusExt = localFont({
+  src: "../fonts/marcellus-ext.woff2",
+  weight: "400",
+  declarations: [
+    { prop: "font-family", value: "'Marcellus'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+    },
+  ],
+  variable: "--font-engraved-ext",
+  display: "swap",
+  preload: false,
+  adjustFontFallback: false,
+});
+
 const jost = localFont({
   src: "../fonts/jost.woff2",
   weight: "100 900",
-  // Its own name, as the pages and tests read it.
-  declarations: [{ prop: "font-family", value: "'Jost'" }],
+  declarations: [
+    { prop: "font-family", value: "'Jost'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+    },
+  ],
   variable: "--font-ecrin",
   display: "swap",
   preload: false,
   fallback: ["sans-serif"],
+});
+const jostExt = localFont({
+  src: "../fonts/jost-ext.woff2",
+  weight: "100 900",
+  declarations: [
+    { prop: "font-family", value: "'Jost'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+    },
+  ],
+  variable: "--font-ecrin-ext",
+  display: "swap",
+  preload: false,
+  adjustFontFallback: false,
 });
 
 // The professional area's Carnet style: a book face (with its optical
@@ -87,14 +209,47 @@ const newsreader = localFont({
       style: "italic",
     },
   ],
-  // Its own name, as the pages and tests read it.
-  declarations: [{ prop: "font-family", value: "'Newsreader'" }],
+  declarations: [
+    { prop: "font-family", value: "'Newsreader'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+    },
+  ],
   variable: "--font-carnet-serif",
   display: "swap",
   preload: false,
   fallback: ["serif"],
   adjustFontFallback: "Times New Roman",
 });
+const newsreaderExt = localFont({
+  src: [
+    {
+      path: "../fonts/newsreader-ext.woff2",
+      weight: "200 800",
+      style: "normal",
+    },
+    {
+      path: "../fonts/newsreader-italic-ext.woff2",
+      weight: "200 800",
+      style: "italic",
+    },
+  ],
+  declarations: [
+    { prop: "font-family", value: "'Newsreader'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+    },
+  ],
+  variable: "--font-carnet-serif-ext",
+  display: "swap",
+  preload: false,
+  adjustFontFallback: false,
+});
+
 const ibmPlexMono = localFont({
   src: [
     {
@@ -108,12 +263,44 @@ const ibmPlexMono = localFont({
       style: "normal",
     },
   ],
-  // Its own name, as the pages and tests read it.
-  declarations: [{ prop: "font-family", value: "'IBM Plex Mono'" }],
+  declarations: [
+    { prop: "font-family", value: "'IBM Plex Mono'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+    },
+  ],
   variable: "--font-carnet-mono",
   display: "swap",
   preload: false,
   fallback: ["monospace"],
+});
+const ibmPlexMonoExt = localFont({
+  src: [
+    {
+      path: "../fonts/ibm-plex-mono-400-ext.woff2",
+      weight: "400",
+      style: "normal",
+    },
+    {
+      path: "../fonts/ibm-plex-mono-500-ext.woff2",
+      weight: "500",
+      style: "normal",
+    },
+  ],
+  declarations: [
+    { prop: "font-family", value: "'IBM Plex Mono'" },
+    {
+      prop: "unicode-range",
+      value:
+        "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+    },
+  ],
+  variable: "--font-carnet-mono-ext",
+  display: "swap",
+  preload: false,
+  adjustFontFallback: false,
 });
 
 export const metadata: Metadata = {
@@ -136,7 +323,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="fr"
-      className={`${hankenGrotesk.variable} ${instrumentSerif.variable} ${archivo.variable} ${marcellus.variable} ${jost.variable} ${newsreader.variable} ${ibmPlexMono.variable} h-full antialiased`}
+      className={`${hankenGrotesk.variable} ${hankenGroteskExt.variable} ${instrumentSerif.variable} ${instrumentSerifExt.variable} ${archivo.variable} ${archivoExt.variable} ${marcellus.variable} ${marcellusExt.variable} ${jost.variable} ${jostExt.variable} ${newsreader.variable} ${newsreaderExt.variable} ${ibmPlexMono.variable} ${ibmPlexMonoExt.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
         <BookingHostProvider host={bookingHost()}>
