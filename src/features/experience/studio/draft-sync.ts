@@ -21,8 +21,20 @@ import { savedConfigOf } from "./saved";
 //   no conflict (the server answers it as done).
 // - any other refusal or a lost answer: said, her changes kept, sent again
 //   on her retry (or her next change).
+//
+// Saves run one after the other, in the order asked: `flush(config)`
+// waits for whatever is in flight, then sends `config` itself on the
+// revision saved by then, and answers the revision at which THAT draft is
+// saved (null if it is not). Publishing relies on it: it never receives
+// the revision of an earlier draft than the one it shows.
+//
+// Leaving the studio inside the app (a link, Back) unmounts it without any
+// `beforeunload`: what is not saved yet is sent at once, and the studio's
+// own links wait for it (useLeave in site-studio.tsx).
 
 export const SAVE_DELAY_MS = 900;
+
+const outgoing = (config: SiteConfig) => savedConfigOf(config);
 
 export type DraftStatus =
   | { kind: "saved" }
@@ -68,7 +80,10 @@ export function useDraftSync({
     initialSaved ? canonical(initialSaved) : "",
   );
   const [revision, setRevision] = useState(initialRevision);
-  const inFlight = useRef<Promise<number | null> | null>(null);
+  /** The last save asked: each one starts when the one before is done. */
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  /** A conflict waits for her choice: nothing is sent until then. */
+  const conflicted = useRef(false);
   const latest = useRef(value);
   const alive = useRef(true);
   useEffect(() => {
@@ -81,69 +96,87 @@ export function useDraftSync({
     };
   }, []);
 
-  const outgoing = (config: SiteConfig) => savedConfigOf(config);
   const dirty = canonical(outgoing(value)) !== savedJson;
   const blocked = status.kind === "conflict";
   /** Waiting for her to stop, or her next save. */
   const shown: DraftStatus =
     status.kind === "saved" && dirty ? { kind: "pending" } : status;
 
+  /** One save, once the previous ones are done: `config` itself. */
+  const attempt = useCallback(
+    async (config: SavedConfig): Promise<number | null> => {
+      if (conflicted.current) return null;
+      const json = canonical(config);
+      if (json === last.current.json && last.current.revision > 0)
+        return last.current.revision;
+      if (alive.current) setStatus({ kind: "saving" });
+      const result = await save(last.current.revision, config);
+      if (result.ok) {
+        // Kept even once she has left: a later save starts from it.
+        last.current = { revision: result.data.revision, json };
+        if (!alive.current) return result.data.revision;
+        setSavedJson(json);
+        setRevision(result.data.revision);
+        const more = canonical(outgoing(latest.current)) !== json;
+        // More since: the wait below starts again (savedJson changed).
+        setStatus({ kind: more ? "pending" : "saved" });
+        return result.data.revision;
+      }
+      if (!alive.current) return null;
+      if (result.error.code === "stale_site_draft") {
+        const now = await read();
+        if (!alive.current) return null;
+        if (!now.ok) {
+          setStatus({ kind: "error", error: now.error });
+          return null;
+        }
+        const theirs = now.data;
+        if (!theirs?.config) {
+          setStatus({ kind: "error", error: result.error });
+          return null;
+        }
+        conflicted.current = true;
+        setStatus({
+          kind: "conflict",
+          theirs: renderConfigOf(theirs.config),
+          revision: theirs.revision,
+        });
+        return null;
+      }
+      setStatus({ kind: "error", error: result.error });
+      return null;
+    },
+    [read, save],
+  );
+
   /**
-   * Sends her draft now (if it differs from what is saved), or `now`.
-   * Resolves to
-   * the revision it is saved at, or null when it is not (said in status).
+   * Saves her draft as it is now, or `now` (a draft just set, not rendered
+   * yet), after any save in flight. Resolves to the revision at which this
+   * very draft is saved, or null when it is not (said in status).
    */
   const flush = useCallback(
     (now?: SiteConfig): Promise<number | null> => {
-      if (inFlight.current) return inFlight.current;
-      // `now`: a draft just set (publishing), not rendered yet.
-      const config = outgoing(now ?? latest.current);
-      const json = canonical(config);
-      if (json === last.current.json && last.current.revision > 0)
-        return Promise.resolve(last.current.revision);
-      const run = (async () => {
-        setStatus({ kind: "saving" });
-        const result = await save(last.current.revision, config);
-        if (!alive.current) return null;
-        if (result.ok) {
-          last.current = { revision: result.data.revision, json };
-          setSavedJson(json);
-          setRevision(result.data.revision);
-          const more =
-            canonical(outgoing(latest.current)) !== last.current.json;
-          // More since: the wait below starts again (savedJson changed).
-          setStatus({ kind: more ? "pending" : "saved" });
-          return result.data.revision;
-        }
-        if (result.error.code === "stale_site_draft") {
-          const now = await read();
-          if (!alive.current) return null;
-          if (!now.ok) {
-            setStatus({ kind: "error", error: now.error });
-            return null;
-          }
-          const theirs = now.data;
-          if (!theirs?.config) {
-            setStatus({ kind: "error", error: result.error });
-            return null;
-          }
-          setStatus({
-            kind: "conflict",
-            theirs: renderConfigOf(theirs.config),
-            revision: theirs.revision,
-          });
-          return null;
-        }
-        setStatus({ kind: "error", error: result.error });
-        return null;
-      })();
-      inFlight.current = run;
-      void run.finally(() => {
-        inFlight.current = null;
-      });
+      const run = queue.current.then(() =>
+        attempt(outgoing(now ?? latest.current)),
+      );
+      queue.current = run.catch(() => null);
       return run;
     },
-    [read, save],
+    [attempt],
+  );
+
+  // Unmounted inside the app (a link, Back): no beforeunload is fired, so
+  // what is not saved yet is sent now. Nothing is said any more, but the
+  // save goes through (and only to her business: actions.ts).
+  const flushRef = useRef(flush);
+  useEffect(() => {
+    flushRef.current = flush;
+  });
+  useEffect(
+    () => () => {
+      void flushRef.current();
+    },
+    [],
   );
 
   // A moment after she stops changing it, while nothing blocks.
@@ -166,6 +199,8 @@ export function useDraftSync({
     status: shown,
     revision,
     dirty,
+    /** Something of hers is not saved yet (or is being saved). */
+    unsaved: dirty || status.kind === "saving" || status.kind === "conflict",
     flush,
     /** After an error: send her draft again. */
     retry: () => {
@@ -175,6 +210,7 @@ export function useDraftSync({
     /** Conflict: her draft wins, sent on the revision saved meanwhile. */
     keepMine: () => {
       if (status.kind !== "conflict") return;
+      conflicted.current = false;
       last.current = { revision: status.revision, json: "" };
       setSavedJson("");
       setRevision(status.revision);
@@ -184,6 +220,7 @@ export function useDraftSync({
     /** Conflict: the saved draft replaces hers in the studio. */
     takeTheirs: () => {
       if (status.kind !== "conflict") return;
+      conflicted.current = false;
       const json = canonical(outgoing(status.theirs));
       last.current = { revision: status.revision, json };
       setSavedJson(json);
@@ -193,6 +230,7 @@ export function useDraftSync({
     },
     /** Another draft the server now holds (a restored version). */
     adopt: (config: SavedConfig, at: number) => {
+      conflicted.current = false;
       last.current = { revision: at, json: canonical(config) };
       setSavedJson(canonical(config));
       setRevision(at);

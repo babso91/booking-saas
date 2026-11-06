@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import type { Route } from "next";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 
 import type { SiteConfig as SavedConfig } from "@/features/sites/config";
 import type {
@@ -15,7 +17,7 @@ import { renderConfigOf } from "../engine/from-site";
 import { ensureReadable } from "../engine/harmony";
 import { MiniSite } from "../mini-site";
 import {
-  serverStudioActions,
+  studioActionsFor,
   type StudioActions,
   type UploadType,
 } from "./actions";
@@ -54,7 +56,8 @@ export function SiteStudio({
   slug,
   photos: initialPhotos,
   fontClasses,
-  actions = serverStudioActions,
+  businessId,
+  actions: given,
 }: {
   /** Her site as read now (null: nothing saved yet). */
   site: SiteDto | null;
@@ -68,9 +71,16 @@ export function SiteStudio({
   slug: string;
   photos: StudioPhoto[];
   fontClasses: string;
+  /** The business this studio is opened for: every call carries it. */
+  businessId: string;
   /** Her server; an in-memory one only in a design preview or a test. */
   actions?: StudioActions;
 }) {
+  const actions = useMemo(
+    () => given ?? studioActionsFor(businessId),
+    [given, businessId],
+  );
+  const router = useRouter();
   const history = useHistory<SiteConfig>(
     site?.config
       ? renderConfigOf(site.config)
@@ -160,6 +170,34 @@ export function SiteStudio({
     const { id } = sent.data;
     setPhotos((list) => [{ id, status: "ready" }, ...list]);
     return { ok: true, id };
+  }
+
+  /**
+   * Her links out of the studio (her space, her services): a client-side
+   * navigation unmounts it without any beforeunload, so her draft is saved
+   * first, and if it cannot be, she decides whether to leave anyway.
+   */
+  async function leave(event: MouseEvent<HTMLAnchorElement>) {
+    // A new tab or window keeps the studio open: nothing to protect.
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      !sync.unsaved
+    )
+      return;
+    event.preventDefault();
+    const href = (event.currentTarget.getAttribute("href") ?? "/app") as Route;
+    const at = await sync.flush();
+    if (
+      at !== null ||
+      window.confirm(
+        "Tes dernières modifications n’ont pas pu être enregistrées. Quitter quand même et les perdre ?",
+      )
+    )
+      router.push(href);
   }
 
   async function publish(config: SiteConfig, corrections: number) {
@@ -289,6 +327,7 @@ export function SiteStudio({
           onUpload={upload}
           flash={flash}
           publicPath={`/b/${slug}`}
+          onLeave={leave}
           status={
             <DraftState
               status={sync.status}

@@ -1,16 +1,6 @@
 "use client";
 
 import { callAction, type UiResult } from "@/features/auth/client/call-action";
-import {
-  confirmSitePhotoAction,
-  createSitePhotoUploadAction,
-  getSiteAction,
-  getSiteVersionAction,
-  listSiteVersionsAction,
-  publishSiteAction,
-  restoreSiteVersionAction,
-  saveSiteDraftAction,
-} from "@/features/sites/actions/sites";
 import type { SiteConfig as SavedConfig } from "@/features/sites/config";
 import type {
   SiteDto,
@@ -20,6 +10,16 @@ import type {
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 
 import type { PhotoSource } from "../engine/engine";
+import {
+  studioConfirmPhotoAction,
+  studioCreatePhotoUploadAction,
+  studioGetVersionAction,
+  studioListVersionsAction,
+  studioPublishAction,
+  studioReadSiteAction,
+  studioRestoreVersionAction,
+  studioSaveDraftAction,
+} from "./server-actions";
 
 // What her studio asks the server, in one place: the Server Actions of
 // docs/SITE_PUBLISHING_CONTRACT.md § 6 and the photo upload of § 8. The
@@ -51,19 +51,34 @@ export type StudioActions = {
   photo?: PhotoSource;
 };
 
-export const serverStudioActions: StudioActions = {
-  read: () => callAction(() => getSiteAction()),
+/**
+ * Her server, for the business her studio was opened for: every call
+ * carries it, and the server refuses it if the session's business is
+ * another one by then (`site_business_changed`), so nothing of this
+ * studio can ever be read from or written to another business.
+ */
+export const studioActionsFor = (businessId: string): StudioActions => ({
+  read: () => callAction(() => studioReadSiteAction({ businessId })),
   save: (expectedRevision, config) =>
-    callAction(() => saveSiteDraftAction({ expectedRevision, config })),
+    callAction(() =>
+      studioSaveDraftAction({ businessId, expectedRevision, config }),
+    ),
   publish: (expectedRevision) =>
-    callAction(() => publishSiteAction({ expectedRevision })),
-  versions: () => callAction(() => listSiteVersionsAction()),
-  version: (versionId) => callAction(() => getSiteVersionAction({ versionId })),
+    callAction(() => studioPublishAction({ businessId, expectedRevision })),
+  versions: () => callAction(() => studioListVersionsAction({ businessId })),
+  version: (versionId) =>
+    callAction(() => studioGetVersionAction({ businessId, versionId })),
   restore: (versionId, expectedRevision) =>
-    callAction(() => restoreSiteVersionAction({ versionId, expectedRevision })),
+    callAction(() =>
+      studioRestoreVersionAction({ businessId, versionId, expectedRevision }),
+    ),
   async upload(file, type) {
     const created = await callAction(() =>
-      createSitePhotoUploadAction({ contentType: type, byteSize: file.size }),
+      studioCreatePhotoUploadAction({
+        businessId,
+        contentType: type,
+        byteSize: file.size,
+      }),
     );
     if (!created.ok) return created;
     const { assetId, path, token } = created.data;
@@ -79,8 +94,8 @@ export const serverStudioActions: StudioActions = {
       return { ok: false, error: { code: "network" } };
     }
     const confirmed = await callAction(() =>
-      confirmSitePhotoAction({ assetId }),
+      studioConfirmPhotoAction({ businessId, assetId }),
     );
     return confirmed.ok ? { ok: true, data: { id: assetId } } : confirmed;
   },
-};
+});

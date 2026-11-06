@@ -219,3 +219,140 @@ describe("her draft, saved by itself", () => {
     expect(hook.result.current.status.kind).toBe("saved");
   });
 });
+
+describe("saves in order, each for its own draft (Codex audit)", () => {
+  /** A server whose first save is held until released. */
+  function heldServer(server: Server) {
+    const real = fakeServer(server);
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const save = vi.fn(async (expected: number, config: SavedConfig) => {
+      calls += 1;
+      if (calls === 1) await gate;
+      return real.save(expected, config);
+    });
+    return { save, read: real.read, release: () => release() };
+  }
+
+  it("flush(B) while A is being saved saves B, and answers B's revision, never A's", async () => {
+    const server: Server = {
+      revision: 1,
+      config: savedConfigOf(base),
+      down: false,
+    };
+    const { save, read, release } = heldServer(server);
+    const hook = renderHook(
+      ({ value }) =>
+        useDraftSync({
+          value,
+          revision: 1,
+          saved: server.config,
+          save,
+          read,
+          replace: () => {},
+        }),
+      { initialProps: { value: base } },
+    );
+    // A: her autosave leaves, and is held on the way.
+    hook.rerender({ value: named(base, "Studio A") });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    // B: publishing asks for B while A is still in flight.
+    const b = named(base, "Studio B");
+    let published: Promise<number | null> = Promise.resolve(null);
+    act(() => {
+      published = hook.result.current.flush(b);
+    });
+    await act(async () => {
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const at = await published;
+    // A saved at 2, then B at 3: the revision answered holds B.
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1]![0]).toBe(2);
+    expect(at).toBe(3);
+    expect(server.revision).toBe(3);
+    expect(server.config!.brand.name).toBe("Studio B");
+  });
+
+  it("two saves are never sent at once", async () => {
+    const server: Server = {
+      revision: 1,
+      config: savedConfigOf(base),
+      down: false,
+    };
+    const { save, read, release } = heldServer(server);
+    const hook = renderHook(() =>
+      useDraftSync({
+        value: base,
+        revision: 1,
+        saved: server.config,
+        save,
+        read,
+        replace: () => {},
+      }),
+    );
+    let first: Promise<number | null> = Promise.resolve(null);
+    let second: Promise<number | null> = Promise.resolve(null);
+    act(() => {
+      first = hook.result.current.flush(named(base, "A"));
+      second = hook.result.current.flush(named(base, "B"));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(await first).toBe(2);
+    expect(await second).toBe(3);
+  });
+
+  it("after a conflict, a flush sends nothing until she chooses", async () => {
+    const server: Server = {
+      revision: 1,
+      config: savedConfigOf(base),
+      down: false,
+    };
+    const { hook, save, edit, wait } = mount(server);
+    // Saved elsewhere meanwhile.
+    server.revision = 2;
+    server.config = savedConfigOf(named(base, "Ailleurs"));
+    edit(named(base, "Ici"));
+    await wait();
+    expect(hook.result.current.status.kind).toBe("conflict");
+    let at: number | null = 0;
+    await act(async () => {
+      at = await hook.result.current.flush(named(base, "Publiée"));
+    });
+    expect(at).toBeNull();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(server.config!.brand.name).toBe("Ailleurs");
+  });
+
+  it("leaving the studio inside the app sends what is not saved yet", async () => {
+    const server: Server = {
+      revision: 1,
+      config: savedConfigOf(base),
+      down: false,
+    };
+    const { hook, save, edit } = mount(server);
+    edit(named(base, "Juste avant de partir"));
+    // No wait: she leaves before the autosave.
+    expect(hook.result.current.unsaved).toBe(true);
+    hook.unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(server.config!.brand.name).toBe("Juste avant de partir");
+  });
+});

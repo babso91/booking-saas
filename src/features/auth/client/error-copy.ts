@@ -124,6 +124,11 @@ export const errorCopy: Record<
     title: "Modifié entre-temps",
     message: "Ton site a changé ailleurs. Recharge-le avant de réessayer.",
   },
+  site_business_changed: {
+    title: "Autre compte connecté",
+    message:
+      "Ta session a changé d’activité depuis un autre onglet : rien n’a été enregistré ici, et rien n’a touché l’autre site. Recharge la page.",
+  },
   site_not_found: {
     title: "Pas encore de brouillon",
     message: "Enregistre ton site avant de le publier.",

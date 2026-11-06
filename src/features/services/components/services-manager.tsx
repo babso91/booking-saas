@@ -24,7 +24,7 @@ import {
 import { getBookingSettingsAction } from "@/features/availability/actions/schedule";
 import {
   getCatalogAction,
-  reorderCategoriesAction,
+  moveCategoryAction,
 } from "@/features/catalog/actions/catalog";
 import {
   categoriesAfterMove,
@@ -295,11 +295,13 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
   async function moveCategory(category: CatalogCategory, delta: -1 | 1) {
     if (load.status !== "ready" || (row && !row.error) || ordering === "saving")
       return;
-    const ids = categoriesAfterMove(load.categories, category.id, delta);
-    if (!ids) return;
+    // Nothing to move from here (already first or last, as she sees it).
+    if (!categoriesAfterMove(load.categories, category.id, delta)) return;
     setOrdering("saving");
+    // A step from where it is NOW on the server: a move made in another tab
+    // meanwhile is kept, and her list shows the order that results.
     const result = await callAction(() =>
-      reorderCategoriesAction({ categoryIds: ids }),
+      moveCategoryAction({ categoryId: category.id, offset: delta }),
     );
     if (result.ok) {
       setLoad((value) =>
@@ -308,14 +310,15 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
           : value,
       );
       setOrdering("idle");
+      const ids = result.data.map((item) => item.id);
       setAnnouncement(
         `${category.name} : position ${ids.indexOf(category.id) + 1} sur ${ids.length}.`,
       );
       return;
     }
     setOrdering(result.error);
-    // A category added or deleted elsewhere: read them again.
-    if (result.error.code === "validation_error") reload();
+    // Deleted elsewhere meanwhile: read them again.
+    if (result.error.code === "category_not_found") reload();
   }
 
   function openCreate(categoryId?: string) {
@@ -451,7 +454,9 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
               <Notice tone="error" title="Ordre non enregistré">
                 {ordering.code === "validation_error"
                   ? "Ta liste a changé entre-temps : elle a été rechargée. Recommence le déplacement."
-                  : "Le nouvel ordre n’a pas pu être enregistré. L’ordre affiché est celui enregistré."}
+                  : ordering.code === "category_not_found"
+                    ? "Cette catégorie a été supprimée entre-temps : ta liste a été rechargée."
+                    : "Le nouvel ordre n’a pas pu être enregistré. L’ordre affiché est celui enregistré."}
               </Notice>
             ) : null}
             {sectionsOf(load.categories, load.services).map(

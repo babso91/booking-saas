@@ -316,4 +316,37 @@ describe("her studio — her photos and her plan", () => {
 
     expect(errors).toEqual([]);
   });
+
+  it("back to her space right after a change: the change is saved first", async () => {
+    const pro = await professionalWithVisit("Iris", "Léa");
+    // A computer: "Mon site" is in the sidebar, for client navigations.
+    const { page, errors } = await studioPage(pro, 1280, false, true);
+    await page.goto(`${APP}/app/site`);
+    await saved(page);
+    const location = async () =>
+      (
+        (await draftOf(pro.businessId)).config as {
+          brand: { location: string };
+        } | null
+      )?.brand.location;
+
+    // No wait for the autosave: she leaves at once, by the studio's link.
+    await page.getByRole("button", { name: "Textes", exact: true }).click();
+    await page.getByLabel("Ville", { exact: true }).fill("Nantes");
+    await page.getByRole("link", { name: "Revenir à mon espace" }).click();
+    await page.waitForURL(`${APP}/app`);
+    expect(await location()).toBe("Nantes");
+
+    // In again from her space, then Back in the browser: a client-side
+    // navigation, no beforeunload. Sent all the same.
+    await page.getByRole("link", { name: "Mon site" }).first().click();
+    await page.waitForURL(`${APP}/app/site`);
+    await saved(page);
+    await page.getByRole("button", { name: "Textes", exact: true }).click();
+    await page.getByLabel("Ville", { exact: true }).fill("Rennes");
+    await page.goBack();
+    await expect.poll(location, { timeout: 10_000 }).toBe("Rennes");
+
+    expect(errors).toEqual([]);
+  });
 });
