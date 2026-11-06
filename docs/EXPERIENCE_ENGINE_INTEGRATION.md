@@ -56,9 +56,10 @@ Empilée sur la PR 1. Même moteur de réservation (`useBookingFlow`, routes pub
   - Groupe facultatif : il part de « Sans ».
   - Chaque réponse affiche ce qu'elle ajoute (« +15,00 € · +30 min », ou « Inclus »).
 - **Le devis du serveur, à chaque réponse.** Chaque changement relit les créneaux et le devis en une seule lecture (`get_public_availability`). Prix et durée affichés sont ceux du `quote`, jamais une somme faite dans le navigateur. Les tests le prouvent avec un serveur simulé qui renvoie volontairement autre chose que la somme locale.
-- **La réservation envoie** `optionChoiceIds`, `expectedPriceCents` et `expectedDurationMinutes` (le devis du créneau choisi).
-  - Sans options, le corps est exactement celui d'avant : même empreinte d'idempotence.
-  - Une réservation non confirmée garde ses réponses et se renvoie à l'identique.
+- **La réservation envoie toujours** `expectedPriceCents` et `expectedDurationMinutes`, c'est-à-dire le devis du créneau choisi, ce qu'elle a accepté. Elle y ajoute `optionChoiceIds` pour une prestation à options.
+  - Sans options aussi (audit Codex) : un prix ou une durée modifiés entre le récapitulatif et la confirmation sont refusés par le serveur (`quote_changed`). Rien n'est réservé, et elle confirme à nouveau le nouveau devis. Test e2e : « a price raised before she confirms ».
+  - Une réservation non confirmée, y compris celle envoyée avant ce changement sans `expected*`, se renvoie à l'identique : même corps, même `requestId`, donc même empreinte d'idempotence.
+- **Une réponse tardive ne s'applique jamais à un autre choix** (audit Codex). Si le catalogue relu pour la prestation A arrive après qu'elle a choisi B (ou une autre réponse, un autre jour), il est ignoré : ni les réponses ni le devis de B ne changent.
 - **Refus traités, rien n'est réservé dans aucun de ces cas :**
 
   | Code                                            | Ce qui se passe                                                                                                                                                                                               |
@@ -73,7 +74,7 @@ Les conditions 1 à 5 du § 10 de `CATALOG_CONTRACT.md` sont remplies. L'éditeu
 
 ### Vérifications de la PR 2
 
-- Composants (`public-booking.test.tsx`) : les tests existants inchangés dans leurs exigences, plus 8 nouveaux. Ils couvrent catégories et « dès », préselection, devis du serveur, relecture à chaque réponse, corps envoyé, `quote_changed`, `option_choice_unavailable`, `options_required`, et le corps inchangé sans options.
+- Composants (`public-booking.test.tsx`) : les tests existants inchangés dans leurs exigences, plus 8 nouveaux. Ils couvrent catégories et « dès », préselection, devis du serveur, relecture à chaque réponse, corps envoyé, `quote_changed`, `option_choice_unavailable`, `options_required`, et le corps sans options, qui porte lui aussi le devis accepté.
 - e2e réel (`booking-options-browser.test.ts`) à 390, 320 et 1280 px :
   - réservation d'une prestation à option obligatoire et facultative ;
   - en base : prix 85 €, durée 120 min, créneau de 120 min, réponses gardées ;
