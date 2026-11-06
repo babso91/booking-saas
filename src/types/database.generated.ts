@@ -705,6 +705,19 @@ isOneToOne: false
                   Relationships: [
                     
                   ]
+                },"site_photo_orphans": {
+                  Row: {
+                    "asset_id": string,"attempts": number,"business_id": string,"first_seen_at": string,"last_attempt_at": string | null,"last_seen_at": string,"name": string
+                  }
+                  Insert: {
+                    "asset_id": string,"attempts"?: number,"business_id": string,"first_seen_at"?: string,"last_attempt_at"?: string | null,"last_seen_at"?: string,"name": string
+                  }
+                  Update: {
+                    "asset_id"?: string,"attempts"?: number,"business_id"?: string,"first_seen_at"?: string,"last_attempt_at"?: string | null,"last_seen_at"?: string,"name"?: string
+                  }
+                  Relationships: [
+                    
+                  ]
                 },"site_photo_purges": {
                   Row: {
                     "asset_id": string,"attempts": number,"business_id": string,"last_attempt_at": string | null,"last_done_at": string | null,"not_before": string,"requested_at": string,"scope": string
@@ -714,6 +727,19 @@ isOneToOne: false
                   }
                   Update: {
                     "asset_id"?: string,"attempts"?: number,"business_id"?: string,"last_attempt_at"?: string | null,"last_done_at"?: string | null,"not_before"?: string,"requested_at"?: string,"scope"?: string
+                  }
+                  Relationships: [
+                    
+                  ]
+                },"site_photo_reconciliation": {
+                  Row: {
+                    "cursor": string,"id": boolean,"last_page_at": string | null,"last_pass_completed_at": string | null,"last_pass_deleted": number | null,"last_pass_failed": number | null,"last_pass_scanned": number | null,"last_pass_suspects": number | null,"last_pass_unknown": number | null,"lease_until": string | null,"pass_deleted": number,"pass_failed": number,"pass_scanned": number,"pass_started_at": string | null,"pass_suspects": number,"pass_unknown": number,"run_id": string | null
+                  }
+                  Insert: {
+                    "cursor"?: string,"id"?: boolean,"last_page_at"?: string | null,"last_pass_completed_at"?: string | null,"last_pass_deleted"?: number | null,"last_pass_failed"?: number | null,"last_pass_scanned"?: number | null,"last_pass_suspects"?: number | null,"last_pass_unknown"?: number | null,"lease_until"?: string | null,"pass_deleted"?: number,"pass_failed"?: number,"pass_scanned"?: number,"pass_started_at"?: string | null,"pass_suspects"?: number,"pass_unknown"?: number,"run_id"?: string | null
+                  }
+                  Update: {
+                    "cursor"?: string,"id"?: boolean,"last_page_at"?: string | null,"last_pass_completed_at"?: string | null,"last_pass_deleted"?: number | null,"last_pass_failed"?: number | null,"last_pass_scanned"?: number | null,"last_pass_suspects"?: number | null,"last_pass_unknown"?: number | null,"lease_until"?: string | null,"pass_deleted"?: number,"pass_failed"?: number,"pass_scanned"?: number,"pass_started_at"?: string | null,"pass_suspects"?: number,"pass_unknown"?: number,"run_id"?: string | null
                   }
                   Relationships: [
                     
@@ -976,6 +1002,9 @@ isOneToOne: false
               "available": boolean,"reason": string,"slug": string
             }[]
                            },
+"claim_site_photo_reconciliation":
+{ Args: { "p_run": string }; Returns: string
+                           },
 "client_hub_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_session_token": string }; Returns: Json
                            },
@@ -1220,6 +1249,12 @@ isOneToOne: false
               "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"style": string,"version": number
             }[]
                            },
+"record_site_photo_orphan_deletions":
+{ Args: { "p_deleted": (string)[],"p_failed": (string)[],"p_run": string }; Returns: undefined
+                           },
+"release_site_photo_reconciliation":
+{ Args: { "p_run": string }; Returns: undefined
+                           },
 "reorder_service_categories":
 { Args: { "p_business_id": string,"p_category_ids": (string)[] }; Returns: undefined
                            },
@@ -1272,6 +1307,12 @@ isOneToOne: false
                            },
 "site_photo_conversion_writable":
 { Args: { "p_asset_id": string,"p_business_id": string }; Returns: boolean
+                           },
+"site_photo_reconciliation_page":
+{ Args: { "p_limit": number,"p_run": string }; Returns: Json
+                           },
+"site_photo_reconciliation_status":
+{ Args: Record<PropertyKey, never>; Returns: Json
                            },
 "update_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_expected_version": number,"p_name"?: string,"p_visible"?: boolean }; Returns: {
