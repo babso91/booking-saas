@@ -67,6 +67,15 @@ export const appErrorMessages = {
   email_taken: "Un compte existe déjà avec cette adresse email.",
   rate_limited: "Trop de tentatives. Merci de réessayer dans quelques minutes.",
   already_onboarded: "Votre activité est déjà configurée.",
+  beta_invitation_required:
+    "L’accès à la bêta se fait sur invitation. Utilisez le lien personnel que vous avez reçu.",
+  invitation_invalid:
+    "Ce lien d’invitation n’est pas valide. Vérifiez qu’il est complet, ou demandez-en un nouveau.",
+  invitation_expired: "Ce lien d’invitation a expiré. Demandez-en un nouveau.",
+  invitation_used:
+    "Cette invitation a déjà été utilisée. Connectez-vous avec votre compte.",
+  invitation_email_mismatch:
+    "Cette invitation est liée à une autre adresse email. Utilisez l’adresse à laquelle vous l’avez reçue.",
   slug_taken:
     "Cette adresse de page est déjà utilisée. Choisissez-en une autre.",
   slug_reserved: "Cette adresse de page est réservée. Choisissez-en une autre.",
@@ -211,6 +220,11 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   email_taken: 409,
   rate_limited: 429,
   already_onboarded: 409,
+  beta_invitation_required: 403,
+  invitation_invalid: 400,
+  invitation_expired: 410,
+  invitation_used: 409,
+  invitation_email_mismatch: 403,
   slug_taken: 409,
   slug_reserved: 409,
   calendar_not_configured: 503,

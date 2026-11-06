@@ -692,7 +692,10 @@ isOneToOne: false
                 }
           }
           Functions: {
-            "agenda_create_appointment":
+            "accept_beta_invitation":
+{ Args: { "p_email": string,"p_token_hash": string }; Returns: string
+                           },
+"agenda_create_appointment":
 { Args: { "p_business_id": string,"p_client_email"?: string,"p_client_first_name"?: string,"p_client_id"?: string,"p_client_last_name"?: string,"p_client_phone"?: string,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_request_id"?: string,"p_service_id": string,"p_starts_at": string }; Returns: {
               "appointment_id": string,"created": boolean
             }[]
@@ -861,6 +864,9 @@ isOneToOne: false
 "calendar_verify_notification":
 { Args: { "p_channel_id": string,"p_resource_id": string,"p_token_hash": string }; Returns: string
                            },
+"check_beta_invitation":
+{ Args: { "p_email": string,"p_token_hash": string }; Returns: string
+                           },
 "check_slug_availability":
 { Args: { "p_slug": string }; Returns: {
               "available": boolean,"reason": string,"slug": string
@@ -903,6 +909,9 @@ isOneToOne: false
 { Args: { "p_buffer_minutes"?: number,"p_business_name": string,"p_cancellation_policy"?: string,"p_contact_email"?: string,"p_description"?: string,"p_first_name": string,"p_last_name": string,"p_location"?: string,"p_maximum_booking_advance_days"?: number,"p_minimum_booking_notice_minutes"?: number,"p_phone"?: string,"p_slug": string,"p_timezone"?: string }; Returns: {
               "business_id": string,"business_name": string,"slug": string,"timezone": string
             }[]
+                           },
+"create_beta_invitation":
+{ Args: { "p_email": string,"p_expires_at": string,"p_note"?: string,"p_token_hash": string }; Returns: string
                            },
 "create_public_booking":
 { Args: { "p_client_ip": unknown,"p_email": string,"p_expected_duration_minutes"?: number,"p_expected_price_cents"?: number,"p_first_name": string,"p_last_name"?: string,"p_option_choice_ids"?: (string)[],"p_phone"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
@@ -1055,6 +1064,9 @@ isOneToOne: false
 "loyalty_update_reward":
 { Args: { "p_active": boolean,"p_business_id": string,"p_description": string,"p_expected_version": number,"p_name": string,"p_points_required": number,"p_reward_id": string,"p_reward_value": number,"p_service_id": string }; Returns: number
                            },
+"my_beta_access":
+{ Args: Record<PropertyKey, never>; Returns: boolean
+                           },
 "quote_public_service":
 { Args: { "p_option_choice_ids"?: (string)[],"p_service_id": string,"p_slug": string }; Returns: {
               "currency": string,"duration_minutes": number,"options": Json,"price_cents": number,"service_name": string
@@ -1087,6 +1099,9 @@ isOneToOne: false
         isOneToOne: false
         isSetofReturn: true
       } },
+"revoke_beta_invitation":
+{ Args: { "p_invitation_id": string }; Returns: undefined
+                           },
 "save_member_preferences":
 { Args: { "p_business_id": string,"p_changes": Json,"p_expected_incarnation": string,"p_expected_version": number,"p_membership_id": string }; Returns: {
               "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"status": string,"style": string,"version": number

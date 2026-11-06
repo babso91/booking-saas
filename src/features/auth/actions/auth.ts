@@ -15,6 +15,12 @@ import {
   type SessionState,
 } from "@/features/auth/data/session";
 import { authCallbackUrl } from "@/features/auth/data/redirects";
+import {
+  acceptInvitation,
+  acceptInvitationIfAccount,
+  assertInvitation,
+  hasBetaAccess,
+} from "@/features/beta/invitations";
 import { signInSchema, signUpSchema } from "@/features/auth/schemas/auth";
 import { getPublicEnv } from "@/lib/env/public";
 import {
@@ -23,10 +29,12 @@ import {
   validationException,
   type ActionResult,
 } from "@/lib/errors";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import {
   createServerSupabaseClient,
   forgetSessionOnThisDevice,
 } from "@/lib/supabase/server";
+import type { AppSupabaseClient } from "@/lib/supabase/types";
 
 // Auth contract for the UI. Every action returns ActionResult<T> with stable
 // error codes (see docs/AUTH_ONBOARDING_CONTRACT.md); none throws to the UI.
@@ -46,8 +54,13 @@ async function run<T>(operation: () => Promise<T>): Promise<ActionResult<T>> {
 export type SignUpResult = SignUpOutcome & { next: SessionDestination | null };
 
 /**
- * Creates an account. `status: "signed_in"` → go to `next` ("/onboarding").
- * `status: "confirmation_required"` → show "check your inbox"; `next` is null.
+ * Creates an account, for an invited address only (private beta,
+ * docs/BETA_ACCESS.md): `invitationToken` must be a valid invitation for
+ * `email` (`beta_invitation_required`, `invitation_invalid`,
+ * `invitation_expired`, `invitation_used`, `invitation_email_mismatch`
+ * otherwise; nothing is created). `status: "signed_in"` → go to `next`
+ * ("/onboarding"). `status: "confirmation_required"` → show "check your
+ * inbox"; `next` is null.
  */
 export async function signUpAction(
   input: unknown,
@@ -59,12 +72,31 @@ export async function signUpAction(
       throw validationException(parsed.error);
     }
 
+    // The invitation first: no account is created without one.
+    const service = createAdminSupabaseClient() as AppSupabaseClient;
+    const { invitationToken, ...account } = parsed.data;
+    await assertInvitation(service, invitationToken, account.email);
+
     const client = await createServerSupabaseClient();
-    const outcome = await signUpWithPassword(
-      client,
-      parsed.data,
-      authCallbackUrl(getPublicEnv().NEXT_PUBLIC_APP_URL),
-    );
+    let outcome: SignUpOutcome;
+    try {
+      outcome = await signUpWithPassword(
+        client,
+        account,
+        authCallbackUrl(getPublicEnv().NEXT_PUBLIC_APP_URL),
+      );
+    } catch (error) {
+      // Auth refused (an account already there: a first attempt interrupted
+      // after Auth created it, or one made before her invitation; a retry
+      // too soon; a simultaneous attempt). If the invited address has an
+      // account, it gets its access all the same (found by the database,
+      // never taken from the caller); then Auth's answer is hers.
+      await acceptInvitationIfAccount(service, invitationToken, account.email);
+      throw error;
+    }
+    // Accepted for the account of the invited address, once (idempotent: a
+    // retry of this same sign-up answers the same).
+    await acceptInvitation(service, invitationToken, account.email);
 
     if (outcome.status === "confirmation_required") {
       return { ...outcome, next: null };
@@ -124,6 +156,11 @@ export type OnboardingStatus =
       status: "onboarding_required";
       next: "/onboarding";
       user: { email: string | null; emailConfirmed: boolean };
+      /**
+       * false: her account has no beta access (no invitation accepted), so
+       * creating her business is refused (`beta_invitation_required`).
+       */
+      betaAccess: boolean;
     }
   | {
       status: "ready";
@@ -132,7 +169,10 @@ export type OnboardingStatus =
       business: { slug: string; name: string; timezone: string };
     };
 
-function toOnboardingStatus(state: SessionState): OnboardingStatus {
+function toOnboardingStatus(
+  state: SessionState,
+  betaAccess: boolean,
+): OnboardingStatus {
   switch (state.status) {
     case "unauthenticated":
       return { status: "unauthenticated", next: "/login" };
@@ -144,6 +184,7 @@ function toOnboardingStatus(state: SessionState): OnboardingStatus {
           email: state.user.email,
           emailConfirmed: state.user.emailConfirmed,
         },
+        betaAccess,
       };
     case "ready":
       return {
@@ -167,6 +208,12 @@ export async function getOnboardingStatusAction(): Promise<
 > {
   return run(async () => {
     const client = await createServerSupabaseClient();
-    return toOnboardingStatus(await getSessionState(client));
+    const state = await getSessionState(client);
+    return toOnboardingStatus(
+      state,
+      state.status === "onboarding_required"
+        ? await hasBetaAccess(client)
+        : true,
+    );
   });
 }

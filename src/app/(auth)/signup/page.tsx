@@ -7,10 +7,21 @@ export const metadata: Metadata = {
   title: "Créer mon espace",
 };
 
-export default function SignupPage() {
+// The private beta's invitation link: /signup?invitation=<token>
+// (docs/BETA_ACCESS.md). The token is only passed on to the server, which
+// checks it; nothing is decided here.
+export default async function SignupPage({
+  searchParams,
+}: PageProps<"/signup">) {
+  const { invitation } = await searchParams;
+
   return (
     <AuthShell>
-      <SignupForm />
+      <SignupForm
+        invitationToken={
+          typeof invitation === "string" ? invitation : undefined
+        }
+      />
     </AuthShell>
   );
 }

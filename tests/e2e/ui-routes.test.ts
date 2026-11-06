@@ -7,6 +7,8 @@ import { describe, expect, inject, it } from "vitest";
 
 import type { Database } from "@/types/database.generated";
 
+import { inviteAccount } from "./support/beta";
+
 // The auth and onboarding screens of the UI branch, served by `next start`
 // against the real local Supabase stack: every route lands on the right
 // page, and guarded routes answer with a redirect before any private markup.
@@ -67,6 +69,8 @@ async function signedInBrowser() {
     email_confirm: true,
   });
   expect(error).toBeNull();
+  // An invited professional (private beta).
+  await inviteAccount(email);
 
   const browser = new Browser();
   const signIn = await browser

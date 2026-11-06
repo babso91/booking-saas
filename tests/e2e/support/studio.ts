@@ -6,6 +6,8 @@ import { afterAll, expect, inject } from "vitest";
 
 import type { Database } from "@/types/database.generated";
 
+import { inviteAccount } from "./beta";
+
 // Shared by the Studio end-to-end tests (`next start` + local Supabase): a
 // browser holding cookies, and a signed-in professional with her business
 // and one visit going on now.
@@ -99,6 +101,7 @@ export async function professionalWithVisit(name: string, client: string) {
     body: JSON.stringify({ email, password: PASSWORD, email_confirm: true }),
   });
   expect(created.ok).toBe(true);
+  await inviteAccount(email);
 
   const browser = new Browser();
   const signIn = await browser

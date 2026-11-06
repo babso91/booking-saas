@@ -35,6 +35,29 @@ export const errorCopy: Record<
     title: "Lien réservé",
     message: "Ce mot est réservé. Essaie une variante.",
   },
+  beta_invitation_required: {
+    title: "Bêta sur invitation",
+    message:
+      "L’accès se fait avec le lien personnel reçu dans ton invitation. Ouvre-le pour créer ton espace.",
+  },
+  invitation_invalid: {
+    title: "Lien non valide",
+    message:
+      "Ce lien d’invitation n’est pas valide. Vérifie qu’il est complet, ou demande-en un nouveau.",
+  },
+  invitation_expired: {
+    title: "Invitation expirée",
+    message: "Ce lien a expiré. Demande-nous une nouvelle invitation.",
+  },
+  invitation_used: {
+    title: "Invitation déjà utilisée",
+    message: "Ton espace a déjà été créé avec ce lien. Connecte-toi.",
+  },
+  invitation_email_mismatch: {
+    title: "Autre adresse",
+    message:
+      "Cette invitation est liée à une autre adresse. Utilise celle à laquelle tu l’as reçue.",
+  },
   already_onboarded: {
     title: "Ton espace existe déjà",
     message: "Ton activité est déjà configurée. Tu peux y accéder directement.",
