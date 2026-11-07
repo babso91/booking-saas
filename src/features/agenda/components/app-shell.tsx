@@ -11,6 +11,7 @@ import {
   ChevronRightIcon,
   ClockIcon,
   GiftIcon,
+  GlobeIcon,
   PaletteIcon,
   SparkIcon,
   UserIcon,
@@ -37,6 +38,7 @@ const CLIENTS = "/app/clients";
 const SERVICES = "/app/services";
 const HOURS = "/app/settings/hours";
 const LOYALTY = "/app/loyalty";
+const SITE = "/app/site";
 const APPEARANCE = "/app/settings/appearance";
 
 type ShellProps = {
@@ -157,6 +159,13 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
             <CalendarSyncIcon size={18} /> Google Calendar
           </Link>
           <Link
+            href={SITE}
+            aria-current={current === "site" ? "page" : undefined}
+            className={item("site")}
+          >
+            <GlobeIcon size={18} /> Mon site
+          </Link>
+          <Link
             href={APPEARANCE}
             aria-current={current === "appearance" ? "page" : undefined}
             className={item("appearance")}
@@ -224,6 +233,7 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
             current === "calendar" ||
               current === "hours" ||
               current === "loyalty" ||
+              current === "site" ||
               current === "appearance"
               ? "font-semibold text-ink"
               : "text-ink-soft",
@@ -268,6 +278,16 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
           >
             <CalendarSyncIcon size={20} className="text-ink-soft" />
             <span className="flex-1">Google Calendar</span>
+            <ChevronRightIcon size={18} className="text-ink-muted" />
+          </Link>
+          <Link
+            href={SITE}
+            onClick={() => setAccountOpen(false)}
+            aria-current={current === "site" ? "page" : undefined}
+            className="flex min-h-14 items-center gap-3 rounded-2xl border border-line bg-paper px-4 text-[15px] font-medium text-ink transition-colors hover:border-line-strong"
+          >
+            <GlobeIcon size={20} className="text-ink-soft" />
+            <span className="flex-1">Mon site</span>
             <ChevronRightIcon size={18} className="text-ink-muted" />
           </Link>
           <Link

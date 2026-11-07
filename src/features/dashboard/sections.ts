@@ -11,6 +11,7 @@ export type DashboardSection =
   | "loyalty"
   | "hours"
   | "calendar"
+  | "site"
   | "appearance";
 
 export const sectionHref: Record<DashboardSection, Route> = {
@@ -21,6 +22,7 @@ export const sectionHref: Record<DashboardSection, Route> = {
   loyalty: "/app/loyalty",
   hours: "/app/settings/hours",
   calendar: "/app/settings/calendar",
+  site: "/app/site",
   appearance: "/app/settings/appearance",
 };
 
