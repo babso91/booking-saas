@@ -107,7 +107,7 @@ APP_URL=https://<domaine de l'application> \
   - `secure_password_change` est désactivé : la session de récupération suffit pour définir le mot de passe.
 - **Décalage d'horloge.** Une session ouverte dans la fenêtre de décalage autour de l'octroi pourrait être classée du mauvais côté. La session de la preuve, elle, est toujours désignée explicitement.
 - **Ancien jeton d'un compte invité.** Il ne donne plus accès à l'établissement. Jusqu'à son expiration (≤ 1 h), il lit encore son propre profil (`profiles`, fondé sur `auth.uid()` seul).
-- **Chemins des mini-sites (#40, #43).** Ils passent par le service, avec l'identifiant de l'acteur. Ce sont les actions serveur qui vérifient la session, via Auth (`getUser`) : une session révoquée y est refusée, mais pas une session que la révocation aurait laissée vivante.
+- **Chemins des mini-sites (#40, #43), une fois intégrés.** Leurs actions résolvent l'établissement avec `getBusinessContext` : `getUser` côté Auth, puis `business_members` sous RLS (`is_business_member`), avant toute écriture par le service. Une session révoquée y est refusée (`unauthenticated`), une session gardée par Auth aussi (`no_business`). Testé sur la combinaison (`tests/integration/beta-minisite-session.test.ts`).
 - **Texte de l'email de récupération.** Il parle d'invitation ; le jour où le produit ajoutera une réinitialisation de mot de passe générale, il faudra le revoir.
 
 ## Annoncé avant toute saisie (UI)
