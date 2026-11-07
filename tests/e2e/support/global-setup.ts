@@ -78,7 +78,9 @@ export default async function setup(project: TestProject) {
       NEXT_PUBLIC_APP_URL: APP_URL,
       NEXT_PUBLIC_SUPABASE_URL: env.apiUrl,
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: env.anonKey,
-      // Online booking, as behind the trusted ingress (support/ingress.ts).
+      // The local stack's own key: online booking (as behind the trusted
+      // ingress, support/ingress.ts) and the actions that write through the
+      // service (her site's draft, publishing, her photos) need it.
       SUPABASE_SERVICE_ROLE_KEY: env.serviceRoleKey,
       BOOKING_PROXY_SECRET: E2E_PROXY_SECRET,
     },

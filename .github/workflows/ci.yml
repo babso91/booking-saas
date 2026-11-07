@@ -96,7 +96,15 @@ jobs:
       - name: Start local Supabase
         run: npx supabase start -x "$SUPABASE_EXCLUDE"
       # Sign-up → confirmation email → /auth/callback against `next start`.
-      - run: npm run build
+      # Built for the local stack: the browser code (her studio's photo
+      # upload) reads the public Supabase URL and key inlined at build time.
+      - name: Build for the local stack
+        run: |
+          status="$(npx supabase status --output json)"
+          export NEXT_PUBLIC_APP_URL=http://localhost:3000
+          export NEXT_PUBLIC_SUPABASE_URL="$(jq -r .API_URL <<< "$status")"
+          export NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$(jq -r .ANON_KEY <<< "$status")"
+          npm run build
       # The agenda scenarios drive a real browser. The browser build is
       # cached per lockfile (it pins Playwright); the system packages are
       # still installed on every run.
