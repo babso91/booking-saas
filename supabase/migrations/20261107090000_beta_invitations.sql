@@ -417,3 +417,146 @@ begin
   end loop;
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Every professional permission follows the same session rule (Codex
+-- re-audit)
+-- ---------------------------------------------------------------------------
+--
+-- has_beta_access binds an invitation's access to the session that proved
+-- who she is. The business it lets her create is then reached through the
+-- common permission primitives (every RLS policy goes through
+-- is_business_member or has_business_role; the RPCs through those, or
+-- through assert_agenda_access and member_preferences_membership): without
+-- the same rule there, an earlier session's token (revoked, or kept) would
+-- read and change the business once it exists. So each primitive also
+-- requires the request's session to be trusted for its user.
+
+-- The request's JWT may act for its user: always for an account whose
+-- access did not come from an invitation (accounts of before the beta, and
+-- no user at all: the service); for one whose access came from an
+-- invitation, only with a session that has_beta_access accepts (still held
+-- by Auth, and the proving session or one opened after it).
+--
+-- RLS calls it for every row: the answer is kept for the rest of the
+-- transaction (one request), keyed by user and session, in a
+-- transaction-local setting. Setting it by hand needs raw SQL, which could
+-- just as well rewrite request.jwt.claims itself: it opens no new way in.
+-- Measured: 5,000 rows read under RLS in 95 ms (66 ms without the rule,
+-- 1.8 s without the memo).
+create function private.request_session_trusted()
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_user uuid := auth.uid();
+  v_key text;
+  v_trusted boolean;
+begin
+  if v_user is null then
+    return true;
+  end if;
+  v_key := v_user::text || '/' || coalesce(
+    pg_catalog.current_setting('request.jwt.claims', true)::jsonb ->> 'session_id', ''
+  );
+  if pg_catalog.current_setting('private.trusted_session', true) = v_key || '=t' then
+    return true;
+  end if;
+  if pg_catalog.current_setting('private.trusted_session', true) = v_key || '=f' then
+    return false;
+  end if;
+  v_trusted := not exists (
+      select 1 from private.beta_access a
+      where a.user_id = v_user and a.source = 'invitation'
+    )
+    or private.has_beta_access(v_user, true);
+  perform pg_catalog.set_config(
+    'private.trusted_session', v_key || case when v_trusted then '=t' else '=f' end, true
+  );
+  return v_trusted;
+end;
+$$;
+
+revoke all on function private.request_session_trusted() from public;
+
+create or replace function public.is_business_member(target_business_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.business_members
+    where business_id = target_business_id
+      and user_id = (select auth.uid())
+  ) and private.request_session_trusted();
+$$;
+
+create or replace function public.has_business_role(
+  target_business_id uuid,
+  accepted_roles public.business_member_role[]
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.business_members
+    where business_id = target_business_id
+      and user_id = (select auth.uid())
+      and role = any (accepted_roles)
+  ) and private.request_session_trusted();
+$$;
+
+create or replace function private.assert_agenda_access(p_business_id uuid)
+returns void
+language plpgsql
+stable
+set search_path = ''
+as $$
+begin
+  if (select auth.uid()) is null then
+    raise exception using errcode = '42501', message = 'unauthenticated';
+  end if;
+
+  if p_business_id is null or not exists (
+    select 1
+    from public.business_members m
+    where m.business_id = p_business_id
+      and m.user_id = (select auth.uid())
+  ) or not private.request_session_trusted() then
+    raise exception using errcode = '42501', message = 'forbidden';
+  end if;
+end;
+$$;
+
+create or replace function private.member_preferences_membership(p_business_id uuid)
+returns uuid
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_membership uuid;
+begin
+  if auth.uid() is null then
+    raise exception using errcode = '42501', message = 'unauthenticated';
+  end if;
+  select m.id into v_membership
+  from public.business_members m
+  where m.business_id = p_business_id and m.user_id = auth.uid();
+  if v_membership is null or not private.request_session_trusted() then
+    raise exception using errcode = '42501', message = 'forbidden';
+  end if;
+  return v_membership;
+end;
+$$;

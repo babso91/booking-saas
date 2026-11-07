@@ -29,6 +29,15 @@ Migration : `supabase/migrations/20261107090000_beta_invitations.sql`.
 
   Une session antérieure, même rafraîchie, même si sa révocation a échoué ou n'a pas eu lieu, ne crée rien : ni par l'action, ni par un appel direct à `complete_onboarding`, ni via `my_beta_access` (testé). Cette règle ne s'applique pas au service agissant sans JWT, ni aux comptes `existing`.
 
+- **La même règle pour toutes les permissions professionnelles** (réaudit Codex). Après l'onboarding, l'établissement est atteint par les primitives communes, et chacune exige maintenant que la session de la requête soit de confiance (`private.request_session_trusted`) :
+  - `is_business_member` et `has_business_role`, par lesquelles passent toutes les politiques RLS ;
+  - `assert_agenda_access` et `member_preferences_membership`, qui lisent l'appartenance directement ;
+  - `assert_catalog_access` et `crm_assert_member`, qui passent par `is_business_member`.
+
+  Une session antérieure à la preuve, révoquée ou gardée, ne lit ni ne modifie donc plus rien de l'établissement, par l'action comme par PostgREST ou SQL : établissement, membres, catalogue, `create_service_category`, préférences, agenda, CRM, et même une `UPDATE` qui ne lit aucune colonne (testé, 6 mutations détectées). Les sessions légitimes fonctionnent, comme les comptes `existing` et le service.
+  - **Coût** : le résultat est gardé pour la transaction, c'est-à-dire la requête. Il est mémorisé par utilisateur et par session dans un réglage local à la transaction. Lire 5 000 lignes sous RLS prend 95 ms (66 ms sans la règle).
+  - Poser ce réglage à la main exige du SQL brut, qui permettrait déjà de réécrire `request.jwt.claims` : cela n'ouvre aucun nouveau chemin.
+
 - **Un compte créé d'abord par un tiers** (audit Codex). N'importe qui peut créer auprès d'Auth un compte non confirmé pour n'importe quelle adresse, et Auth garde le premier mot de passe lors d'une nouvelle inscription (vérifié).
   - **Le lien d'invitation n'est jamais une preuve suffisante pour modifier un compte préexistant** (contre-audit Codex). Le serveur ne change jamais le mot de passe d'un compte, quel que soit son état : aucun appel à l'API d'administration (testé). Sinon, l'adresse pourrait être confirmée entre deux appels du serveur (par l'email d'Auth envoyé au tiers), et le mot de passe d'un compte confirmé serait remplacé (reproduit sur l'ancien code).
   - **Compte non confirmé** : la preuve, c'est le **lien de récupération reçu dans sa boîte mail**. `completeInvitationAction` exige :
@@ -97,5 +106,6 @@ APP_URL=https://<domaine de l'application> \
   - Les horloges d'Auth (`auth.sessions.created_at`) et de PostgreSQL (`granted_at`) sont alignées.
   - `secure_password_change` est désactivé : la session de récupération suffit pour définir le mot de passe.
 - **Décalage d'horloge.** Une session ouverte dans la fenêtre de décalage autour de l'octroi pourrait être classée du mauvais côté. La session de la preuve, elle, est toujours désignée explicitement.
-- **Lectures avec un ancien jeton.** Le jeton d'accès d'une session révoquée permet encore, jusqu'à son expiration (≤ 1 h), les lectures et écritures soumises au RLS d'un compte qui n'a pas encore d'établissement. Il ne permet pas d'activer l'accès bêta.
+- **Ancien jeton d'un compte invité.** Il ne donne plus accès à l'établissement. Jusqu'à son expiration (≤ 1 h), il lit encore son propre profil (`profiles`, fondé sur `auth.uid()` seul).
+- **Chemins des mini-sites (#40, #43).** Ils passent par le service, avec l'identifiant de l'acteur. Ce sont les actions serveur qui vérifient la session, via Auth (`getUser`) : une session révoquée y est refusée, mais pas une session que la révocation aurait laissée vivante.
 - **Texte de l'email de récupération.** Il parle d'invitation ; le jour où le produit ajoutera une réinitialisation de mot de passe générale, il faudra le revoir.

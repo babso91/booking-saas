@@ -1338,3 +1338,180 @@ describe("beta invitations: Codex counter-audit", () => {
     expect(await accessOf(data.user!.id)).toBeNull();
   });
 });
+
+describe("beta invitations: an earlier session after onboarding (Codex re-audit)", () => {
+  const asToken = (accessToken: string) =>
+    createClient<Database>(env.apiUrl, env.anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    });
+
+  /** Every professional path, read and write, with that token. */
+  async function professionalPaths(accessToken: string, businessId: string) {
+    const client = asToken(accessToken);
+    const business = await client
+      .from("businesses")
+      .select("id")
+      .eq("id", businessId);
+    const members = await client
+      .from("business_members")
+      .select("id")
+      .eq("business_id", businessId);
+    const services = await client
+      .from("services")
+      .select("id")
+      .eq("business_id", businessId);
+    const renamed = await client
+      .from("businesses")
+      .update({ name: "Renommé par un ancien jeton" })
+      .eq("id", businessId)
+      .select("id");
+    const category = await client.rpc("create_service_category", {
+      p_business_id: businessId,
+      p_request_id: randomUUID(),
+      p_name: `Catégorie ${randomUUID().slice(0, 6)}`,
+      p_visible: true,
+    });
+    const catalog = await client.rpc("get_catalog", {
+      p_business_id: businessId,
+    } as never);
+    const preferences = await client.rpc("read_member_preferences", {
+      p_business_id: businessId,
+    });
+    const agenda = await client.rpc("calendar_outbound_status", {
+      p_business_id: businessId,
+    });
+    const crm = await client.rpc("crm_client_activity", {
+      p_business_id: businessId,
+      p_as_of: new Date().toISOString(),
+      p_client_id: randomUUID(),
+    } as never);
+    return {
+      readsBusiness: (business.data ?? []).length > 0,
+      readsMembers: (members.data ?? []).length > 0,
+      servicesSeen: (services.data ?? []).length,
+      renames: (renamed.data ?? []).length > 0,
+      createsCategory: category.error === null,
+      readsCatalog: catalog.error === null,
+      readsPreferences: preferences.error === null,
+      readsAgenda: agenda.error === null,
+      crm: crm.error?.message ?? "ok",
+    };
+  }
+
+  const refused = {
+    readsBusiness: false,
+    servicesSeen: 0,
+    readsMembers: false,
+    renames: false,
+    createsCategory: false,
+    readsCatalog: false,
+    readsPreferences: false,
+    readsAgenda: false,
+    crm: "forbidden",
+  };
+
+  async function invitedAndOnboarded(label: string) {
+    const email = uniqueEmail(label);
+    const invitation = await invite(email);
+    await admin.auth.admin.createUser({
+      email,
+      password: PASSWORD,
+      email_confirm: true,
+    });
+    const { data: before } = await anonClient().auth.signInWithPassword({
+      email,
+      password: PASSWORD,
+    });
+    return { email, invitation, before: before.session! };
+  }
+
+  it.each([
+    ["revoked", undefined],
+    ["kept by Auth despite its answer", async () => ({ error: null })],
+  ] as const)(
+    "an earlier session (%s) reads and writes nothing of the business her proven session created",
+    async (_label, signOutOthers) => {
+      const { email, invitation, before } =
+        await invitedAndOnboarded("after-onboarding");
+      device = new Device();
+      serverHooks.signOutOthers = signOutOthers;
+      try {
+        expect(
+          await signInAction({
+            email,
+            password: PASSWORD,
+            invitationToken: invitation.token,
+          }),
+        ).toMatchObject({ ok: true, data: { invitation: "accepted" } });
+      } finally {
+        serverHooks.signOutOthers = undefined;
+      }
+      expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
+      const [userId] = await accountsFor(email);
+      const { rows } = await db.query<{ business_id: string }>(
+        "select business_id from public.business_members where user_id = $1",
+        [userId],
+      );
+      const businessId = rows[0]!.business_id;
+      // Several rows: each one is checked (and the answer kept per request).
+      await db.query(
+        `insert into public.services (business_id, name, duration_minutes, price_cents)
+         select $1, 'Prestation ' || g, 30, 1000 from generate_series(1, 3) g`,
+        [businessId],
+      );
+
+      // The earlier session's token: nothing, read or write.
+      expect(
+        await professionalPaths(before.access_token, businessId),
+      ).toMatchObject(refused);
+      const { rows: names } = await db.query(
+        "select name from public.businesses where id = $1",
+        [businessId],
+      );
+      expect(names[0].name).toBe("Atelier Camille");
+      // An UPDATE that reads no column: only the owner's UPDATE policy
+      // (has_business_role) decides, as with that token's claims.
+      const blindUpdate = async (accessToken: string) => {
+        const transaction = await openTransaction({
+          role: "authenticated",
+          userId,
+          sessionId: JSON.parse(
+            Buffer.from(accessToken.split(".")[1]!, "base64url").toString(),
+          ).session_id,
+        });
+        try {
+          const result = await transaction.connection.query(
+            "update public.businesses set name = 'Renommé à l''aveugle'",
+          );
+          return result.rowCount;
+        } finally {
+          await closeTransaction(transaction, "rollback");
+        }
+      };
+      expect(await blindUpdate(before.access_token)).toBe(0);
+
+      // Her sessions: the proven one, and one opened afterwards.
+      const proven = (
+        await (await createServerSupabaseClient()).auth.getSession()
+      ).data.session!.access_token;
+      const { data: later } = await anonClient().auth.signInWithPassword({
+        email,
+        password: PASSWORD,
+      });
+      expect(await blindUpdate(proven)).toBe(1);
+      for (const token of [proven, later.session!.access_token]) {
+        expect(await professionalPaths(token, businessId)).toMatchObject({
+          readsBusiness: true,
+          readsMembers: true,
+          servicesSeen: 3,
+          renames: true,
+          createsCategory: true,
+          readsCatalog: true,
+          readsPreferences: true,
+          readsAgenda: true,
+        });
+      }
+    },
+  );
+});
