@@ -4,6 +4,8 @@ import type {
   PublicBusinessDto,
   PublicServiceDto,
 } from "@/features/businesses/data/public-business";
+import type { PublicQuote } from "@/features/catalog/data/catalog";
+import type { PublicCatalog } from "@/features/catalog/model";
 import type { AppErrorCode } from "@/lib/errors";
 
 // The public booking routes (docs/PUBLIC_BOOKING_CONTRACT.md), called from
@@ -16,7 +18,18 @@ export type PublicService = PublicServiceDto;
 export type Slot = SlotDto;
 export type Booking = PublicBookingDto;
 
-export type Availability = { date: string; timezone: string; slots: Slot[] };
+export type Quote = PublicQuote;
+
+/**
+ * Slots of one day and the quote they are for: the price and duration the
+ * server books for these answers, from the same read of the catalogue.
+ */
+export type Availability = {
+  date: string;
+  timezone: string;
+  slots: Slot[];
+  quote: Quote;
+};
 
 export type BookingErrorCode = AppErrorCode | "network";
 
@@ -37,6 +50,11 @@ export type BookingCommand = {
   lastName?: string;
   email: string;
   phone?: string;
+  /** One answer per answered group (none: the service alone). */
+  optionChoiceIds?: string[];
+  /** What she was shown: if the server comes to another, nothing is booked. */
+  expectedPriceCents?: number;
+  expectedDurationMinutes?: number;
 };
 
 /** Longest wait for a read, then for a booking, before saying so. */
@@ -97,13 +115,13 @@ async function request<T>(
 const businessUrl = (slug: string) =>
   `/api/public/businesses/${encodeURIComponent(slug)}`;
 
-/** The public profile and its active services (nothing private). */
+/** The public profile, its active services and its catalogue. */
 export function fetchPublicBusiness(slug: string) {
-  return request<{ business: PublicBusiness; services: PublicService[] }>(
-    businessUrl(slug),
-    { method: "GET" },
-    READ_TIMEOUT_MS,
-  );
+  return request<{
+    business: PublicBusiness;
+    services: PublicService[];
+    catalog: PublicCatalog;
+  }>(businessUrl(slug), { method: "GET" }, READ_TIMEOUT_MS);
 }
 
 /** Real slots of one civil day, in the business time zone. */
@@ -111,9 +129,12 @@ export function fetchAvailability(
   slug: string,
   serviceId: string,
   date: string,
+  optionChoiceIds: string[],
   signal?: AbortSignal,
 ) {
   const query = new URLSearchParams({ serviceId, date });
+  if (optionChoiceIds.length > 0)
+    query.set("optionChoiceIds", optionChoiceIds.join(","));
   return request<Availability>(
     `${businessUrl(slug)}/availability?${query}`,
     { method: "GET", signal },

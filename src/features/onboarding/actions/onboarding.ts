@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { getSessionState } from "@/features/auth/data/session";
+import { hasBetaAccess } from "@/features/beta/invitations";
 import {
   checkSlugAvailability,
   completeOnboarding,
@@ -50,6 +51,12 @@ export async function completeOnboardingAction(
     }
     if (state.status === "ready") {
       throw new AppException("already_onboarded");
+    }
+
+    // Private beta: her account needs an accepted invitation (the database
+    // refuses the business anyway; this answers before any work).
+    if (!(await hasBetaAccess(client))) {
+      throw new AppException("beta_invitation_required");
     }
 
     const parsed = completeOnboardingSchema.safeParse(input);

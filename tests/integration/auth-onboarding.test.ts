@@ -21,7 +21,7 @@ import {
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 import type { Database } from "@/types/database.generated";
 
-import { anonClient, db, env } from "./support/fixtures";
+import { anonClient, db, env, grantBetaAccess } from "./support/fixtures";
 import {
   closeTransaction,
   openTransaction,
@@ -70,6 +70,8 @@ async function signedUpUser(label = "pro") {
   );
   const [userId] = await userIdOf(email);
   await admin.auth.admin.updateUserById(userId!, { email_confirm: true });
+  // An invited professional (private beta).
+  await grantBetaAccess(userId!);
   await signInWithPassword(client, { email, password: PASSWORD });
 
   return { client, email, userId: userId! };

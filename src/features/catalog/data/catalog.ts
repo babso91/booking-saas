@@ -197,6 +197,25 @@ export async function reorderCategories(
   return listCategories(client, businessId);
 }
 
+/**
+ * Moves one category a step up or down from where it is now (applied to
+ * the current order, under the schedule lock): a move made in another tab
+ * meanwhile is kept, never replaced. Answers her categories as they are.
+ */
+export async function moveCategory(
+  client: AppSupabaseClient,
+  businessId: string,
+  input: { categoryId: string; offset: -1 | 1 },
+): Promise<CategoryDto[]> {
+  const { error } = await client.rpc("move_service_category", {
+    p_business_id: businessId,
+    p_category_id: input.categoryId,
+    p_offset: input.offset,
+  });
+  if (error) throw databaseException(error);
+  return listCategories(client, businessId);
+}
+
 /** Deletes a category; its services stay, without a category. */
 export async function deleteCategory(
   client: AppSupabaseClient,

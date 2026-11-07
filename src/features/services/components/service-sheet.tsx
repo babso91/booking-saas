@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button, type ButtonState } from "@/components/ui/button";
 import { TextAreaField, TextField } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
+import { SelectField } from "@/components/ui/select-field";
 import { Sheet } from "@/components/ui/sheet";
 import {
   fingerprintOf,
@@ -16,6 +17,7 @@ import {
   scopeId,
   type DraftScope,
 } from "@/features/businesses/client/draft-scope";
+import type { CatalogCategory } from "@/features/catalog/client/catalog-view";
 import {
   createServiceAction,
   updateServiceAction,
@@ -52,6 +54,7 @@ const FIELD_ORDER: ServiceField[] = [
   "description",
   "duration",
   "price",
+  "category",
 ];
 
 const linkAction =
@@ -59,7 +62,12 @@ const linkAction =
 
 /** Which form is open: a new service, or an existing one. */
 export type ServiceSheetTarget =
-  { mode: "create" } | { mode: "edit"; service: ServiceView };
+  | {
+      mode: "create";
+      /** Opened from one of her categories: it is preselected. */
+      categoryId?: string;
+    }
+  | { mode: "edit"; service: ServiceView };
 
 /** The service as it is now, read after a refused edit. */
 export type CurrentService =
@@ -93,6 +101,7 @@ const sameDraft = (a: ServiceDraft, b: ServiceDraft) =>
  */
 export function ServiceSheet({
   target,
+  categories,
   currency,
   scope,
   onClose,
@@ -102,6 +111,8 @@ export function ServiceSheet({
   readCurrent,
 }: {
   target: ServiceSheetTarget | null;
+  /** Her categories, in her order (from the same reading as the list). */
+  categories: CatalogCategory[];
   currency: string;
   /** Whose drafts these are (signed-in user and business). */
   scope: DraftScope;
@@ -141,6 +152,8 @@ export function ServiceSheet({
         <CreateForm
           key={formKey}
           storeKey={creationKey(scope)}
+          initial={{ ...EMPTY_SERVICE, category: target.categoryId ?? "" }}
+          categories={categories}
           currency={currency}
           onSavingChange={setSaving}
           onClose={onClose}
@@ -152,6 +165,7 @@ export function ServiceSheet({
           key={formKey}
           service={target.service}
           storeKey={editKey(scope, target.service.id)}
+          categories={categories}
           currency={currency}
           onSavingChange={setSaving}
           onClose={onClose}
@@ -170,6 +184,8 @@ export function ServiceSheet({
 
 function CreateForm({
   storeKey,
+  initial,
+  categories,
   currency,
   onSavingChange,
   onClose,
@@ -177,6 +193,9 @@ function CreateForm({
   onReload,
 }: {
   storeKey: string;
+  /** An empty form, or one preselecting her category. */
+  initial: ServiceDraft;
+  categories: CatalogCategory[];
   currency: string;
   onSavingChange: (saving: boolean) => void;
   onClose: () => void;
@@ -185,7 +204,7 @@ function CreateForm({
 }) {
   const [kept] = useState(() => readPendingCreation(storeKey));
   const [draft, setDraft] = useState<ServiceDraft>(
-    () => kept?.draft ?? EMPTY_SERVICE,
+    () => kept?.draft ?? initial,
   );
   /** The request id of the last command sent (kept with the draft). */
   const key = useRef<RequestKey | null>(kept?.key ?? null);
@@ -212,7 +231,7 @@ function CreateForm({
   useEffect(() => () => onSavingChange(false), [onSavingChange]);
 
   const busy = state !== "idle";
-  const pending = !sameDraft(draft, EMPTY_SERVICE) || unconfirmed;
+  const pending = !sameDraft(draft, initial) || unconfirmed;
   const checked = checkService(draft);
   // Values changed since the unconfirmed command: saving is a new creation.
   const changedSinceUnconfirmed =
@@ -222,7 +241,7 @@ function CreateForm({
     fingerprintOf(checked.command) !== sentFingerprint;
 
   function keep(next: { draft: ServiceDraft; unconfirmed: boolean }) {
-    if (sameDraft(next.draft, EMPTY_SERVICE) && !next.unconfirmed) {
+    if (sameDraft(next.draft, initial) && !next.unconfirmed) {
       clearServiceDraft(storeKey);
     } else {
       writePendingCreation(storeKey, { ...next, key: key.current });
@@ -326,6 +345,7 @@ function CreateForm({
         draft={draft}
         errors={errors}
         busy={busy}
+        categories={categories}
         currency={currency}
         onChange={change}
       />
@@ -420,6 +440,7 @@ function CreateFailure({
 function EditForm({
   service,
   storeKey,
+  categories,
   currency,
   onSavingChange,
   onClose,
@@ -430,6 +451,7 @@ function EditForm({
   service: ServiceView;
   /** Where this edit is kept for later (this identity, this service). */
   storeKey: string;
+  categories: CatalogCategory[];
   currency: string;
   onSavingChange: (saving: boolean) => void;
   onClose: () => void;
@@ -586,6 +608,7 @@ function EditForm({
         draft={draft}
         errors={errors}
         busy={busy}
+        categories={categories}
         currency={currency}
         onChange={change}
       />
@@ -595,6 +618,7 @@ function EditForm({
           base={base}
           current={current}
           typed={draft}
+          categories={categories}
           onCompare={compare}
           onKeepMine={keepMine}
           onTakeTheirs={takeTheirs}
@@ -624,6 +648,7 @@ type StaleProps = {
   base: ServiceView;
   current: CurrentService | { status: "loading" } | null;
   typed: ServiceDraft;
+  categories: CatalogCategory[];
   onCompare: () => void;
   onKeepMine: (latest: ServiceView) => void;
   onTakeTheirs: (latest: ServiceView) => void;
@@ -649,6 +674,7 @@ function StaleNotice({
   base,
   current,
   typed,
+  categories,
   onCompare,
   onKeepMine,
   onTakeTheirs,
@@ -657,11 +683,20 @@ function StaleNotice({
     const latest = current.service;
     const changes = serviceChangedElsewhere(base, latest, typed);
     const mine = changes.some((change) => change.edited);
+    // A category is said by its name, never by its id.
+    const said = (field: ServiceField, value: string) =>
+      field !== "category"
+        ? value
+        : value
+          ? (categories.find((category) => category.id === value)?.name ??
+            "une catégorie supprimée")
+          : "sans catégorie";
     return (
       <Notice tone="warning" title="Version actuelle de la prestation">
         {changes.length === 0 ? (
           <p>
-            Ses nom, description, durée et prix n’ont pas changé ailleurs
+            Ses nom, description, durée, prix et catégorie n’ont pas changé
+            ailleurs
             {latest.active !== base.active
               ? ` : elle a été ${latest.active ? "réactivée" : "désactivée"}.`
               : "."}
@@ -674,11 +709,12 @@ function StaleNotice({
                   {serviceFieldLabels[change.field]}
                 </dt>
                 <dd className="wrap-anywhere">
-                  Maintenant : {change.current || "non renseigné"}
+                  Maintenant :{" "}
+                  {said(change.field, change.current) || "non renseigné"}
                 </dd>
                 <dd className="wrap-anywhere">
                   {change.edited
-                    ? `Ta saisie : ${change.typed || "non renseigné"}`
+                    ? `Ta saisie : ${said(change.field, change.typed) || "non renseigné"}`
                     : "Tu ne l’avais pas modifié : la valeur actuelle sera gardée."}
                 </dd>
               </div>
@@ -742,19 +778,23 @@ function focusFirstError(
 ) {
   const index = FIELD_ORDER.findIndex((field) => found[field]);
   if (index < 0) return;
-  form?.querySelectorAll<HTMLElement>("input, textarea")[index]?.focus();
+  form
+    ?.querySelectorAll<HTMLElement>("input, textarea, select")
+    [index]?.focus();
 }
 
 function ServiceFields({
   draft,
   errors,
   busy,
+  categories,
   currency,
   onChange,
 }: {
   draft: ServiceDraft;
   errors: Partial<Record<ServiceField, string>>;
   busy: boolean;
+  categories: CatalogCategory[];
   currency: string;
   onChange: (field: ServiceField, value: string) => void;
 }) {
@@ -775,7 +815,7 @@ function ServiceFields({
         readOnly={busy}
         maxLength={MAX_NAME}
         autoComplete="off"
-        placeholder="Rehaussement de cils"
+        placeholder="Rehaussement, motif au henné, épilation…"
         data-autofocus=""
       />
       <TextAreaField
@@ -816,6 +856,29 @@ function ServiceFields({
           }
         />
       </div>
+      {categories.length > 0 || draft.category ? (
+        <SelectField
+          label="Catégorie"
+          value={draft.category}
+          onChange={(event) => onChange("category", event.target.value)}
+          error={errors.category}
+          disabled={busy}
+          hint="Elle range la prestation ici et sur ta page de réservation."
+        >
+          <option value="">Sans catégorie</option>
+          {categories.map((category) => (
+            <option key={category.id} value={category.id}>
+              {category.name}
+              {category.visible ? "" : " (masquée en ligne)"}
+            </option>
+          ))}
+          {draft.category &&
+          !categories.some((category) => category.id === draft.category) ? (
+            // Deleted since this draft was typed: said, never silently moved.
+            <option value={draft.category}>Catégorie supprimée</option>
+          ) : null}
+        </SelectField>
+      ) : null}
     </>
   );
 }

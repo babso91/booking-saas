@@ -57,14 +57,14 @@ Ce sont les mêmes règles que pour la PR #19.
   - Fermer ou recharger l'onglet demande une confirmation au navigateur (`beforeunload`).
   - Une autre sortie (bouton Précédent) garde la semaine non enregistrée pour la session, avec la semaine dont elle est partie. Elle est proposée au retour (« Brouillon non enregistré restauré »). Si les horaires enregistrés ont changé depuis, elle est quand même restaurée (« Brouillon restauré, horaires modifiés ») et comparée aux horaires actuels, avec les trois mêmes choix ; « Continuer à modifier » reste fondé sur la semaine de départ, donc l'enregistrement est de nouveau refusé et comparé tant qu'elle est périmée.
 
-## Ce qui n'est pas promis
+## Sa page publique
 
-La réservation en ligne par les clientes n'existe pas encore (`/b/[slug]` est une page de fondation). Les invitations à « partager ton lien » ont donc été retirées :
+La réservation en ligne existe (`/b/[slug]`, [`PUBLIC_BOOKING_CONTRACT.md`](PUBLIC_BOOKING_CONTRACT.md)) : sa page de réservation, ou son site une fois publié. Son adresse est donc un vrai lien, jamais « Bientôt » :
 
-- de l'écran de bienvenue ;
-- de l'agenda vide ;
-- de l'annuaire vide ;
-- de la barre latérale, où l'adresse est affichée avec la mention « Bientôt », sans lien.
+- **barre latérale et feuille « Compte » / « Plus »** des quatre styles (`PublicLink`) : l'adresse s'ouvre dans un nouvel onglet, et « Copier le lien » copie l'adresse complète (l'origine où elle se trouve). Si le presse-papiers est refusé, l'adresse est sélectionnée pour une copie à la main ;
+- **Studio**, dès qu'une version est en ligne : « Voir mon site en ligne » et « Copier le lien » ;
+- **bienvenue** : prestations et horaires ouvrent la réservation en ligne, et chaque rendez-vous arrive dans l'agenda. La troisième ligne de la mise en route est « Ton site », facultative : elle ne compte pas dans « x sur 2 », puisque sans site sa page est sa page de réservation ;
+- **agenda vide** : les rendez-vous réservés en ligne y arrivent aussi.
 
 ## Limites connues
 

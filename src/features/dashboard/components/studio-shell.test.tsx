@@ -118,10 +118,12 @@ describe("every room is reachable, on a phone as on a computer", () => {
         "/app/clients",
         "/app/loyalty",
         "/app/services",
+        "/app/site",
         "/app/settings/appearance",
         "/app/settings/calendar",
         "/app/settings/hours",
         "/app/today",
+        "/b/atelier-maelys",
       ].sort(),
     );
   });

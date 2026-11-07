@@ -93,6 +93,8 @@ describe("migrated schema", () => {
       "get_public_business",
       "get_public_catalog",
       "get_public_services",
+      // The published version of a mini-site (site_publishing migration).
+      "get_public_site",
       "quote_public_service",
     ]);
   });

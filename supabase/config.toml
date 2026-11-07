@@ -114,7 +114,7 @@ port = 54324
 [storage]
 enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
-file_size_limit = "5MiB"
+file_size_limit = "10MiB"
 
 # Uncomment to configure local storage buckets
 # [storage.buckets.images]
@@ -256,6 +256,13 @@ otp_expiry = 3600
 # [auth.email.template.invite]
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
+
+# The recovery link: sent to an invited address whose account existed
+# already (docs/BETA_ACCESS.md). The same subject and text are to be set on
+# the hosted project (Authentication > Email Templates > Reset Password).
+[auth.email.template.recovery]
+subject = "Choisis ton mot de passe"
+content_path = "./supabase/templates/recovery.html"
 
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]

@@ -55,6 +55,24 @@ export function bookingRequest<T extends object>(
   return { ...input, requestId: randomUUID() };
 }
 
+/**
+ * Beta access for an account, as an accepted invitation gives it (private
+ * beta, docs/BETA_ACCESS.md): the professionals of these tests are invited
+ * ones. The gate itself is tested in beta-invitations.test.ts.
+ */
+export async function grantBetaAccess(userId: string) {
+  // Upgrade tests start from schemas before the beta: nothing to grant.
+  const { rows } = await db.query<{ exists: boolean }>(
+    "select to_regclass('private.beta_access') is not null as exists",
+  );
+  if (!rows[0]?.exists) return;
+  await db.query(
+    `insert into private.beta_access (user_id, source) values ($1, 'existing')
+     on conflict (user_id) do nothing`,
+    [userId],
+  );
+}
+
 export type Professional = {
   userId: string;
   email: string;
@@ -75,6 +93,8 @@ export async function createProfessional(label: string): Promise<Professional> {
   if (error || !data.user) {
     throw error ?? new Error("User creation failed");
   }
+
+  await grantBetaAccess(data.user.id);
 
   const client = anonClient();
   const { error: signInError } = await client.auth.signInWithPassword({

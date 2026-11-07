@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type Ref } from "react";
+import { useEffect, useState, type ComponentProps, type Ref } from "react";
 
 import { Button, type ButtonState } from "@/components/ui/button";
 
@@ -14,11 +14,14 @@ export function CheckEmail({
   headingRef,
   onChangeEmail,
   onResend,
+  loginHref = "/login",
 }: {
   email: string;
   headingRef: Ref<HTMLHeadingElement>;
   onChangeEmail: () => void;
   onResend: () => Promise<boolean>;
+  /** Her sign-in, with her invitation when she came by one (#47). */
+  loginHref?: ComponentProps<typeof Link>["href"];
 }) {
   const [resendState, setResendState] = useState<ButtonState>("idle");
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_S);
@@ -75,7 +78,7 @@ export function CheckEmail({
 
       <div className="flex w-full animate-rise flex-col gap-3 [animation-delay:140ms]">
         <Link
-          href="/login"
+          href={loginHref}
           className="inline-flex h-14 w-full items-center justify-center rounded-2xl bg-ink text-base font-medium text-paper-raised shadow-[0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] transition-[background-color,transform] duration-200 hover:bg-[color-mix(in_srgb,var(--ink)_86%,var(--paper))] active:scale-[0.985]"
         >
           J’ai confirmé, me connecter

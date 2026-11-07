@@ -35,6 +35,34 @@ export const errorCopy: Record<
     title: "Lien réservé",
     message: "Ce mot est réservé. Essaie une variante.",
   },
+  beta_invitation_required: {
+    title: "Bêta sur invitation",
+    message:
+      "L’accès se fait avec le lien personnel reçu dans ton invitation. Ouvre-le pour créer ton espace.",
+  },
+  invitation_invalid: {
+    title: "Lien non valide",
+    message:
+      "Ce lien d’invitation n’est pas valide. Vérifie qu’il est complet, ou demande-en un nouveau.",
+  },
+  invitation_expired: {
+    title: "Invitation expirée",
+    message: "Ce lien a expiré. Demande-nous une nouvelle invitation.",
+  },
+  invitation_used: {
+    title: "Invitation déjà utilisée",
+    message: "Ton espace a déjà été créé avec ce lien. Connecte-toi.",
+  },
+  invitation_email_mismatch: {
+    title: "Autre adresse",
+    message:
+      "Cette invitation est liée à une autre adresse. Utilise celle à laquelle tu l’as reçue.",
+  },
+  session_revocation_failed: {
+    title: "Pas encore activée",
+    message:
+      "On n’a pas pu fermer les autres connexions à ce compte, donc ton invitation n’est pas encore activée. Réessaie dans un instant.",
+  },
   already_onboarded: {
     title: "Ton espace existe déjà",
     message: "Ton activité est déjà configurée. Tu peux y accéder directement.",
@@ -119,6 +147,67 @@ export const errorCopy: Record<
   service_unavailable: {
     title: "Prestation indisponible",
     message: "Cette prestation n’est pas disponible.",
+  },
+  stale_site_draft: {
+    title: "Modifié entre-temps",
+    message: "Ton site a changé ailleurs. Recharge-le avant de réessayer.",
+  },
+  site_business_changed: {
+    title: "Autre compte connecté",
+    message:
+      "Ta session a changé d’activité depuis un autre onglet : rien n’a été enregistré ici, et rien n’a touché l’autre site. Recharge la page.",
+  },
+  site_not_found: {
+    title: "Pas encore de brouillon",
+    message: "Enregistre ton site avant de le publier.",
+  },
+  site_not_published: {
+    title: "Pas encore publié",
+    message: "Ce site n’est pas encore en ligne.",
+  },
+  site_version_not_found: {
+    title: "Version introuvable",
+    message: "Cette version de ton site n’existe pas.",
+  },
+  site_unreadable: {
+    title: "Textes illisibles",
+    message:
+      "Certains textes ne se liraient pas. Corrige les couleurs avant de publier.",
+  },
+  site_asset_unavailable: {
+    title: "Photo indisponible",
+    message: "Une photo n’est plus disponible. Choisis-en une autre.",
+  },
+  site_asset_in_use: {
+    title: "Photo utilisée",
+    message:
+      "Cette photo est sur ton brouillon ou une version publiée. Retire-la, ou révoque-la.",
+  },
+  site_photo_not_found: {
+    title: "Photo introuvable",
+    message: "Cette photo n’existe plus.",
+  },
+  site_photo_revoked: {
+    title: "Photo révoquée",
+    message: "Cette photo a été révoquée. Envoie-en une nouvelle.",
+  },
+  site_photo_unsupported: {
+    title: "Format non accepté",
+    message:
+      "Choisis une photo JPEG, PNG, WebP ou AVIF. Sur iPhone, choisis-la depuis la photothèque.",
+  },
+  site_photo_too_large: {
+    title: "Photo trop lourde",
+    message: "Choisis une photo de 10 Mo au plus.",
+  },
+  site_photo_cleanup_pending: {
+    title: "Presque terminé",
+    message:
+      "Des fichiers de la photo n’ont pas encore pu être supprimés. Réessaie : leur suppression sera reprise.",
+  },
+  site_photo_invalid: {
+    title: "Photo trop petite",
+    message: "Choisis une photo d’au moins 320 px de côté, pas trop allongée.",
   },
   stale_service: {
     title: "Modifiée entre-temps",

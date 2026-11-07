@@ -39,12 +39,24 @@ export const editKey = (scope: DraftScope, serviceId: string) =>
 
 const DRAFT_FIELDS = ["name", "description", "duration", "price"] as const;
 
-const isDraft = (value: unknown): value is ServiceDraft =>
+const isDraft = (value: unknown): value is Omit<ServiceDraft, "category"> =>
   typeof value === "object" &&
   value !== null &&
   DRAFT_FIELDS.every(
     (field) => typeof (value as Record<string, unknown>)[field] === "string",
   );
+
+/**
+ * A draft kept before categories existed has none: it keeps the category
+ * it started from (`fallback`), so it never moves the service by itself.
+ */
+const withCategory = (
+  draft: Omit<ServiceDraft, "category"> & { category?: unknown },
+  fallback: string,
+): ServiceDraft => ({
+  ...draft,
+  category: typeof draft.category === "string" ? draft.category : fallback,
+});
 
 function parse(raw: string | null): unknown {
   if (!raw) return null;
@@ -59,7 +71,7 @@ export function readPendingCreation(key: string): PendingCreation | null {
   const value = parse(readDraftRaw(key)) as Partial<PendingCreation> | null;
   return value && isDraft(value.draft)
     ? {
-        draft: value.draft,
+        draft: withCategory(value.draft, ""),
         key: value.key ?? null,
         unconfirmed: value.unconfirmed === true,
       }
@@ -83,7 +95,10 @@ export function readEditDraft(
     isDraft(value.draft) &&
     base?.id === serviceId &&
     typeof base.version === "number"
-    ? { draft: value.draft, base }
+    ? {
+        draft: withCategory(value.draft, base.categoryId ?? ""),
+        base: { ...base, categoryId: base.categoryId ?? null },
+      }
     : null;
 }
 

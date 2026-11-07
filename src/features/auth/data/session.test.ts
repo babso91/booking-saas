@@ -31,6 +31,7 @@ describe("safeNextPath", () => {
   it("accepts known internal paths only", () => {
     expect(safeNextPath("/onboarding")).toBe("/onboarding");
     expect(safeNextPath("/app")).toBe("/app");
+    expect(safeNextPath("/invitation")).toBe("/invitation");
   });
 
   it.each([
@@ -52,6 +53,12 @@ describe("authCallbackUrl", () => {
     );
     expect(authCallbackUrl("https://app.example.com/")).toBe(
       "https://app.example.com/auth/callback",
+    );
+  });
+
+  it("carries an allowed next path", () => {
+    expect(authCallbackUrl("https://app.example.com", "/invitation")).toBe(
+      "https://app.example.com/auth/callback?next=%2Finvitation",
     );
   });
 

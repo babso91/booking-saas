@@ -5,16 +5,19 @@ import type { SetupProgressDto } from "@/features/businesses/data/setup-progress
 import { cn } from "@/lib/cn";
 
 /**
- * What to configure after onboarding, in order: services, then opening
- * hours, then appointments in the agenda. Each step reflects the real data
- * (counted on the server) and links to the screen that configures it.
- * Online booking by customers is not available yet, and is not promised.
+ * What to configure after onboarding: services, then opening hours (both
+ * counted on the server). With them, her clients book online on her page.
+ * Her site comes third and is optional: without one, the page is her
+ * booking page, so it never counts as unfinished setup.
  */
 export function SetupChecklist({
   progress,
+  sitePublished = false,
   compact = false,
 }: {
   progress: SetupProgressDto;
+  /** Whether a version of her site is online (read on the server). */
+  sitePublished?: boolean;
   /** A banner above the agenda instead of the welcome page block. */
   compact?: boolean;
 }) {
@@ -41,12 +44,13 @@ export function SetupChecklist({
       action: hours ? "Modifier" : "Configurer",
     },
     {
-      done: false,
-      title: "Tes rendez-vous",
-      detail:
-        "Ajoute-les dans l’agenda. La réservation en ligne par tes clientes arrive bientôt.",
-      href: "/app" as const,
-      action: "Agenda",
+      done: sitePublished,
+      title: "Ton site",
+      detail: sitePublished
+        ? "En ligne : tes clientes réservent depuis ton site"
+        : "Choisis ton univers et publie-le, quand tu veux",
+      href: "/app/site" as const,
+      action: sitePublished ? "Modifier" : "Créer",
     },
   ];
 
@@ -84,7 +88,7 @@ export function SetupChecklist({
           ))}
         </ul>
         <p className="hidden text-[13px] text-ink-muted md:block">
-          La réservation en ligne par tes clientes arrive bientôt.
+          Ensuite, tes clientes réservent en ligne sur ta page.
         </p>
       </section>
     );
