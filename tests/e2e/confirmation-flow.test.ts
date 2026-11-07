@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { inject } from "vitest";
 
@@ -9,6 +10,8 @@ import { signUpWithPassword } from "@/features/auth/data/credentials";
 import { getSessionState } from "@/features/auth/data/session";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 import type { Database } from "@/types/database.generated";
+
+import { createBetaInvitation } from "../../scripts/beta-invite.mjs";
 
 // Sign-up with email confirmation enabled, end to end:
 //   signUpAction → confirmation_required → confirmation email (Mailpit)
@@ -160,17 +163,32 @@ async function followVerifyLink(link: URL) {
   return new URL(response.headers.get("location")!);
 }
 
+/** Her invitation (private beta), as the operator's command makes it. */
+async function invitationFor(email: string) {
+  const service = createClient<Database>(env.apiUrl, env.serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const { url } = await createBetaInvitation(service, {
+    email,
+    days: 7,
+    appUrl: APP,
+  });
+  return new URL(url).searchParams.get("invitation")!;
+}
+
 async function signUpInBrowser(jar: CookieJar, label: string) {
   activeJar = jar;
   const email = `${label}-${randomUUID().slice(0, 8)}@test.local`;
+  const invitationToken = await invitationFor(email);
   const result = await signUpAction({
     email,
     password: PASSWORD,
     firstName: "Mila",
     lastName: "Durand",
+    invitationToken,
   });
 
-  return { email, result };
+  return { email, result, invitationToken };
 }
 
 beforeAll(() => {
@@ -178,6 +196,7 @@ beforeAll(() => {
   process.env.NEXT_PUBLIC_APP_URL = APP;
   process.env.NEXT_PUBLIC_SUPABASE_URL = env.apiUrl;
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = env.anonKey;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = env.serviceRoleKey;
 });
 
 describe("sign-up with email confirmation enabled", () => {
@@ -340,14 +359,21 @@ describe("sign-up with email confirmation enabled", () => {
   });
 
   it("answers a pending, unconfirmed registration like a new one", async () => {
-    const { email } = await signUpInBrowser(new CookieJar(), "twice");
+    const { email, invitationToken } = await signUpInBrowser(
+      new CookieJar(),
+      "twice",
+    );
 
     // Supabase sends at most one email per address per second (max_frequency).
     await new Promise((resolve) => setTimeout(resolve, 1_200));
 
     activeJar = new CookieJar();
     expect(
-      await signUpAction({ email, password: "another-password-123" }),
+      await signUpAction({
+        email,
+        password: "another-password-123",
+        invitationToken,
+      }),
     ).toEqual({
       ok: true,
       data: { status: "confirmation_required", email, next: null },

@@ -16,6 +16,8 @@ export async function openTransaction(
   options: {
     role?: "anon" | "authenticated" | "service_role";
     userId?: string;
+    /** The JWT's `session_id` claim (an Auth session), with `userId`. */
+    sessionId?: string;
     isolation?: "read committed" | "repeatable read" | "serializable";
   } = {},
 ): Promise<OpenTransaction> {
@@ -31,7 +33,13 @@ export async function openTransaction(
   if (options.userId) {
     await connection.query(
       "select set_config('request.jwt.claims', $1, true)",
-      [JSON.stringify({ sub: options.userId, role: "authenticated" })],
+      [
+        JSON.stringify({
+          sub: options.userId,
+          role: "authenticated",
+          ...(options.sessionId ? { session_id: options.sessionId } : {}),
+        }),
+      ],
     );
   }
   if (options.role) {

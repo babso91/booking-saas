@@ -55,6 +55,7 @@ const domainMessages: Record<string, AppErrorCode> = {
   forbidden: "forbidden",
   unauthenticated: "unauthenticated",
   already_onboarded: "already_onboarded",
+  beta_invitation_required: "beta_invitation_required",
   slug_taken: "slug_taken",
   slug_reserved: "slug_reserved",
   invalid_input: "validation_error",

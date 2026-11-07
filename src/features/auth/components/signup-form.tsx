@@ -27,8 +27,17 @@ type Field = "email" | "password";
  * Email + password only: the show/hide toggle replaces a confirmation field,
  * which mostly adds friction on mobile keyboards.
  */
-export function SignupForm() {
+export function SignupForm({
+  invitationToken,
+}: {
+  /** From her invitation link; the server checks it (private beta). */
+  invitationToken?: string;
+} = {}) {
   const router = useRouter();
+  // Her invitation follows her to the sign-in (an account already there).
+  const loginHref = invitationToken
+    ? { pathname: "/login" as const, query: { invitation: invitationToken } }
+    : ("/login" as const);
   const [values, setValues] = useState({ email: "", password: "" });
   const [fieldErrors, setFieldErrors] = useState<FieldErrors<Field>>({});
   const [formError, setFormError] = useState<UiError | null>(null);
@@ -66,7 +75,9 @@ export function SignupForm() {
     setFormError(null);
     setState("loading");
 
-    const result = await callAction(() => signUpAction(parsed.data));
+    const result = await callAction(() =>
+      signUpAction({ ...parsed.data, invitationToken }),
+    );
 
     if (!result.ok) {
       setState("idle");
@@ -106,7 +117,9 @@ export function SignupForm() {
   async function resend(): Promise<boolean> {
     const parsed = signUpSchema.safeParse(values);
     if (!parsed.success) return false;
-    const result = await callAction(() => signUpAction(parsed.data));
+    const result = await callAction(() =>
+      signUpAction({ ...parsed.data, invitationToken }),
+    );
     return result.ok && result.data.status === "confirmation_required";
   }
 
@@ -149,7 +162,7 @@ export function SignupForm() {
             action={
               formError.code === "email_taken" ? (
                 <Link
-                  href="/login"
+                  href={loginHref}
                   className="text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4"
                 >
                   Me connecter
@@ -224,7 +237,7 @@ export function SignupForm() {
       <p className="animate-rise text-center text-[15px] text-ink-soft [animation-delay:120ms]">
         Déjà un compte ?{" "}
         <Link
-          href="/login"
+          href={loginHref}
           className="font-semibold text-ink underline decoration-line-strong decoration-1 underline-offset-4 transition-colors hover:decoration-ink"
         >
           Se connecter

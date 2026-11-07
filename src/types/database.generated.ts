@@ -825,7 +825,10 @@ isOneToOne: false
                 }
           }
           Functions: {
-            "agenda_create_appointment":
+            "accept_beta_invitation":
+{ Args: { "p_email": string,"p_proof_session"?: string,"p_token_hash": string,"p_user_id": string }; Returns: string
+                           },
+"agenda_create_appointment":
 { Args: { "p_business_id": string,"p_client_email"?: string,"p_client_first_name"?: string,"p_client_id"?: string,"p_client_last_name"?: string,"p_client_phone"?: string,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_request_id"?: string,"p_service_id": string,"p_starts_at": string }; Returns: {
               "appointment_id": string,"created": boolean
             }[]
@@ -838,6 +841,11 @@ isOneToOne: false
                            },
 "begin_site_photo_conversion":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: string
+                           },
+"beta_invited_account":
+{ Args: { "p_email": string,"p_token_hash": string }; Returns: {
+              "state": string,"user_id": string
+            }[]
                            },
 "business_time":
 { Args: { "p_business_id": string,"p_dates"?: (string)[],"p_instants"?: (string)[],"p_locals"?: (string)[],"p_open_ranges"?: boolean }; Returns: Json
@@ -997,6 +1005,9 @@ isOneToOne: false
 "calendar_verify_notification":
 { Args: { "p_channel_id": string,"p_resource_id": string,"p_token_hash": string }; Returns: string
                            },
+"check_beta_invitation":
+{ Args: { "p_email": string,"p_token_hash": string }; Returns: string
+                           },
 "check_slug_availability":
 { Args: { "p_slug": string }; Returns: {
               "available": boolean,"reason": string,"slug": string
@@ -1048,6 +1059,9 @@ isOneToOne: false
                            },
 "confirm_site_asset":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string,"p_byte_size": number,"p_content_type": string,"p_height": number,"p_width": number }; Returns: undefined
+                           },
+"create_beta_invitation":
+{ Args: { "p_email": string,"p_expires_at": string,"p_note"?: string,"p_token_hash": string }; Returns: string
                            },
 "create_public_booking":
 { Args: { "p_client_ip": unknown,"p_email": string,"p_expected_duration_minutes"?: number,"p_expected_price_cents"?: number,"p_first_name": string,"p_last_name"?: string,"p_option_choice_ids"?: (string)[],"p_phone"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
@@ -1229,6 +1243,9 @@ isOneToOne: false
 "move_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_offset": number }; Returns: undefined
                            },
+"my_beta_access":
+{ Args: Record<PropertyKey, never>; Returns: boolean
+                           },
 "pending_site_photo_purges":
 { Args: { "p_before": string,"p_limit": number }; Returns: {
               "asset_id": string,"attempts": number,"business_id": string,"scope": string
@@ -1282,6 +1299,9 @@ isOneToOne: false
       } },
 "restore_site_version":
 { Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number,"p_version_id": string }; Returns: number
+                           },
+"revoke_beta_invitation":
+{ Args: { "p_invitation_id": string }; Returns: undefined
                            },
 "revoke_site_asset":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: undefined

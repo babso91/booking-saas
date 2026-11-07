@@ -8,11 +8,16 @@ export const metadata: Metadata = {
 };
 
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
-  const { error } = await searchParams;
+  const { error, invitation } = await searchParams;
 
   return (
     <AuthShell>
-      <LoginForm callbackFailed={error === "auth_callback_failed"} />
+      <LoginForm
+        callbackFailed={error === "auth_callback_failed"}
+        invitationToken={
+          typeof invitation === "string" ? invitation : undefined
+        }
+      />
     </AuthShell>
   );
 }
