@@ -193,6 +193,12 @@ Toute décision qui rend des fichiers inutiles enregistre leur suppression (`sit
   - D'où la garantie : chaque suppression porte `not_before` = création de la photo + 2 h 10 min. Une suppression faite plus tôt reste enregistrée comme faite (`last_done_at`).
   - Le nettoyage la rejoue une fois `not_before` passé, quand plus aucune écriture n'est possible, puis l'oublie.
   - Testé : rejeu après confirmation, après révocation et après suppression ; le fichier rejoué disparaît après expiration.
+- **Conversion tardive** (contre-audit Codex, reproduit). Le service écrit les déclinaisons WebP avec sa propre clé, qu'aucune échéance ne limite. Scénario : une conversion ralentie écrit ses fichiers après la suppression ou la révocation de la photo ; la purge correspondante est déjà faite et oubliée ; Storage échoue au rattrapage. Les fichiers restaient alors à jamais invisibles pour le nettoyage. D'où une **obligation de conversion durable** (`site_photo_conversions`, sans clé étrangère : elle survit à la photo et à l'établissement) :
+  - **Avant de lire l'original,** la conversion enregistre son obligation, avec une échéance à 15 min (`begin_site_photo_conversion`, sous verrou de la photo).
+  - **Avant chaque fichier,** elle vérifie qu'il reste au moins 5 min avant l'échéance (`site_photo_conversion_writable`). Sinon elle n'écrit rien et répond `conflict` : confirmer de nouveau relance une conversion.
+  - **Après l'échéance seulement,** le nettoyage solde l'obligation (`expire_site_photo_conversions`), en une transaction : si la photo a disparu ou est révoquée, la suppression de **tous** ses fichiers est enregistrée de nouveau, même si une suppression a déjà été faite et oubliée. L'obligation n'est oubliée qu'à ce moment-là. Une photo prête ou en attente garde ses fichiers.
+  - Le rattrapage immédiat (suppression dans le `catch`) reste un premier essai : son échec ne perd plus rien. Une écriture qui arriverait malgré tout après le solde de l'obligation est retrouvée par la réconciliation du bucket (plus bas).
+  - Testé : suppression puis révocation pendant une conversion lente, purge déjà refermée, rattrapage en échec, puis Storage encore en panne au premier nettoyage (fichiers supprimés ensuite, nettoyages répétés sans effet) ; processus tué après l'écriture d'un fichier ; conversion trop proche de son échéance (rien d'écrit, nouvelle confirmation réussie) ; droits (service seul).
 - Testé de façon déterministe : stockage en échec à la confirmation (l'original avec EXIF/GPS reste, rien n'est déclaré prêt, puis il est supprimé), interruption après confirmation, révocation, suppression, fichier refusé, établissement supprimé, et un établissement ne peut ni voir ni terminer la suppression d'un autre.
 
 ### Purge ciblée et durées plus longues (étude, rien de branché)
@@ -203,17 +209,88 @@ Toute décision qui rend des fichiers inutiles enregistre leur suppression (`sit
 
 ### Nettoyage périodique (`GET /api/cron/site-photos`)
 
-Route protégée par `Authorization: Bearer $CRON_SECRET`, comme les autres tâches planifiées. Elle est **à planifier toutes les 15 minutes au déploiement** (rien n'est planifié aujourd'hui). Elle fait deux choses (`runSitePhotoMaintenance`) :
+Route protégée par `Authorization: Bearer $CRON_SECRET`, comme les autres tâches planifiées. Elle est **à planifier toutes les 15 minutes au déploiement** : rien n'est planifié aujourd'hui, et le dépôt ne contient aucun `vercel.json`. Elle fait quatre choses (`runSitePhotoMaintenance`) :
 
-1. **Envois abandonnés** : les photos encore `pending` après expiration de leur URL d'envoi (2 h 10 min) sont oubliées. Cela couvre l'envoi jamais fait, la confirmation jamais faite, et la conversion interrompue après l'écriture des déclinaisons. Leurs fichiers sont enregistrés pour suppression.
-2. **Suppressions dues** : celles qui ont échoué ou ont été interrompues, et celles faites tôt, à rejouer après expiration de l'URL. Les suppressions demandées dans la dernière minute sont laissées à l'action en cours. Les échecs répétés sont journalisés (`attempts`).
+1. **Envois abandonnés** : les photos encore `pending` après expiration de leur URL d'envoi (2 h 10 min) sont oubliées, sauf pendant une conversion en cours (sa confirmation peut encore aboutir). Cela couvre l'envoi jamais fait, la confirmation jamais faite, et la conversion interrompue après l'écriture des déclinaisons. Leurs fichiers sont enregistrés pour suppression.
+2. **Conversions échues** : elles sont soldées, comme décrit plus haut. La réponse indique combien (`conversions`).
+3. **Suppressions dues** : celles qui ont échoué ou ont été interrompues, et celles faites tôt, à rejouer après expiration de l'URL. Les suppressions demandées dans la dernière minute sont laissées à l'action en cours. Les échecs répétés sont journalisés (`attempts`).
+4. **Réconciliation du bucket** (`reconcileSitePhotoBucket`), décrite ci-dessous.
 
 Testé : envoi abandonné supprimé, envoi récent laissé, route refusée sans secret ou avec un mauvais secret.
 
+### Réconciliation du bucket avec la base (fenêtre résiduelle, fermée)
+
+**Le problème** (reproduit sur `4035e09` par un test déterministe, avec PostgreSQL et Storage réels). Une conversion passe sa dernière vérification, puis reste bloquée au-delà de son échéance. Pendant ce temps, la photo est supprimée, le nettoyage solde l'obligation et la purge, et il ne reste plus aucun enregistrement. Le WebP arrive ensuite, et le rattrapage échoue. Aucun nettoyage ne retrouvait ce fichier. **Une garantie absolue au moment de l'écriture est impossible** avec ces primitives : la clé du service écrit sans échéance, et Storage ne propose ni écriture conditionnelle ni jeton à durée limitée pour le service. Une obligation tenue par celui qui écrit peut donc toujours être soldée avant que son écriture n'arrive.
+
+**Le mécanisme retenu : inventorier ce qui existe vraiment, à chaque passage.**
+
+- **La source.** C'est l'index de Storage lui-même, `storage.objects`, dans la même base. Seuls l'API Storage et ses objets courants comptent, filtrés sur le bucket `site-photos` (`archived_at is null`, `not is_delete_marker`). La lecture se fait par pages, triées par nom (index `bucket_id, name`), à partir d'un curseur enregistré. Une exécution interrompue, ou limitée à `maxPages`, reprend donc là où elle s'est arrêtée.
+- **Le jugement**, par la base, au moment de la page, pour chaque objet au format `<établissement>/<photo>/<original|w480.webp|w828.webp|w1200.webp>`. Ce sont la ligne de la photo et son établissement qui décident, jamais le chemin seul :
+  - **justifié**, donc jamais suspect : la photo existe **sous cet établissement** et elle est `pending` (son original, ou les déclinaisons d'une conversion en cours ou interrompue) ou `ready` (ses déclinaisons) ;
+  - **laissé de côté** : tout objet d'une photo dont la conversion est encore active, et tout nom hors de ce format (compté dans `unknown`, jamais supprimé) ;
+  - **suspect** : la photo n'existe pas, appartient à un autre établissement ou est révoquée, ou bien c'est l'original d'une photo prête.
+- **Pourquoi c'est sûr.** Une photo disparue ou révoquée ne revient jamais. Une photo prête n'a plus jamais besoin de son original. Un suspect ne peut donc pas redevenir justifié, et une décision prise à n'importe quel passage reste juste.
+- **Délai de sécurité : 1 heure.** Il se compte depuis la première détection, enregistrée dans `site_photo_orphans` (les dates de Storage sont réécrites à chaque mise à jour). L'objet doit encore être suspect au passage qui le supprime. Pour la suppression, seul ce que Storage déclare avoir supprimé est oublié ; le reste est compté (`attempts`) et rejugé au passage suivant.
+- **Les écritures tardives.** Chaque passage voit tout ce qui existe à ce moment-là : un objet écrit après un passage est trouvé par le suivant.
+- **Les échecs.**
+  - Une page en échec arrête l'exécution, sans rien supprimer de cette page. La réponse le signale (`reconciliation: { error: true }`), et la route répond 500 après avoir fait le reste.
+  - Un passage n'est déclaré complet qu'après la dernière page lue. Une liste incomplète ne vaut donc jamais « bucket vide », et elle ne peut rien faire supprimer : une suppression exige un objet vu présent et suspect deux fois, à au moins une heure d'écart.
+- **Les exécutions concurrentes.** Un bail de 5 minutes, renouvelé à chaque page, est porté par une ligne unique (`site_photo_reconciliation`). Une deuxième exécution est ignorée (`skipped`). Si deux exécutions tournaient malgré tout (bail expiré), la sûreté ne changerait pas : chaque page rejuge en base, et une suppression en double est sans effet.
+  - **Réponse tardive d'une exécution périmée** (contre-audit Codex, reproduite). Une exécution A envoie une suppression ; son bail expire ; B reprend et enregistre un échec ; la réponse de A arrive ensuite. Elle effaçait le suivi de B et modifiait ses compteurs. Désormais, `record_site_photo_orphan_deletions` et `site_photo_reconciliation_page` verrouillent la ligne de contrôle et vérifient que l'exécution détient le bail et qu'il est encore valide, **avant** toute modification et dans la même transaction. Sinon : `reconciliation_lease_lost`, et rien ne change. Ce que A a vraiment supprimé est vu disparu au passage suivant.
+  - Testé : A, expiration, B, puis retour tardif de A (le suivi de B, ses compteurs et la date de première détection restent intacts) ; réponses simultanées d'une exécution périmée et de l'exécution courante ; reprise en cours, non validée, à l'arrivée de la réponse de A (A attend le verrou, puis est refusée) ; bail expiré sans reprise ; exécution interrompue avec le bail. 3 mutations, toutes détectées.
+- **Les droits.** Tout est réservé à `service_role` (fonctions `security definer`, tables sans droits pour l'API). La fonction lit `storage.objects` en tant que propriétaire, `postgres`, qui a ce droit sur Supabase. **À vérifier sur la prévisualisation** : un refus ferait échouer la page (erreur visible), sans jamais donner un inventaire vide.
+
+**La garantie réelle.** Tout objet présent dans l'index de Storage, dans le bucket des photos et au format des photos, qu'aucune photo ne justifie :
+
+- est retrouvé à **chaque** passage complet tant qu'il existe ;
+- est supprimé au premier passage qui a lieu au moins une heure après sa détection et où Storage accepte la suppression.
+
+Le délai est d'environ 1 h à 1 h 15 (tâche toutes les 15 min) si un passage tient en une exécution.
+
+**Les limites.**
+
+- Un objet présent dans le stockage sous-jacent mais absent de l'index de Storage (incohérence interne de Storage) n'est pas vu. Il ne peut pas non plus être servi ni listé par l'API.
+- Un nom hors format n'est jamais supprimé : il est seulement compté.
+
+**Supervision** : `site_photo_reconciliation_status()` (service seul) et la réponse de la route.
+
+| Signal                                                                       | Lecture                                                                                                                     |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `lastPassCompletedAt`                                                        | dernier passage complet. Plus de 2 h : nettoyage bloqué, à alerter                                                          |
+| `lastPass.scanned`, `photos`                                                 | `scanned = 0` alors que `photos > 0` : index de Storage illisible                                                           |
+| `lastPass.suspects` / `deleted` / `failed`, `suspects`, `oldestSuspectSince` | détections et suppressions. Un suspect plus vieux que quelques heures : suppression qui échoue                              |
+| `failingSuspects`                                                            | suspects dont la suppression a échoué au moins une fois                                                                     |
+| journaux                                                                     | `Site photo reconciliation` (comptes seulement, jamais de noms), `…: deletions failing`, `Site photo reconciliation failed` |
+
+**Coût.** Un passage lit une ligne d'index par objet du bucket et fait une recherche par clé dans `site_assets`. Par exécution : 20 pages de 1 000 objets au plus, soit 20 000 objets, en quelques secondes. Au-delà, le passage s'étale sur plusieurs exécutions grâce au curseur, et le délai de suppression s'allonge d'autant (100 000 objets : un passage toutes les 5 exécutions). Les suppressions se font par lots de 100. Le temps maximal de la route est de 60 s.
+
+**Tests** (PostgreSQL et Storage réels ; échecs de Storage et de l'inventaire simulés) :
+
+- conversion bloquée après sa dernière vérification, puis écriture tardive ;
+- objet écrit après un passage ;
+- convertisseur planté avant et après l’écriture, obligations perdues ;
+- Storage en échec, puis reprise ;
+- inventaire en échec : rien supprimé, aucun passage déclaré complet ;
+- pagination sur plusieurs exécutions avec reprise ;
+- conversion active laissée ;
+- photos d'un autre établissement, originaux en attente et déclinaisons prêtes jamais touchés ;
+- noms hors format jamais supprimés ;
+- deux exécutions simultanées ;
+- passages répétés sans suppression indésirable ;
+- supervision.
+
+Mutations : 12, toutes détectées.
+
+### Mise en service (rien n'est activé)
+
+- **Planification** : un appel `GET /api/cron/site-photos` toutes les 15 minutes, avec `Authorization: Bearer $CRON_SECRET`. Sur Vercel, cela passe par une entrée `crons` dans `vercel.json` (Vercel envoie lui-même ce secret si `CRON_SECRET` est défini), **à ajouter seulement avec ton accord**. Autre option : un ordonnanceur externe.
+- **Serveur** : `CRON_SECRET`, `SUPABASE_SERVICE_ROLE_KEY` et `NEXT_PUBLIC_SUPABASE_URL`.
+- **Reprise** : le curseur et les suspects sont en base. Une exécution coupée laisse son bail expirer (5 min) : l'exécution suivante reprend à la dernière page enregistrée.
+- **À alerter** : `lastPassCompletedAt` plus vieux que 2 h, une réponse 500 de la route, ou `failingSuspects > 0` pendant plusieurs heures.
+
 Restent à faire avant d'ouvrir largement :
 
-- l'inventaire du bucket, pour les dossiers sans photo ni suppression enregistrée (un fichier écrit après une panne imprévue) ;
-- une alerte sur les suppressions qui échouent plusieurs fois.
+- une alerte branchée sur ces signaux.
 
 Photos de démonstration des univers : jamais enregistrées ni publiées (§ 10).
 
