@@ -85,7 +85,7 @@ export function DetailsStep({
           label="Présentation courte"
           optional
           name="description"
-          placeholder="Spécialiste du regard naturel, je pose des extensions sur-mesure dans un atelier cosy."
+          placeholder="Je te reçois dans mon atelier, sur rendez-vous, pour des soins pensés pour toi."
           counterMax={DESCRIPTION_MAX_LENGTH}
           value={draft.description}
           onChange={(event) => update("description", event.target.value)}
