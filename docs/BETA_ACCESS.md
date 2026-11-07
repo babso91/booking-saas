@@ -99,6 +99,12 @@ APP_URL=https://<domaine de l'application> \
   - avec `invitation_used` ou `email_taken`, le lien « Me connecter » suffit ;
   - un lien d'invitation ouvert alors qu'une autre session est active redirige comme aujourd'hui (garde existante).
 
+## Annoncé avant toute saisie (UI)
+
+- **`/signup` sans `?invitation=`** : `BetaNotice reason="signup"` (« Bêta privée · Sur invitation, pour l'instant. »), sans formulaire, avec « Se connecter ». Le formulaire n'est rendu qu'avec un jeton ; c'est toujours le serveur qui le vérifie.
+- **`/onboarding` d'un compte sans accès** : la page lit `my_beta_access()` (`hasBetaAccess`) et affiche `BetaNotice reason="onboarding"` au lieu des quatre étapes : pourquoi la création serait refusée, et quoi faire (se déconnecter, ouvrir son lien d'invitation), avec « Se déconnecter ».
+- Tests : `beta-notice.test.tsx` ; `tests/e2e/ui-routes.test.ts` (`/signup` avec et sans invitation, `/onboarding` sans accès).
+
 ## Hypothèses de sécurité et risques résiduels
 
 - **Hypothèses.**
