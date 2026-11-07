@@ -11,6 +11,8 @@ export type ServiceDraft = {
   duration: string;
   /** Major units as typed ("45", "45,50", "45.5"). */
   price: string;
+  /** Her category's id; "" for none (shown last, without a heading). */
+  category: string;
 };
 
 export type ServiceField = keyof ServiceDraft;
@@ -24,6 +26,8 @@ export type ServiceView = {
   priceCents: number;
   active: boolean;
   displayOrder: number;
+  /** null: not in a category. */
+  categoryId: string | null;
   /** As last read: sent back as `expectedVersion` with an edit. */
   version: number;
 };
@@ -33,6 +37,7 @@ export const EMPTY_SERVICE: ServiceDraft = {
   description: "",
   duration: "60",
   price: "",
+  category: "",
 };
 
 export const MAX_NAME = 120;
@@ -80,6 +85,8 @@ export function draftFromService(service: ServiceView): ServiceDraft {
     description: service.description ?? "",
     duration: String(service.durationMinutes),
     price: priceInput(service.priceCents),
+    // Read before categories existed (a kept draft): none.
+    category: service.categoryId ?? "",
   };
 }
 
@@ -91,6 +98,7 @@ type Checked =
         description: string | null;
         durationMinutes: number;
         priceCents: number;
+        categoryId: string | null;
       };
     }
   | { ok: false; errors: Partial<Record<ServiceField, string>> };
@@ -126,6 +134,7 @@ export function checkService(draft: ServiceDraft): Checked {
       description: description || null,
       durationMinutes: duration,
       priceCents: priceCents!,
+      categoryId: draft.category || null,
     },
   };
 }
@@ -143,6 +152,8 @@ export function serviceChanges(
     changes.durationMinutes = command.durationMinutes;
   if (command.priceCents !== service.priceCents)
     changes.priceCents = command.priceCents;
+  if (command.categoryId !== (service.categoryId ?? null))
+    changes.categoryId = command.categoryId;
   return changes;
 }
 
@@ -155,6 +166,8 @@ const serverFieldCopy: Record<string, ServiceField> = {
   "changes.description": "description",
   "changes.durationMinutes": "duration",
   "changes.priceCents": "price",
+  categoryId: "category",
+  "changes.categoryId": "category",
 };
 
 const serverMessages: Record<ServiceField, string> = {
@@ -162,6 +175,7 @@ const serverMessages: Record<ServiceField, string> = {
   description: "Description trop longue (1000 caractères au plus).",
   duration: "Durée entre 5 minutes et 12 heures.",
   price: "Vérifie le prix.",
+  category: "Cette catégorie n’existe plus : choisis-en une autre.",
 };
 
 /** Field messages of a refused write (the backend's text is never shown). */
@@ -174,7 +188,13 @@ export function serviceFieldErrors(fieldErrors?: Record<string, string[]>) {
   return errors;
 }
 
-const FIELDS: ServiceField[] = ["name", "description", "duration", "price"];
+const FIELDS: ServiceField[] = [
+  "name",
+  "description",
+  "duration",
+  "price",
+  "category",
+];
 
 /** Whether two drafts would send the same values (as the backend reads them). */
 function sameField(field: ServiceField, a: ServiceDraft, b: ServiceDraft) {
@@ -186,6 +206,7 @@ function sameField(field: ServiceField, a: ServiceDraft, b: ServiceDraft) {
       description: "description",
       duration: "durationMinutes",
       price: "priceCents",
+      category: "categoryId",
     }[field] as keyof typeof left.command;
     return left.command[key] === right.command[key];
   }
@@ -239,4 +260,5 @@ export const serviceFieldLabels: Record<ServiceField, string> = {
   description: "Description",
   duration: "Durée (min)",
   price: "Prix",
+  category: "Catégorie",
 };

@@ -1226,6 +1226,9 @@ isOneToOne: false
 "member_site_photo":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: boolean
                            },
+"move_service_category":
+{ Args: { "p_business_id": string,"p_category_id": string,"p_offset": number }; Returns: undefined
+                           },
 "pending_site_photo_purges":
 { Args: { "p_before": string,"p_limit": number }; Returns: {
               "asset_id": string,"attempts": number,"business_id": string,"scope": string
