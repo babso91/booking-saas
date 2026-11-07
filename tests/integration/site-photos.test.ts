@@ -23,6 +23,7 @@ import {
   createSitePhotoUpload,
   deleteSitePhoto,
   processSitePhotoPurges,
+  reconcileSitePhotoBucket,
   revokeSitePhoto,
   revokeSitePhotoForPrivacy,
   sitePhotoFiles,
@@ -923,6 +924,12 @@ describe("site photos: deletion", () => {
  */
 const removal = { fails: false, attempts: 0 };
 
+/**
+ * `beforeUpload` runs once just before the next file is sent to Storage by
+ * that client (a conversion stalled after its last check).
+ */
+const storageHooks: { beforeUpload?: (path: string) => Promise<void> } = {};
+
 function serviceWithFlakyRemoval(): AppSupabaseClient {
   const real = bookingClient();
   const bind = (target: object, value: unknown) =>
@@ -945,6 +952,16 @@ function serviceWithFlakyRemoval(): AppSupabaseClient {
             const bucket = storageTarget.from(bucketName);
             return new Proxy(bucket, {
               get(bucketTarget, bucketProperty) {
+                if (bucketProperty === "upload") {
+                  return async (
+                    ...args: Parameters<typeof bucketTarget.upload>
+                  ) => {
+                    const hook = storageHooks.beforeUpload;
+                    storageHooks.beforeUpload = undefined;
+                    await hook?.(args[0]);
+                    return bucketTarget.upload(...args);
+                  };
+                }
                 if (bucketProperty === "remove") {
                   return async (paths: string[]) => {
                     removal.attempts += 1;
@@ -1247,6 +1264,21 @@ async function uploadWindowPassed(assetId: string) {
   );
 }
 
+/**
+ * The safety period of the bucket's reconciliation has passed for the
+ * suspect files of `businessId` (and only those).
+ */
+async function orphansAged(businessId: string) {
+  const { rows } = await db.query(
+    "select to_regclass('public.site_photo_orphans') is not null as exists",
+  );
+  if (!rows[0].exists) return;
+  await db.query(
+    "update public.site_photo_orphans set first_seen_at = now() - interval '2 hours' where name like $1",
+    [`${businessId}/%`],
+  );
+}
+
 /** The periodic cleanup, run now. */
 async function cleanUpNow() {
   return processSitePhotoPurges(bookingClient(), {
@@ -1433,5 +1465,867 @@ describe("site photos: the periodic cleanup", () => {
         )
       ).rows,
     ).toHaveLength(0);
+  });
+});
+
+describe("site photos: a conversion outliving its photo (Codex counter-audit)", () => {
+  async function lateStudio(label: string) {
+    const owner = await createAccount(label);
+    alice = owner;
+    studioA = await createBusiness(owner.userId);
+    await signIn(owner);
+    return {
+      owner,
+      business: studioA,
+      flaky: {
+        service: serviceWithFlakyRemoval(),
+        businessId: studioA.id,
+        actor: owner.userId,
+      } satisfies SiteWriter,
+    };
+  }
+
+  /** An upload sent long ago: its URL has expired. */
+  async function sentLongAgo(assetId: string) {
+    await db.query(
+      "update public.site_assets set created_at = now() - interval '3 hours' where id = $1",
+      [assetId],
+    );
+  }
+
+  const hasConversions = async () =>
+    (
+      await db.query(
+        "select to_regclass('public.site_photo_conversions') is not null as exists",
+      )
+    ).rows[0].exists as boolean;
+
+  /** The conversion's deadline has passed: nothing may write for it. */
+  async function conversionDeadlinePassed(assetId: string) {
+    if (!(await hasConversions())) return;
+    await db.query(
+      "update public.site_photo_conversions set deadline = now() - interval '1 second' where asset_id = $1",
+      [assetId],
+    );
+  }
+
+  async function conversionsOf(assetId: string) {
+    if (!(await hasConversions())) return 0;
+    const { rows } = await db.query<{ n: number }>(
+      "select count(*)::int as n from public.site_photo_conversions where asset_id = $1",
+      [assetId],
+    );
+    return rows[0]!.n;
+  }
+
+  /** The periodic cleanup, everything due included. */
+  const cleanUp = (service: AppSupabaseClient = bookingClient()) =>
+    runSitePhotoMaintenance(service, { now: new Date(Date.now() + 120_000) });
+
+  it.each(["deleted", "revoked"] as const)(
+    "%s during a slow conversion, its purge closed, the catch-up failing: the late files are deleted after the deadline",
+    async (outcome) => {
+      const { owner, business, flaky } = await lateStudio(`late-${outcome}`);
+      const upload = await uploadPhoto(await phonePhoto());
+      await sentLongAgo(upload.assetId);
+      // Converted; before its files are written, she removes the photo from
+      // another tab: its files are deleted, its purge done and closed (the
+      // upload URL expired long ago). Then Storage fails for a while.
+      afterConversion.run = async () => {
+        const writer = writerFor(business, owner);
+        if (outcome === "deleted") {
+          expect(await deleteSitePhoto(writer, upload.assetId)).toEqual({
+            deleted: true,
+          });
+        } else {
+          await revokeSitePhoto(writer, upload.assetId);
+        }
+        expect(await purgesOf(upload.assetId)).toEqual([]);
+        removal.fails = true;
+      };
+      try {
+        expect(
+          await codeOf(() => confirmSitePhoto(flaky, upload.assetId)),
+        ).toBe(
+          outcome === "deleted" ? "site_photo_not_found" : "site_photo_revoked",
+        );
+      } finally {
+        removal.fails = false;
+      }
+      // The late WebP files are there, for a photo gone or revoked.
+      expect(await storedFiles(business.id, upload.assetId)).toEqual([
+        "w1200.webp",
+        "w480.webp",
+        "w828.webp",
+      ]);
+
+      // Cleanups before the deadline: the obligation stays.
+      await cleanUp();
+      await cleanUp();
+      // After it, Storage still down: the files stay, recorded, retried.
+      await conversionDeadlinePassed(upload.assetId);
+      removal.fails = true;
+      try {
+        await cleanUp(serviceWithFlakyRemoval());
+      } finally {
+        removal.fails = false;
+      }
+      expect(await conversionsOf(upload.assetId)).toBe(0);
+      expect(await purgesOf(upload.assetId)).toMatchObject([{ scope: "all" }]);
+      // Storage back: gone, and the cleanups repeated change nothing more.
+      await cleanUp();
+      expect(await storedFiles(business.id, upload.assetId)).toEqual([]);
+      await cleanUp();
+      await cleanUp();
+      expect(await storedFiles(business.id, upload.assetId)).toEqual([]);
+      expect(await purgesOf(upload.assetId)).toEqual([]);
+    },
+  );
+
+  it("the cleanup during her conversion leaves her photo: her confirmation finishes", async () => {
+    const { business } = await lateStudio("late-abandoned");
+    const upload = await uploadPhoto(await phonePhoto());
+    await sentLongAgo(upload.assetId);
+    afterConversion.run = async () => {
+      await cleanUp();
+    };
+    expect(
+      await confirmSitePhotoAction({ assetId: upload.assetId }),
+    ).toMatchObject({ ok: true, data: { status: "ready" } });
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "w1200.webp",
+      "w480.webp",
+      "w828.webp",
+    ]);
+    // Its obligation, settled after the deadline: a ready photo keeps its
+    // files.
+    await conversionDeadlinePassed(upload.assetId);
+    await cleanUp();
+    expect(await conversionsOf(upload.assetId)).toBe(0);
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "w1200.webp",
+      "w480.webp",
+      "w828.webp",
+    ]);
+  });
+
+  it("the process dies after writing a file: the photo and every file go once the deadline has passed", async () => {
+    const { owner, business } = await lateStudio("late-killed");
+    const upload = await uploadPhoto(await phonePhoto());
+    await sentLongAgo(upload.assetId);
+    // What the conversion did before the process was killed.
+    const { error } = await bookingClient().rpc("begin_site_photo_conversion", {
+      p_business_id: business.id,
+      p_actor: owner.userId,
+      p_asset_id: upload.assetId,
+    });
+    expect(error).toBeNull();
+    await admin.storage
+      .from(SITE_PHOTO_BUCKET)
+      .upload(
+        `${business.id}/${upload.assetId}/w480.webp`,
+        Buffer.from("webp"),
+        { contentType: "image/webp" },
+      );
+    // Before the deadline: it may still finish, nothing is removed.
+    await cleanUp();
+    expect(await assetRow(upload.assetId)).toMatchObject({ status: "pending" });
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "original",
+      "w480.webp",
+    ]);
+    // After: forgotten, every file deleted, nothing left to do.
+    await conversionDeadlinePassed(upload.assetId);
+    await cleanUp();
+    expect(await assetRow(upload.assetId)).toBeNull();
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([]);
+    expect(await conversionsOf(upload.assetId)).toBe(0);
+    expect(await purgesOf(upload.assetId)).toEqual([]);
+  });
+
+  it("too close to its deadline, the conversion writes nothing; confirming again works", async () => {
+    const { business } = await lateStudio("late-deadline");
+    const upload = await uploadPhoto(await phonePhoto());
+    afterConversion.run = async () => {
+      await db.query(
+        "update public.site_photo_conversions set deadline = now() + interval '1 minute' where asset_id = $1",
+        [upload.assetId],
+      );
+    };
+    expect(
+      await confirmSitePhotoAction({ assetId: upload.assetId }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "original",
+    ]);
+    expect(await assetRow(upload.assetId)).toMatchObject({ status: "pending" });
+    expect(
+      await confirmSitePhotoAction({ assetId: upload.assetId }),
+    ).toMatchObject({ ok: true, data: { status: "ready" } });
+  });
+
+  it("stalled after its last check, written after its obligation was settled: the late file is found and deleted", async () => {
+    const { owner, business, flaky } = await lateStudio("late-stalled");
+    const upload = await uploadPhoto(await phonePhoto());
+    await sentLongAgo(upload.assetId);
+    // The conversion passed its last check; before its file reaches
+    // Storage it stalls past its deadline. Meanwhile she deletes the photo
+    // and the cleanup settles everything: no obligation is left.
+    storageHooks.beforeUpload = async () => {
+      expect(
+        await deleteSitePhoto(writerFor(business, owner), upload.assetId),
+      ).toEqual({ deleted: true });
+      await conversionDeadlinePassed(upload.assetId);
+      await cleanUp();
+      expect(await conversionsOf(upload.assetId)).toBe(0);
+      expect(await purgesOf(upload.assetId)).toEqual([]);
+      removal.fails = true;
+    };
+    try {
+      // The late file lands; the next check refuses; the catch-up fails.
+      expect(await codeOf(() => confirmSitePhoto(flaky, upload.assetId))).toBe(
+        "conflict",
+      );
+    } finally {
+      removal.fails = false;
+      storageHooks.beforeUpload = undefined;
+    }
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([
+      "w480.webp",
+    ]);
+    // Nothing recorded can find it: no photo, no purge, no conversion.
+    expect(await assetRow(upload.assetId)).toBeNull();
+    expect(await purgesOf(upload.assetId)).toEqual([]);
+    expect(await conversionsOf(upload.assetId)).toBe(0);
+
+    // The cleanups go on (Storage back): it is found, then deleted.
+    await cleanUp();
+    await cleanUp();
+    await orphansAged(business.id);
+    await cleanUp();
+    expect(await storedFiles(business.id, upload.assetId)).toEqual([]);
+  });
+
+  it("nobody but the service sees or records a conversion", async () => {
+    const { owner, business } = await lateStudio("late-rights");
+    const upload = await uploadPhoto(await phonePhoto());
+    const member = await bookingClient().rpc("begin_site_photo_conversion", {
+      p_business_id: business.id,
+      p_actor: bruno.userId,
+      p_asset_id: upload.assetId,
+    });
+    expect(member.error?.message).toBe("forbidden");
+    for (const client of [anonClient()]) {
+      const { error } = await client.rpc("begin_site_photo_conversion", {
+        p_business_id: business.id,
+        p_actor: owner.userId,
+        p_asset_id: upload.assetId,
+      });
+      expect(error).not.toBeNull();
+      const read = await client
+        .from("site_photo_conversions" as never)
+        .select();
+      expect(read.error ?? read.data).toBeTruthy();
+      expect(read.data ?? []).toEqual([]);
+    }
+  });
+});
+
+describe("site photos: the bucket reconciled with the database", () => {
+  async function studio(label: string) {
+    const owner = await createAccount(label);
+    alice = owner;
+    studioA = await createBusiness(owner.userId);
+    await signIn(owner);
+    return { owner, business: studioA };
+  }
+
+  /** An object written straight into the bucket (late, by anyone). */
+  async function put(name: string) {
+    const { error } = await admin.storage
+      .from(SITE_PHOTO_BUCKET)
+      .upload(name, Buffer.from("x"), {
+        contentType: "image/webp",
+        upsert: true,
+      });
+    if (error) throw error;
+  }
+
+  /** Which of `names` Storage holds (its own index). */
+  async function present(names: string[]) {
+    const { rows } = await db.query<{ name: string }>(
+      "select name from storage.objects where bucket_id = 'site-photos' and name = any($1) and archived_at is null and not is_delete_marker",
+      [names],
+    );
+    return rows.map((row) => row.name).sort();
+  }
+
+  async function suspectsOf(businessId: string) {
+    const { rows } = await db.query<{ name: string; attempts: number }>(
+      "select name, attempts from public.site_photo_orphans where name like $1 order by name",
+      [`${businessId}/%`],
+    );
+    return rows;
+  }
+
+  /**
+   * Runs until a pass over the whole bucket has ended (the pass in
+   * progress first, if any), as the periodic cleanup would over several
+   * runs. Answers the summed counts.
+   */
+  async function fullPass(
+    service: AppSupabaseClient = bookingClient(),
+    options: { pageSize?: number; maxPages?: number } = {},
+  ) {
+    const totals = { runs: 0, scanned: 0, deleted: 0, failed: 0, skipped: 0 };
+    for (let attempt = 0; attempt < 2000; attempt += 1) {
+      const result = await reconcileSitePhotoBucket(service, options);
+      totals.runs += 1;
+      if (result.skipped) {
+        totals.skipped += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        continue;
+      }
+      if ("error" in result) throw new Error("reconciliation failed");
+      totals.scanned += result.scanned;
+      totals.deleted += result.deleted;
+      totals.failed += result.failed;
+      if (result.complete) return totals;
+    }
+    throw new Error("the pass never ended");
+  }
+
+  /** A photo row of `businessId`, ready, without going through the studio. */
+  async function readyRow(businessId: string) {
+    const { rows } = await db.query<{ id: string }>(
+      `insert into public.site_assets (business_id, status, content_type, byte_size, width, height)
+       values ($1, 'ready', 'image/webp', 1000, 480, 640) returning id`,
+      [businessId],
+    );
+    return rows[0]!.id;
+  }
+
+  it("only what no photo justifies is deleted, after the safety period; nothing legitimate is ever touched", async () => {
+    const { owner, business } = await studio("reconcile-safety");
+    const b = business.id;
+    // Legitimate.
+    const ready = await readyPhoto();
+    const pending = await uploadPhoto(await phonePhoto());
+    const converting = await uploadPhoto(await phonePhoto());
+    await bookingClient().rpc("begin_site_photo_conversion", {
+      p_business_id: b,
+      p_actor: owner.userId,
+      p_asset_id: converting.assetId,
+    });
+    await put(`${b}/${converting.assetId}/w480.webp`);
+    const othersPhoto = await readyRow(studioB.id);
+    await put(`${studioB.id}/${othersPhoto}/w480.webp`);
+    const legitimate = [
+      `${b}/${ready}/w1200.webp`,
+      `${b}/${ready}/w480.webp`,
+      `${b}/${ready}/w828.webp`,
+      `${b}/${pending.assetId}/original`,
+      `${b}/${converting.assetId}/original`,
+      `${b}/${converting.assetId}/w480.webp`,
+      `${studioB.id}/${othersPhoto}/w480.webp`,
+    ].sort();
+    // Suspects: no photo; a ready photo's original; a revoked photo's
+    // file; another business's photo under her folder.
+    const revoked = await readyPhoto();
+    await revokeSitePhoto(writerFor(business, owner), revoked);
+    const suspects = [
+      `${b}/${randomUUID()}/w828.webp`,
+      `${b}/${ready}/original`,
+      `${b}/${revoked}/w480.webp`,
+      `${b}/${othersPhoto}/w480.webp`,
+    ].sort();
+    // Outside the photos' layout: never deleted.
+    const outside = [
+      `${b}/${ready}/notes.webp`,
+      `${b}/${randomUUID()}/notes.webp`,
+      `${b}/${randomUUID()}/nested/w480.webp`,
+      `${b}/readme.webp`,
+    ].sort();
+    for (const name of [...suspects, ...outside]) await put(name);
+    const everything = [...legitimate, ...suspects, ...outside].sort();
+    expect(await present(everything)).toEqual(everything);
+
+    // First pass: suspects recorded, nothing deleted (safety period).
+    // The ready and the revoked photos were converted moments ago: while
+    // their conversion may still write, their files are left alone.
+    await fullPass();
+    expect((await suspectsOf(b)).map((row) => row.name)).toEqual(
+      suspects.filter(
+        (name) =>
+          !name.includes(`/${ready}/`) && !name.includes(`/${revoked}/`),
+      ),
+    );
+    expect(await present(everything)).toEqual(everything);
+    await db.query(
+      "update public.site_photo_conversions set deadline = now() - interval '1 second' where asset_id = any($1)",
+      [[ready, revoked]],
+    );
+    await fullPass();
+    expect((await suspectsOf(b)).map((row) => row.name)).toEqual(suspects);
+    expect(await present(everything)).toEqual(everything);
+
+    // Once suspected for the safety period: deleted, and only them.
+    await orphansAged(b);
+    const second = await fullPass();
+    expect(second.deleted).toBeGreaterThanOrEqual(suspects.length);
+    expect(await present(everything)).toEqual(
+      [...legitimate, ...outside].sort(),
+    );
+    expect(await suspectsOf(b)).toEqual([]);
+    // Also as Storage lists them.
+    expect(await storedFiles(b, ready)).toEqual([
+      "notes.webp",
+      "w1200.webp",
+      "w480.webp",
+      "w828.webp",
+    ]);
+
+    // Repeated: nothing more goes.
+    await fullPass();
+    await orphansAged(b);
+    await fullPass();
+    expect(await present(everything)).toEqual(
+      [...legitimate, ...outside].sort(),
+    );
+  });
+
+  it("a file written after a pass is found by the next one", async () => {
+    const { business } = await studio("reconcile-late");
+    await fullPass();
+    const late = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(late);
+    expect(await suspectsOf(business.id)).toEqual([]);
+    await fullPass();
+    expect(await suspectsOf(business.id)).toMatchObject([{ name: late }]);
+    await orphansAged(business.id);
+    await fullPass();
+    expect(await present([late])).toEqual([]);
+  });
+
+  it("by small pages over several runs: every object examined, the pass resumed where it stopped", async () => {
+    const { business } = await studio("reconcile-pages");
+    const legit = await readyRow(business.id);
+    await put(`${business.id}/${legit}/w480.webp`);
+    const orphans = Array.from(
+      { length: 5 },
+      () => `${business.id}/${randomUUID()}/w828.webp`,
+    ).sort();
+    for (const name of orphans) await put(name);
+    await fullPass(); // the pass in progress, if any, ends
+    // One page of two per run: no run sees the whole bucket.
+    const first = await reconcileSitePhotoBucket(bookingClient(), {
+      pageSize: 2,
+      maxPages: 1,
+    });
+    expect(first).toMatchObject({
+      skipped: false,
+      scanned: 2,
+      complete: false,
+    });
+    const paged = await fullPass(bookingClient(), { pageSize: 2, maxPages: 1 });
+    expect(paged.runs).toBeGreaterThan(2);
+    expect((await suspectsOf(business.id)).map((row) => row.name)).toEqual(
+      orphans,
+    );
+    await orphansAged(business.id);
+    await fullPass(bookingClient(), { pageSize: 2, maxPages: 1 });
+    expect(await present(orphans)).toEqual([]);
+    expect(await present([`${business.id}/${legit}/w480.webp`])).toHaveLength(
+      1,
+    );
+  });
+
+  it("Storage failing the deletion: recorded, counted, deleted once it answers again", async () => {
+    const { business } = await studio("reconcile-storage");
+    const orphan = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(orphan);
+    await fullPass();
+    await orphansAged(business.id);
+    removal.fails = true;
+    let failing;
+    try {
+      failing = await fullPass(serviceWithFlakyRemoval());
+    } finally {
+      removal.fails = false;
+    }
+    expect(failing.failed).toBeGreaterThanOrEqual(1);
+    expect(await present([orphan])).toEqual([orphan]);
+    expect(await suspectsOf(business.id)).toMatchObject([
+      { name: orphan, attempts: 1 },
+    ]);
+    const { data: status } = await bookingClient().rpc(
+      "site_photo_reconciliation_status",
+    );
+    expect(status).toMatchObject({ failingSuspects: expect.any(Number) });
+    expect(
+      (status as { failingSuspects: number }).failingSuspects,
+    ).toBeGreaterThanOrEqual(1);
+
+    await fullPass();
+    expect(await present([orphan])).toEqual([]);
+    expect(await suspectsOf(business.id)).toEqual([]);
+  });
+
+  it("the inventory failing: nothing deleted, the error reported, then resumed", async () => {
+    const { business } = await studio("reconcile-listing");
+    const orphan = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(orphan);
+    await fullPass();
+    await orphansAged(business.id);
+    const { data: before } = await bookingClient().rpc(
+      "site_photo_reconciliation_status",
+    );
+    // Every page of the inventory fails (database or network).
+    const real = bookingClient();
+    const failingInventory = new Proxy(real, {
+      get(target, property) {
+        if (property === "rpc") {
+          return (name: string, ...args: unknown[]) =>
+            name === "site_photo_reconciliation_page"
+              ? Promise.resolve({
+                  data: null,
+                  error: {
+                    code: "57014",
+                    message: "canceling statement (injected)",
+                    details: "",
+                    hint: "",
+                  },
+                })
+              : (target.rpc as (...all: unknown[]) => unknown)(name, ...args);
+        }
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as AppSupabaseClient;
+    const result = await runSitePhotoMaintenance(failingInventory);
+    expect(result.reconciliation).toEqual({ skipped: false, error: true });
+    expect(await present([orphan])).toEqual([orphan]);
+    const { data: after } = await bookingClient().rpc(
+      "site_photo_reconciliation_status",
+    );
+    // No pass is said complete on a failed inventory.
+    expect((after as { lastPassCompletedAt: string }).lastPassCompletedAt).toBe(
+      (before as { lastPassCompletedAt: string }).lastPassCompletedAt,
+    );
+    // The lease was released: the next run goes on, and deletes it.
+    await fullPass();
+    expect(await present([orphan])).toEqual([]);
+  });
+
+  it("two runs at once: one holds the pass; together they never delete anything legitimate", async () => {
+    const { business } = await studio("reconcile-concurrent");
+    const legit = await readyRow(business.id);
+    const legitName = `${business.id}/${legit}/w480.webp`;
+    await put(legitName);
+    const orphans = Array.from(
+      { length: 3 },
+      () => `${business.id}/${randomUUID()}/w480.webp`,
+    );
+    for (const name of orphans) await put(name);
+    await fullPass();
+
+    // A run holds the pass: another one is skipped.
+    const holder = randomUUID();
+    const { data: cursor } = await bookingClient().rpc(
+      "claim_site_photo_reconciliation",
+      { p_run: holder },
+    );
+    expect(cursor).not.toBeNull();
+    expect(await reconcileSitePhotoBucket(bookingClient())).toEqual({
+      skipped: true,
+    });
+    await bookingClient().rpc("release_site_photo_reconciliation", {
+      p_run: holder,
+    });
+
+    await orphansAged(business.id);
+    await Promise.all([
+      fullPass(bookingClient(), { pageSize: 3, maxPages: 2 }),
+      fullPass(bookingClient(), { pageSize: 3, maxPages: 2 }),
+    ]);
+    expect(await present([legitName, ...orphans])).toEqual([legitName]);
+  });
+
+  it("the converter crashing before or after writing, its obligation lost: the files still end", async () => {
+    const { owner, business } = await studio("reconcile-crash");
+    // Before writing: nothing but her original, which stays hers.
+    const before = await uploadPhoto(await phonePhoto());
+    await bookingClient().rpc("begin_site_photo_conversion", {
+      p_business_id: business.id,
+      p_actor: owner.userId,
+      p_asset_id: before.assetId,
+    });
+    // After writing: a derivative of a photo then gone, and every record
+    // of it lost (no photo, no conversion, no purge).
+    const after = await uploadPhoto(await phonePhoto());
+    await bookingClient().rpc("begin_site_photo_conversion", {
+      p_business_id: business.id,
+      p_actor: owner.userId,
+      p_asset_id: after.assetId,
+    });
+    await put(`${business.id}/${after.assetId}/w480.webp`);
+    await db.query("delete from public.site_assets where id = $1", [
+      after.assetId,
+    ]);
+    await db.query("delete from public.site_photo_purges where asset_id = $1", [
+      after.assetId,
+    ]);
+    await db.query(
+      "delete from public.site_photo_conversions where asset_id = any($1)",
+      [[before.assetId, after.assetId]],
+    );
+
+    await fullPass();
+    await orphansAged(business.id);
+    await fullPass();
+    expect(await storedFiles(business.id, after.assetId)).toEqual([]);
+    expect(await storedFiles(business.id, before.assetId)).toEqual([
+      "original",
+    ]);
+    expect(await assetRow(before.assetId)).toMatchObject({ status: "pending" });
+  });
+
+  async function suspectRow(name: string) {
+    const { rows } = await db.query(
+      "select attempts, first_seen_at, last_attempt_at from public.site_photo_orphans where name = $1",
+      [name],
+    );
+    return rows[0] ?? null;
+  }
+
+  async function counters() {
+    const { rows } = await db.query(
+      "select pass_deleted, pass_failed, last_pass_deleted, last_pass_failed from public.site_photo_reconciliation",
+    );
+    return rows[0];
+  }
+
+  const leaseExpires = () =>
+    db.query(
+      "update public.site_photo_reconciliation set lease_until = now() - interval '1 second'",
+    );
+
+  it("a run whose lease expired answers late: refused, the newer run's record and counts untouched", async () => {
+    const { business } = await studio("reconcile-late-answer");
+    const orphan = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(orphan);
+    await fullPass();
+    await orphansAged(business.id);
+
+    // A takes the pass and is told to delete the orphan, then stalls.
+    const runA = randomUUID();
+    const { data: cursor } = await bookingClient().rpc(
+      "claim_site_photo_reconciliation",
+      { p_run: runA },
+    );
+    expect(cursor).not.toBeNull();
+    let due: string[] = [];
+    for (let page = 0; page < 500 && !due.includes(orphan); page += 1) {
+      const { data, error } = await bookingClient().rpc(
+        "site_photo_reconciliation_page",
+        { p_run: runA, p_limit: 1000 },
+      );
+      expect(error).toBeNull();
+      due = (data as { due: string[] }).due;
+      if ((data as { complete: boolean }).complete && !due.includes(orphan))
+        break;
+    }
+    expect(due).toContain(orphan);
+
+    // Its lease expires; B takes over, Storage refuses B's deletion.
+    await leaseExpires();
+    removal.fails = true;
+    try {
+      await fullPass(serviceWithFlakyRemoval());
+    } finally {
+      removal.fails = false;
+    }
+    const recordedByB = await suspectRow(orphan);
+    expect(recordedByB).toMatchObject({ attempts: 1 });
+    const countsByB = await counters();
+
+    // A's answer arrives at last ("deleted"): refused, nothing changes.
+    const late = await bookingClient().rpc(
+      "record_site_photo_orphan_deletions",
+      { p_run: runA, p_deleted: [orphan], p_failed: [] },
+    );
+    expect(late.error?.message).toBe("reconciliation_lease_lost");
+    expect(await suspectRow(orphan)).toEqual(recordedByB);
+    expect(await counters()).toEqual(countsByB);
+    // Nor as a failure.
+    const lateFailure = await bookingClient().rpc(
+      "record_site_photo_orphan_deletions",
+      { p_run: runA, p_deleted: [], p_failed: [orphan] },
+    );
+    expect(lateFailure.error?.message).toBe("reconciliation_lease_lost");
+    expect(await suspectRow(orphan)).toEqual(recordedByB);
+
+    // The orphan is still deleted by the next run.
+    await fullPass();
+    expect(await present([orphan])).toEqual([]);
+  });
+
+  it("answers of an expired run and of the current one at once: only the current one counts", async () => {
+    const { business } = await studio("reconcile-two-answers");
+    const [mine, theirs] = [
+      `${business.id}/${randomUUID()}/w480.webp`,
+      `${business.id}/${randomUUID()}/w828.webp`,
+    ];
+    await put(mine);
+    await put(theirs);
+    await fullPass();
+    const stale = randomUUID();
+    await bookingClient().rpc("claim_site_photo_reconciliation", {
+      p_run: stale,
+    });
+    await leaseExpires();
+    const current = randomUUID();
+    const { data: claimed } = await bookingClient().rpc(
+      "claim_site_photo_reconciliation",
+      { p_run: current },
+    );
+    expect(claimed).not.toBeNull();
+    const [staleAnswer, currentAnswer] = await Promise.all([
+      bookingClient().rpc("record_site_photo_orphan_deletions", {
+        p_run: stale,
+        p_deleted: [theirs],
+        p_failed: [mine],
+      }),
+      bookingClient().rpc("record_site_photo_orphan_deletions", {
+        p_run: current,
+        p_deleted: [],
+        p_failed: [mine],
+      }),
+    ]);
+    expect(staleAnswer.error?.message).toBe("reconciliation_lease_lost");
+    expect(currentAnswer.error).toBeNull();
+    expect(await suspectRow(mine)).toMatchObject({ attempts: 1 });
+    expect(await suspectRow(theirs)).toMatchObject({ attempts: 0 });
+    await bookingClient().rpc("release_site_photo_reconciliation", {
+      p_run: current,
+    });
+  });
+
+  it("a run whose lease expired, nobody having taken over yet: its answer is refused too", async () => {
+    const { business } = await studio("reconcile-expired-alone");
+    const orphan = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(orphan);
+    await fullPass();
+    await leaseExpires();
+    const run = randomUUID();
+    await bookingClient().rpc("claim_site_photo_reconciliation", {
+      p_run: run,
+    });
+    await leaseExpires();
+    const before = await suspectRow(orphan);
+    const counts = await counters();
+    const { error } = await bookingClient().rpc(
+      "record_site_photo_orphan_deletions",
+      { p_run: run, p_deleted: [orphan], p_failed: [] },
+    );
+    expect(error?.message).toBe("reconciliation_lease_lost");
+    expect(await suspectRow(orphan)).toEqual(before);
+    expect(await counters()).toEqual(counts);
+    // Within its lease, the same answer is taken (and renews the lease).
+    const again = randomUUID();
+    await bookingClient().rpc("claim_site_photo_reconciliation", {
+      p_run: again,
+    });
+    const { error: accepted } = await bookingClient().rpc(
+      "record_site_photo_orphan_deletions",
+      { p_run: again, p_deleted: [], p_failed: [orphan] },
+    );
+    expect(accepted).toBeNull();
+    expect(await suspectRow(orphan)).toMatchObject({ attempts: 1 });
+    await bookingClient().rpc("release_site_photo_reconciliation", {
+      p_run: again,
+    });
+  });
+
+  it("a takeover in progress when the old run's answer arrives: the answer waits for it, then is refused", async () => {
+    const { business } = await studio("reconcile-takeover");
+    const orphan = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(orphan);
+    await fullPass();
+    await leaseExpires();
+    const runA = randomUUID();
+    const { data: taken } = await bookingClient().rpc(
+      "claim_site_photo_reconciliation",
+      { p_run: runA },
+    );
+    expect(taken).not.toBeNull();
+    const before = await suspectRow(orphan);
+
+    // B takes the pass over (its claim not committed yet) just as A's
+    // answer comes, while A's lease still reads as valid.
+    const takeover = await openTransaction({ role: "service_role" });
+    await takeover.connection.query(
+      "update public.site_photo_reconciliation set run_id = $1, lease_until = now() + interval '5 minutes'",
+      [randomUUID()],
+    );
+    // Sent now (a supabase-js call only starts once awaited).
+    const answer = (async () =>
+      bookingClient().rpc("record_site_photo_orphan_deletions", {
+        p_run: runA,
+        p_deleted: [orphan],
+        p_failed: [],
+      }))();
+    try {
+      await waitUntilWaitingFor(takeover.pid);
+    } finally {
+      await closeTransaction(takeover, "commit");
+    }
+    expect((await answer).error?.message).toBe("reconciliation_lease_lost");
+    expect(await suspectRow(orphan)).toEqual(before);
+    await leaseExpires();
+  });
+
+  it("a run interrupted while holding the pass: the next one resumes once its lease has expired", async () => {
+    const { business } = await studio("reconcile-interrupted");
+    const orphan = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(orphan);
+    await fullPass();
+    await orphansAged(business.id);
+    // A run took the pass and died without releasing it.
+    await leaseExpires();
+    const { data: taken } = await bookingClient().rpc(
+      "claim_site_photo_reconciliation",
+      { p_run: randomUUID() },
+    );
+    expect(taken).not.toBeNull();
+    expect(await reconcileSitePhotoBucket(bookingClient())).toEqual({
+      skipped: true,
+    });
+    await leaseExpires();
+    await fullPass();
+    expect(await present([orphan])).toEqual([]);
+  });
+
+  it("observable: the last complete pass and its counts", async () => {
+    await fullPass();
+    const { data, error } = await bookingClient().rpc(
+      "site_photo_reconciliation_status",
+    );
+    expect(error).toBeNull();
+    const status = data as {
+      lastPassCompletedAt: string;
+      passInProgress: boolean;
+      lastPass: { scanned: number };
+    };
+    expect(Date.now() - Date.parse(status.lastPassCompletedAt)).toBeLessThan(
+      60_000,
+    );
+    expect(status.passInProgress).toBe(false);
+    expect(status.lastPass.scanned).toBeGreaterThan(0);
+    // Nobody but the service reads it.
+    const { error: anonymous } = await anonClient().rpc(
+      "site_photo_reconciliation_status",
+    );
+    expect(anonymous).not.toBeNull();
   });
 });

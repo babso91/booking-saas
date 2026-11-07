@@ -256,6 +256,15 @@ export async function confirmSitePhoto(
   }
   if (asset.status === "revoked") throw new AppException("site_photo_revoked");
 
+  // Before anything is written: the obligation to delete what this
+  // conversion may write, should the photo go meanwhile (settled by the
+  // cleanup after its deadline, whatever happens to this process).
+  const { error: beginError } = await service.rpc(
+    "begin_site_photo_conversion",
+    { p_business_id: businessId, p_actor: writer.actor, p_asset_id: assetId },
+  );
+  if (beginError) throw databaseException(beginError);
+
   const bucket = service.storage.from(SITE_PHOTO_BUCKET);
   const { data: blob, error: downloadError } = await bucket.download(
     originalPath(businessId, assetId),
@@ -277,6 +286,7 @@ export async function confirmSitePhoto(
 
   try {
     for (const derivative of processed.derivatives) {
+      await assertStillWritable(service, businessId, assetId);
       const { error } = await bucket.upload(
         derivativePath(businessId, assetId, derivative.width),
         derivative.data,
@@ -297,7 +307,8 @@ export async function confirmSitePhoto(
   } catch (error) {
     // Revoked or deleted meanwhile: its purge is recorded, its files go
     // (the derivatives just written included). Otherwise the original
-    // stays, she may confirm again.
+    // stays, she may confirm again. Only a first attempt: if it fails, the
+    // conversion's obligation has them deleted after its deadline.
     const current = await readAsset(service, businessId, assetId).catch(
       () => undefined,
     );
@@ -316,6 +327,29 @@ export async function confirmSitePhoto(
   const ready = await readAsset(service, businessId, assetId);
   if (!ready) throw new AppException("site_photo_not_found");
   return ready;
+}
+
+/**
+ * One more file may be written only while the conversion's deadline is far
+ * enough (site_photo_conversion_writable): after it, the cleanup may have
+ * settled it, and a file written then would be seen by nobody. `conflict`
+ * otherwise: confirming again starts a new conversion.
+ */
+async function assertStillWritable(
+  service: AppSupabaseClient,
+  businessId: string,
+  assetId: string,
+) {
+  const { data, error } = await service.rpc("site_photo_conversion_writable", {
+    p_business_id: businessId,
+    p_asset_id: assetId,
+  });
+  if (error) throw databaseException(error);
+  if (data !== true) {
+    throw new AppException("conflict", {
+      message: "La conversion a pris trop de temps. Réessayez.",
+    });
+  }
 }
 
 /** Her photos (pending, ready and revoked), the latest first. */
@@ -433,27 +467,160 @@ export async function readMemberSitePhoto(
   return readDerivative(writer.service, writer.businessId, assetId, width);
 }
 
+export type SitePhotoReconciliation =
+  | { skipped: true }
+  | {
+      skipped: false;
+      /** Objects of the bucket examined by this run. */
+      scanned: number;
+      /** Objects no photo justifies, seen by this run. */
+      suspects: number;
+      /** Names outside the photos' layout: counted, never deleted. */
+      unknown: number;
+      deleted: number;
+      failed: number;
+      /** This run reached the end of the bucket (a full pass ended). */
+      complete: boolean;
+    }
+  | { skipped: false; error: true };
+
+/**
+ * The bucket reconciled with the database (migration, "Reconciliation of
+ * the bucket"): reads Storage's index of the bucket by pages, from where
+ * the pass stands; the database judges each object against the photos and
+ * records the suspects; those suspected for the safety period are deleted
+ * through Storage, the outcome recorded. A run holds the pass (another run
+ * meanwhile is skipped), resumes where the previous one stopped, and stops
+ * after `maxPages` pages. Never deletes on an incomplete answer: a failed
+ * page stops the run (`error`) with nothing deleted from it.
+ */
+export async function reconcileSitePhotoBucket(
+  service: AppSupabaseClient,
+  options: { pageSize?: number; maxPages?: number } = {},
+): Promise<SitePhotoReconciliation> {
+  const pageSize = options.pageSize ?? 1000;
+  const maxPages = options.maxPages ?? 20;
+  const run = crypto.randomUUID();
+  const { data: cursor, error: claimError } = await service.rpc(
+    "claim_site_photo_reconciliation",
+    { p_run: run },
+  );
+  if (claimError) throw databaseException(claimError);
+  if (cursor === null) return { skipped: true };
+
+  const totals = {
+    scanned: 0,
+    suspects: 0,
+    unknown: 0,
+    deleted: 0,
+    failed: 0,
+    complete: false,
+  };
+  try {
+    for (let page = 0; page < maxPages && !totals.complete; page += 1) {
+      const { data, error } = await service.rpc(
+        "site_photo_reconciliation_page",
+        { p_run: run, p_limit: pageSize },
+      );
+      if (error) throw databaseException(error);
+      const result = data as {
+        scanned: number;
+        suspects: number;
+        unknown: number;
+        due: string[];
+        complete: boolean;
+      };
+      totals.scanned += result.scanned;
+      totals.suspects += result.suspects;
+      totals.unknown += result.unknown;
+      totals.complete = result.complete;
+      for (let start = 0; start < result.due.length; start += 100) {
+        const batch = result.due.slice(start, start + 100);
+        const { data: removed, error: removeError } = await service.storage
+          .from(SITE_PHOTO_BUCKET)
+          .remove(batch);
+        // Only what Storage says it deleted is forgotten; anything else is
+        // judged again at the next pass.
+        const deleted = removeError
+          ? []
+          : (removed ?? []).map((object) => object.name);
+        const failed = removeError ? batch : [];
+        const { error: recordError } = await service.rpc(
+          "record_site_photo_orphan_deletions",
+          { p_run: run, p_deleted: deleted, p_failed: failed },
+        );
+        if (recordError) throw databaseException(recordError);
+        totals.deleted += deleted.length;
+        totals.failed += failed.length;
+      }
+    }
+  } finally {
+    const { error } = await service.rpc("release_site_photo_reconciliation", {
+      p_run: run,
+    });
+    if (error)
+      console.error("Site photo reconciliation not released", error.code);
+  }
+  return { skipped: false, ...totals };
+}
+
 /**
  * The periodic cleanup (GET /api/cron/site-photos): forgets the uploads
- * abandoned once their upload URL has expired, then runs every purge due
- * (left by a failure or an interruption, or done early and due again now
- * that the upload URL can no longer write). Purges requested in the last
- * minute are left to the action that recorded them.
+ * abandoned once their upload URL has expired (not while being converted),
+ * settles the conversions past their deadline (a photo gone or revoked
+ * meanwhile: all its files recorded for deletion again, files a late
+ * conversion wrote included), then runs every purge due (left by a failure
+ * or an interruption, or done early and due again now that nothing can
+ * write any more), and finally reconciles the bucket with the database
+ * (reconcileSitePhotoBucket: whatever was written after its obligation was
+ * settled). Purges requested in the last minute are left to the action
+ * that recorded them. A failed reconciliation does not undo the rest: it
+ * answers `reconciliation: { error: true }`.
  */
 export async function runSitePhotoMaintenance(
   service: AppSupabaseClient,
-  options: { limit?: number; now?: Date } = {},
-): Promise<{ abandoned: number; done: number; failed: number }> {
+  options: {
+    limit?: number;
+    now?: Date;
+    reconciliation?: { pageSize?: number; maxPages?: number };
+  } = {},
+): Promise<{
+  abandoned: number;
+  conversions: number;
+  done: number;
+  failed: number;
+  reconciliation: SitePhotoReconciliation;
+}> {
   const limit = options.limit ?? 200;
   const { data: abandoned, error } = await service.rpc(
     "discard_abandoned_site_assets",
     { p_limit: limit },
   );
   if (error) throw databaseException(error);
+  const { data: conversions, error: conversionsError } = await service.rpc(
+    "expire_site_photo_conversions",
+    { p_limit: limit },
+  );
+  if (conversionsError) throw databaseException(conversionsError);
   const now = options.now ?? new Date();
   const purges = await processSitePhotoPurges(service, {
     before: new Date(now.getTime() - 60_000),
     limit,
   });
-  return { abandoned: abandoned ?? 0, ...purges };
+  let reconciliation: SitePhotoReconciliation;
+  try {
+    reconciliation = await reconcileSitePhotoBucket(
+      service,
+      options.reconciliation,
+    );
+  } catch (cause) {
+    console.error("Site photo reconciliation failed", cause);
+    reconciliation = { skipped: false, error: true };
+  }
+  return {
+    abandoned: abandoned ?? 0,
+    conversions: conversions ?? 0,
+    ...purges,
+    reconciliation,
+  };
 }
