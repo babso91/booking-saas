@@ -85,6 +85,56 @@ describe("SignupForm", () => {
     expect((resend as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("passes her invitation link's token to the server, which decides", async () => {
+    signUpAction.mockResolvedValue({
+      ok: true,
+      data: { status: "signed_in", next: "/onboarding" },
+    });
+    render(<SignupForm invitationToken="inv_abc" />);
+    await submit();
+
+    expect(signUpAction).toHaveBeenCalledWith({
+      email: "mila@studio.fr",
+      password: "correct-horse-battery",
+      invitationToken: "inv_abc",
+    });
+    // Her account may exist already: the sign-in link keeps her invitation.
+    expect(
+      screen.getByRole("link", { name: "Se connecter" }).getAttribute("href"),
+    ).toBe("/login?invitation=inv_abc");
+  });
+
+  it("the inbox screen's sign-in keeps her invitation too", async () => {
+    signUpAction.mockResolvedValue({
+      ok: true,
+      data: { status: "confirmation_required", email: "mila@studio.fr" },
+    });
+    render(<SignupForm invitationToken="inv_abc" />);
+    await submit();
+    expect(
+      (
+        await screen.findByRole("link", { name: "J’ai confirmé, me connecter" })
+      ).getAttribute("href"),
+    ).toBe("/login?invitation=inv_abc");
+  });
+
+  it.each([
+    ["beta_invitation_required", /lien personnel reçu dans ton invitation/],
+    ["invitation_expired", /Ce lien a expiré/],
+    ["invitation_used", /déjà été créé avec ce lien/],
+    ["invitation_email_mismatch", /liée à une autre adresse/],
+    ["invitation_invalid", /n’est pas valide/],
+  ])("%s: says why, in the product's words", async (code, text) => {
+    signUpAction.mockResolvedValue({
+      ok: false,
+      error: { code, message: "server default" },
+    });
+    render(<SignupForm invitationToken="inv_abc" />);
+    await submit();
+
+    expect(await screen.findByText(text)).toBeTruthy();
+  });
+
   it("answers email_taken with a neutral message", async () => {
     signUpAction.mockResolvedValue({
       ok: false,

@@ -15,6 +15,11 @@ import { ServicesManager } from "./services-manager";
 // The services screen, from what the professional sees and does. The
 // existing Server Actions are mocked at their module boundary with their
 // real result shapes (ActionResult<ServiceDto…>).
+//
+// The screen reads her whole catalogue at once (getCatalogAction). Here it
+// is answered from the services list mock (`listServicesAction`) and the
+// test's categories (`catalogCategories`), so that every list answer — and
+// every late or refused one — is the catalogue's.
 
 const { actions } = vi.hoisted(() => ({
   actions: {
@@ -25,7 +30,26 @@ const { actions } = vi.hoisted(() => ({
     reorderServicesAction: vi.fn(),
     deleteServiceAction: vi.fn(),
     getBookingSettingsAction: vi.fn(),
+    getCatalogAction: vi.fn(),
+    createCategoryAction: vi.fn(),
+    updateCategoryAction: vi.fn(),
+    reorderCategoriesAction: vi.fn(),
+    moveCategoryAction: vi.fn(),
+    deleteCategoryAction: vi.fn(),
   },
+}));
+vi.mock("@/features/catalog/actions/catalog", () => ({
+  getCatalogAction: (...args: unknown[]) => actions.getCatalogAction(...args),
+  createCategoryAction: (...args: unknown[]) =>
+    actions.createCategoryAction(...args),
+  updateCategoryAction: (...args: unknown[]) =>
+    actions.updateCategoryAction(...args),
+  reorderCategoriesAction: (...args: unknown[]) =>
+    actions.reorderCategoriesAction(...args),
+  moveCategoryAction: (...args: unknown[]) =>
+    actions.moveCategoryAction(...args),
+  deleteCategoryAction: (...args: unknown[]) =>
+    actions.deleteCategoryAction(...args),
 }));
 vi.mock("@/features/services/actions/services", () => ({
   listServicesAction: (...args: unknown[]) =>
@@ -71,6 +95,28 @@ const service = (overrides: Partial<ServiceView> = {}): ServiceView => {
     durationMinutes: 75,
     priceCents: 6500,
     active: true,
+    displayOrder: sequence,
+    categoryId: null,
+    version: 1,
+    ...overrides,
+  };
+};
+
+type TestCategory = {
+  id: string;
+  name: string;
+  visible: boolean;
+  displayOrder: number;
+  version: number;
+};
+/** Her categories, as getCatalogAction answers them. */
+let catalogCategories: TestCategory[] = [];
+const category = (overrides: Partial<TestCategory> = {}): TestCategory => {
+  sequence += 1;
+  return {
+    id: `40000000-0000-4000-8000-${String(sequence).padStart(12, "0")}`,
+    name: "Regard",
+    visible: true,
     displayOrder: sequence,
     version: 1,
     ...overrides,
@@ -124,6 +170,17 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   Object.values(actions).forEach((mock) => mock.mockReset());
   window.sessionStorage.clear();
+  catalogCategories = [];
+  actions.getCatalogAction.mockImplementation(async () => {
+    const listed = (await actions.listServicesAction()) as
+      { ok: true; data: ServiceView[] } | { ok: false; error: unknown };
+    return listed.ok
+      ? ok({
+          categories: catalogCategories,
+          services: listed.data.map((item) => ({ ...item, options: [] })),
+        })
+      : listed;
+  });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -206,6 +263,8 @@ describe("creating a service", () => {
       description: null,
       durationMinutes: 120,
       priceCents: 11050,
+      // Without a category (she has none yet).
+      categoryId: null,
       requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
     // Locked while it is sent: typing cannot slip in and be dropped.
@@ -733,7 +792,13 @@ describe("editing and deactivating", () => {
     const first = service({ name: "Un" });
     const second = service({ name: "Deux" });
     await renderManager([first, second]);
-    actions.reorderServicesAction.mockResolvedValueOnce(ok([second, first]));
+    // The server answers the list with its new positions.
+    actions.reorderServicesAction.mockResolvedValueOnce(
+      ok([
+        { ...second, displayOrder: 0 },
+        { ...first, displayOrder: 1 },
+      ]),
+    );
     fireEvent.click(list().getByRole("button", { name: "Descendre Un" }));
     await flush();
     expect(actions.reorderServicesAction).toHaveBeenCalledWith({
@@ -1177,5 +1242,381 @@ describe("another identity on the same mounted page", () => {
     save();
     await flush();
     expect(requestIds()[1]).toBe(requestIds()[0]);
+  });
+});
+
+describe("her categories", () => {
+  const section = (name: string) =>
+    within(screen.getByRole("region", { name }));
+
+  it("her categories in her order, each with its services; those without one last", async () => {
+    const regard = category({ name: "Regard" });
+    const mains = category({ name: "Mains", visible: false });
+    const vide = category({ name: "Vide" });
+    catalogCategories = [regard, mains, vide];
+    await renderManager([
+      service({ name: "Libre" }),
+      service({ name: "Cils", categoryId: regard.id }),
+      service({ name: "Ongles", categoryId: mains.id }),
+    ]);
+    expect(
+      screen
+        .getAllByRole("heading", { level: 2 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Regard", "Mains", "Vide", "Sans catégorie"]);
+    expect(
+      section("Regard").getByRole("heading", { name: "Cils" }),
+    ).toBeTruthy();
+    expect(
+      section("Mains").getByText(/masquée : pas réservable en ligne/),
+    ).toBeTruthy();
+    expect(section("Vide").getByText("Aucune prestation")).toBeTruthy();
+    expect(
+      section("Sans catégorie").getByRole("heading", { name: "Libre" }),
+    ).toBeTruthy();
+  });
+
+  it("creates one; a lost answer is resent with the same request id", async () => {
+    await renderManager([service({ name: "Cils" })]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ajouter une catégorie" }),
+    );
+    await flush();
+    type(/^Nom/, " Regard ");
+    actions.createCategoryAction.mockResolvedValueOnce(fail("network"));
+    save();
+    await flush();
+    expect(dialog().getByText("Création non confirmée")).toBeTruthy();
+    const created = category({ name: "Regard" });
+    actions.createCategoryAction.mockResolvedValueOnce(ok(created));
+    catalogCategories = [created];
+    fireEvent.click(dialog().getByRole("button", { name: "Réessayer" }));
+    await flush();
+    const [first, second] = actions.createCategoryAction.mock.calls.map(
+      ([command]) =>
+        command as { name: string; visible: boolean; requestId: string },
+    );
+    expect(first).toEqual({
+      name: "Regard",
+      visible: true,
+      requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+    expect(second!.requestId).toBe(first!.requestId);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Regard" }),
+    ).toBeTruthy();
+  });
+
+  it("hides it online: only that change, on the version she read", async () => {
+    const regard = category({ name: "Regard", version: 3 });
+    catalogCategories = [regard];
+    await renderManager([service({ name: "Cils", categoryId: regard.id })]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Modifier la catégorie Regard" }),
+    );
+    await flush();
+    fireEvent.click(dialog().getByRole("switch"));
+    expect(
+      dialog().getByText(/ne sont plus réservables en ligne/),
+    ).toBeTruthy();
+    actions.updateCategoryAction.mockResolvedValueOnce(
+      ok({ ...regard, visible: false, version: 4 }),
+    );
+    save();
+    await flush();
+    expect(actions.updateCategoryAction).toHaveBeenCalledWith({
+      categoryId: regard.id,
+      expectedVersion: 3,
+      visible: false,
+    });
+  });
+
+  it("changed elsewhere: nothing saved, the current version shown, then hers sent on it", async () => {
+    const regard = category({ name: "Regard", version: 1 });
+    catalogCategories = [regard];
+    await renderManager([]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Modifier la catégorie Regard" }),
+    );
+    await flush();
+    type(/^Nom/, "Yeux");
+    actions.updateCategoryAction.mockResolvedValueOnce(fail("stale_category"));
+    // Hidden elsewhere meanwhile.
+    catalogCategories = [{ ...regard, visible: false, version: 2 }];
+    save();
+    await flush();
+    expect(dialog().getByText("Version actuelle de la catégorie")).toBeTruthy();
+    expect(dialog().getByText("Maintenant : masquée en ligne")).toBeTruthy();
+    expect(field(/^Nom/).value).toBe("Yeux");
+    expect(
+      (
+        dialog().getByRole("button", {
+          name: /^Enregistrer/,
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(dialog().getByRole("button", { name: "Garder ma saisie" }));
+    actions.updateCategoryAction.mockResolvedValueOnce(
+      ok({ ...regard, name: "Yeux", visible: false, version: 3 }),
+    );
+    save();
+    await flush();
+    // Her name, on the new version; the hiding done elsewhere is kept.
+    expect(actions.updateCategoryAction).toHaveBeenLastCalledWith({
+      categoryId: regard.id,
+      expectedVersion: 2,
+      name: "Yeux",
+    });
+  });
+
+  it("deleting it is said first; its services stay, without a category", async () => {
+    const regard = category({ name: "Regard" });
+    catalogCategories = [regard];
+    await renderManager([
+      service({ name: "Cils", categoryId: regard.id }),
+      service({ name: "Sourcils", categoryId: regard.id }),
+    ]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Modifier la catégorie Regard" }),
+    );
+    await flush();
+    fireEvent.click(
+      dialog().getByRole("button", { name: "Supprimer cette catégorie" }),
+    );
+    expect(
+      dialog().getByText(
+        /Ses 2 prestations restent dans ta liste, sans catégorie/,
+      ),
+    ).toBeTruthy();
+    expect(actions.deleteCategoryAction).not.toHaveBeenCalled();
+    actions.deleteCategoryAction.mockResolvedValueOnce(ok(undefined));
+    catalogCategories = [];
+    actions.listServicesAction.mockResolvedValue(
+      ok([service({ name: "Cils" }), service({ name: "Sourcils" })]),
+    );
+    fireEvent.click(
+      dialog().getByRole("button", { name: "Supprimer la catégorie" }),
+    );
+    await flush();
+    expect(actions.deleteCategoryAction).toHaveBeenCalledWith({
+      categoryId: regard.id,
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(list().getByRole("heading", { name: "Cils" })).toBeTruthy();
+    expect(screen.getByText(/Ses prestations sont restées/)).toBeTruthy();
+  });
+
+  it("deleted elsewhere: what she asked for is done", async () => {
+    const regard = category({ name: "Regard" });
+    catalogCategories = [regard];
+    await renderManager([]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Modifier la catégorie Regard" }),
+    );
+    await flush();
+    fireEvent.click(
+      dialog().getByRole("button", { name: "Supprimer cette catégorie" }),
+    );
+    actions.deleteCategoryAction.mockResolvedValueOnce(
+      fail("category_not_found"),
+    );
+    fireEvent.click(
+      dialog().getByRole("button", { name: "Supprimer la catégorie" }),
+    );
+    await flush();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("moves one a step from where it is now, and shows the order that results", async () => {
+    const regard = category({ name: "Regard" });
+    const mains = category({ name: "Mains" });
+    const pieds = category({ name: "Pieds" });
+    catalogCategories = [regard, mains, pieds];
+    await renderManager([]);
+    // Another tab moved Pieds first meanwhile: the server answers the
+    // order with both moves, and that is what she sees.
+    actions.moveCategoryAction.mockResolvedValueOnce(
+      ok([
+        { ...pieds, displayOrder: 0 },
+        { ...mains, displayOrder: 1 },
+        { ...regard, displayOrder: 2 },
+      ]),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Descendre la catégorie Regard" }),
+    );
+    await flush();
+    // Only her move is sent, never a whole order read earlier.
+    expect(actions.moveCategoryAction).toHaveBeenCalledWith({
+      categoryId: regard.id,
+      offset: 1,
+    });
+    expect(
+      screen
+        .getAllByRole("heading", { level: 2 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Pieds", "Mains", "Regard"]);
+    expect(screen.getByText("Regard : position 3 sur 3.")).toBeTruthy();
+  });
+
+  it("a category deleted elsewhere: said, and the list read again", async () => {
+    const regard = category({ name: "Regard" });
+    const mains = category({ name: "Mains" });
+    catalogCategories = [regard, mains];
+    await renderManager([]);
+    actions.moveCategoryAction.mockResolvedValueOnce(
+      fail("category_not_found"),
+    );
+    const reads = actions.getCatalogAction.mock.calls.length;
+    fireEvent.click(
+      screen.getByRole("button", { name: "Descendre la catégorie Regard" }),
+    );
+    await flush();
+    expect(
+      screen.getByText(/Cette catégorie a été supprimée entre-temps/),
+    ).toBeTruthy();
+    expect(actions.getCatalogAction.mock.calls.length).toBeGreaterThan(reads);
+  });
+
+  it("a service moves within its section; the complete list is sent", async () => {
+    const regard = category({ name: "Regard" });
+    catalogCategories = [regard];
+    const cils = service({ name: "Cils", categoryId: regard.id });
+    const libre = service({ name: "Libre" });
+    const sourcils = service({ name: "Sourcils", categoryId: regard.id });
+    await renderManager([cils, libre, sourcils]);
+    expect(
+      (
+        section("Regard").getByRole("button", {
+          name: "Monter Cils",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    actions.reorderServicesAction.mockResolvedValueOnce(
+      ok([
+        { ...sourcils, displayOrder: 0 },
+        { ...libre, displayOrder: 1 },
+        { ...cils, displayOrder: 2 },
+      ]),
+    );
+    fireEvent.click(
+      section("Regard").getByRole("button", { name: "Descendre Cils" }),
+    );
+    await flush();
+    expect(actions.reorderServicesAction).toHaveBeenCalledWith({
+      serviceIds: [sourcils.id, libre.id, cils.id],
+    });
+  });
+
+  it("added from a category, a service is preselected in it and sent with it", async () => {
+    const regard = category({ name: "Regard" });
+    catalogCategories = [regard];
+    await renderManager([]);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Ajouter une prestation ici/ }),
+    );
+    await flush();
+    expect(
+      (dialog().getByLabelText(/^Catégorie/) as HTMLSelectElement).value,
+    ).toBe(regard.id);
+    fillSoin();
+    actions.createServiceAction.mockResolvedValueOnce(
+      ok(service({ name: "Soin", categoryId: regard.id })),
+    );
+    save();
+    await flush();
+    expect(actions.createServiceAction.mock.calls[0]![0]).toMatchObject({
+      name: "Soin",
+      categoryId: regard.id,
+    });
+  });
+
+  it("moved out of its category by its form; changed elsewhere, the category is said by name", async () => {
+    const regard = category({ name: "Regard" });
+    const mains = category({ name: "Mains" });
+    catalogCategories = [regard, mains];
+    const cils = service({ name: "Cils", categoryId: regard.id, version: 1 });
+    await renderManager([cils]);
+    fireEvent.click(screen.getByRole("button", { name: "Modifier Cils" }));
+    await flush();
+    fireEvent.change(dialog().getByLabelText(/^Catégorie/), {
+      target: { value: "" },
+    });
+    actions.updateServiceAction.mockResolvedValueOnce(fail("stale_service"));
+    actions.listServicesAction.mockResolvedValue(
+      ok([{ ...cils, categoryId: mains.id, version: 2 }]),
+    );
+    save();
+    await flush();
+    expect(actions.updateServiceAction.mock.calls[0]![0]).toEqual({
+      serviceId: cils.id,
+      expectedVersion: 1,
+      changes: { categoryId: null },
+    });
+    expect(dialog().getByText("Maintenant : Mains")).toBeTruthy();
+    expect(dialog().getByText("Ta saisie : sans catégorie")).toBeTruthy();
+  });
+
+  it("a category deleted meanwhile is refused on its field", async () => {
+    const regard = category({ name: "Regard" });
+    catalogCategories = [regard];
+    await renderManager([]);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Ajouter une prestation ici/ }),
+    );
+    await flush();
+    fillSoin();
+    actions.createServiceAction.mockResolvedValueOnce(
+      fail("category_not_found", { categoryId: ["backend"] }),
+    );
+    save();
+    await flush();
+    expect(
+      dialog().getByText(
+        "Cette catégorie n’existe plus : choisis-en une autre.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("a service with options says how many; their editor is not offered yet", async () => {
+    actions.getBookingSettingsAction.mockResolvedValue(settings);
+    actions.listServicesAction.mockResolvedValue(
+      ok([service({ name: "Henné" })]),
+    );
+    actions.getCatalogAction.mockImplementation(async () => {
+      const listed = (await actions.listServicesAction()) as {
+        ok: true;
+        data: ServiceView[];
+      };
+      return ok({
+        categories: [],
+        services: listed.data.map((item) => ({
+          ...item,
+          options: [
+            {
+              id: "o1",
+              question: "Motif",
+              required: true,
+              choices: [
+                {
+                  id: "c1",
+                  label: "Simple",
+                  priceDeltaCents: 0,
+                  durationDeltaMinutes: 0,
+                },
+              ],
+            },
+          ],
+        })),
+      });
+    });
+    render(<ServicesManager scope={A} />);
+    await flush();
+    expect(list().getByText(/· 1 option$/)).toBeTruthy();
+    fireEvent.click(list().getByRole("button", { name: "Modifier Henné" }));
+    await flush();
+    // CATALOG_CONTRACT.md § 10: not before the public booking knows them.
+    expect(dialog().queryByText(/Motif/)).toBeNull();
   });
 });

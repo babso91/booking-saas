@@ -8,6 +8,7 @@ import {
   createCategory,
   deleteCategory,
   getCatalog,
+  moveCategory,
   reorderCategories,
   setServiceOptions,
   updateCategory,
@@ -15,6 +16,7 @@ import {
 import {
   createCategorySchema,
   deleteCategorySchema,
+  moveCategorySchema,
   reorderCategoriesSchema,
   setServiceOptionsSchema,
   updateCategorySchema,
@@ -57,6 +59,20 @@ export async function updateCategoryAction(input: unknown) {
     updateCategorySchema,
     input,
     ({ client, businessId }, data) => updateCategory(client, businessId, data),
+  );
+  if (result.ok) revalidateCatalogPages();
+  return result;
+}
+
+/**
+ * One category a step up or down, applied to the order as it is now: what
+ * her arrows do. Two tabs never erase each other's move.
+ */
+export async function moveCategoryAction(input: unknown) {
+  const result = await runBusinessAction(
+    moveCategorySchema,
+    input,
+    ({ client, businessId }, data) => moveCategory(client, businessId, data),
   );
   if (result.ok) revalidateCatalogPages();
   return result;

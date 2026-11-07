@@ -27,6 +27,29 @@ export const appErrorMessages = {
   stale_note:
     "Cette note a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_unavailable: "Cette prestation n’est pas disponible.",
+  stale_site_draft:
+    "Le brouillon du site a été modifié entre-temps. Rechargez-le avant de réessayer.",
+  site_not_found: "Ce site n’a pas encore de brouillon.",
+  site_business_changed:
+    "Cette page appartient à une autre activité que celle de la session : rien n’a été enregistré. Rechargez la page.",
+  site_not_published: "Ce site n’est pas encore publié.",
+  site_version_not_found: "Cette version du site n’existe pas.",
+  site_unreadable:
+    "Certains textes du site ne seraient pas lisibles. Corrigez les couleurs avant de publier.",
+  site_asset_unavailable:
+    "Une photo du site n’est pas (ou plus) disponible. Choisissez-en une autre.",
+  site_asset_in_use:
+    "Cette photo est utilisée par le brouillon ou une version publiée. Retirez-la, ou révoquez-la.",
+  site_photo_not_found: "Cette photo est introuvable.",
+  site_photo_revoked:
+    "Cette photo a été révoquée. Elle ne peut plus être utilisée.",
+  site_photo_unsupported:
+    "Ce fichier n’est pas une photo JPEG, PNG, WebP ou AVIF.",
+  site_photo_too_large: "Cette photo est trop lourde (10 Mo au plus).",
+  site_photo_invalid:
+    "Cette photo est trop petite (320 px au moins de côté) ou trop allongée.",
+  site_photo_cleanup_pending:
+    "L’opération est enregistrée, mais des fichiers de la photo n’ont pas encore pu être supprimés. Réessayez : leur suppression sera reprise.",
   stale_service:
     "Cette prestation a été modifiée entre-temps. Rechargez-la avant de réessayer.",
   service_deleted:
@@ -67,6 +90,17 @@ export const appErrorMessages = {
   email_taken: "Un compte existe déjà avec cette adresse email.",
   rate_limited: "Trop de tentatives. Merci de réessayer dans quelques minutes.",
   already_onboarded: "Votre activité est déjà configurée.",
+  beta_invitation_required:
+    "L’accès à la bêta se fait sur invitation. Utilisez le lien personnel que vous avez reçu.",
+  invitation_invalid:
+    "Ce lien d’invitation n’est pas valide. Vérifiez qu’il est complet, ou demandez-en un nouveau.",
+  invitation_expired: "Ce lien d’invitation a expiré. Demandez-en un nouveau.",
+  invitation_used:
+    "Cette invitation a déjà été utilisée. Connectez-vous avec votre compte.",
+  invitation_email_mismatch:
+    "Cette invitation est liée à une autre adresse email. Utilisez l’adresse à laquelle vous l’avez reçue.",
+  session_revocation_failed:
+    "Les autres connexions à ce compte n’ont pas pu être fermées : l’invitation n’a pas été activée. Réessayez dans quelques instants.",
   slug_taken:
     "Cette adresse de page est déjà utilisée. Choisissez-en une autre.",
   slug_reserved: "Cette adresse de page est réservée. Choisissez-en une autre.",
@@ -187,6 +221,20 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   note_deleted: 410,
   stale_note: 409,
   service_unavailable: 409,
+  stale_site_draft: 409,
+  site_not_found: 404,
+  site_business_changed: 409,
+  site_not_published: 404,
+  site_version_not_found: 404,
+  site_unreadable: 422,
+  site_asset_unavailable: 409,
+  site_asset_in_use: 409,
+  site_photo_not_found: 404,
+  site_photo_revoked: 410,
+  site_photo_unsupported: 415,
+  site_photo_too_large: 413,
+  site_photo_invalid: 422,
+  site_photo_cleanup_pending: 503,
   stale_service: 409,
   service_deleted: 410,
   category_not_found: 404,
@@ -211,6 +259,12 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   email_taken: 409,
   rate_limited: 429,
   already_onboarded: 409,
+  beta_invitation_required: 403,
+  invitation_invalid: 400,
+  invitation_expired: 410,
+  invitation_used: 409,
+  invitation_email_mismatch: 403,
+  session_revocation_failed: 503,
   slug_taken: 409,
   slug_reserved: 409,
   calendar_not_configured: 503,

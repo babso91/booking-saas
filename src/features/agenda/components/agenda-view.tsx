@@ -681,8 +681,8 @@ export function AgendaView({
                   : "Ta journée est encore libre."}
               </p>
               <p className="text-[14.5px] text-ink-soft">
-                Ajoute tes rendez-vous ici. La réservation en ligne par tes
-                clientes arrive bientôt.
+                Ajoute tes rendez-vous ici. Ceux que tes clientes réservent en
+                ligne y arrivent aussi.
               </p>
               <Button
                 size="md"

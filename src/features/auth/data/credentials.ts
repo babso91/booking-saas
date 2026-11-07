@@ -46,6 +46,43 @@ export async function signUpWithPassword(
   return { status: "signed_in" };
 }
 
+/**
+ * Sends (again) the sign-up confirmation link of an unconfirmed account,
+ * for this device's PKCE flow: the link lands on `emailRedirectTo`.
+ */
+export async function sendConfirmation(
+  client: AppSupabaseClient,
+  email: string,
+  emailRedirectTo: string,
+): Promise<void> {
+  const { error } = await client.auth.resend({
+    type: "signup",
+    email,
+    options: { emailRedirectTo },
+  });
+  if (error) {
+    throw authException(error);
+  }
+}
+
+/**
+ * Sends a recovery link to `email`, for this device's PKCE flow: following
+ * it proves the mailbox is hers (it also confirms the address) and opens a
+ * session whose `amr` says `recovery`. Lands on `redirectTo`.
+ */
+export async function sendRecovery(
+  client: AppSupabaseClient,
+  email: string,
+  redirectTo: string,
+): Promise<void> {
+  const { error } = await client.auth.resetPasswordForEmail(email, {
+    redirectTo,
+  });
+  if (error) {
+    throw authException(error);
+  }
+}
+
 export async function signInWithPassword(
   client: AppSupabaseClient,
   input: SignInInput,

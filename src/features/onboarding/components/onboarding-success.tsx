@@ -13,15 +13,17 @@ const petals = Array.from({ length: 10 }, (_, index) => index * 36);
 
 /**
  * Rendered by /app/welcome with the business and its setup progress read
- * from the server. Online booking is not available yet: the next steps are
- * configuring services and hours, then adding appointments in the agenda.
+ * from the server. The next steps: services and hours, which open online
+ * booking on her page, then her site if she wants one.
  */
 export function OnboardingSuccess({
   businessName,
   progress,
+  sitePublished = false,
 }: {
   businessName: string;
   progress: SetupProgressDto;
+  sitePublished?: boolean;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -98,12 +100,12 @@ export function OnboardingSuccess({
         Ton espace est prêt.
       </h1>
       <p className="mt-4 max-w-[38ch] animate-rise text-[16px] leading-relaxed text-ink-soft [animation-delay:420ms]">
-        Configure tes prestations et tes horaires, puis ajoute tes rendez-vous
-        dans l’agenda.
+        Ajoute tes prestations et tes horaires : tes clientes pourront réserver
+        en ligne, et chaque rendez-vous arrivera dans ton agenda.
       </p>
 
       <div className="mt-8 w-full max-w-[460px] animate-rise [animation-delay:480ms]">
-        <SetupChecklist progress={progress} />
+        <SetupChecklist progress={progress} sitePublished={sitePublished} />
       </div>
 
       <Link

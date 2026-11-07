@@ -24,8 +24,11 @@ type Field = "email" | "password";
 
 export function LoginForm({
   callbackFailed = false,
+  invitationToken,
 }: {
   callbackFailed?: boolean;
+  /** From her invitation link: accepted once her password is proven. */
+  invitationToken?: string;
 }) {
   const router = useRouter();
   const [values, setValues] = useState({ email: "", password: "" });
@@ -62,7 +65,9 @@ export function LoginForm({
     setShowCallbackError(false);
     setState("loading");
 
-    const result = await callAction(() => signInAction(parsed.data));
+    const result = await callAction(() =>
+      signInAction({ ...parsed.data, invitationToken }),
+    );
 
     if (!result.ok) {
       setState("idle");
@@ -195,7 +200,11 @@ export function LoginForm({
       <p className="animate-rise text-center text-[15px] text-ink-soft [animation-delay:120ms]">
         Pas encore de compte ?{" "}
         <Link
-          href="/signup"
+          href={
+            invitationToken
+              ? { pathname: "/signup", query: { invitation: invitationToken } }
+              : "/signup"
+          }
           className="font-semibold text-ink underline decoration-line-strong decoration-1 underline-offset-4 transition-colors hover:decoration-ink"
         >
           Crée ton espace
