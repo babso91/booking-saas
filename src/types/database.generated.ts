@@ -667,6 +667,81 @@ isOneToOne: false
       referencedColumns: ["id","business_id"]
     }
                   ]
+                },"site_assets": {
+                  Row: {
+                    "business_id": string,"byte_size": number | null,"content_type": string | null,"created_at": string,"height": number | null,"id": string,"status": string,"width": number | null
+                  }
+                  Insert: {
+                    "business_id": string,"byte_size"?: number | null,"content_type"?: string | null,"created_at"?: string,"height"?: number | null,"id"?: string,"status"?: string,"width"?: number | null
+                  }
+                  Update: {
+                    "business_id"?: string,"byte_size"?: number | null,"content_type"?: string | null,"created_at"?: string,"height"?: number | null,"id"?: string,"status"?: string,"width"?: number | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "site_assets_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"site_versions": {
+                  Row: {
+                    "business_id": string,"config": NonNullable<Json>,"id": string,"number": number,"published_at": string,"published_by": string | null,"restored_from": string | null,"schema_version": number,"site_id": string
+                  }
+                  Insert: {
+                    "business_id": string,"config": NonNullable<Json>,"id"?: string,"number": number,"published_at"?: string,"published_by"?: string | null,"restored_from"?: string | null,"schema_version": number,"site_id": string
+                  }
+                  Update: {
+                    "business_id"?: string,"config"?: NonNullable<Json>,"id"?: string,"number"?: number,"published_at"?: string,"published_by"?: string | null,"restored_from"?: string | null,"schema_version"?: number,"site_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "site_versions_published_by_fkey"
+      columns: ["published_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "site_versions_site_id_business_id_fkey"
+      columns: ["site_id","business_id"]
+isOneToOne: false
+      referencedRelation: "sites"
+      referencedColumns: ["id","business_id"]
+    }
+                  ]
+                },"sites": {
+                  Row: {
+                    "business_id": string,"created_at": string,"draft_config": Json | null,"draft_restored_from": string | null,"draft_revision": number,"draft_schema_version": number | null,"draft_updated_at": string | null,"draft_updated_by": string | null,"id": string,"plan": string,"published_version_id": string | null
+                  }
+                  Insert: {
+                    "business_id": string,"created_at"?: string,"draft_config"?: Json | null,"draft_restored_from"?: string | null,"draft_revision"?: number,"draft_schema_version"?: number | null,"draft_updated_at"?: string | null,"draft_updated_by"?: string | null,"id"?: string,"plan"?: string,"published_version_id"?: string | null
+                  }
+                  Update: {
+                    "business_id"?: string,"created_at"?: string,"draft_config"?: Json | null,"draft_restored_from"?: string | null,"draft_revision"?: number,"draft_schema_version"?: number | null,"draft_updated_at"?: string | null,"draft_updated_by"?: string | null,"id"?: string,"plan"?: string,"published_version_id"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "sites_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: true
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sites_draft_updated_by_fkey"
+      columns: ["draft_updated_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sites_published_version_fkey"
+      columns: ["published_version_id","id"]
+isOneToOne: false
+      referencedRelation: "site_versions"
+      referencedColumns: ["id","site_id"]
+    }
+                  ]
                 }
           }
           Views: {
@@ -1014,6 +1089,11 @@ isOneToOne: false
               "currency": string,"description": string,"display_order": number,"duration_minutes": number,"id": string,"name": string,"price_cents": number
             }[]
                            },
+"get_public_site":
+{ Args: { "p_slug": string }; Returns: {
+              "config": Json,"number": number,"plan": string,"published_at": string,"schema_version": number,"version_id": string
+            }[]
+                           },
 "has_business_role":
 { Args: { "accepted_roles": (Database["public"]['Enums']["business_member_role"])[],"target_business_id": string }; Returns: boolean
                            },
@@ -1058,6 +1138,11 @@ isOneToOne: false
 "move_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_offset": number }; Returns: undefined
                            },
+"publish_site":
+{ Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number }; Returns: {
+              "created": boolean,"number": number,"published_at": string,"version_id": string
+            }[]
+                           },
 "quote_public_service":
 { Args: { "p_option_choice_ids"?: (string)[],"p_service_id": string,"p_slug": string }; Returns: {
               "currency": string,"duration_minutes": number,"options": Json,"price_cents": number,"service_name": string
@@ -1090,10 +1175,16 @@ isOneToOne: false
         isOneToOne: false
         isSetofReturn: true
       } },
+"restore_site_version":
+{ Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number,"p_version_id": string }; Returns: number
+                           },
 "save_member_preferences":
 { Args: { "p_business_id": string,"p_changes": Json,"p_expected_incarnation": string,"p_expected_version": number,"p_membership_id": string }; Returns: {
               "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"status": string,"style": string,"version": number
             }[]
+                           },
+"save_site_draft":
+{ Args: { "p_actor": string,"p_business_id": string,"p_config": Json,"p_expected_revision": number,"p_schema_version": number }; Returns: number
                            },
 "search_clients":
 { Args: { "p_business_id": string,"p_limit"?: number,"p_query": string }; Returns: {
@@ -1102,6 +1193,9 @@ isOneToOne: false
                            },
 "set_service_options":
 { Args: { "p_business_id": string,"p_deleted_choice_ids"?: (string)[],"p_deleted_option_ids"?: (string)[],"p_expected_version": number,"p_options": Json,"p_service_id": string }; Returns: number
+                           },
+"set_site_plan":
+{ Args: { "p_business_id": string,"p_plan": string }; Returns: undefined
                            },
 "update_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_expected_version": number,"p_name"?: string,"p_visible"?: boolean }; Returns: {
