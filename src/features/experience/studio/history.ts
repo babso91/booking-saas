@@ -18,6 +18,7 @@ type State<T> = {
 
 type Action<T> =
   | { type: "set"; value: T; key?: string; at: number }
+  | { type: "update"; change: (value: T) => T; key?: string; at: number }
   | { type: "undo" }
   | { type: "redo" }
   | { type: "reset"; value: T };
@@ -37,6 +38,15 @@ function reduce<T>(state: State<T>, action: Action<T>): State<T> {
         last: action.key ? { key: action.key, at: action.at } : null,
       };
     }
+    case "update":
+      // Applied to the value as it is when the change lands, not to the
+      // one a slow caller saw (a photo arriving after other edits).
+      return reduce(state, {
+        type: "set",
+        value: action.change(state.present),
+        key: action.key,
+        at: action.at,
+      });
     case "undo": {
       const previous = state.past.at(-1);
       if (previous === undefined) return state;
@@ -74,6 +84,9 @@ export function useHistory<T>(initial: T) {
     /** `key` names the control: its quick successive changes merge. */
     set: (value: T, key?: string) =>
       dispatch({ type: "set", value, key, at: Date.now() }),
+    /** A change applied to the latest value (never to a stale copy). */
+    update: (change: (value: T) => T, key?: string) =>
+      dispatch({ type: "update", change, key, at: Date.now() }),
     undo: () => dispatch({ type: "undo" }),
     redo: () => dispatch({ type: "redo" }),
     /** Another value to start from (taken from elsewhere): no undo to it. */

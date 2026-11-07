@@ -1,4 +1,5 @@
 import type { SiteConfig, SitePalette } from "@/features/sites/config";
+import { contrast, MIN_CONTRAST } from "./contrast";
 
 // The universes we design, as data only (no React): what the Core lens
 // needs. One copy, shared by the server (readability before publishing),
@@ -294,26 +295,52 @@ const paletteKeys = [
  */
 export function coreLens(config: SiteConfig): SiteConfig {
   const design = universeDesigns[config.universe];
+  // Her accent's text follows her accent (a correction may have changed
+  // it): neither is compared to find the designed palette she chose.
   const designed = design.palettes.find((item) =>
     paletteKeys.every(
       (key) =>
-        key === "accent" || item.palette[key] === config.tokens.palette[key],
+        key === "accent" ||
+        key === "onAccent" ||
+        item.palette[key] === config.tokens.palette[key],
     ),
   );
+  const base = designed?.palette ?? design.tokens.palette;
+  const accent = config.tokens.palette.accent;
   return {
     ...config,
     tokens: {
       ...design.tokens,
       cta: config.tokens.cta,
       palette: {
-        ...(designed?.palette ?? design.tokens.palette),
-        accent: config.tokens.palette.accent,
+        ...base,
+        accent,
+        onAccent: readableOnAccent(
+          accent,
+          base.onAccent,
+          config.tokens.palette.onAccent,
+        ),
       },
     },
     sections: design.sections,
     booking: design.booking,
     quickBook: design.quickBook,
   };
+}
+
+/**
+ * The text on her accent under Core: the designed one when it reads on her
+ * accent, else hers (the correction offered before publishing), else black
+ * or white, whichever reads better. Her accent is hers on both plans, so
+ * any correction she accepts makes both renders readable (Codex review of
+ * #50: a dark accent was refused publication under Core forever).
+ */
+function readableOnAccent(accent: string, designed: string, hers: string) {
+  if (contrast(designed, accent) >= MIN_CONTRAST) return designed;
+  if (contrast(hers, accent) >= MIN_CONTRAST) return hers;
+  return contrast("#FFFFFF", accent) >= contrast("#000000", accent)
+    ? "#FFFFFF"
+    : "#000000";
 }
 
 /** What a plan renders of a configuration. */

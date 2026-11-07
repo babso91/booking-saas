@@ -76,3 +76,62 @@ describe("coreLens (the lab's effective, Core)", () => {
     }
   });
 });
+
+describe("coreLens and the readability correction (Codex review of #50)", () => {
+  it("a dark accent: once the offered correction is applied, both plans read", async () => {
+    // As the studio publishes: her draft rendered, corrected, saved.
+    const { ensureReadable } =
+      await import("@/features/experience/engine/harmony");
+    const { renderConfigOf } =
+      await import("@/features/experience/engine/from-site");
+    const { savedConfigOf } =
+      await import("@/features/experience/studio/saved");
+    const { readabilityIssues } = await import("./readability");
+    const base = sampleSiteConfig();
+    const dark = {
+      ...base,
+      tokens: {
+        ...base.tokens,
+        palette: { ...base.tokens.palette, accent: "#4b1f8f" },
+      },
+    };
+    // Only her saved text is at fault; Core's text on her accent reads.
+    expect(readabilityIssues(dark).map((issue) => issue.plan)).toEqual([
+      "signature",
+    ]);
+    // Before this fix, Core kept Mila's dark text on her dark accent:
+    // publication was refused whatever she accepted.
+    const published = savedConfigOf(ensureReadable(renderConfigOf(dark)));
+    expect(readabilityIssues(published)).toEqual([]);
+  });
+
+  it("the designed palette she chose stays hers under Core after the correction", () => {
+    const base = sampleSiteConfig();
+    const second = universeDesigns.mila.palettes[1]!.palette;
+    const corrected = {
+      ...base,
+      tokens: {
+        ...base.tokens,
+        palette: { ...second, accent: "#4b1f8f", onAccent: "#ffffff" },
+      },
+    };
+    expect(coreLens(corrected).tokens.palette).toEqual({
+      ...second,
+      accent: "#4b1f8f",
+      onAccent: "#ffffff",
+    });
+  });
+
+  it("the designed text on the accent is kept whenever it reads", () => {
+    const base = sampleSiteConfig();
+    const first = universeDesigns.mila.palettes[0]!.palette;
+    const lens = coreLens({
+      ...base,
+      tokens: {
+        ...base.tokens,
+        palette: { ...first, onAccent: "#123456" },
+      },
+    });
+    expect(lens.tokens.palette.onAccent).toBe(first.onAccent);
+  });
+});

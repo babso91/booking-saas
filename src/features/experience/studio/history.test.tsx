@@ -34,3 +34,31 @@ describe("studio undo / redo", () => {
     expect(result.current.canUndo).toBe(false);
   });
 });
+
+describe("a change that lands late (Codex review of #50)", () => {
+  it("update applies to the latest value, never to the one a slow caller saw", async () => {
+    const { withPhoto } = await import("./studio");
+    const { universes } = await import("./universes");
+    const start = universes.mila.config;
+    const { result } = renderHook(() => useHistory(start));
+    // A photo upload starts; meanwhile she renames her studio.
+    act(() =>
+      result.current.set({
+        ...result.current.value,
+        brand: { ...result.current.value.brand, name: "Atelier Nouveau" },
+      }),
+    );
+    // The upload completes: the photo goes into the draft as it is now.
+    act(() =>
+      result.current.update((current) =>
+        withPhoto(current, "cover", "photo-1"),
+      ),
+    );
+    expect(result.current.value.brand.name).toBe("Atelier Nouveau");
+    expect(result.current.value.content.cover).toBe("photo-1");
+    // One undo step for the photo, then the rename.
+    act(() => result.current.undo());
+    expect(result.current.value.content.cover).toBe(start.content.cover);
+    expect(result.current.value.brand.name).toBe("Atelier Nouveau");
+  });
+});

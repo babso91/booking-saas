@@ -35,6 +35,8 @@ import { universes, type Universe, type UniverseId } from "./universes";
 type Part<T> = {
   value: T;
   set: (value: T, key?: string) => void;
+  /** A change applied to the latest value (history.ts). */
+  update: (change: (value: T) => T, key?: string) => void;
   undo: () => void;
   redo: () => void;
   canUndo: boolean;
@@ -300,22 +302,11 @@ export function Studio({
     onPhotoSlot(works.length);
   }
 
+  // An upload can finish after she edited something else (or left the
+  // photo): the photo goes into the draft as it is then, never into the
+  // copy seen when the upload started (Codex review of #50).
   function replacePhoto(slot: PhotoSlot, id: string) {
-    const content =
-      slot === "cover"
-        ? { ...config.content, cover: id }
-        : slot === "portrait"
-          ? {
-              ...config.content,
-              portrait: { ...config.content.portrait, photo: id },
-            }
-          : {
-              ...config.content,
-              works: config.content.works.map((work, position) =>
-                position === slot ? { ...work, photo: id } : work,
-              ),
-            };
-    set({ content });
+    draft.update((current) => withPhoto(current, slot, id));
   }
 
   return (
@@ -1475,4 +1466,27 @@ function IconButton({
       {children}
     </button>
   );
+}
+
+/** `config` with photo `id` in `slot`; everything else as it is. */
+export function withPhoto(
+  config: SiteConfig,
+  slot: PhotoSlot,
+  id: string,
+): SiteConfig {
+  const content =
+    slot === "cover"
+      ? { ...config.content, cover: id }
+      : slot === "portrait"
+        ? {
+            ...config.content,
+            portrait: { ...config.content.portrait, photo: id },
+          }
+        : {
+            ...config.content,
+            works: config.content.works.map((work, position) =>
+              position === slot ? { ...work, photo: id } : work,
+            ),
+          };
+  return { ...config, content };
 }

@@ -111,10 +111,11 @@ describe("readability", () => {
     ]);
   });
 
-  it("an accent readable as saved but not under Core's lens is refused for Core", () => {
+  it("an accent whose text reads as saved reads under Core's lens too", () => {
     const base = sampleSiteConfig();
-    // Signature: white on a dark violet reads. Core: Mila's designed palette
-    // keeps its own text colour on her accent (#0b0b0b on violet): it does not.
+    // Signature: white on a dark violet reads. Core used to keep Mila's
+    // designed text (#0b0b0b) on her violet, and refused publication whatever
+    // she accepted (Codex review of #50): it now keeps her readable text.
     const config = {
       ...base,
       tokens: {
@@ -126,12 +127,6 @@ describe("readability", () => {
         },
       },
     };
-    expect(readabilityIssues(config)).toEqual([
-      {
-        plan: "core",
-        where: "Le texte des boutons sur l’accent",
-        ratio: expect.any(Number),
-      },
-    ]);
+    expect(readabilityIssues(config)).toEqual([]);
   });
 });
