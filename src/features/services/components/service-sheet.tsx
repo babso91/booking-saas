@@ -815,7 +815,7 @@ function ServiceFields({
         readOnly={busy}
         maxLength={MAX_NAME}
         autoComplete="off"
-        placeholder="Rehaussement de cils"
+        placeholder="Rehaussement, motif au henné, épilation…"
         data-autofocus=""
       />
       <TextAreaField

@@ -102,6 +102,7 @@ describe("the Écrin frame", () => {
           "/app/settings/calendar",
           "/app/settings/hours",
           "/app/today",
+          "/b/atelier-maelys",
         ].sort(),
       );
     },

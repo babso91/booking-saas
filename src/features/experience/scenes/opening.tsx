@@ -12,6 +12,8 @@ import {
   useLessMotion,
 } from "../engine/engine";
 import type { OpeningVariant } from "../engine/config";
+import { typePairs } from "../engine/tokens";
+import { displayWidthEm } from "./fit";
 import styles from "./opening.module.css";
 
 // Opening scenes: the first frame of a professional's site. Each is its
@@ -140,7 +142,19 @@ function DidoneCutOpening() {
               className={`block ${nameLine.className}`}
               style={nameLine.style}
             >
-              <Display className="block text-[34vw] leading-[0.8] md:text-[24vw]">
+              {/* Enormous, but whole: a longer name than "Mila" gets
+                  smaller rather than cut off mid-letter. */}
+              <Display
+                className="block text-[length:min(34vw,var(--fit))] leading-[0.8] whitespace-nowrap md:text-[length:min(24vw,var(--fit))]"
+                style={
+                  {
+                    "--fit": `calc((100vw - 2rem) / ${displayWidthEm(
+                      name,
+                      typePairs[config.tokens.type].displayCase === "uppercase",
+                    ).toFixed(2)})`,
+                  } as CSSProperties
+                }
+              >
                 {name}
               </Display>
             </span>

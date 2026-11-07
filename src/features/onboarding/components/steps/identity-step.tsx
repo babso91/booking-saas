@@ -91,7 +91,7 @@ export function IdentityStep({
           autoComplete="organization"
           autoCapitalize="words"
           enterKeyHint="next"
-          placeholder="Studio Mila Lashes"
+          placeholder="Atelier Mila"
           hint="C’est le nom que verront tes clientes."
           value={draft.businessName}
           onChange={(event) => update("businessName", event.target.value)}

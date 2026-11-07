@@ -53,6 +53,7 @@ export function SiteStudio({
   online: initialOnline,
   catalog,
   businessName,
+  slug,
   photos: initialPhotos,
   fontClasses,
   businessId,
@@ -66,6 +67,8 @@ export function SiteStudio({
   online: { config: SavedConfig; number: number; publishedAt: string } | null;
   catalog: ShowcaseGroup[];
   businessName: string;
+  /** Her public page's address: /b/[slug]. */
+  slug: string;
   photos: StudioPhoto[];
   fontClasses: string;
   /** The business this studio is opened for: every call carries it. */
@@ -323,6 +326,7 @@ export function SiteStudio({
           library={library}
           onUpload={upload}
           flash={flash}
+          publicPath={`/b/${slug}`}
           onLeave={leave}
           status={
             <DraftState

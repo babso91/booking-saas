@@ -35,8 +35,14 @@ describe("AppShell", () => {
       expect(link.getAttribute("aria-current")).toBeNull();
     });
     expect(screen.queryByRole("link", { name: /Paramètres/ })).toBeNull();
-    // Only the booking page address is still marked as coming soon.
-    expect(screen.getAllByText("Bientôt").length).toBeGreaterThan(0);
+    // Her public page is a real link, never "coming soon".
+    expect(screen.queryByText("Bientôt")).toBeNull();
+    screen
+      .getAllByRole("link", { name: /\/b\/studio-mila/ })
+      .forEach((link) => {
+        expect(link.getAttribute("href")).toBe("/b/studio-mila");
+        expect(link.getAttribute("target")).toBe("_blank");
+      });
     expect(screen.getByText("contenu")).toBeTruthy();
   });
 
@@ -56,9 +62,13 @@ describe("AppShell", () => {
     expect(
       dialog.getByRole("link", { name: /Horaires/ }).getAttribute("href"),
     ).toBe("/app/settings/hours");
-    // The booking page address is shown, marked as coming soon, not linked.
-    expect(dialog.getByText(/\/b\/studio-mila/)).toBeTruthy();
-    expect(dialog.queryByRole("link", { name: /\/b\// })).toBeNull();
+    // Her public page: a real link, and its address to copy.
+    expect(
+      dialog
+        .getByRole("link", { name: /\/b\/studio-mila/ })
+        .getAttribute("href"),
+    ).toBe("/b/studio-mila");
+    expect(dialog.getByRole("button", { name: "Copier le lien" })).toBeTruthy();
     expect(dialog.getByRole("button", { name: /Se déconnecter/ })).toBeTruthy();
   });
 
