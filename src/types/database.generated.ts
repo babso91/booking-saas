@@ -669,13 +669,13 @@ isOneToOne: false
                   ]
                 },"site_assets": {
                   Row: {
-                    "business_id": string,"byte_size": number | null,"content_type": string | null,"created_at": string,"height": number | null,"id": string,"status": string,"width": number | null
+                    "business_id": string,"byte_size": number | null,"content_type": string | null,"created_at": string,"created_by": string | null,"height": number | null,"id": string,"revoked_at": string | null,"revoked_reason": string | null,"status": string,"width": number | null
                   }
                   Insert: {
-                    "business_id": string,"byte_size"?: number | null,"content_type"?: string | null,"created_at"?: string,"height"?: number | null,"id"?: string,"status"?: string,"width"?: number | null
+                    "business_id": string,"byte_size"?: number | null,"content_type"?: string | null,"created_at"?: string,"created_by"?: string | null,"height"?: number | null,"id"?: string,"revoked_at"?: string | null,"revoked_reason"?: string | null,"status"?: string,"width"?: number | null
                   }
                   Update: {
-                    "business_id"?: string,"byte_size"?: number | null,"content_type"?: string | null,"created_at"?: string,"height"?: number | null,"id"?: string,"status"?: string,"width"?: number | null
+                    "business_id"?: string,"byte_size"?: number | null,"content_type"?: string | null,"created_at"?: string,"created_by"?: string | null,"height"?: number | null,"id"?: string,"revoked_at"?: string | null,"revoked_reason"?: string | null,"status"?: string,"width"?: number | null
                   }
                   Relationships: [
                     {
@@ -684,7 +684,65 @@ isOneToOne: false
 isOneToOne: false
       referencedRelation: "businesses"
       referencedColumns: ["id"]
+    },{
+      foreignKeyName: "site_assets_created_by_fkey"
+      columns: ["created_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
     }
+                  ]
+                },"site_photo_conversions": {
+                  Row: {
+                    "asset_id": string,"business_id": string,"deadline": string,"started_at": string
+                  }
+                  Insert: {
+                    "asset_id": string,"business_id": string,"deadline": string,"started_at"?: string
+                  }
+                  Update: {
+                    "asset_id"?: string,"business_id"?: string,"deadline"?: string,"started_at"?: string
+                  }
+                  Relationships: [
+                    
+                  ]
+                },"site_photo_orphans": {
+                  Row: {
+                    "asset_id": string,"attempts": number,"business_id": string,"first_seen_at": string,"last_attempt_at": string | null,"last_seen_at": string,"name": string
+                  }
+                  Insert: {
+                    "asset_id": string,"attempts"?: number,"business_id": string,"first_seen_at"?: string,"last_attempt_at"?: string | null,"last_seen_at"?: string,"name": string
+                  }
+                  Update: {
+                    "asset_id"?: string,"attempts"?: number,"business_id"?: string,"first_seen_at"?: string,"last_attempt_at"?: string | null,"last_seen_at"?: string,"name"?: string
+                  }
+                  Relationships: [
+                    
+                  ]
+                },"site_photo_purges": {
+                  Row: {
+                    "asset_id": string,"attempts": number,"business_id": string,"last_attempt_at": string | null,"last_done_at": string | null,"not_before": string,"requested_at": string,"scope": string
+                  }
+                  Insert: {
+                    "asset_id": string,"attempts"?: number,"business_id": string,"last_attempt_at"?: string | null,"last_done_at"?: string | null,"not_before"?: string,"requested_at"?: string,"scope": string
+                  }
+                  Update: {
+                    "asset_id"?: string,"attempts"?: number,"business_id"?: string,"last_attempt_at"?: string | null,"last_done_at"?: string | null,"not_before"?: string,"requested_at"?: string,"scope"?: string
+                  }
+                  Relationships: [
+                    
+                  ]
+                },"site_photo_reconciliation": {
+                  Row: {
+                    "cursor": string,"id": boolean,"last_page_at": string | null,"last_pass_completed_at": string | null,"last_pass_deleted": number | null,"last_pass_failed": number | null,"last_pass_scanned": number | null,"last_pass_suspects": number | null,"last_pass_unknown": number | null,"lease_until": string | null,"pass_deleted": number,"pass_failed": number,"pass_scanned": number,"pass_started_at": string | null,"pass_suspects": number,"pass_unknown": number,"run_id": string | null
+                  }
+                  Insert: {
+                    "cursor"?: string,"id"?: boolean,"last_page_at"?: string | null,"last_pass_completed_at"?: string | null,"last_pass_deleted"?: number | null,"last_pass_failed"?: number | null,"last_pass_scanned"?: number | null,"last_pass_suspects"?: number | null,"last_pass_unknown"?: number | null,"lease_until"?: string | null,"pass_deleted"?: number,"pass_failed"?: number,"pass_scanned"?: number,"pass_started_at"?: string | null,"pass_suspects"?: number,"pass_unknown"?: number,"run_id"?: string | null
+                  }
+                  Update: {
+                    "cursor"?: string,"id"?: boolean,"last_page_at"?: string | null,"last_pass_completed_at"?: string | null,"last_pass_deleted"?: number | null,"last_pass_failed"?: number | null,"last_pass_scanned"?: number | null,"last_pass_suspects"?: number | null,"last_pass_unknown"?: number | null,"lease_until"?: string | null,"pass_deleted"?: number,"pass_failed"?: number,"pass_scanned"?: number,"pass_started_at"?: string | null,"pass_suspects"?: number,"pass_unknown"?: number,"run_id"?: string | null
+                  }
+                  Relationships: [
+                    
                   ]
                 },"site_versions": {
                   Row: {
@@ -777,6 +835,9 @@ isOneToOne: false
                            },
 "agenda_update_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_starts_at"?: string }; Returns: string
+                           },
+"begin_site_photo_conversion":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: string
                            },
 "business_time":
 { Args: { "p_business_id": string,"p_dates"?: (string)[],"p_instants"?: (string)[],"p_locals"?: (string)[],"p_open_ranges"?: boolean }; Returns: Json
@@ -941,6 +1002,9 @@ isOneToOne: false
               "available": boolean,"reason": string,"slug": string
             }[]
                            },
+"claim_site_photo_reconciliation":
+{ Args: { "p_run": string }; Returns: string
+                           },
 "client_hub_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_session_token": string }; Returns: Json
                            },
@@ -979,6 +1043,12 @@ isOneToOne: false
               "business_id": string,"business_name": string,"slug": string,"timezone": string
             }[]
                            },
+"complete_site_photo_purge":
+{ Args: { "p_asset_id": string,"p_business_id": string,"p_scope": string }; Returns: undefined
+                           },
+"confirm_site_asset":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string,"p_byte_size": number,"p_content_type": string,"p_height": number,"p_width": number }; Returns: undefined
+                           },
 "create_public_booking":
 { Args: { "p_client_ip": unknown,"p_email": string,"p_expected_duration_minutes"?: number,"p_expected_price_cents"?: number,"p_first_name": string,"p_last_name"?: string,"p_option_choice_ids"?: (string)[],"p_phone"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
               "appointment_id": string,"business_name": string,"currency": string,"duration_minutes": number,"ends_at": string,"options": Json,"price_cents": number,"replayed": boolean,"service_name": string,"starts_at": string,"status": string,"timezone": string
@@ -993,6 +1063,9 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_name": string,"p_request_id": string,"p_visible"?: boolean }; Returns: {
               "category_id": string,"status": string
             }[]
+                           },
+"create_site_asset":
+{ Args: { "p_actor": string,"p_business_id": string,"p_byte_size": number,"p_content_type": string }; Returns: string
                            },
 "crm_assert_member":
 { Args: { "p_business_id": string }; Returns: undefined
@@ -1050,6 +1123,15 @@ isOneToOne: false
 "delete_service_category":
 { Args: { "p_business_id": string,"p_category_id": string }; Returns: undefined
                            },
+"delete_site_asset":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: string
+                           },
+"discard_abandoned_site_assets":
+{ Args: { "p_limit": number }; Returns: number
+                           },
+"discard_site_asset":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: undefined
+                           },
 "email_outbox_claim":
 { Args: { "p_business_id"?: string,"p_limit"?: number,"p_per_business"?: number }; Returns: Json
                            },
@@ -1064,6 +1146,12 @@ isOneToOne: false
                            },
 "email_outbox_release":
 { Args: { "p_claim_id": string,"p_id": string }; Returns: boolean
+                           },
+"expire_site_photo_conversions":
+{ Args: { "p_limit": number }; Returns: number
+                           },
+"fail_site_photo_purge":
+{ Args: { "p_asset_id": string,"p_business_id": string,"p_scope": string }; Returns: undefined
                            },
 "get_available_slots":
 { Args: { "p_date": string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_slug": string }; Returns: {
@@ -1091,7 +1179,7 @@ isOneToOne: false
                            },
 "get_public_site":
 { Args: { "p_slug": string }; Returns: {
-              "config": Json,"number": number,"plan": string,"published_at": string,"schema_version": number,"version_id": string
+              "config": Json,"number": number,"plan": string,"published_at": string,"schema_version": number,"unavailable_assets": (string)[],"version_id": string
             }[]
                            },
 "has_business_role":
@@ -1135,8 +1223,19 @@ isOneToOne: false
 "loyalty_update_reward":
 { Args: { "p_active": boolean,"p_business_id": string,"p_description": string,"p_expected_version": number,"p_name": string,"p_points_required": number,"p_reward_id": string,"p_reward_value": number,"p_service_id": string }; Returns: number
                            },
+"member_site_photo":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: boolean
+                           },
 "move_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_offset": number }; Returns: undefined
+                           },
+"pending_site_photo_purges":
+{ Args: { "p_before": string,"p_limit": number }; Returns: {
+              "asset_id": string,"attempts": number,"business_id": string,"scope": string
+            }[]
+                           },
+"public_site_photo":
+{ Args: { "p_asset_id": string,"p_slug": string }; Returns: string
                            },
 "publish_site":
 { Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number }; Returns: {
@@ -1152,6 +1251,12 @@ isOneToOne: false
 { Args: { "p_business_id": string }; Returns: {
               "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"style": string,"version": number
             }[]
+                           },
+"record_site_photo_orphan_deletions":
+{ Args: { "p_deleted": (string)[],"p_failed": (string)[],"p_run": string }; Returns: undefined
+                           },
+"release_site_photo_reconciliation":
+{ Args: { "p_run": string }; Returns: undefined
                            },
 "reorder_service_categories":
 { Args: { "p_business_id": string,"p_category_ids": (string)[] }; Returns: undefined
@@ -1178,6 +1283,12 @@ isOneToOne: false
 "restore_site_version":
 { Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number,"p_version_id": string }; Returns: number
                            },
+"revoke_site_asset":
+{ Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: undefined
+                           },
+"revoke_site_asset_for_privacy":
+{ Args: { "p_asset_id": string,"p_business_id": string }; Returns: undefined
+                           },
 "save_member_preferences":
 { Args: { "p_business_id": string,"p_changes": Json,"p_expected_incarnation": string,"p_expected_version": number,"p_membership_id": string }; Returns: {
               "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"status": string,"style": string,"version": number
@@ -1196,6 +1307,15 @@ isOneToOne: false
                            },
 "set_site_plan":
 { Args: { "p_business_id": string,"p_plan": string }; Returns: undefined
+                           },
+"site_photo_conversion_writable":
+{ Args: { "p_asset_id": string,"p_business_id": string }; Returns: boolean
+                           },
+"site_photo_reconciliation_page":
+{ Args: { "p_limit": number,"p_run": string }; Returns: Json
+                           },
+"site_photo_reconciliation_status":
+{ Args: Record<PropertyKey, never>; Returns: Json
                            },
 "update_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_expected_version": number,"p_name"?: string,"p_visible"?: boolean }; Returns: {

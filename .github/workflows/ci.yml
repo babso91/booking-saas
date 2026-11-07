@@ -18,7 +18,7 @@ concurrency:
 # migrations and upgrade, the PostgreSQL suite in two shards, the browser.
 
 env:
-  SUPABASE_EXCLUDE: studio,imgproxy,vector,logflare,realtime,storage-api,edge-runtime,supavisor,postgres-meta
+  SUPABASE_EXCLUDE: studio,imgproxy,vector,logflare,realtime,edge-runtime,supavisor,postgres-meta
 
 jobs:
   checks:

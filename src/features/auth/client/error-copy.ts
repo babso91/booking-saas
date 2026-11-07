@@ -145,6 +145,37 @@ export const errorCopy: Record<
     title: "Photo indisponible",
     message: "Une photo n’est plus disponible. Choisis-en une autre.",
   },
+  site_asset_in_use: {
+    title: "Photo utilisée",
+    message:
+      "Cette photo est sur ton brouillon ou une version publiée. Retire-la, ou révoque-la.",
+  },
+  site_photo_not_found: {
+    title: "Photo introuvable",
+    message: "Cette photo n’existe plus.",
+  },
+  site_photo_revoked: {
+    title: "Photo révoquée",
+    message: "Cette photo a été révoquée. Envoie-en une nouvelle.",
+  },
+  site_photo_unsupported: {
+    title: "Format non accepté",
+    message:
+      "Choisis une photo JPEG, PNG, WebP ou AVIF. Sur iPhone, choisis-la depuis la photothèque.",
+  },
+  site_photo_too_large: {
+    title: "Photo trop lourde",
+    message: "Choisis une photo de 10 Mo au plus.",
+  },
+  site_photo_cleanup_pending: {
+    title: "Presque terminé",
+    message:
+      "Des fichiers de la photo n’ont pas encore pu être supprimés. Réessaie : leur suppression sera reprise.",
+  },
+  site_photo_invalid: {
+    title: "Photo trop petite",
+    message: "Choisis une photo d’au moins 320 px de côté, pas trop allongée.",
+  },
   stale_service: {
     title: "Modifiée entre-temps",
     message: "Cette prestation a changé. Recharge-la avant de réessayer.",

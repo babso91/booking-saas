@@ -251,6 +251,11 @@ export type PublishedSiteDto = {
   plan: SitePlan;
   schemaVersion: number;
   config: SiteConfig;
+  /**
+   * The photos `config` refers to that can no longer be shown (revoked
+   * since): their places are drawn without a photo.
+   */
+  unavailableAssets: string[];
 };
 
 /** The published version of a business's site, for the public. */
@@ -269,5 +274,6 @@ export async function getPublishedSite(
     plan: data.plan as SitePlan,
     schemaVersion: data.schema_version,
     config: data.config as SiteConfig,
+    unavailableAssets: data.unavailable_assets,
   };
 }
