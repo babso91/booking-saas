@@ -291,17 +291,29 @@ export function useLessMotion() {
   );
 }
 
-/** "25 €", "12,50 €" (never "12,5 €"); a field typed wrong says so. */
-export const euros = (cents: number) =>
-  !Number.isFinite(cents)
-    ? "prix à corriger"
-    : `${(cents / 100).toLocaleString("fr-FR", {
-        minimumFractionDigits: cents % 100 ? 2 : 0,
-        maximumFractionDigits: 2,
-      })} €`;
+/**
+ * "25 €", "12,50 €" (never "12,5 €"); a field typed wrong says so. In her
+ * catalogue's currency (euros unless it says otherwise).
+ */
+export const euros = (cents: number, currency = "EUR") => {
+  if (!Number.isFinite(cents)) return "prix à corriger";
+  const fraction = cents % 100 ? 2 : 0;
+  if (currency === "EUR")
+    return `${(cents / 100).toLocaleString("fr-FR", {
+      minimumFractionDigits: fraction,
+      maximumFractionDigits: 2,
+    })} €`;
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: fraction,
+    maximumFractionDigits: 2,
+  }).format(cents / 100);
+};
 
 /** A price as customers read it: "Offert" rather than "0 €". */
-export const price = (cents: number) => (cents === 0 ? "Offert" : euros(cents));
+export const price = (cents: number, currency = "EUR") =>
+  cents === 0 ? "Offert" : euros(cents, currency);
 
 /**
  * Small text that informs rather than labels (a duration, a price note):

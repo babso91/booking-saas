@@ -109,8 +109,8 @@ function OptionsNote({ service }: { service: CatalogService }) {
 function priceOf(service: CatalogService) {
   const from = startingAt(service);
   return from.priceVaries
-    ? `dès ${euros(from.priceCents)}`
-    : price(from.priceCents);
+    ? `dès ${euros(from.priceCents, service.currency)}`
+    : price(from.priceCents, service.currency);
 }
 
 function minutesOf(service: CatalogService) {

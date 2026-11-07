@@ -538,7 +538,7 @@ export function useBookingFlow({
         // Back to the slots of that day, read again; details kept.
         const day = wallDate(request.localStartsAt);
         restoreContact(sent);
-        setServiceId(sent.serviceId);
+        restoreSelection(sent);
         setSlot(null);
         setSlotQuote(null);
         setDate(days.includes(day) ? day : date);
@@ -555,6 +555,7 @@ export function useBookingFlow({
       case "options_required":
       case "option_choice_unavailable":
         restoreContact(sent);
+        restoreSelection(sent);
         setSubmit({ status: "idle" });
         optionsChanged(sent.serviceId);
         return;
@@ -565,6 +566,7 @@ export function useBookingFlow({
         const day = wallDate(request.localStartsAt);
         const onDay = days.includes(day) ? day : date;
         restoreContact(sent);
+        restoreSelection(sent);
         setSubmit({ status: "idle" });
         setNotice("quote_changed");
         setSlot(null);
@@ -608,6 +610,26 @@ export function useBookingFlow({
       default:
         setSubmit({ status: "failed", error });
     }
+  }
+
+  /**
+   * The service and answers of a sent request back in the flow: after the
+   * page was left and the request resent, nothing is chosen in this render
+   * (Codex review of #50: a refusal then left her without a booking step).
+   */
+  function restoreSelection(sent: BookingCommand) {
+    setServiceId(sent.serviceId);
+    const sentService = services.find((item) => item.id === sent.serviceId);
+    if (!sentService) return;
+    const chosen = new Set(sent.optionChoiceIds ?? []);
+    const kept: Answers = {};
+    for (const option of sentService.options) {
+      const choice = option.choices.find((item) => chosen.has(item.id));
+      if (choice) kept[option.id] = choice.id;
+    }
+    const next = answersFor(sentService, kept);
+    latestAnswers.current = next;
+    setAnswers(next);
   }
 
   /** The details of a sent request back in the form (it is what was sent). */

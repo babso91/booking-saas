@@ -10,13 +10,25 @@ import type {
 // category. The lab's fictional catalogue (proto/experience-engine,
 // catalog/model.ts) had the same shape; no universe owns or changes it.
 
-export type CatalogService = PublicCatalogService;
+/**
+ * A service as the scenes take it: with the currency of her catalogue
+ * (prices are never said in another one; Codex review of #50).
+ */
+export type CatalogService = PublicCatalogService & { currency?: string };
 
-export type ShowcaseGroup = PublicCatalogGroup;
+export type ShowcaseGroup = Omit<PublicCatalogGroup, "services"> & {
+  services: CatalogService[];
+};
 
 /** Her showcase, as the scenes take it. */
 export const showcaseOf = (catalog: PublicCatalog): ShowcaseGroup[] =>
-  catalog.groups;
+  catalog.groups.map((group) => ({
+    ...group,
+    services: group.services.map((service) => ({
+      ...service,
+      currency: catalog.currency,
+    })),
+  }));
 
 /**
  * What a service costs and lasts at least, as her booking page says it

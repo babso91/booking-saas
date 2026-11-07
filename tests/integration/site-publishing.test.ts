@@ -15,6 +15,7 @@ import {
 } from "@/features/sites/data/sites";
 import { saveSiteDraftSchema } from "@/features/sites/schemas";
 import { sampleSiteConfig } from "@/features/sites/site-fixture";
+import { coreLens } from "@/features/sites/universes";
 import { AppException } from "@/lib/errors";
 
 import {
@@ -602,7 +603,10 @@ describe("validation", () => {
     }
   });
 
-  it("readable as saved but not under Core's lens: refused, for Core", async () => {
+  it("white on a dark accent: readable under both plans, published (Codex review of #50)", async () => {
+    // Core used to keep its universe's dark text on her dark accent and
+    // refuse publication whatever she accepted; it now keeps her readable
+    // text on her accent.
     const studio = await studioOf(alice);
     const writer = writerFor(studio, alice);
     const base = sampleSiteConfig();
@@ -618,6 +622,30 @@ describe("validation", () => {
       },
     };
     await saveSiteDraft(writer, { expectedRevision: 0, config });
+    expect(await codeOf(() => publishSite(writer, 1))).toBe("ok");
+    expect(await listSiteVersions(alice.client, studio.id)).toHaveLength(1);
+    expect(coreLens(config).tokens.palette).toMatchObject({
+      accent: "#4b1f8f",
+      onAccent: "#ffffff",
+    });
+  });
+
+  it("her text on her accent unreadable: refused, for Signature (Core's render reads)", async () => {
+    const studio = await studioOf(alice);
+    const writer = writerFor(studio, alice);
+    const base = sampleSiteConfig();
+    const config = {
+      ...base,
+      tokens: {
+        ...base.tokens,
+        palette: {
+          ...base.tokens.palette,
+          accent: "#4b1f8f",
+          onAccent: "#0b0b0b",
+        },
+      },
+    };
+    await saveSiteDraft(writer, { expectedRevision: 0, config });
     try {
       await publishSite(writer, 1);
       throw new Error("published");
@@ -625,7 +653,9 @@ describe("validation", () => {
       expect(error).toBeInstanceOf(AppException);
       expect((error as AppException).code).toBe("site_unreadable");
       expect((error as AppException).fieldErrors?.palette).toEqual([
-        expect.stringMatching(/^Core — Le texte des boutons sur l’accent/),
+        expect.stringMatching(
+          /^Signature — Le texte des boutons sur l’accent : 1\.\d+:1/,
+        ),
       ]);
     }
     expect(await listSiteVersions(alice.client, studio.id)).toEqual([]);
@@ -645,7 +675,17 @@ describe("validation", () => {
     expect(
       await saveSiteDraft(writer, { expectedRevision: 0, config: unreadable }),
     ).toEqual({ revision: 1 });
-    expect(await codeOf(() => publishSite(writer, 1))).toBe("site_unreadable");
+    // Core renders a designed palette (readable), Signature her own: hers is
+    // what is refused, never let through because Core reads.
+    try {
+      await publishSite(writer, 1);
+      throw new Error("published");
+    } catch (error) {
+      expect((error as AppException).code).toBe("site_unreadable");
+      expect((error as AppException).fieldErrors?.palette).toEqual([
+        expect.stringMatching(/^Signature — Le texte sur le fond nuit/),
+      ]);
+    }
     expect(await listSiteVersions(alice.client, studio.id)).toEqual([]);
     expect(
       await codeOf(() => getPublishedSite(anonClient(), studio.slug)),

@@ -1148,7 +1148,7 @@ function CatalogPanel({
                       {from.durationVaries ? "dès " : ""}
                       {minutes(from.durationMinutes)} ·{" "}
                       {from.priceVaries ? "dès " : ""}
-                      {euros(from.priceCents)}
+                      {euros(from.priceCents, service.currency)}
                     </span>
                   </li>
                 );

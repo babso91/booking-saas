@@ -135,3 +135,38 @@ describe("coreLens and the readability correction (Codex review of #50)", () => 
     expect(lens.tokens.palette.onAccent).toBe(first.onAccent);
   });
 });
+
+describe("coreLens never lets an unreadable render through", () => {
+  it("whatever her accent, Core's text on it reads; Core's other pairs are its designed ones", async () => {
+    const { contrast } = await import("./readability");
+    const base = sampleSiteConfig();
+    const steps = ["00", "33", "66", "99", "cc", "ff"];
+    for (const universe of Object.keys(universeDesigns) as Array<
+      keyof typeof universeDesigns
+    >) {
+      for (const r of steps)
+        for (const g of steps)
+          for (const b of steps) {
+            const accent = `#${r}${g}${b}`;
+            for (const onAccent of ["#000000", "#ffffff", "#808080"]) {
+              const lens = coreLens({
+                ...base,
+                universe,
+                tokens: {
+                  ...base.tokens,
+                  palette: { ...base.tokens.palette, accent, onAccent },
+                },
+              }).tokens.palette;
+              expect(contrast(lens.onAccent, accent)).toBeGreaterThanOrEqual(
+                4.5,
+              );
+              expect(contrast(lens.ink, lens.bg)).toBeGreaterThanOrEqual(4.5);
+              expect(
+                contrast(lens.inkOnPaper, lens.paper),
+              ).toBeGreaterThanOrEqual(4.5);
+              expect(contrast(lens.muted, lens.bg)).toBeGreaterThanOrEqual(4.5);
+            }
+          }
+    }
+  });
+});

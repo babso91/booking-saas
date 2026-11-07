@@ -6,6 +6,7 @@ import {
   screen,
   waitFor,
   within,
+  cleanup,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1034,6 +1035,45 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
     const [first, second] = bookingBodies();
     expect(first!.expectedPriceCents).toBe(4450);
     expect(second!.expectedPriceCents).toBe(5000);
+  });
+
+  it("resent after leaving the page, the price changed meanwhile: her service and answers come back with the new quote (Codex review of #50)", async () => {
+    api.booking.mockImplementationOnce(lost);
+    await toReviewWithOptions();
+    fireEvent.click(confirmButton());
+    await screen.findByText("Réservation non confirmée");
+    cleanup();
+
+    // Back on the page: nothing chosen in this render, only the request
+    // kept on her device.
+    renderCatalog();
+    api.booking.mockImplementationOnce(() => refuse(409, "quote_changed"));
+    api.availability.mockImplementation((_, date) =>
+      ok({
+        date,
+        timezone: TZ,
+        slots: slotsFor(date),
+        quote: { ...quoteFor([LARGE]), priceCents: 5000 },
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Renvoyer la même demande" }),
+    );
+    await screen.findByText("Le prix ou la durée a changé");
+    expect(
+      await screen.findByRole("heading", { name: "Vérifiez et confirmez" }),
+    ).toBeTruthy();
+    expect(screen.getByText(/^50,00\s€$/)).toBeTruthy();
+    expect(screen.getAllByText(/Large/).length).toBeGreaterThan(0);
+    api.booking.mockImplementationOnce(() =>
+      ok({ booking: bookingFor({ priceCents: 5000 }) }, 201),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    const [first, , third] = bookingBodies();
+    expect(third!.serviceId).toBe(first!.serviceId);
+    expect(third!.optionChoiceIds).toEqual([LARGE]);
+    expect(third!.expectedPriceCents).toBe(5000);
   });
 
   it("option_choice_unavailable: the catalogue is read again, she chooses again, nothing picked silently", async () => {
