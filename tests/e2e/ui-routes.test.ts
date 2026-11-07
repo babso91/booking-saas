@@ -7,6 +7,8 @@ import { describe, expect, inject, it } from "vitest";
 
 import type { Database } from "@/types/database.generated";
 
+import { inviteAccount } from "./support/beta";
+
 // The auth and onboarding screens of the UI branch, served by `next start`
 // against the real local Supabase stack: every route lands on the right
 // page, and guarded routes answer with a redirect before any private markup.
@@ -61,12 +63,14 @@ const admin = createClient<Database>(env.apiUrl, env.serviceRoleKey, {
 /** A confirmed account signed in in a fresh browser. */
 async function signedInBrowser() {
   const email = `ui-${randomUUID().slice(0, 8)}@test.local`;
-  const { error } = await admin.auth.admin.createUser({
+  const { data, error } = await admin.auth.admin.createUser({
     email,
     password: PASSWORD,
     email_confirm: true,
   });
   expect(error).toBeNull();
+  // An invited professional (private beta).
+  await inviteAccount(email, data.user!.id);
 
   const browser = new Browser();
   const signIn = await browser

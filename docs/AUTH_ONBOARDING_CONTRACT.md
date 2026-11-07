@@ -90,6 +90,10 @@ Le serveur est la seule implémentation de la normalisation. L'UI affiche le `sl
 - Réservés : `account`, `admin`, `api`, `app`, `auth`, `b`, `dashboard`, `help`, `login`, `logout`, `onboarding`, `register`, `settings`, `signin`, `signup`, `support`, `www`.
 - `checkSlugAction` est une aide UX. Seule la contrainte d'unicité en base fait foi : un slug annoncé disponible peut être pris entre-temps, et `completeOnboardingAction` renvoie alors `slug_taken`.
 
+## Bêta privée
+
+Pendant la bêta, `signUpAction` exige `invitationToken` (le lien d'invitation) et l'onboarding exige un accès bêta : voir `docs/BETA_ACCESS.md` (codes `beta_invitation_required`, `invitation_invalid`, `invitation_expired`, `invitation_used`, `invitation_email_mismatch`).
+
 ## Codes d'erreur
 
 | Code                  | HTTP | Quand                                                                                                                          |
