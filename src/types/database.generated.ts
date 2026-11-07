@@ -1055,6 +1055,9 @@ isOneToOne: false
 "loyalty_update_reward":
 { Args: { "p_active": boolean,"p_business_id": string,"p_description": string,"p_expected_version": number,"p_name": string,"p_points_required": number,"p_reward_id": string,"p_reward_value": number,"p_service_id": string }; Returns: number
                            },
+"move_service_category":
+{ Args: { "p_business_id": string,"p_category_id": string,"p_offset": number }; Returns: undefined
+                           },
 "quote_public_service":
 { Args: { "p_option_choice_ids"?: (string)[],"p_service_id": string,"p_slug": string }; Returns: {
               "currency": string,"duration_minutes": number,"options": Json,"price_cents": number,"service_name": string
