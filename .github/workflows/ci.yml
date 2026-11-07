@@ -12,6 +12,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The database suites run side by side, each on its own real Supabase stack
+# (PostgreSQL, Auth, PostgREST, Mailpit), started from scratch with every
+# migration applied. Same tests as one long job, in about half the time:
+# migrations and upgrade, the PostgreSQL suite in two shards, the browser.
+
+env:
+  SUPABASE_EXCLUDE: studio,imgproxy,vector,logflare,realtime,storage-api,edge-runtime,supavisor,postgres-meta
+
 jobs:
   checks:
     name: Format, lint, types, unit tests, build
@@ -29,8 +37,8 @@ jobs:
       - run: npm test
       - run: npm run build
 
-  database:
-    name: Migrations and database tests
+  migrations:
+    name: Migrations and upgrade
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,12 +47,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      # Applies every migration from scratch on a real Supabase stack
-      # (PostgreSQL, Auth, PostgREST, Mailpit for confirmation emails).
       - name: Start local Supabase
-        run: >-
-          npx supabase start
-          -x studio,imgproxy,vector,logflare,realtime,storage-api,edge-runtime,supavisor,postgres-meta
+        run: npx supabase start -x "$SUPABASE_EXCLUDE"
       - name: Generated types match the migrated schema
         run: |
           npm run db:types
@@ -52,11 +56,49 @@ jobs:
       # Upgrade of a populated database (not only a fresh install): reset to
       # an older schema, insert historical rows, migrate to the latest.
       - run: npm run test:upgrade
-      - run: npm run test:db
+      - name: Stop local Supabase
+        if: always()
+        run: npx supabase stop --no-backup
+
+  database:
+    name: Database tests (${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    strategy:
+      # Both halves always report: one failing never hides the other's.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Start local Supabase
+        run: npx supabase start -x "$SUPABASE_EXCLUDE"
+      # Split by file; each half on its own database.
+      - run: npm run test:db -- --shard=${{ matrix.shard }}/2
+      - name: Stop local Supabase
+        if: always()
+        run: npx supabase stop --no-backup
+
+  browser:
+    name: Browser journeys
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Start local Supabase
+        run: npx supabase start -x "$SUPABASE_EXCLUDE"
       # Sign-up → confirmation email → /auth/callback against `next start`.
       - run: npm run build
-      # The Studio agenda scenarios drive a real browser. The browser build
-      # is cached per lockfile (it pins Playwright); the system packages are
+      # The agenda scenarios drive a real browser. The browser build is
+      # cached per lockfile (it pins Playwright); the system packages are
       # still installed on every run.
       - name: Cache Playwright browsers
         uses: actions/cache@v4
