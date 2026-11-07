@@ -2090,6 +2090,222 @@ describe("site photos: the bucket reconciled with the database", () => {
     expect(await assetRow(before.assetId)).toMatchObject({ status: "pending" });
   });
 
+  async function suspectRow(name: string) {
+    const { rows } = await db.query(
+      "select attempts, first_seen_at, last_attempt_at from public.site_photo_orphans where name = $1",
+      [name],
+    );
+    return rows[0] ?? null;
+  }
+
+  async function counters() {
+    const { rows } = await db.query(
+      "select pass_deleted, pass_failed, last_pass_deleted, last_pass_failed from public.site_photo_reconciliation",
+    );
+    return rows[0];
+  }
+
+  const leaseExpires = () =>
+    db.query(
+      "update public.site_photo_reconciliation set lease_until = now() - interval '1 second'",
+    );
+
+  it("a run whose lease expired answers late: refused, the newer run's record and counts untouched", async () => {
+    const { business } = await studio("reconcile-late-answer");
+    const orphan = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(orphan);
+    await fullPass();
+    await orphansAged(business.id);
+
+    // A takes the pass and is told to delete the orphan, then stalls.
+    const runA = randomUUID();
+    const { data: cursor } = await bookingClient().rpc(
+      "claim_site_photo_reconciliation",
+      { p_run: runA },
+    );
+    expect(cursor).not.toBeNull();
+    let due: string[] = [];
+    for (let page = 0; page < 500 && !due.includes(orphan); page += 1) {
+      const { data, error } = await bookingClient().rpc(
+        "site_photo_reconciliation_page",
+        { p_run: runA, p_limit: 1000 },
+      );
+      expect(error).toBeNull();
+      due = (data as { due: string[] }).due;
+      if ((data as { complete: boolean }).complete && !due.includes(orphan))
+        break;
+    }
+    expect(due).toContain(orphan);
+
+    // Its lease expires; B takes over, Storage refuses B's deletion.
+    await leaseExpires();
+    removal.fails = true;
+    try {
+      await fullPass(serviceWithFlakyRemoval());
+    } finally {
+      removal.fails = false;
+    }
+    const recordedByB = await suspectRow(orphan);
+    expect(recordedByB).toMatchObject({ attempts: 1 });
+    const countsByB = await counters();
+
+    // A's answer arrives at last ("deleted"): refused, nothing changes.
+    const late = await bookingClient().rpc(
+      "record_site_photo_orphan_deletions",
+      { p_run: runA, p_deleted: [orphan], p_failed: [] },
+    );
+    expect(late.error?.message).toBe("reconciliation_lease_lost");
+    expect(await suspectRow(orphan)).toEqual(recordedByB);
+    expect(await counters()).toEqual(countsByB);
+    // Nor as a failure.
+    const lateFailure = await bookingClient().rpc(
+      "record_site_photo_orphan_deletions",
+      { p_run: runA, p_deleted: [], p_failed: [orphan] },
+    );
+    expect(lateFailure.error?.message).toBe("reconciliation_lease_lost");
+    expect(await suspectRow(orphan)).toEqual(recordedByB);
+
+    // The orphan is still deleted by the next run.
+    await fullPass();
+    expect(await present([orphan])).toEqual([]);
+  });
+
+  it("answers of an expired run and of the current one at once: only the current one counts", async () => {
+    const { business } = await studio("reconcile-two-answers");
+    const [mine, theirs] = [
+      `${business.id}/${randomUUID()}/w480.webp`,
+      `${business.id}/${randomUUID()}/w828.webp`,
+    ];
+    await put(mine);
+    await put(theirs);
+    await fullPass();
+    const stale = randomUUID();
+    await bookingClient().rpc("claim_site_photo_reconciliation", {
+      p_run: stale,
+    });
+    await leaseExpires();
+    const current = randomUUID();
+    const { data: claimed } = await bookingClient().rpc(
+      "claim_site_photo_reconciliation",
+      { p_run: current },
+    );
+    expect(claimed).not.toBeNull();
+    const [staleAnswer, currentAnswer] = await Promise.all([
+      bookingClient().rpc("record_site_photo_orphan_deletions", {
+        p_run: stale,
+        p_deleted: [theirs],
+        p_failed: [mine],
+      }),
+      bookingClient().rpc("record_site_photo_orphan_deletions", {
+        p_run: current,
+        p_deleted: [],
+        p_failed: [mine],
+      }),
+    ]);
+    expect(staleAnswer.error?.message).toBe("reconciliation_lease_lost");
+    expect(currentAnswer.error).toBeNull();
+    expect(await suspectRow(mine)).toMatchObject({ attempts: 1 });
+    expect(await suspectRow(theirs)).toMatchObject({ attempts: 0 });
+    await bookingClient().rpc("release_site_photo_reconciliation", {
+      p_run: current,
+    });
+  });
+
+  it("a run whose lease expired, nobody having taken over yet: its answer is refused too", async () => {
+    const { business } = await studio("reconcile-expired-alone");
+    const orphan = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(orphan);
+    await fullPass();
+    await leaseExpires();
+    const run = randomUUID();
+    await bookingClient().rpc("claim_site_photo_reconciliation", {
+      p_run: run,
+    });
+    await leaseExpires();
+    const before = await suspectRow(orphan);
+    const counts = await counters();
+    const { error } = await bookingClient().rpc(
+      "record_site_photo_orphan_deletions",
+      { p_run: run, p_deleted: [orphan], p_failed: [] },
+    );
+    expect(error?.message).toBe("reconciliation_lease_lost");
+    expect(await suspectRow(orphan)).toEqual(before);
+    expect(await counters()).toEqual(counts);
+    // Within its lease, the same answer is taken (and renews the lease).
+    const again = randomUUID();
+    await bookingClient().rpc("claim_site_photo_reconciliation", {
+      p_run: again,
+    });
+    const { error: accepted } = await bookingClient().rpc(
+      "record_site_photo_orphan_deletions",
+      { p_run: again, p_deleted: [], p_failed: [orphan] },
+    );
+    expect(accepted).toBeNull();
+    expect(await suspectRow(orphan)).toMatchObject({ attempts: 1 });
+    await bookingClient().rpc("release_site_photo_reconciliation", {
+      p_run: again,
+    });
+  });
+
+  it("a takeover in progress when the old run's answer arrives: the answer waits for it, then is refused", async () => {
+    const { business } = await studio("reconcile-takeover");
+    const orphan = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(orphan);
+    await fullPass();
+    await leaseExpires();
+    const runA = randomUUID();
+    const { data: taken } = await bookingClient().rpc(
+      "claim_site_photo_reconciliation",
+      { p_run: runA },
+    );
+    expect(taken).not.toBeNull();
+    const before = await suspectRow(orphan);
+
+    // B takes the pass over (its claim not committed yet) just as A's
+    // answer comes, while A's lease still reads as valid.
+    const takeover = await openTransaction({ role: "service_role" });
+    await takeover.connection.query(
+      "update public.site_photo_reconciliation set run_id = $1, lease_until = now() + interval '5 minutes'",
+      [randomUUID()],
+    );
+    // Sent now (a supabase-js call only starts once awaited).
+    const answer = (async () =>
+      bookingClient().rpc("record_site_photo_orphan_deletions", {
+        p_run: runA,
+        p_deleted: [orphan],
+        p_failed: [],
+      }))();
+    try {
+      await waitUntilWaitingFor(takeover.pid);
+    } finally {
+      await closeTransaction(takeover, "commit");
+    }
+    expect((await answer).error?.message).toBe("reconciliation_lease_lost");
+    expect(await suspectRow(orphan)).toEqual(before);
+    await leaseExpires();
+  });
+
+  it("a run interrupted while holding the pass: the next one resumes once its lease has expired", async () => {
+    const { business } = await studio("reconcile-interrupted");
+    const orphan = `${business.id}/${randomUUID()}/w480.webp`;
+    await put(orphan);
+    await fullPass();
+    await orphansAged(business.id);
+    // A run took the pass and died without releasing it.
+    await leaseExpires();
+    const { data: taken } = await bookingClient().rpc(
+      "claim_site_photo_reconciliation",
+      { p_run: randomUUID() },
+    );
+    expect(taken).not.toBeNull();
+    expect(await reconcileSitePhotoBucket(bookingClient())).toEqual({
+      skipped: true,
+    });
+    await leaseExpires();
+    await fullPass();
+    expect(await present([orphan])).toEqual([]);
+  });
+
   it("observable: the last complete pass and its counts", async () => {
     await fullPass();
     const { data, error } = await bookingClient().rpc(

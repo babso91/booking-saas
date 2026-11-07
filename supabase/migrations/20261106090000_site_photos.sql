@@ -573,7 +573,10 @@ declare
   v_page jsonb;
 begin
   select * into v_state from public.site_photo_reconciliation r where r.id for update;
-  if v_state.run_id is distinct from p_run or v_state.lease_until <= pg_catalog.now() then
+  if p_run is null
+    or v_state.run_id is distinct from p_run
+    or v_state.lease_until is null
+    or v_state.lease_until <= pg_catalog.now() then
     raise exception using errcode = 'P0001', message = 'reconciliation_lease_lost';
   end if;
 
@@ -682,6 +685,12 @@ $$;
 
 -- What became of the suspects the run tried to delete: `p_deleted` are gone
 -- (records dropped), `p_failed` stay recorded, counted, for the next pass.
+-- Only from the run that holds the pass, with its lease still valid,
+-- checked under the pass's row lock before anything changes (the same
+-- transaction): the late answer of a run whose lease expired would
+-- otherwise erase the record and counts of the run that took over
+-- (`reconciliation_lease_lost`; what it deleted is seen gone by the next
+-- pass anyway).
 create function public.record_site_photo_orphan_deletions(
   p_run uuid,
   p_deleted text[],
@@ -692,7 +701,17 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_state public.site_photo_reconciliation%rowtype;
 begin
+  select * into v_state from public.site_photo_reconciliation r where r.id for update;
+  if p_run is null
+    or v_state.run_id is distinct from p_run
+    or v_state.lease_until is null
+    or v_state.lease_until <= pg_catalog.now() then
+    raise exception using errcode = 'P0001', message = 'reconciliation_lease_lost';
+  end if;
+
   delete from public.site_photo_orphans x where x.name = any (p_deleted);
   update public.site_photo_orphans x
   set attempts = x.attempts + 1, last_attempt_at = pg_catalog.now()
@@ -706,7 +725,8 @@ begin
         else r.last_pass_deleted end,
       last_pass_failed = case when r.cursor = '' and r.run_id = p_run
         then coalesce(r.last_pass_failed, 0) + coalesce(pg_catalog.cardinality(p_failed), 0)
-        else r.last_pass_failed end
+        else r.last_pass_failed end,
+      lease_until = pg_catalog.now() + interval '5 minutes'
   where r.id;
 end;
 $$;
