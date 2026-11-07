@@ -129,6 +129,7 @@ export function SignupForm({
         email={sentTo}
         headingRef={headingRef}
         onResend={resend}
+        loginHref={loginHref}
         onChangeEmail={() => {
           setSentTo(null);
           window.setTimeout(() => emailRef.current?.focus(), 0);
