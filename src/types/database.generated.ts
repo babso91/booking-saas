@@ -693,7 +693,7 @@ isOneToOne: false
           }
           Functions: {
             "accept_beta_invitation":
-{ Args: { "p_email": string,"p_token_hash": string,"p_user_id": string }; Returns: string
+{ Args: { "p_email": string,"p_proof_session"?: string,"p_token_hash": string,"p_user_id": string }; Returns: string
                            },
 "agenda_create_appointment":
 { Args: { "p_business_id": string,"p_client_email"?: string,"p_client_first_name"?: string,"p_client_id"?: string,"p_client_last_name"?: string,"p_client_phone"?: string,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_request_id"?: string,"p_service_id": string,"p_starts_at": string }; Returns: {

@@ -60,8 +60,10 @@ export type InvitedAccount =
 /**
  * The account of the invited address, if any (throws as assertInvitation
  * when the invitation is not valid for it). An `unconfirmed` account may
- * have been created by anyone, with any password: it must be made hers
- * before it is accepted (secureUnconfirmedAccount).
+ * have been created by anyone, with any password: it is never changed for
+ * her invitation; she proves the mailbox is hers through a recovery link
+ * and sets her own password (completeInvitationAction) before it is
+ * accepted.
  */
 export async function invitedAccount(
   service: AppSupabaseClient,
@@ -86,53 +88,25 @@ export async function invitedAccount(
 }
 
 /**
- * An unconfirmed account of the invited address gets HER password (a third
- * party may have created it first with theirs: Auth keeps the first
- * password on a repeated sign-up), then the invitation, which drops any
- * session it had. It counts once she confirms her address.
- */
-export async function secureUnconfirmedAccount(
-  service: AppSupabaseClient,
-  token: string | undefined,
-  email: string,
-  account: {
-    userId: string;
-    password: string;
-    firstName?: string;
-    lastName?: string;
-  },
-): Promise<void> {
-  const { error } = await service.auth.admin.updateUserById(account.userId, {
-    password: account.password,
-    user_metadata: {
-      first_name: account.firstName ?? null,
-      last_name: account.lastName ?? null,
-    },
-  });
-  if (error) {
-    throw new AppException("internal", {
-      message: "Account not secured.",
-      cause: error,
-    });
-  }
-  await acceptInvitationFor(service, token, email, account.userId);
-}
-
-/**
  * Accepts the invitation for `userId`, the account of the invited address,
- * made hers by the caller (her password set, or proven). Idempotent for that
- * account. Throws as assertInvitation does.
+ * proven hers by the caller (just created with her password, her password
+ * proven, or her mailbox proven and her password set). `proofSessionId`:
+ * the session of that proof; only it and sessions opened afterwards use
+ * the access, and the caller has ended the others first. Idempotent for
+ * that account. Throws as assertInvitation does.
  */
 export async function acceptInvitationFor(
   service: AppSupabaseClient,
   token: string | undefined,
   email: string,
   userId: string,
+  proofSessionId?: string,
 ): Promise<void> {
   const { data, error } = await service.rpc("accept_beta_invitation", {
     p_token_hash: hashOf(token),
     p_email: email,
     p_user_id: userId,
+    ...(proofSessionId ? { p_proof_session: proofSessionId } : {}),
   });
   if (error) throw databaseException(error);
   const state = (data ?? "invalid") as

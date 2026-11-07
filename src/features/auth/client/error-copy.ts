@@ -58,6 +58,11 @@ export const errorCopy: Record<
     message:
       "Cette invitation est liée à une autre adresse. Utilise celle à laquelle tu l’as reçue.",
   },
+  session_revocation_failed: {
+    title: "Pas encore activée",
+    message:
+      "On n’a pas pu fermer les autres connexions à ce compte, donc ton invitation n’est pas encore activée. Réessaie dans un instant.",
+  },
   already_onboarded: {
     title: "Ton espace existe déjà",
     message: "Ton activité est déjà configurée. Tu peux y accéder directement.",

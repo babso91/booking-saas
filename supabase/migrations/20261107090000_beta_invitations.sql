@@ -50,7 +50,10 @@ create table private.beta_access (
   user_id uuid primary key references auth.users (id) on delete cascade,
   source text not null check (source in ('invitation', 'existing')),
   invitation_id uuid references private.beta_invitations (id) on delete set null,
-  granted_at timestamptz not null default pg_catalog.now()
+  granted_at timestamptz not null default pg_catalog.now(),
+  -- The session in which she proved who she is when it was granted (her
+  -- password at sign-in, her mailbox through a recovery link), if any.
+  proof_session_id uuid
 );
 
 -- Every account that exists now keeps what it could do: create its business
@@ -66,9 +69,33 @@ revoke all on table private.beta_access from public, anon, authenticated;
 -- The gate
 -- ---------------------------------------------------------------------------
 
+-- The session of the request's JWT (its `session_id` claim), if any.
+create function private.jwt_session_id()
+returns uuid
+language sql
+stable
+set search_path = ''
+as $$
+  select case
+    when auth.jwt() ->> 'session_id' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    then (auth.jwt() ->> 'session_id')::uuid
+  end;
+$$;
+
+revoke all on function private.jwt_session_id() from public;
+
 -- Access counts only once the account's address is confirmed: proof that
 -- whoever uses it holds the invited mailbox.
-create function private.has_beta_access(p_user_id uuid)
+--
+-- With `p_check_session` (a request made with her JWT), an access given by
+-- an invitation also needs the JWT's session to be one Auth still holds
+-- (a signed-out or revoked session's access token stays cryptographically
+-- valid until it expires) and to be the session that proved who she is, or
+-- one opened after the access was given. A session opened before, by
+-- whoever knew the account then, never uses it, even if its revocation
+-- failed. Not checked for the service acting for her (no JWT) nor for the
+-- accounts that existed before the beta.
+create function private.has_beta_access(p_user_id uuid, p_check_session boolean)
 returns boolean
 language sql
 stable
@@ -80,10 +107,20 @@ as $$
     from private.beta_access a
     join auth.users u on u.id = a.user_id
     where a.user_id = p_user_id and u.email_confirmed_at is not null
+      and (
+        not p_check_session
+        or a.source = 'existing'
+        or exists (
+          select 1 from auth.sessions s
+          where s.id = private.jwt_session_id()
+            and s.user_id = p_user_id
+            and (s.id = a.proof_session_id or s.created_at >= a.granted_at)
+        )
+      )
   );
 $$;
 
-revoke all on function private.has_beta_access(uuid) from public;
+revoke all on function private.has_beta_access(uuid, boolean) from public;
 
 -- A business created through the API requires beta access for the user it
 -- is created for: the signed-in user (auth.uid(), complete_onboarding or
@@ -102,10 +139,11 @@ declare
     or session_user::text in ('anon', 'authenticated', 'service_role', 'authenticator');
   v_user uuid := coalesce(auth.uid(), case when v_api then new.created_by end);
 begin
-  if v_api and (v_user is null or not private.has_beta_access(v_user)) then
+  -- Her session is checked when the request carries her JWT (auth.uid()).
+  if v_api and (v_user is null or not private.has_beta_access(v_user, auth.uid() is not null)) then
     raise exception using errcode = 'P0001', message = 'beta_invitation_required';
   end if;
-  if not v_api and auth.uid() is not null and not private.has_beta_access(auth.uid()) then
+  if not v_api and auth.uid() is not null and not private.has_beta_access(auth.uid(), true) then
     raise exception using errcode = 'P0001', message = 'beta_invitation_required';
   end if;
   return new;
@@ -125,7 +163,7 @@ stable
 security definer
 set search_path = ''
 as $$
-  select auth.uid() is not null and private.has_beta_access(auth.uid());
+  select auth.uid() is not null and private.has_beta_access(auth.uid(), true);
 $$;
 
 revoke all on function public.my_beta_access() from public, anon;
@@ -297,14 +335,24 @@ end;
 $$;
 
 -- Accepts the invitation for `p_user_id`, which must be the account of the
--- invited address. The caller has first made that account hers: her own
--- password set on an unconfirmed account (sign-up), or her password proven
--- on a confirmed one (sign-in). An unconfirmed account loses every session
--- it may have. Under the invitation's row lock: accepted once; again for the
--- same account, the same answer (a retry). The access counts once the
--- address is confirmed (has_beta_access). Answers 'accepted' or the
--- invitation's state ('account_mismatch' for another account).
-create function public.accept_beta_invitation(p_token_hash text, p_email text, p_user_id uuid)
+-- invited address. The caller has first proven that account is hers: just
+-- created by the server with her password (sign-up, no session yet), her
+-- password proven on a confirmed account (sign-in), or her mailbox proven
+-- through a recovery link and her own password set (an account made before
+-- her invitation). `p_proof_session` is the session of that proof, which
+-- must be the account's: only it, and sessions opened afterwards, use the
+-- access (has_beta_access); the caller has ended every other session. An
+-- unconfirmed account loses every session it may have. Under the
+-- invitation's row lock: accepted once; again for the same account, the
+-- same answer (a retry, which renews the proof). The access counts once the
+-- address is confirmed. Answers 'accepted' or the invitation's state
+-- ('account_mismatch' for another account or another account's session).
+create function public.accept_beta_invitation(
+  p_token_hash text,
+  p_email text,
+  p_user_id uuid,
+  p_proof_session uuid default null
+)
 returns text
 language plpgsql
 security definer
@@ -326,6 +374,11 @@ begin
   if not found or v_user.id is distinct from p_user_id then
     return 'account_mismatch';
   end if;
+  if p_proof_session is not null and not exists (
+    select 1 from auth.sessions s where s.id = p_proof_session and s.user_id = v_user.id
+  ) then
+    return 'account_mismatch';
+  end if;
 
   if v_user.email_confirmed_at is null then
     delete from auth.sessions s where s.user_id = v_user.id;
@@ -337,9 +390,13 @@ begin
       accepted_by = v_user.id
   where i.id = v_invitation_id;
 
-  insert into private.beta_access (user_id, source, invitation_id)
-  values (v_user.id, 'invitation', v_invitation_id)
-  on conflict (user_id) do nothing;
+  insert into private.beta_access (user_id, source, invitation_id, proof_session_id)
+  values (v_user.id, 'invitation', v_invitation_id, p_proof_session)
+  on conflict (user_id) do update
+    set invitation_id = excluded.invitation_id,
+        proof_session_id = excluded.proof_session_id,
+        granted_at = pg_catalog.now()
+    where private.beta_access.source = 'invitation';
   return 'accepted';
 end;
 $$;
@@ -353,10 +410,153 @@ begin
     'public.revoke_beta_invitation(uuid)',
     'public.check_beta_invitation(text, text)',
     'public.beta_invited_account(text, text)',
-    'public.accept_beta_invitation(text, text, uuid)'
+    'public.accept_beta_invitation(text, text, uuid, uuid)'
   ] loop
     execute pg_catalog.format('revoke all on function %s from public, anon, authenticated', v_signature);
     execute pg_catalog.format('grant execute on function %s to service_role', v_signature);
   end loop;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Every professional permission follows the same session rule (Codex
+-- re-audit)
+-- ---------------------------------------------------------------------------
+--
+-- has_beta_access binds an invitation's access to the session that proved
+-- who she is. The business it lets her create is then reached through the
+-- common permission primitives (every RLS policy goes through
+-- is_business_member or has_business_role; the RPCs through those, or
+-- through assert_agenda_access and member_preferences_membership): without
+-- the same rule there, an earlier session's token (revoked, or kept) would
+-- read and change the business once it exists. So each primitive also
+-- requires the request's session to be trusted for its user.
+
+-- The request's JWT may act for its user: always for an account whose
+-- access did not come from an invitation (accounts of before the beta, and
+-- no user at all: the service); for one whose access came from an
+-- invitation, only with a session that has_beta_access accepts (still held
+-- by Auth, and the proving session or one opened after it).
+--
+-- RLS calls it for every row: the answer is kept for the rest of the
+-- transaction (one request), keyed by user and session, in a
+-- transaction-local setting. Setting it by hand needs raw SQL, which could
+-- just as well rewrite request.jwt.claims itself: it opens no new way in.
+-- Measured: 5,000 rows read under RLS in 95 ms (66 ms without the rule,
+-- 1.8 s without the memo).
+create function private.request_session_trusted()
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_user uuid := auth.uid();
+  v_key text;
+  v_trusted boolean;
+begin
+  if v_user is null then
+    return true;
+  end if;
+  v_key := v_user::text || '/' || coalesce(
+    pg_catalog.current_setting('request.jwt.claims', true)::jsonb ->> 'session_id', ''
+  );
+  if pg_catalog.current_setting('private.trusted_session', true) = v_key || '=t' then
+    return true;
+  end if;
+  if pg_catalog.current_setting('private.trusted_session', true) = v_key || '=f' then
+    return false;
+  end if;
+  v_trusted := not exists (
+      select 1 from private.beta_access a
+      where a.user_id = v_user and a.source = 'invitation'
+    )
+    or private.has_beta_access(v_user, true);
+  perform pg_catalog.set_config(
+    'private.trusted_session', v_key || case when v_trusted then '=t' else '=f' end, true
+  );
+  return v_trusted;
+end;
+$$;
+
+revoke all on function private.request_session_trusted() from public;
+
+create or replace function public.is_business_member(target_business_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.business_members
+    where business_id = target_business_id
+      and user_id = (select auth.uid())
+  ) and private.request_session_trusted();
+$$;
+
+create or replace function public.has_business_role(
+  target_business_id uuid,
+  accepted_roles public.business_member_role[]
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.business_members
+    where business_id = target_business_id
+      and user_id = (select auth.uid())
+      and role = any (accepted_roles)
+  ) and private.request_session_trusted();
+$$;
+
+create or replace function private.assert_agenda_access(p_business_id uuid)
+returns void
+language plpgsql
+stable
+set search_path = ''
+as $$
+begin
+  if (select auth.uid()) is null then
+    raise exception using errcode = '42501', message = 'unauthenticated';
+  end if;
+
+  if p_business_id is null or not exists (
+    select 1
+    from public.business_members m
+    where m.business_id = p_business_id
+      and m.user_id = (select auth.uid())
+  ) or not private.request_session_trusted() then
+    raise exception using errcode = '42501', message = 'forbidden';
+  end if;
+end;
+$$;
+
+create or replace function private.member_preferences_membership(p_business_id uuid)
+returns uuid
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_membership uuid;
+begin
+  if auth.uid() is null then
+    raise exception using errcode = '42501', message = 'unauthenticated';
+  end if;
+  select m.id into v_membership
+  from public.business_members m
+  where m.business_id = p_business_id and m.user_id = auth.uid();
+  if v_membership is null or not private.request_session_trusted() then
+    raise exception using errcode = '42501', message = 'forbidden';
+  end if;
+  return v_membership;
 end;
 $$;

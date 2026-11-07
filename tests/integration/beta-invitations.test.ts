@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import { NextRequest } from "next/server";
+
+import { GET as authCallback } from "@/app/auth/callback/route";
 import {
+  completeInvitationAction,
   getOnboardingStatusAction,
   signInAction,
   signUpAction,
@@ -67,6 +71,9 @@ class Device {
     if (!value || options?.maxAge === 0) this.cookies.delete(name);
     else this.cookies.set(name, value);
   }
+  delete(name: string) {
+    this.cookies.delete(name);
+  }
 }
 
 let device = new Device();
@@ -77,9 +84,71 @@ vi.mock("next/headers", () => ({
     get: (name: string) => device.get(name),
     set: (name: string, value: string, options?: { maxAge?: number }) =>
       device.set(name, value, options),
+    delete: (name: string) => device.delete(name),
   }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+
+// The service's Auth admin calls are counted: the invitation never changes
+// an account's password (`updateUserById`), whatever its state.
+const adminCalls = { updateUserById: 0 };
+vi.mock("@/lib/supabase/admin", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/supabase/admin")>();
+  return {
+    createAdminSupabaseClient: () => {
+      const client = actual.createAdminSupabaseClient();
+      const update = client.auth.admin.updateUserById.bind(client.auth.admin);
+      client.auth.admin.updateUserById = ((
+        ...args: Parameters<typeof update>
+      ) => {
+        adminCalls.updateUserById += 1;
+        return update(...args);
+      }) as typeof update;
+      return client;
+    },
+  };
+});
+
+// Hooks on her device's Auth calls (the server client): `beforeRecovery`
+// runs just before the recovery link is requested (the real owner
+// confirming her address between two server calls); `signOutOthers`
+// replaces ending the other sessions (Auth failing, or pretending to
+// succeed without ending them).
+const serverHooks: {
+  beforeRecovery?: () => Promise<void>;
+  signOutOthers?: () => Promise<{ error: { code: string } | null }>;
+} = {};
+vi.mock("@/lib/supabase/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/supabase/server")>();
+  return {
+    ...actual,
+    createServerSupabaseClient: async (
+      ...args: Parameters<typeof actual.createServerSupabaseClient>
+    ) => {
+      const client = await actual.createServerSupabaseClient(...args);
+      const recover = client.auth.resetPasswordForEmail.bind(client.auth);
+      client.auth.resetPasswordForEmail = (async (
+        ...recoverArgs: Parameters<typeof recover>
+      ) => {
+        const hook = serverHooks.beforeRecovery;
+        serverHooks.beforeRecovery = undefined;
+        await hook?.();
+        return recover(...recoverArgs);
+      }) as typeof recover;
+      const signOut = client.auth.signOut.bind(client.auth);
+      client.auth.signOut = (async (
+        ...signOutArgs: Parameters<typeof signOut>
+      ) => {
+        const replaced = serverHooks.signOutOthers;
+        if (signOutArgs[0]?.scope === "others" && replaced) {
+          return replaced();
+        }
+        return signOut(...signOutArgs);
+      }) as typeof signOut;
+      return client;
+    },
+  };
+});
 
 const admin = createClient<Database>(env.apiUrl, env.serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -144,6 +213,95 @@ async function signInOnNewDevice(email: string) {
   const result = await signInAction({ email, password: PASSWORD });
   if (!result.ok) throw new Error(result.error.code);
   return result.data.next;
+}
+
+const MAILPIT_URL = process.env.MAILPIT_URL ?? "http://127.0.0.1:54324";
+
+/** The link of the newest email Auth sent to `email` with `subject`. */
+async function lastAuthLink(email: string, subject: RegExp) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const list = await (
+      await fetch(
+        `${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}`,
+      )
+    ).json();
+    const found = (list.messages ?? []).find((message: { Subject: string }) =>
+      subject.test(message.Subject),
+    );
+    if (found) {
+      const message = await (
+        await fetch(`${MAILPIT_URL}/api/v1/message/${found.ID}`)
+      ).json();
+      const body: string = message.HTML || message.Text;
+      return body
+        .match(/https?:\/\/[^\s"<>]+\/verify[^\s"<>]+/)![0]
+        .replace(/&amp;/g, "&");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("no email");
+}
+
+/**
+ * She opens the recovery link of her mailbox on this device: Auth's verify
+ * endpoint, then our callback (the PKCE code against this device's
+ * verifier). Answers where the callback sends her.
+ */
+async function followRecoveryLink(email: string) {
+  const link = await lastAuthLink(email, /mot de passe/i);
+  const verified = await fetch(link, { redirect: "manual" });
+  const landing = new URL(verified.headers.get("location")!);
+  expect(landing.pathname).toBe("/auth/callback");
+  const response = await authCallback(new NextRequest(landing));
+  return new URL(response.headers.get("location")!).pathname;
+}
+
+/** The session id of an access token (its `session_id` claim). */
+const sessionOf = (accessToken: string) =>
+  JSON.parse(Buffer.from(accessToken.split(".")[1]!, "base64url").toString())
+    .session_id as string;
+
+/** complete_onboarding called straight at the API with `accessToken`. */
+async function onboardWithToken(accessToken: string) {
+  const response = await fetch(
+    `${env.apiUrl}/rest/v1/rpc/complete_onboarding`,
+    {
+      method: "POST",
+      headers: {
+        apikey: env.anonKey,
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        p_first_name: "Ancien",
+        p_last_name: "Jeton",
+        p_business_name: "Par un ancien jeton",
+        p_slug: uniqueSlug("old"),
+      }),
+    },
+  );
+  return { status: response.status, body: await response.json() };
+}
+
+async function myBetaAccessWithToken(accessToken: string) {
+  const response = await fetch(`${env.apiUrl}/rest/v1/rpc/my_beta_access`, {
+    method: "POST",
+    headers: {
+      apikey: env.anonKey,
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+    },
+    body: "{}",
+  });
+  return response.json();
+}
+
+async function businessesOf(userId: string) {
+  const { rows } = await db.query<{ n: number }>(
+    "select count(*)::int as n from public.business_members where user_id = $1",
+    [userId],
+  );
+  return rows[0]!.n;
 }
 
 const onboarding = () => ({
@@ -520,21 +678,26 @@ describe("beta invitations: concurrency and interruptions", () => {
     const [userId] = await accountsFor(email);
     expect(await accessOf(userId!)).toBeNull();
 
-    // She opens the link again and signs up again (not confirmed yet): her
-    // access is given whatever Auth answers (the confirmation sent again,
-    // or `rate_limited` right after the first attempt).
+    // She opens the link again and signs up again (not confirmed yet): the
+    // account may not be hers (nothing proves it), so it is not given yet;
+    // a recovery link is sent to her address.
     device = new Device();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
     const again = await signUpAction({
       email,
       password: PASSWORD,
       invitationToken: invitation.token,
     });
-    expect(["ok", "rate_limited"]).toContain(codeOf(again));
-    expect(await accessOf(userId!)).toMatchObject({ source: "invitation" });
+    expect(codeOf(again)).toBe("ok");
+    expect(await accessOf(userId!)).toBeNull();
     expect(await accountsFor(email)).toEqual([userId]);
 
-    await confirmEmail(email);
-    await signInOnNewDevice(email);
+    // Her mailbox's link, then her password: her access, her business.
+    expect(await followRecoveryLink(email)).toBe("/invitation");
+    expect(
+      await completeInvitationAction({ password: "Un-autre-mot-de-passe-1" }),
+    ).toEqual({ ok: true, data: { next: "/onboarding" } });
+    expect(await accessOf(userId!)).toMatchObject({ source: "invitation" });
     expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
   });
 
@@ -660,24 +823,37 @@ describe("beta invitations: an account a third party created first (Codex audit)
     });
     expect(error).toBeNull();
 
-    // The invitee follows her link and chooses her password.
+    // The invitee follows her invitation and signs up: the account is not
+    // touched, nothing is given; her mailbox gets a recovery link.
     device = new Device();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
     const answer = await signUpAction({
       email,
       password: PASSWORD,
       invitationToken: invitation.token,
     });
-    expect(["ok", "rate_limited"]).toContain(codeOf(answer));
-    // She proves her address (the confirmation link of her mailbox).
-    await confirmEmail(email);
+    expect(answer).toEqual({
+      ok: true,
+      data: { status: "confirmation_required", email, next: null },
+    });
+    const [userId] = await accountsFor(email);
+    expect(await accessOf(userId!)).toBeNull();
+    expect(adminCalls.updateUserById).toBe(0);
+
+    // Her mailbox's link, on her device: she chooses her password there.
+    expect(await followRecoveryLink(email)).toBe("/invitation");
+    expect(await completeInvitationAction({ password: PASSWORD })).toEqual({
+      ok: true,
+      data: { next: "/onboarding" },
+    });
 
     const thirdParty = await anonClient().auth.signInWithPassword({
       email,
       password: THIRD_PARTY,
     });
     expect(thirdParty.error?.message).toMatch(/Invalid login credentials/);
-    expect(await signInOnNewDevice(email)).toBe("/onboarding");
     expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
+    expect(await signInOnNewDevice(email)).toBe("/app");
   });
 
   it("confirmed with a third party's password: her link gives that account nothing", async () => {
@@ -821,10 +997,17 @@ describe("beta invitations: issued again at once, and the service acting for a u
     });
     const [userId] = await accountsFor(email);
     expect(await accessOf(userId!)).toMatchObject({ source: "invitation" });
+    // A session of hers, opened after the access was given.
+    const sessionId = randomUUID();
+    await db.query(
+      "insert into auth.sessions (id, user_id, created_at, updated_at) values ($1, $2, now(), now())",
+      [sessionId, userId],
+    );
     const asHer = async () => {
       const transaction = await openTransaction({
         role: "authenticated",
         userId,
+        sessionId,
       });
       try {
         const { rows } = await transaction.connection.query<{
@@ -840,4 +1023,495 @@ describe("beta invitations: issued again at once, and the service acting for a u
     await confirmEmail(email);
     expect(await asHer()).toBe(true);
   });
+});
+
+describe("beta invitations: Codex counter-audit", () => {
+  const THIRD = "third-party-password-9";
+
+  it("her confirmation lands between two server calls: her link never replaces the account's password", async () => {
+    const email = uniqueEmail("between");
+    const invitation = await invite(email);
+    await anonClient().auth.signUp({ email, password: THIRD });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    // The server has seen the account unconfirmed; the real owner confirms
+    // her address (Auth's own email, sent for the third party) right then.
+    serverHooks.beforeRecovery = () => confirmEmail(email);
+
+    device = new Device();
+    const answer = await signUpAction({
+      email,
+      password: PASSWORD,
+      invitationToken: invitation.token,
+    });
+    expect(codeOf(answer)).toBe("ok");
+    expect(serverHooks.beforeRecovery).toBeUndefined();
+
+    // The account is as it was: the third party's password, no access.
+    expect(adminCalls.updateUserById).toBe(0);
+    const invitee = await anonClient().auth.signInWithPassword({
+      email,
+      password: PASSWORD,
+    });
+    expect(invitee.error?.message).toMatch(/Invalid login credentials/);
+    const [userId] = await accountsFor(email);
+    expect(await accessOf(userId!)).toBeNull();
+
+    // Only her mailbox's link makes it hers: then the third party's
+    // password is refused and the access is hers.
+    const thirdSession = await anonClient().auth.signInWithPassword({
+      email,
+      password: THIRD,
+    });
+    expect(thirdSession.error).toBeNull();
+    expect(await followRecoveryLink(email)).toBe("/invitation");
+    expect(codeOf(await completeInvitationAction({ password: PASSWORD }))).toBe(
+      "ok",
+    );
+    expect(
+      (await anonClient().auth.signInWithPassword({ email, password: THIRD }))
+        .error?.message,
+    ).toMatch(/Invalid login credentials/);
+    // The third party's session, opened before: ended, and its token
+    // activates nothing.
+    expect(
+      (
+        await anonClient().auth.refreshSession({
+          refresh_token: thirdSession.data.session!.refresh_token,
+        })
+      ).error,
+    ).not.toBeNull();
+    expect(
+      (await onboardWithToken(thirdSession.data.session!.access_token)).body
+        .message,
+    ).toBe("beta_invitation_required");
+    expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
+  });
+
+  it("/invitation without her mailbox's link: nothing changes", async () => {
+    const email = uniqueEmail("no-proof");
+    const invitation = await invite(email);
+    await admin.auth.admin.createUser({
+      email,
+      password: THIRD,
+      email_confirm: true,
+    });
+    // Signed in with the account's password (whoever knows it), her
+    // invitation on this device: no proof of the mailbox.
+    device = new Device();
+    device.set("beta_invitation", invitation.token);
+    await signInAction({ email, password: THIRD });
+    expect(codeOf(await completeInvitationAction({ password: PASSWORD }))).toBe(
+      "invitation_invalid",
+    );
+    // No invitation on this device: refused too.
+    device.delete("beta_invitation");
+    expect(codeOf(await completeInvitationAction({ password: PASSWORD }))).toBe(
+      "beta_invitation_required",
+    );
+    const [userId] = await accountsFor(email);
+    expect(await accessOf(userId!)).toBeNull();
+    expect(
+      (
+        await anonClient().auth.signInWithPassword({
+          email,
+          password: PASSWORD,
+        })
+      ).error?.message,
+    ).toMatch(/Invalid login credentials/);
+  });
+
+  it("a recovery link followed more than an hour ago is no longer a proof", async () => {
+    const email = uniqueEmail("stale-proof");
+    const invitation = await invite(email);
+    await anonClient().auth.signUp({ email, password: THIRD });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    device = new Device();
+    expect(
+      codeOf(
+        await signUpAction({
+          email,
+          password: PASSWORD,
+          invitationToken: invitation.token,
+        }),
+      ),
+    ).toBe("ok");
+    expect(await followRecoveryLink(email)).toBe("/invitation");
+    // Two hours later (the device kept the session, refreshed since).
+    const [userId] = await accountsFor(email);
+    await db.query(
+      `update auth.mfa_amr_claims c
+       set created_at = c.created_at - interval '2 hours',
+           updated_at = c.updated_at - interval '2 hours'
+       from auth.sessions s where s.id = c.session_id and s.user_id = $1`,
+      [userId],
+    );
+    const { error } = await (
+      await createServerSupabaseClient()
+    ).auth.refreshSession();
+    expect(error).toBeNull();
+    expect(codeOf(await completeInvitationAction({ password: PASSWORD }))).toBe(
+      "invitation_invalid",
+    );
+    expect(await accessOf(userId!)).toBeNull();
+    expect(
+      (
+        await anonClient().auth.signInWithPassword({
+          email,
+          password: PASSWORD,
+        })
+      ).error?.message,
+    ).toMatch(/Invalid login credentials/);
+  });
+
+  it("an earlier session's access token, still valid, cannot activate the beta rights", async () => {
+    const email = uniqueEmail("old-token");
+    const invitation = await invite(email);
+    await admin.auth.admin.createUser({
+      email,
+      password: PASSWORD,
+      email_confirm: true,
+    });
+    // Another session of the account, opened before (another device).
+    const { data: before } = await anonClient().auth.signInWithPassword({
+      email,
+      password: PASSWORD,
+    });
+    const oldToken = before.session!.access_token;
+
+    device = new Device();
+    expect(
+      await signInAction({
+        email,
+        password: PASSWORD,
+        invitationToken: invitation.token,
+      }),
+    ).toMatchObject({ ok: true, data: { invitation: "accepted" } });
+
+    // That old token is still cryptographically valid (PostgREST accepts
+    // it), but it activates nothing, by RPC or otherwise.
+    expect(await onboardWithToken(oldToken)).toMatchObject({
+      body: { message: "beta_invitation_required" },
+    });
+    expect(await myBetaAccessWithToken(oldToken)).toBe(false);
+    const [userId] = await accountsFor(email);
+    expect(await businessesOf(userId!)).toBe(0);
+
+    // A session opened after the proof is allowed (another of her devices),
+    // as is the proof's own session.
+    const { data: after } = await anonClient().auth.signInWithPassword({
+      email,
+      password: PASSWORD,
+    });
+    expect(await myBetaAccessWithToken(after.session!.access_token)).toBe(true);
+    expect(await getOnboardingStatusAction()).toMatchObject({
+      ok: true,
+      data: { betaAccess: true },
+    });
+    expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
+    expect(await businessesOf(userId!)).toBe(1);
+  });
+
+  it("the other sessions cannot be ended: an error, nothing given; retried, accepted", async () => {
+    const email = uniqueEmail("revoke-fails");
+    const invitation = await invite(email);
+    await admin.auth.admin.createUser({
+      email,
+      password: PASSWORD,
+      email_confirm: true,
+    });
+    const { data: before } = await anonClient().auth.signInWithPassword({
+      email,
+      password: PASSWORD,
+    });
+    const [userId] = await accountsFor(email);
+
+    serverHooks.signOutOthers = async () => ({
+      error: { code: "unexpected_failure" },
+    });
+    device = new Device();
+    try {
+      expect(
+        codeOf(
+          await signInAction({
+            email,
+            password: PASSWORD,
+            invitationToken: invitation.token,
+          }),
+        ),
+      ).toBe("session_revocation_failed");
+    } finally {
+      serverHooks.signOutOthers = undefined;
+    }
+    expect(await accessOf(userId!)).toBeNull();
+    expect(await onboardWithToken(before.session!.access_token)).toMatchObject({
+      body: { message: "beta_invitation_required" },
+    });
+
+    // Signing in again, Auth answering: accepted.
+    device = new Device();
+    expect(
+      await signInAction({
+        email,
+        password: PASSWORD,
+        invitationToken: invitation.token,
+      }),
+    ).toMatchObject({ ok: true, data: { invitation: "accepted" } });
+    expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
+  });
+
+  it("Auth says the other sessions ended but kept them: they still activate nothing", async () => {
+    const email = uniqueEmail("revoke-lies");
+    const invitation = await invite(email);
+    await admin.auth.admin.createUser({
+      email,
+      password: PASSWORD,
+      email_confirm: true,
+    });
+    const { data: before } = await anonClient().auth.signInWithPassword({
+      email,
+      password: PASSWORD,
+    });
+    const oldSession = sessionOf(before.session!.access_token);
+
+    serverHooks.signOutOthers = async () => ({ error: null });
+    device = new Device();
+    try {
+      expect(
+        await signInAction({
+          email,
+          password: PASSWORD,
+          invitationToken: invitation.token,
+        }),
+      ).toMatchObject({ ok: true, data: { invitation: "accepted" } });
+    } finally {
+      serverHooks.signOutOthers = undefined;
+    }
+    // The old session is alive: refreshed, its new token is still that
+    // session's, opened before the proof.
+    const { rows } = await db.query(
+      "select 1 from auth.sessions where id = $1",
+      [oldSession],
+    );
+    expect(rows).toHaveLength(1);
+    const refreshed = await anonClient().auth.refreshSession({
+      refresh_token: before.session!.refresh_token,
+    });
+    expect(refreshed.error).toBeNull();
+    const renewed = refreshed.data.session!.access_token;
+    expect(sessionOf(renewed)).toBe(oldSession);
+    expect(await onboardWithToken(renewed)).toMatchObject({
+      body: { message: "beta_invitation_required" },
+    });
+    expect(await myBetaAccessWithToken(renewed)).toBe(false);
+    // Her own session: allowed.
+    expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
+  });
+
+  it("the proof is bound to the account: another account's session is refused", async () => {
+    const email = uniqueEmail("proof-owner");
+    const invitation = await invite(email);
+    const { data } = await admin.auth.admin.createUser({
+      email,
+      password: PASSWORD,
+      email_confirm: true,
+    });
+    const other = uniqueEmail("proof-other");
+    await admin.auth.admin.createUser({
+      email: other,
+      password: PASSWORD,
+      email_confirm: true,
+    });
+    const { data: otherSignIn } = await anonClient().auth.signInWithPassword({
+      email: other,
+      password: PASSWORD,
+    });
+    const { data: answer } = await bookingClient().rpc(
+      "accept_beta_invitation",
+      {
+        p_token_hash: hashInvitationToken(invitation.token),
+        p_email: email,
+        p_user_id: data.user!.id,
+        p_proof_session: sessionOf(otherSignIn.session!.access_token),
+      },
+    );
+    expect(answer).toBe("account_mismatch");
+    expect(await accessOf(data.user!.id)).toBeNull();
+  });
+});
+
+describe("beta invitations: an earlier session after onboarding (Codex re-audit)", () => {
+  const asToken = (accessToken: string) =>
+    createClient<Database>(env.apiUrl, env.anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    });
+
+  /** Every professional path, read and write, with that token. */
+  async function professionalPaths(accessToken: string, businessId: string) {
+    const client = asToken(accessToken);
+    const business = await client
+      .from("businesses")
+      .select("id")
+      .eq("id", businessId);
+    const members = await client
+      .from("business_members")
+      .select("id")
+      .eq("business_id", businessId);
+    const services = await client
+      .from("services")
+      .select("id")
+      .eq("business_id", businessId);
+    const renamed = await client
+      .from("businesses")
+      .update({ name: "Renommé par un ancien jeton" })
+      .eq("id", businessId)
+      .select("id");
+    const category = await client.rpc("create_service_category", {
+      p_business_id: businessId,
+      p_request_id: randomUUID(),
+      p_name: `Catégorie ${randomUUID().slice(0, 6)}`,
+      p_visible: true,
+    });
+    const catalog = await client.rpc("get_catalog", {
+      p_business_id: businessId,
+    } as never);
+    const preferences = await client.rpc("read_member_preferences", {
+      p_business_id: businessId,
+    });
+    const agenda = await client.rpc("calendar_outbound_status", {
+      p_business_id: businessId,
+    });
+    const crm = await client.rpc("crm_client_activity", {
+      p_business_id: businessId,
+      p_as_of: new Date().toISOString(),
+      p_client_id: randomUUID(),
+    } as never);
+    return {
+      readsBusiness: (business.data ?? []).length > 0,
+      readsMembers: (members.data ?? []).length > 0,
+      servicesSeen: (services.data ?? []).length,
+      renames: (renamed.data ?? []).length > 0,
+      createsCategory: category.error === null,
+      readsCatalog: catalog.error === null,
+      readsPreferences: preferences.error === null,
+      readsAgenda: agenda.error === null,
+      crm: crm.error?.message ?? "ok",
+    };
+  }
+
+  const refused = {
+    readsBusiness: false,
+    servicesSeen: 0,
+    readsMembers: false,
+    renames: false,
+    createsCategory: false,
+    readsCatalog: false,
+    readsPreferences: false,
+    readsAgenda: false,
+    crm: "forbidden",
+  };
+
+  async function invitedAndOnboarded(label: string) {
+    const email = uniqueEmail(label);
+    const invitation = await invite(email);
+    await admin.auth.admin.createUser({
+      email,
+      password: PASSWORD,
+      email_confirm: true,
+    });
+    const { data: before } = await anonClient().auth.signInWithPassword({
+      email,
+      password: PASSWORD,
+    });
+    return { email, invitation, before: before.session! };
+  }
+
+  it.each([
+    ["revoked", undefined],
+    ["kept by Auth despite its answer", async () => ({ error: null })],
+  ] as const)(
+    "an earlier session (%s) reads and writes nothing of the business her proven session created",
+    async (_label, signOutOthers) => {
+      const { email, invitation, before } =
+        await invitedAndOnboarded("after-onboarding");
+      device = new Device();
+      serverHooks.signOutOthers = signOutOthers;
+      try {
+        expect(
+          await signInAction({
+            email,
+            password: PASSWORD,
+            invitationToken: invitation.token,
+          }),
+        ).toMatchObject({ ok: true, data: { invitation: "accepted" } });
+      } finally {
+        serverHooks.signOutOthers = undefined;
+      }
+      expect(codeOf(await completeOnboardingAction(onboarding()))).toBe("ok");
+      const [userId] = await accountsFor(email);
+      const { rows } = await db.query<{ business_id: string }>(
+        "select business_id from public.business_members where user_id = $1",
+        [userId],
+      );
+      const businessId = rows[0]!.business_id;
+      // Several rows: each one is checked (and the answer kept per request).
+      await db.query(
+        `insert into public.services (business_id, name, duration_minutes, price_cents)
+         select $1, 'Prestation ' || g, 30, 1000 from generate_series(1, 3) g`,
+        [businessId],
+      );
+
+      // The earlier session's token: nothing, read or write.
+      expect(
+        await professionalPaths(before.access_token, businessId),
+      ).toMatchObject(refused);
+      const { rows: names } = await db.query(
+        "select name from public.businesses where id = $1",
+        [businessId],
+      );
+      expect(names[0].name).toBe("Atelier Camille");
+      // An UPDATE that reads no column: only the owner's UPDATE policy
+      // (has_business_role) decides, as with that token's claims.
+      const blindUpdate = async (accessToken: string) => {
+        const transaction = await openTransaction({
+          role: "authenticated",
+          userId,
+          sessionId: JSON.parse(
+            Buffer.from(accessToken.split(".")[1]!, "base64url").toString(),
+          ).session_id,
+        });
+        try {
+          const result = await transaction.connection.query(
+            "update public.businesses set name = 'Renommé à l''aveugle'",
+          );
+          return result.rowCount;
+        } finally {
+          await closeTransaction(transaction, "rollback");
+        }
+      };
+      expect(await blindUpdate(before.access_token)).toBe(0);
+
+      // Her sessions: the proven one, and one opened afterwards.
+      const proven = (
+        await (await createServerSupabaseClient()).auth.getSession()
+      ).data.session!.access_token;
+      const { data: later } = await anonClient().auth.signInWithPassword({
+        email,
+        password: PASSWORD,
+      });
+      expect(await blindUpdate(proven)).toBe(1);
+      for (const token of [proven, later.session!.access_token]) {
+        expect(await professionalPaths(token, businessId)).toMatchObject({
+          readsBusiness: true,
+          readsMembers: true,
+          servicesSeen: 3,
+          renames: true,
+          createsCategory: true,
+          readsCatalog: true,
+          readsPreferences: true,
+          readsAgenda: true,
+        });
+      }
+    },
+  );
 });
