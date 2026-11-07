@@ -104,6 +104,20 @@ describe("SignupForm", () => {
     ).toBe("/login?invitation=inv_abc");
   });
 
+  it("the inbox screen's sign-in keeps her invitation too", async () => {
+    signUpAction.mockResolvedValue({
+      ok: true,
+      data: { status: "confirmation_required", email: "mila@studio.fr" },
+    });
+    render(<SignupForm invitationToken="inv_abc" />);
+    await submit();
+    expect(
+      (
+        await screen.findByRole("link", { name: "J’ai confirmé, me connecter" })
+      ).getAttribute("href"),
+    ).toBe("/login?invitation=inv_abc");
+  });
+
   it.each([
     ["beta_invitation_required", /lien personnel reçu dans ton invitation/],
     ["invitation_expired", /Ce lien a expiré/],
