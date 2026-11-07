@@ -9,6 +9,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { PublicCatalog } from "@/features/catalog/model";
+
 import type { PublicBusiness, PublicService } from "../client/api";
 import { addDays, businessToday, dayLabel } from "../client/business-time";
 import { PublicBooking } from "./public-booking";
@@ -57,6 +59,39 @@ const services: PublicService[] = [
   },
 ];
 
+/** Her catalogue as the server projects it: these services, no category. */
+const catalogOf = (list: PublicService[]): PublicCatalog => ({
+  currency: "EUR",
+  groups:
+    list.length === 0
+      ? []
+      : [
+          {
+            category: null,
+            services: list.map((item) => ({
+              id: item.id,
+              name: item.name,
+              description: item.description,
+              durationMinutes: item.durationMinutes,
+              priceCents: item.priceCents,
+              options: [],
+            })),
+          },
+        ],
+});
+
+/** The server's quote for a service without answers: its own values. */
+const quoteOf = (serviceId: string) => {
+  const item = services.find((entry) => entry.id === serviceId)!;
+  return {
+    serviceName: item.name,
+    durationMinutes: item.durationMinutes,
+    priceCents: item.priceCents,
+    currency: "EUR",
+    options: [],
+  };
+};
+
 /** Wall clocks deliberately far from any UTC reading of `startsAt`. */
 const slotsFor = (date: string) => [
   {
@@ -95,7 +130,10 @@ const deferred = () => {
 
 const api = {
   business: vi.fn<() => Promise<Response>>(),
-  availability: vi.fn<(serviceId: string, date: string) => Promise<Response>>(),
+  availability:
+    vi.fn<
+      (serviceId: string, date: string, choices?: string) => Promise<Response>
+    >(),
   booking: vi.fn<(body: Record<string, unknown>) => Promise<Response>>(),
 };
 const bookingBodies = () =>
@@ -119,20 +157,35 @@ const bookingFor = (overrides: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   Object.values(api).forEach((mock) => mock.mockReset());
-  api.availability.mockImplementation((_, date) =>
-    ok({ date, timezone: TZ, slots: slotsFor(date) }),
+  api.availability.mockImplementation((serviceId, date) =>
+    ok({
+      date,
+      timezone: TZ,
+      slots: slotsFor(date),
+      quote: quoteOf(serviceId),
+    }),
   );
-  api.business.mockImplementation(() => ok({ business, services }));
+  api.business.mockImplementation(() =>
+    ok({ business, services, catalog: catalogOf(services) }),
+  );
   globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "http://localhost");
     if (url.pathname === "/api/bookings") {
       return api.booking(JSON.parse(String(init?.body)));
     }
     if (url.pathname.endsWith("/availability")) {
-      return api.availability(
-        url.searchParams.get("serviceId")!,
-        url.searchParams.get("date")!,
-      );
+      const choices = url.searchParams.get("optionChoiceIds");
+      // Answers only when there are some: the call is the one of before.
+      return choices === null
+        ? api.availability(
+            url.searchParams.get("serviceId")!,
+            url.searchParams.get("date")!,
+          )
+        : api.availability(
+            url.searchParams.get("serviceId")!,
+            url.searchParams.get("date")!,
+            choices,
+          );
     }
     return api.business();
   }) as unknown as typeof fetch;
@@ -142,7 +195,7 @@ afterEach(() => {
 });
 
 const renderPage = (list = services) =>
-  render(<PublicBooking business={business} services={list} />);
+  render(<PublicBooking business={business} catalog={catalogOf(list)} />);
 
 const chooseService = async (name = "Pose cil à cil") => {
   fireEvent.click(screen.getByRole("button", { name: new RegExp(name) }));
@@ -205,7 +258,7 @@ describe("days and slots", () => {
     ).toBeTruthy();
     expect(
       screen
-        .getByRole("button", { name: dayLabel(today) })
+        .getByRole("button", { name: new RegExp(`, ${dayLabel(today)}$`) })
         .getAttribute("aria-pressed"),
     ).toBe("true");
   });
@@ -216,6 +269,7 @@ describe("days and slots", () => {
         date,
         timezone: TZ,
         slots: date === today ? [] : slotsFor(date),
+        quote: quoteOf(SERVICE_A),
       }),
     );
     renderPage();
@@ -240,18 +294,28 @@ describe("days and slots", () => {
     renderPage();
     await chooseService();
     const tomorrow = addDays(today, 1);
-    fireEvent.click(screen.getByRole("button", { name: dayLabel(tomorrow) }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(`, ${dayLabel(tomorrow)}$`),
+      }),
+    );
     // Tomorrow answers first, then today's late answer arrives.
     second.resolve(
       await ok({
         date: tomorrow,
         timezone: TZ,
         slots: [slotsFor(tomorrow)[1]],
+        quote: quoteOf(SERVICE_A),
       }),
     );
     expect(await slotButton("14:00")).toBeTruthy();
     first.resolve(
-      await ok({ date: today, timezone: TZ, slots: slotsFor(today) }),
+      await ok({
+        date: today,
+        timezone: TZ,
+        slots: slotsFor(today),
+        quote: quoteOf(SERVICE_A),
+      }),
     );
     await flush();
     expect(screen.queryByRole("button", { name: /à 09:30$/ })).toBeNull();
@@ -324,6 +388,9 @@ describe("booking", () => {
         startsAt: `${today}T16:30:00.000Z`,
         firstName: "Inès",
         email: "ines.benali@exemple.fr",
+        // What she accepted, sent even without options.
+        expectedPriceCents: quoteOf(SERVICE_A).priceCents,
+        expectedDurationMinutes: quoteOf(SERVICE_A).durationMinutes,
         requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       },
     ]);
@@ -520,7 +587,7 @@ describe("an answer that never arrives", () => {
     render(
       <PublicBooking
         business={{ ...business, slug: "atelier-nour", name: "Atelier Nour" }}
-        services={services}
+        catalog={catalogOf(services)}
       />,
     );
     expect(screen.queryByText("Réservation non confirmée")).toBeNull();
@@ -655,7 +722,11 @@ describe("refusals", () => {
   it("service no longer offered: back to the services, read again from the public route", async () => {
     api.booking.mockImplementationOnce(() => refuse(404, "service_not_found"));
     api.business.mockImplementationOnce(() =>
-      ok({ business, services: [services[1]] }),
+      ok({
+        business,
+        services: [services[1]],
+        catalog: catalogOf([services[1]!]),
+      }),
     );
     renderPage();
     await toReview();
@@ -677,5 +748,331 @@ describe("refusals", () => {
     await toReview();
     fireEvent.click(confirmButton());
     expect(await screen.findByText("Réservation indisponible")).toBeTruthy();
+  });
+});
+
+describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => {
+  const HENNE = "50000000-0000-4000-8000-000000000001";
+  const TAILLE = "51000000-0000-4000-8000-000000000001";
+  const FIN = "52000000-0000-4000-8000-000000000001";
+  const LARGE = "52000000-0000-4000-8000-000000000002";
+  const PAILLETTES = "51000000-0000-4000-8000-000000000002";
+  const OUI = "52000000-0000-4000-8000-000000000003";
+
+  const henne = {
+    id: HENNE,
+    name: "Motif au henné",
+    description: null,
+    durationMinutes: 45,
+    priceCents: 3000,
+    options: [
+      {
+        id: TAILLE,
+        question: "Taille du motif",
+        required: true,
+        choices: [
+          {
+            id: FIN,
+            label: "Fin",
+            priceDeltaCents: 0,
+            durationDeltaMinutes: 0,
+          },
+          {
+            id: LARGE,
+            label: "Large",
+            priceDeltaCents: 1250,
+            durationDeltaMinutes: 20,
+          },
+        ],
+      },
+      {
+        id: PAILLETTES,
+        question: "Paillettes ?",
+        required: false,
+        choices: [
+          {
+            id: OUI,
+            label: "Oui",
+            priceDeltaCents: 300,
+            durationDeltaMinutes: 0,
+          },
+        ],
+      },
+    ],
+  };
+  const catalog: PublicCatalog = {
+    currency: "EUR",
+    groups: [
+      { category: { id: "c-mains", name: "Mains" }, services: [henne] },
+      {
+        category: null,
+        services: [{ ...catalogOf(services).groups[0]!.services[1]! }],
+      },
+    ],
+  };
+  /**
+   * The server's quote. Deliberately NOT the sum a browser would make
+   * (+1 € on each answer): the page must show the server's numbers.
+   */
+  const quoteFor = (ids: string[]) => ({
+    serviceName: "Motif au henné",
+    durationMinutes: 45 + (ids.includes(LARGE) ? 20 : 0),
+    priceCents:
+      3100 + (ids.includes(LARGE) ? 1350 : 0) + (ids.includes(OUI) ? 400 : 0),
+    currency: "EUR",
+    options: [
+      ids.includes(LARGE)
+        ? {
+            optionId: TAILLE,
+            question: "Taille du motif",
+            choiceId: LARGE,
+            label: "Large",
+            priceDeltaCents: 1250,
+            durationDeltaMinutes: 20,
+          }
+        : {
+            optionId: TAILLE,
+            question: "Taille du motif",
+            choiceId: FIN,
+            label: "Fin",
+            priceDeltaCents: 0,
+            durationDeltaMinutes: 0,
+          },
+      ...(ids.includes(OUI)
+        ? [
+            {
+              optionId: PAILLETTES,
+              question: "Paillettes ?",
+              choiceId: OUI,
+              label: "Oui",
+              priceDeltaCents: 300,
+              durationDeltaMinutes: 0,
+            },
+          ]
+        : []),
+    ],
+  });
+  const choicesAsked = () =>
+    api.availability.mock.calls.map(([, , choices]) => choices ?? "");
+
+  beforeEach(() => {
+    api.availability.mockImplementation((_, date, choices) =>
+      ok({
+        date,
+        timezone: TZ,
+        slots: slotsFor(date),
+        quote: quoteFor(choices ? choices.split(",") : []),
+      }),
+    );
+    api.business.mockImplementation(() => ok({ business, services, catalog }));
+  });
+
+  const renderCatalog = () =>
+    render(<PublicBooking business={business} catalog={catalog} />);
+  const toOptions = async () => {
+    renderCatalog();
+    fireEvent.click(screen.getByRole("button", { name: /Motif au henné/ }));
+    await screen.findByRole("heading", {
+      name: "Personnalisez votre prestation",
+    });
+  };
+  const toReviewWithOptions = async () => {
+    await toOptions();
+    fireEvent.click(screen.getByRole("radio", { name: /Large/ }));
+    await screen.findByText(/1 h 05 · 44,50\s€/);
+    fireEvent.click(screen.getByRole("button", { name: "Choisir un créneau" }));
+    await screen.findByRole("heading", { name: "Choisissez un créneau" });
+    fireEvent.click(await slotButton("09:30"));
+    await screen.findByRole("heading", { name: "Vos coordonnées" });
+    fillContact();
+    fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
+    await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+  };
+
+  it("her categories in her order, those without one last; a price that options can raise says « dès »", () => {
+    renderCatalog();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Mains" }),
+    ).toBeTruthy();
+    const mains = within(screen.getByRole("list", { name: "Mains" }));
+    expect(mains.getByText(/dès 45 min · 30,00\s€/)).toBeTruthy();
+    const rest = within(screen.getByRole("list", { name: "Prestations" }));
+    expect(rest.getByText(/1 h 15 · 65,50\s€/)).toBeTruthy();
+    expect(rest.queryByText(/dès/)).toBeNull();
+  });
+
+  it("a required group starts on its first answer, an optional one on none; the server's quote is shown", async () => {
+    await toOptions();
+    expect(screen.getByText("Étape 2 sur 5")).toBeTruthy();
+    expect(
+      (screen.getByRole("radio", { name: /Fin/ }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("radio", { name: /^Sans/ }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    expect(choicesAsked()).toEqual([FIN]);
+    // 31,00 €: the server's number, not 30 + 0 added up here.
+    expect(await screen.findByText(/45 min · 31,00\s€/)).toBeTruthy();
+    // A required group has no "none".
+    const taille = within(
+      screen.getByRole("group", { name: /Taille du motif/ }),
+    );
+    expect(taille.queryByRole("radio", { name: /^Sans/ })).toBeNull();
+    expect(taille.getByText(/\+12,50\s€ · \+20 min/)).toBeTruthy();
+  });
+
+  it("every answer reads the slots and the quote again", async () => {
+    await toOptions();
+    await screen.findByText(/45 min · 31,00\s€/);
+    fireEvent.click(screen.getByRole("radio", { name: /Large/ }));
+    await screen.findByText(/1 h 05 · 44,50\s€/);
+    fireEvent.click(screen.getByRole("radio", { name: /^Oui/ }));
+    await screen.findByText(/1 h 05 · 48,50\s€/);
+    expect(choicesAsked()).toEqual([FIN, LARGE, `${LARGE},${OUI}`]);
+    fireEvent.click(screen.getByRole("radio", { name: /^Sans/ }));
+    await screen.findByText(/1 h 05 · 44,50\s€/);
+  });
+
+  it("books her answers with the quote she saw; the review and the confirmation say them", async () => {
+    await toReviewWithOptions();
+    expect(screen.getByText("Taille du motif")).toBeTruthy();
+    expect(screen.getByText("Large")).toBeTruthy();
+    expect(screen.getByText(/^44,50\s€$/)).toBeTruthy();
+    api.booking.mockImplementationOnce(() =>
+      ok(
+        {
+          booking: bookingFor({
+            serviceName: "Motif au henné",
+            durationMinutes: 65,
+            priceCents: 4450,
+            options: quoteFor([LARGE]).options,
+          }),
+        },
+        201,
+      ),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    expect(bookingBodies()[0]).toMatchObject({
+      serviceId: HENNE,
+      optionChoiceIds: [LARGE],
+      expectedPriceCents: 4450,
+      expectedDurationMinutes: 65,
+    });
+    expect(screen.getByText("Large")).toBeTruthy();
+  });
+
+  it("quote_changed: nothing booked, the new quote shown on the same slot before she confirms again", async () => {
+    await toReviewWithOptions();
+    api.booking.mockImplementationOnce(() => refuse(409, "quote_changed"));
+    // Meanwhile the business raised "Large".
+    api.availability.mockImplementation((_, date) =>
+      ok({
+        date,
+        timezone: TZ,
+        slots: slotsFor(date),
+        quote: { ...quoteFor([LARGE]), priceCents: 5000 },
+      }),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByText("Le prix ou la durée a changé");
+    expect(
+      screen.getByRole("heading", { name: "Vérifiez et confirmez" }),
+    ).toBeTruthy();
+    expect(screen.getByText(/^50,00\s€$/)).toBeTruthy();
+    api.booking.mockImplementationOnce(() =>
+      ok({ booking: bookingFor({ priceCents: 5000 }) }, 201),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    const [first, second] = bookingBodies();
+    expect(first!.expectedPriceCents).toBe(4450);
+    expect(second!.expectedPriceCents).toBe(5000);
+  });
+
+  it("option_choice_unavailable: the catalogue is read again, she chooses again, nothing picked silently", async () => {
+    await toReviewWithOptions();
+    api.booking.mockImplementationOnce(() =>
+      refuse(409, "option_choice_unavailable"),
+    );
+    // "Large" was withdrawn meanwhile.
+    const withdrawn: PublicCatalog = {
+      ...catalog,
+      groups: [
+        {
+          category: catalog.groups[0]!.category,
+          services: [
+            {
+              ...henne,
+              options: [
+                {
+                  ...henne.options[0]!,
+                  choices: [henne.options[0]!.choices[0]!],
+                },
+                henne.options[1]!,
+              ],
+            },
+          ],
+        },
+        catalog.groups[1]!,
+      ],
+    };
+    api.business.mockImplementation(() =>
+      ok({ business, services, catalog: withdrawn }),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByText("Les options ont changé");
+    expect(
+      screen.getByRole("heading", { name: "Personnalisez votre prestation" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("radio", { name: /Large/ })).toBeNull();
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("radio", { name: /Fin/ }) as HTMLInputElement)
+          .checked,
+      ).toBe(true),
+    );
+    expect(choicesAsked().at(-1)).toBe(FIN);
+  });
+
+  it("options_required while reading slots: back to her options, the group now required answered first", async () => {
+    await toOptions();
+    api.availability.mockImplementationOnce(() =>
+      refuse(422, "options_required"),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /^Oui/ }));
+    await screen.findByText("Les options ont changé");
+  });
+
+  it("without options, the price and duration she accepted are sent too (Codex audit)", async () => {
+    renderCatalog();
+    fireEvent.click(screen.getByRole("button", { name: /Rehaussement/ }));
+    await screen.findByRole("heading", { name: "Choisissez un créneau" });
+    expect(screen.getByText("Étape 2 sur 4")).toBeTruthy();
+    fireEvent.click(await slotButton("09:30"));
+    await screen.findByRole("heading", { name: "Vos coordonnées" });
+    fillContact();
+    fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
+    await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+    api.booking.mockImplementationOnce(() =>
+      ok({ booking: bookingFor() }, 201),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    expect(Object.keys(bookingBodies()[0]!).sort()).toEqual(
+      [
+        "email",
+        "expectedDurationMinutes",
+        "expectedPriceCents",
+        "firstName",
+        "requestId",
+        "serviceId",
+        "slug",
+        "startsAt",
+      ].sort(),
+    );
+    // No answers to send: no optionChoiceIds.
+    expect(bookingBodies()[0]).not.toHaveProperty("optionChoiceIds");
   });
 });

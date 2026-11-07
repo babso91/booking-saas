@@ -108,7 +108,7 @@ Le rendez-vous garde `service_name_snapshot`, `price_cents_snapshot` et `duratio
 
 ## 7. Clients écrits avant les options
 
-- **Une prestation sans options se réserve exactement comme avant :** mêmes créneaux, même prix, même durée, même empreinte d'idempotence, `options: []`.
+- **Une prestation sans options se réserve comme avant :** mêmes créneaux, même prix, même durée, `options: []`. Le client y envoie aussi le devis accepté (`expected*`), contrôlé par le serveur comme pour une prestation à options. Une demande sans `expected*` reste acceptée telle quelle, par exemple une demande en attente renvoyée à l'identique.
 - **`GET /api/public/businesses/[slug]`** garde `services` tel quel. Une prestation d'une catégorie masquée n'y figure plus.
 - **Une prestation avec un groupe obligatoire** ne se réserve pas sans réponse (`options_required`), même pour un ancien client. Le serveur ne choisit jamais une réponse à sa place, car cela changerait le prix. Avec seulement des groupes facultatifs, un ancien client réserve la prestation de base.
 
@@ -258,7 +258,7 @@ Avec seulement des groupes **facultatifs**, le parcours actuel réserve la prest
 
 **Pourquoi ce n'est pas un risque aujourd'hui.** Aucun écran ne crée encore d'options : le formulaire de prestations du dashboard ne les connaît pas. Seuls `setServiceOptionsAction` et la RPC `set_service_options` peuvent en écrire.
 
-**Conditions d'activation, avant toute ouverture réelle des options aux professionnelles :**
+**Conditions d’activation, avant toute ouverture réelle des options aux professionnelles** (1 à 5 remplies par la PR 2 de `docs/EXPERIENCE_ENGINE_INTEGRATION.md`) :
 
 1. Le parcours public (Claude UI) utilise `catalog` de `GET /api/public/businesses/[slug]`. Pour chaque prestation à options, il affiche les groupes, préselectionne la première réponse des groupes obligatoires et met à jour le prix et la durée.
 2. Il passe `optionChoiceIds` aux créneaux et relit les créneaux à chaque changement de réponse (la durée change). Il affiche le `quote` du serveur.

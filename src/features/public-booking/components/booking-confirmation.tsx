@@ -14,7 +14,7 @@ import {
   wallTime,
   zoneCity,
 } from "../client/business-time";
-import { Facts, StepHeading, statusLabel } from "./booking-parts";
+import { answerRows, Facts, StepHeading, statusLabel } from "./booking-parts";
 
 /**
  * The booking as the backend answered it (authoritative): nothing here is
@@ -67,6 +67,8 @@ export function BookingConfirmation({
         rows={[
           ["Établissement", booking.businessName],
           ["Prestation", booking.serviceName],
+          // As booked: the answers and the totals the server recorded.
+          ...answerRows(booking.options ?? []),
           ...(local
             ? ([
                 [
