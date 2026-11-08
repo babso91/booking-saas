@@ -39,12 +39,15 @@ existing=$(psql "$TARGET_DB_URL" -At -v ON_ERROR_STOP=1 -c \
 
 confirm_ref "Restore $DIR (from $source_ref) INTO the empty project $TARGET_REF at $(url_host "$TARGET_DB_URL")." "$TARGET_REF"
 
-# Platform-only grants (on server parameters) cannot be replayed by
-# postgres and are not ours.
-grep -v '^GRANT SET ON PARAMETER' "$DIR/roles.sql" >"$DIR/roles.restore.sql"
+# Only the settings of the API roles are replayed (lib.sh,
+# role_settings_to_replay); the reserved platform roles keep the target
+# project's own settings. Written outside the backup folder.
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+role_settings_to_replay "$DIR/roles.sql" >"$WORK/roles.restore.sql"
 
 psql --single-transaction -v ON_ERROR_STOP=1 -q \
-  --file "$DIR/roles.restore.sql" \
+  --file "$WORK/roles.restore.sql" \
   --file "$DIR/schema.sql" \
   --file "$DIR/history-schema.sql" \
   --command 'SET session_replication_role = replica' \
@@ -55,4 +58,4 @@ psql --single-transaction -v ON_ERROR_STOP=1 -q \
   --dbname "$TARGET_DB_URL"
 
 echo "Restored. Verifying…"
-exec "$HERE/verify-restore.sh" "$DIR"
+"$HERE/verify-restore.sh" "$DIR"

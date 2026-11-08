@@ -79,3 +79,33 @@ confirm_ref() {
   read -r answer
   [[ "$answer" == "$expected" ]] || die "not confirmed"
 }
+
+# Role settings of a roles.sql (backup.sh) that a restore may replay.
+# On Supabase, postgres is not a superuser: supautils reserves the platform
+# roles, and only anon, authenticated, authenticator and service_role
+# accept `ALTER ROLE … SET` from it. The CLI's role dump re-enables some
+# settings of every platform role (statement_timeout, pgrst.*, …), reserved
+# ones included (`ALTER ROLE "supabase_admin" …`): those belong to the
+# platform of each project and are left to it. Our migrations create and
+# alter no role: any other line (a role of ours) stops the restore.
+API_ROLES='anon|authenticated|authenticator|service_role'
+PLATFORM_ROLES='anon|authenticated|authenticator|cli_login_.*|dashboard_user|pgbouncer|postgres|service_role|supabase_.*|pgsodium_keyholder|pgsodium_keyiduser|pgsodium_keymaker|pgtle_admin'
+
+# Prints the replayable lines; dies on a line that is not the platform's.
+role_settings_to_replay() {
+  local file="$1" line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      "" | SET\ * | RESET\ *) printf '%s\n' "$line" ;;
+      *)
+        if printf '%s' "$line" | grep -Eq "^ALTER ROLE \"($API_ROLES)\" SET "; then
+          printf '%s\n' "$line"
+        elif printf '%s' "$line" | grep -Eq "^(ALTER ROLE \"($PLATFORM_ROLES)\" |GRANT SET ON PARAMETER )"; then
+          echo "  left to the platform: $(printf '%s' "$line" | sed -E 's/ TO .*//')" >&2
+        else
+          die "roles.sql holds a line that is not the platform's: $line"
+        fi
+        ;;
+    esac
+  done <"$file"
+}

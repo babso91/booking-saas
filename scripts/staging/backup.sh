@@ -59,7 +59,6 @@ objects=$(sql inventory.sql | awk -F'|' '$1=="rows" && $2=="storage.objects" {pr
 [[ "$objects" == "0" ]] || die "storage.objects counts '$objects' files: download them first (runbook § 2.1)"
 
 PLATFORM_SCHEMAS='information_schema|pg_*|_analytics|_realtime|_supavisor|auth|etl|extensions|pgbouncer|realtime|storage|supabase_functions|supabase_migrations|cron|dbdev|graphql|graphql_public|net|pgmq|pgsodium|pgsodium_masks|pgtle|repack|tiger|tiger_data|timescaledb_*|_timescaledb_*|topology|vault'
-PLATFORM_ROLES='anon|authenticated|authenticator|cli_login_.*|dashboard_user|pgbouncer|postgres|service_role|supabase_.*|pgsodium_keyholder|pgsodium_keyiduser|pgsodium_keymaker|pgtle_admin'
 
 # The CLI's rewrites of a schema dump (idempotent CREATEs, platform objects
 # commented out, comments dropped).

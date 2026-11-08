@@ -34,5 +34,24 @@ else
   status=1
 fi
 
+# The API roles' settings replayed from roles.sql must be in place.
+checked=0
+q="'"
+ROLE_SQL="select count(*) from pg_catalog.pg_roles, unnest(rolconfig) c where rolname = :'r' and c = :'s';"
+pattern="^ALTER ROLE \"([^\"]+)\" SET \"([^\"]+)\" TO ${q}(.*)${q};\$"
+while IFS= read -r line; do
+  role=$(printf '%s' "$line" | sed -nE "s/$pattern/\\1/p")
+  [[ -n "$role" ]] || continue
+  param=$(printf '%s' "$line" | sed -nE "s/$pattern/\\2/p")
+  value=$(printf '%s' "$line" | sed -nE "s/$pattern/\\3/p")
+  found=$(printf '%s\n' "$ROLE_SQL" | psql "$TARGET_DB_URL" -At -v ON_ERROR_STOP=1 -v r="$role" -v s="$param=$value")
+  if [[ "$found" != "1" ]]; then
+    echo "ROLE SETTING MISSING: $role $param" >&2
+    status=1
+  fi
+  checked=$((checked + 1))
+done < <(role_settings_to_replay "$DIR/roles.sql" 2>/dev/null | grep '^ALTER ROLE')
+echo "role settings: $checked API-role settings in place (platform roles left to the project)"
+
 if [[ $status -eq 0 ]]; then echo "RESTORE VERIFIED"; else echo "RESTORE NOT VERIFIED" >&2; fi
 exit $status
