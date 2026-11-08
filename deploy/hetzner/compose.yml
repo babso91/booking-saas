@@ -1,0 +1,39 @@
+# Booking SaaS on the Hetzner server. Its own compose project
+# (`booking-saas`): starting, stopping or replacing it never touches the
+# Luminys services nor Caddy. It joins the existing network Caddy uses
+# (BOOKING_CADDY_NETWORK) and publishes no port: only Caddy reaches it.
+#
+#   BOOKING_IMAGE=booking-saas:<sha> BOOKING_CADDY_NETWORK=<network> \
+#     docker compose -p booking-saas -f compose.yml up -d
+name: booking-saas
+
+services:
+  booking-saas:
+    image: ${BOOKING_IMAGE:?set BOOKING_IMAGE, e.g. booking-saas:1965f8a}
+    container_name: booking-saas
+    restart: unless-stopped
+    env_file:
+      - booking-saas.env
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 768m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - caddy
+
+networks:
+  caddy:
+    external: true
+    name: ${BOOKING_CADDY_NETWORK:?set BOOKING_CADDY_NETWORK (the network of Caddy)}
