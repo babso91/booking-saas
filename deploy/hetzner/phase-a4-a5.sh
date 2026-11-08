@@ -34,8 +34,15 @@ case "$KEY" in
   sb_secret_*) auth=(-H "apikey: $KEY") ;;
   *) die "the key is neither a service_role JWT nor an sb_secret_ key" ;;
 esac
-n=$(curl -sS --max-time 10 "${auth[@]}" "https://$REF.supabase.co/rest/v1/businesses?select=id" | grep -o '"id"' | wc -l)
-[ "$n" -ge 1 ] || die "the key does not read staging's businesses as the service role"
+echo "key: $(printf '%s' "$KEY" | cut -c1-10)… (${#KEY} characters)"
+status=$(curl -sS --max-time 15 -o /tmp/.booking-key-check -w '%{http_code}' "${auth[@]}" \
+  "https://$REF.supabase.co/rest/v1/businesses?select=id" || echo "curl-failed")
+body=$(head -c 300 /tmp/.booking-key-check 2>/dev/null || true); rm -f /tmp/.booking-key-check
+n=$(printf '%s' "$body" | grep -o '"id"' | wc -l || true)
+if [ "$status" != "200" ] || [ "$n" -lt 1 ]; then
+  echo "Supabase answered HTTP $status: $(printf '%s' "$body" | sed -E 's/(sb_[a-z]+_)[A-Za-z0-9_-]+/\1<masked>/g')"
+  die "the key does not read staging's businesses as the service role"
+fi
 echo "server key OK: reads $n businesses of $REF (RLS bypassed, as the service role)"
 
 section "A4 runtime.env.next (mode 600)"
