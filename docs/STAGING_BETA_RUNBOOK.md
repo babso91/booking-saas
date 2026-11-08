@@ -12,7 +12,21 @@ git worktree add ../booking-saas-ops origin/ops/staging-beta   # dossier sépar�
 cd ../booking-saas-ops
 ```
 
-`audit.mjs` vérifie de lui-même que `supabase/migrations` est identique à `1965f8a`, et s'arrête sinon. Node 20 ou plus suffit pour l'audit. Pour la sauvegarde, `npm ci` est nécessaire (CLI Supabase du dépôt, 2.118.0) ainsi que `psql` (client PostgreSQL 17).
+`audit.mjs` vérifie de lui-même que `supabase/migrations` est identique à `1965f8a`, et s'arrête sinon.
+
+**Prérequis sur macOS :**
+
+- Node 20 ou plus ;
+- les outils PostgreSQL **17**, la version du serveur, sans Docker : `brew install postgresql@17`. Les scripts les trouvent seuls, sinon `export PG_BIN="$(brew --prefix postgresql@17)/bin"` ;
+- `npm ci` pour la CLI Supabase du dépôt (2.118.0), utilisée seulement par `db push`, qui n'a pas besoin de Docker.
+
+Les scripts tournent avec le bash 3.2 de macOS et les outils BSD (`sed`, `shasum`). Ils ont été vérifiés sans aucun accès à Docker.
+
+**Chaînes de connexion :**
+
+- **Où les trouver :** tableau de bord Supabase du projet > bouton **Connect** > **Session pooler** (port 5432, utilisateur `postgres.<ref>`). L'hôte direct `db.<ref>.supabase.co` n'est joignable qu'en IPv6, et le transaction pooler (port 6543) est refusé par les scripts.
+- **Mot de passe :** remplacer `[YOUR-PASSWORD]` par le vrai mot de passe. S'il contient des caractères spéciaux (`@ : / ? # %`), il faut les encoder dans l'URL, ou plus simplement le réinitialiser avec des lettres et des chiffres (Project settings > Database > Reset password).
+- **Saisie :** toujours avec `read -rs` (rien à l'écran, rien dans l'historique), jamais dans un fichier ni dans le chat.
 
 Après la bêta : `git worktree remove ../booking-saas-ops`.
 
@@ -136,7 +150,7 @@ Ce que `backup.sh` contient (vérifié sur la répétition locale) :
 
 Ce que la sauvegarde **ne contient pas** :
 
-- **Fichiers Storage :** un dump SQL n'en contient pas. Le script **s'arrête** si l'index compte des fichiers. On s'attend à 0, puisque le bucket `site-photos` n'existe qu'après 20261106. S'il y en avait : `npx supabase storage cp -r ss:///<bucket> backups/…/storage --experimental --linked` avant de continuer.
+- **Fichiers Storage :** un dump SQL n'en contient pas. Le script **s'arrête** si l'index compte des fichiers. On s'attend à 0, puisque le bucket `site-photos` n'existe qu'après 20261106. S'il y en avait : les télécharger d'abord (tableau de bord Storage, ou `supabase storage cp --experimental`), puis en reparler avant de continuer.
 - **Réglages Auth et modèles d'email :** l'instantané non secret est dans `auth.json` (audit). Les secrets (mot de passe SMTP, clés d'API) ne sont jamais exportés : ils se ressaisissent.
 - **Vault :** non utilisé (0 secret, aucune migration n'y fait référence).
 - **Deux tables internes de Storage** (`buckets_vectors`, `vector_indexes`) : elles appartiennent à la plateforme, sont inutilisées, et `postgres` ne peut pas y écrire. Leur vide est contrôlé par l'empreinte.
@@ -148,54 +162,74 @@ Ce dossier contient des données personnelles et des secrets. Il reste sur ta ma
 ### 2.2 Sauvegarder
 
 ```bash
-npm ci
-export SUPABASE_ACCESS_TOKEN=…     # le même jeton en lecture seule
-export SUPABASE_DB_PASSWORD=…      # Project settings > Database ; pg_dump en a besoin
-scripts/staging/backup.sh
+read -rs SOURCE_DB_URL && export SOURCE_DB_URL   # Session pooler de STAGING
+scripts/staging/backup.sh                        # demande de retaper la ref de staging
 ```
 
-Seule la lecture se fait sur staging : `pg_dump` via la CLI, puis des `SELECT` via l'API en lecture seule. Le mot de passe de la base n'est utilisé que par `pg_dump`. Il reste dans le terminal, n'est jamais dans un fichier ni dans le chat, et on peut le **réinitialiser après la sauvegarde** (Project settings > Database > Reset password).
+`backup.sh` ne fait que lire staging :
 
-À lancer quand personne n'écrit sur staging (c'est le cas : aucune application n'y est branchée). L'empreinte est prise juste après le dump.
+- `pg_dump` et `pg_dumpall --roles-only`, avec exactement les options et filtres de la CLI Supabase (relevés avec son `--dry-run`), mais sans Docker ;
+- des `SELECT` en transaction en lecture seule.
+
+Aucun jeton d'API n'est nécessaire.
+
+Garde-fous :
+
+- l'URL doit désigner le projet staging (`osvlzlnwjnmjscpubawa`) ;
+- le script affiche l'état lu (version, migrations, comptes) et fait retaper la ref avant de commencer ;
+- il s'arrête si Storage contient des fichiers, si un fichier est vide, ou si l'historique ou les comptes Auth manquent.
+
+`manifest.txt` garde la source (ref, hôte, sans mot de passe), l'état et la version de `pg_dump`.
+
+À lancer quand personne n'écrit sur staging, ce qui est le cas aujourd'hui. Ensuite, on peut réinitialiser le mot de passe de la base.
 
 ### 2.3 Répétition sur un projet jetable : restaurer, vérifier, puis monter de version (obligatoire avant staging)
 
 Le projet jetable sert deux fois : il prouve que la sauvegarde se restaure, puis que la montée de version 24 → 35 passe sur une **vraie** infrastructure Supabase, avec les vraies données de staging.
 
-1. Créer un projet Supabase **jetable** : gratuit, même région, Postgres 17, vide.
+1. Créer un projet Supabase **jetable** : gratuit, même région, Postgres 17, vide, avec un mot de passe de base en lettres et chiffres. Noter sa **ref**.
 2. Restaurer et vérifier :
 
    ```bash
-   read -rs TARGET_DB_URL && export TARGET_DB_URL
-   #   coller : postgresql://postgres:<mdp du jetable>@db.<ref du jetable>.supabase.co:5432/postgres
+   export TARGET_REF=<ref du jetable>
+   read -rs TARGET_DB_URL && export TARGET_DB_URL   # Session pooler du JETABLE
    scripts/staging/restore.sh backups/staging-<horodatage>
    ```
 
    Attendu : `data: identical`, `privileges: identical`, `RESTORE VERIFIED`.
 
-   `restore.sh` :
+   Garde-fous de `restore.sh`, tous vérifiés **avant** la moindre écriture (chacun a été testé en le provoquant) :
 
-   - contrôle les sommes SHA-256 ;
-   - **refuse** une cible qui serait staging, ou une cible non vide ;
-   - restaure en une seule transaction : rôles, schémas, historique, données, puis les droits exacts ;
-   - lance `verify-restore.sh`.
+   - la ref nommée par l'URL doit être `TARGET_REF` ;
+   - la cible ne peut pas être staging : ni par sa ref, ni par son hôte direct, ni par l'utilisateur du pooler ;
+   - la cible ne peut pas être la source de la sauvegarde ;
+   - le transaction pooler est refusé ;
+   - la cible doit être vide : aucune table à nous, aucun compte ;
+   - les sommes SHA-256 de la sauvegarde doivent être intactes ;
+   - il faut retaper la ref de la cible.
+
+   Ensuite, il restaure en une seule transaction (rôles, schémas, historique, données, puis droits exacts) et lance `verify-restore.sh`.
 
 3. Monter le jetable de version, comme on le fera pour staging :
 
    ```bash
-   npx --no-install supabase migration list --db-url "$TARGET_DB_URL"        # 24 appliquées, 11 en attente
-   npx --no-install supabase db push --db-url "$TARGET_DB_URL" --dry-run      # exactement les 11, dans l'ordre
-   npx --no-install supabase db push --db-url "$TARGET_DB_URL"                # applique les 11 sur le JETABLE
-   SQL_DB_URL="$TARGET_DB_URL" node scripts/staging/sql.mjs scripts/staging/postcheck.sql
-   #   attendu : 13 lignes se terminant par |t (true)
+   scripts/staging/upgrade-throwaway.sh
    ```
+
+   Le script :
+
+   - refuse staging ;
+   - exige que la cible soit exactement au niveau de staging (24 migrations, `20261016090000`) ;
+   - montre le `db push --dry-run` (les 11 migrations), fait retaper la ref, puis applique ;
+   - vérifie le niveau 35 et les 13 contrôles.
+
+   Attendu : `UPGRADE REHEARSED: 35 migrations, 13/13 post-checks.`
 
 4. Contrôle fonctionnel sur le jetable (tableau de bord : Auth et Table Editor) :
 
    - les 2 comptes et les 2 établissements sont là ;
-   - le rendez-vous est présent, avec `options_snapshot = []` ;
    - `private.beta_access` contient 2 lignes `existing` ;
-   - `public.email_events` montre ce qui partirait si un transport était activé.
+   - aucun email en attente dans `public.email_events` (l'audit en comptait 0).
 
 5. Supprimer le projet jetable.
 
@@ -228,6 +262,14 @@ Les 11 contrôles fonctionnels :
 
 Reproductible : `scripts/staging/rehearsal/rehearse.sh`, sur la stack locale uniquement (il efface la base locale et ne touche jamais un projet hébergé).
 
+**Dernière répétition (8 nov., outils natifs, Docker inaccessible aux scripts) :**
+
+- `backup.sh` (`pg_dump` 17.11) de l'état ancien ;
+- `restore.sh` vers une base vierge : `RESTORE VERIFIED` (62 tables, 170 droits) ;
+- `upgrade-throwaway.sh` : `UPGRADE REHEARSED` (35 migrations, 13/13) ; droits identiques à la source mise à niveau, 2 comptes, 2 établissements, 2 accès `existing`.
+
+Les garde-fous ont été provoqués un par un, et tous ont arrêté le script sans rien écrire.
+
 Ce qui reste à prouver sur l'hébergé : les étapes 2 à 4 ci-dessus, sur le projet jetable.
 
 ### 2.4 Retour arrière
@@ -250,9 +292,9 @@ C'est l'étape qui écrit. Elle demande le mot de passe de la base, que seul la 
 
 ```bash
 node scripts/staging/audit.mjs                         # code 0 : toujours 24 appliquées, les 11 attendues
-npx --no-install supabase link --project-ref osvlzlnwjnmjscpubawa
-npx --no-install supabase db push --linked --dry-run    # exactement les 11, dans l'ordre
-npx --no-install supabase db push --linked              # 🔒 applique 20261017 → 20261108
+read -rs SOURCE_DB_URL && export SOURCE_DB_URL         # Session pooler de STAGING
+npx --no-install supabase db push --db-url "$SOURCE_DB_URL" --dry-run   # exactement les 11, dans l'ordre
+npx --no-install supabase db push --db-url "$SOURCE_DB_URL"             # 🔒 applique 20261017 → 20261108
 node scripts/staging/audit.mjs --after                  # code 0 : 35 appliquées, 13 contrôles « ok »
 ```
 

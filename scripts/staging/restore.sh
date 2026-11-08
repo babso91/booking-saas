@@ -1,36 +1,47 @@
 #!/usr/bin/env bash
-# Restores a backup made by backup.sh into an EMPTY project, then verifies it.
+# Restores a backup made by backup.sh into an EMPTY throwaway project, then
+# verifies it (verify-restore.sh).
 #
-#   TARGET_DB_URL='postgresql://postgres:…@db.<throwaway-ref>.supabase.co:5432/postgres' \
-#     scripts/staging/restore.sh backups/staging-<UTC>
+#   export TARGET_REF=<ref of the throwaway project>
+#   read -rs TARGET_DB_URL && export TARGET_DB_URL   # its Session pooler string
+#   scripts/staging/restore.sh backups/staging-<UTC>
 #
-# Rehearsal: a throwaway project (or a blank local stack). For a real
-# recovery, a NEW project, then point the application at it. Never the
-# source: the script refuses the staging ref and any non-empty target.
+# Protections against the wrong target, all before any write:
+#   - TARGET_REF is required and must be what TARGET_DB_URL names;
+#   - neither may be staging, nor the project the backup came from;
+#   - the target must be empty (no table of ours, no account);
+#   - the operator types the ref to confirm;
+#   - checksums of the backup are verified.
 # One transaction: on any error nothing is left behind.
 set -euo pipefail
 
 DIR="${1:?usage: restore.sh <backup dir>}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-: "${TARGET_DB_URL:?export TARGET_DB_URL (the EMPTY target project)}"
-REF="${STAGING_PROJECT_REF:-osvlzlnwjnmjscpubawa}"
+# shellcheck source=lib.sh
+source "$HERE/lib.sh"
 
-if [[ "$TARGET_DB_URL" == *"$REF"* ]]; then
-  echo "TARGET_DB_URL names the staging project itself: refused." >&2
-  exit 1
-fi
-(cd "$DIR" && sha256sum --quiet -c SHA256SUMS) || { echo "checksums differ" >&2; exit 1; }
+: "${TARGET_REF:?export TARGET_REF (the throwaway project ref)}"
+: "${TARGET_DB_URL:?export TARGET_DB_URL (the throwaway project, Session pooler)}"
+check_url TARGET_DB_URL "$TARGET_DB_URL"
+named=$(url_ref "$TARGET_DB_URL")
+[[ "$named" == "$TARGET_REF" ]] || die "TARGET_DB_URL names '$named', not TARGET_REF '$TARGET_REF'"
+[[ "$TARGET_REF" != "$STAGING_REF" && "$TARGET_DB_URL" != *"$STAGING_REF"* ]] ||
+  die "the target is the staging project itself"
+source_ref=$(sed -n 's/^source_ref=//p' "$DIR/manifest.txt")
+[[ -n "$source_ref" && "$TARGET_REF" != "$source_ref" ]] || die "the target is the backup's source ($source_ref)"
+use_pg_tools
+
+(cd "$DIR" && sha256_check SHA256SUMS) || die "checksums of $DIR differ"
 
 existing=$(psql "$TARGET_DB_URL" -At -v ON_ERROR_STOP=1 -c \
-  "select (to_regclass('public.businesses') is not null)::int + (select count(*) from auth.users)")
-if [[ "$existing" != "0" ]]; then
-  echo "The target is not empty (tables or accounts found): refused." >&2
-  exit 1
-fi
+  "select (pg_catalog.to_regclass('public.businesses') is not null)::int + (select count(*) from auth.users)")
+[[ "$existing" == "0" ]] || die "the target is not empty (tables or accounts found)"
 
-# Platform-only grants (on server parameters) cannot be replayed by postgres
-# and are not ours.
-grep -v '^GRANT SET ON PARAMETER' "$DIR/roles.sql" > "$DIR/roles.restore.sql"
+confirm_ref "Restore $DIR (from $source_ref) INTO the empty project $TARGET_REF at $(url_host "$TARGET_DB_URL")." "$TARGET_REF"
+
+# Platform-only grants (on server parameters) cannot be replayed by
+# postgres and are not ours.
+grep -v '^GRANT SET ON PARAMETER' "$DIR/roles.sql" >"$DIR/roles.restore.sql"
 
 psql --single-transaction -v ON_ERROR_STOP=1 -q \
   --file "$DIR/roles.restore.sql" \

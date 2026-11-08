@@ -5,6 +5,9 @@
 # Never touches a hosted project. Erases the local database.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
+# shellcheck source=../lib.sh
+source scripts/staging/lib.sh
+use_pg_tools
 HERE=scripts/staging
 DB=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 STATUS="$(mktemp)"
@@ -13,7 +16,8 @@ npx --no-install supabase db reset --version 20261016090000
 npx --no-install supabase status -o json > "$STATUS"
 node "$HERE/rehearsal/seed-staging-like.mjs" "$STATUS"
 
-BACKUP_DIR=backups/rehearsal-old-state BACKUP_DB_URL="$DB" "$HERE/backup.sh"
+BACKUP_DIR=backups/rehearsal-old-state SOURCE_DB_URL="$DB" EXPECT_SOURCE_REF=127.0.0.1:54322 \
+  CONFIRM_REF=127.0.0.1:54322 "$HERE/backup.sh"
 
 npx --no-install supabase migration up --local
 checks=$(SQL_DB_URL="$DB" node "$HERE/sql.mjs" "$HERE/postcheck.sql")
