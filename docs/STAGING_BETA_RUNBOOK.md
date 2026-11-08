@@ -59,19 +59,61 @@ Aucun des secrets factices de la configuration Auth ne s'est retrouvé dans les 
 
 ### 1.3 Lire le résultat
 
+**État réellement observé (audit du 8 novembre 2026)** :
+
+- **Migrations :** 24 sur 35 appliquées, la dernière est `20261016090000` (setup_write_guarantees). Aucune version présente seulement à distance, aucun trou.
+- **Base :** PostgreSQL 17.11.
+- **Données :** 2 comptes confirmés, 2 établissements, 2 prestations, 1 rendez-vous.
+- **Storage :** 0 fichier ; les colonnes lues par la réconciliation sont présentes.
+- **Sauvegardes :** 0, PITR désactivé.
+- **Auth :**
+  - `site_url` pointe vers une adresse DuckDNS ;
+  - mot de passe minimum : 6 caractères ;
+  - aucun SMTP configuré.
+
 **Pour continuer (code de sortie 0) :**
 
-- dernière version hébergée `20261103090000`, aucune version « remote only », aucun trou ;
-- migrations en attente, exactement dans cet ordre :
-  1. `20261105090000_site_publishing.sql`
-  2. `20261106090000_site_photos.sql`
-  3. `20261107090000_beta_invitations.sql`
-  4. `20261108090000_category_move.sql`
-- `storage.objects columns for 20261106: present`.
+- la dernière version hébergée est **exactement** `20261016090000` ;
+- il n'y a aucune version « remote only », ni aucun trou ;
+- les migrations en attente sont **exactement** les 11 du § 1.4, dans cet ordre.
 
-**Sinon (code 2) : arrêt.** Version présente seulement à distance, trou ou autre ordre : on analyse avant tout `migration repair` ou `--include-all`. Aucune réparation automatique.
+`audit.mjs` vérifie précisément cet état (`EXPECTED_LAST_HOSTED`, `EXPECTED_PENDING`), et non plus l'hypothèse des « 4 migrations ». Il a été testé contre cinq états simulés :
 
-**Comptes existants.** La migration 20261107 donne l'accès bêta à **tous** les comptes présents au moment où elle tourne (`source = 'existing'`). Le résumé les compte. `accounts.local.json` les liste, pour que tu décides, compte par compte : garder ou supprimer. **Aucun compte n'est supprimé** sans cette décision explicite, et aucun script ne supprime quoi que ce soit.
+| État simulé                                      | Verdict |
+| ------------------------------------------------ | ------- |
+| État réel (24 migrations, 11 en attente)         | OK      |
+| Après migration                                  | OK      |
+| Version présente seulement à distance            | STOP    |
+| Ancienne hypothèse (dernière version `20261103`) | STOP    |
+| Trou dans l'historique                           | STOP    |
+
+**Sinon (code 2) : arrêt.** La répétition du § 2.4 ne décrit plus cet état. On analyse avant tout `migration repair` ou `--include-all`, et on ne fait aucune réparation automatique.
+
+**Deux comptes existants : conservés.** La migration 20261107 donne l'accès bêta à **tous** les comptes présents (`source = 'existing'`), donc ces deux comptes le recevront. On ne supprime aucun compte : ils restent en attente d'identification. Aucun script ne supprime quoi que ce soit.
+
+**À clarifier avant la migration : le `site_url` DuckDNS.** Une ancienne version de l'application tourne peut-être encore sur cette adresse, branchée sur staging. Après la mise à niveau, elle casserait : plusieurs fonctions RPC changent de signature (réservation, disponibilités, agenda, création de prestation), et la réservation publique devient réservée au serveur. Il faut savoir si elle sert encore, et l'arrêter ou l'ignorer.
+
+### 1.4 Les 11 migrations en attente, et leur effet sur la base de staging
+
+Ordre exact d'application :
+
+| #   | Migration                            | Effet sur les données existantes                                                                                                                                                                            | Point d'attention                                                                                                                                                               |
+| --- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `20261017_public_booking_guarantees` | aucun                                                                                                                                                                                                       | Remplace `create_public_booking` (nouvelle signature, avec `request_id`). Une ancienne application qui l'appelle cassera.                                                       |
+| 2   | `20261018_public_booking_hardening`  | **vide** `private.public_booking_log`, le journal anti-abus (empreintes non salées, voulu) ; ajoute une clé HMAC                                                                                            | Réservation publique **réservée au serveur** (`service_role`). `get_public_business` est recréée.                                                                               |
+| 3   | `20261019_email_notifications`       | colonnes ajoutées à `email_events` (contraintes `not valid`, l'existant n'est pas revalidé) ; **met en file un rappel** pour chaque rendez-vous futur confirmé qui a un email client                        | Ces emails partiront dès qu'un transport sera activé : **garder `EMAIL_TRANSPORT` vide** tant que la file n'a pas été revue (l'inventaire compte les emails `pending`).         |
+| 4   | `20261020_loyalty_engine`            | crée un programme de fidélité **inactif** par établissement ; désactive un programme actif sans événement ; renumérote le grand livre (`ledger_seq`) et complète les récompenses et utilisations existantes | Remplace les politiques d'écriture de la fidélité par des fonctions. Sur staging (aucun événement de fidélité attendu), seule la création des 2 programmes inactifs s'applique. |
+| 5   | `20261021_client_hub`                | aucun (tables nouvelles)                                                                                                                                                                                    | —                                                                                                                                                                               |
+| 6   | `20261031_member_preferences`        | aucun                                                                                                                                                                                                       | —                                                                                                                                                                               |
+| 7   | `20261103_service_catalog`           | colonnes ajoutées : `services.category_id` (nul, donc « sans catégorie ») et `appointments.options_snapshot` (`[]`)                                                                                         | Remplace 7 fonctions (disponibilités, réservations, agenda, création de prestation) par des versions avec options.                                                              |
+| 8   | `20261105_site_publishing`           | aucun (tables nouvelles)                                                                                                                                                                                    | —                                                                                                                                                                               |
+| 9   | `20261106_site_photos`               | crée le bucket privé `site-photos` et l'état de réconciliation                                                                                                                                              | Lit `storage.objects.archived_at` et `is_delete_marker` (présents sur staging).                                                                                                 |
+| 10  | `20261107_beta_invitations`          | **donne l'accès bêta aux 2 comptes existants**                                                                                                                                                              | Ajoute un déclencheur sur `businesses` : une nouvelle création d'établissement exige l'accès bêta.                                                                              |
+| 11  | `20261108_category_move`             | aucun                                                                                                                                                                                                       | —                                                                                                                                                                               |
+
+Rien ne supprime de rendez-vous, de cliente, d'établissement ni de compte. Seul le journal anti-abus est vidé, ce qui est voulu.
+
+**Dépendances :** chaque migration s'appuie sur les précédentes : par exemple, 20261103 recrée les fonctions de 20261017 et 20261018. Il faut donc les appliquer **toutes, dans l'ordre, en une seule opération** (`db push`). Aucune extension nouvelle n'est requise.
 
 ## 2. Sauvegarde et retour arrière
 
@@ -116,67 +158,112 @@ Seule la lecture se fait sur staging : `pg_dump` via la CLI, puis des `SELECT` v
 
 À lancer quand personne n'écrit sur staging (c'est le cas : aucune application n'y est branchée). L'empreinte est prise juste après le dump.
 
-### 2.3 Restaurer sur un projet jetable, puis vérifier (obligatoire avant de migrer)
+### 2.3 Répétition sur un projet jetable : restaurer, vérifier, puis monter de version (obligatoire avant staging)
 
-1. Créer un projet Supabase **jetable** (gratuit, même région, même version Postgres 17), vide.
+Le projet jetable sert deux fois : il prouve que la sauvegarde se restaure, puis que la montée de version 24 → 35 passe sur une **vraie** infrastructure Supabase, avec les vraies données de staging.
+
+1. Créer un projet Supabase **jetable** : gratuit, même région, Postgres 17, vide.
 2. Restaurer et vérifier :
 
    ```bash
-   export TARGET_DB_URL='postgresql://postgres:<mdp du projet jetable>@db.<ref jetable>.supabase.co:5432/postgres'
+   read -rs TARGET_DB_URL && export TARGET_DB_URL
+   #   coller : postgresql://postgres:<mdp du jetable>@db.<ref du jetable>.supabase.co:5432/postgres
    scripts/staging/restore.sh backups/staging-<horodatage>
    ```
+
+   Attendu : `data: identical`, `privileges: identical`, `RESTORE VERIFIED`.
 
    `restore.sh` :
 
    - contrôle les sommes SHA-256 ;
-   - **refuse** une cible qui serait le projet staging, ou une cible non vide ;
-   - restaure en **une seule transaction** : rôles (sans les droits propres à la plateforme), schémas, historique, données (contraintes différées), puis les droits ;
-   - lance `verify-restore.sh`, qui compare table par table les lignes et le md5, historique compris, ainsi que les droits normalisés.
+   - **refuse** une cible qui serait staging, ou une cible non vide ;
+   - restaure en une seule transaction : rôles, schémas, historique, données, puis les droits exacts ;
+   - lance `verify-restore.sh`.
 
-3. Attendu : `data: identical`, `privileges: identical`, `RESTORE VERIFIED`.
-4. Contrôle fonctionnel :
-   - se connecter avec un compte de test sur le projet jetable (Auth > Users, ou l'API) ;
-   - appeler une fonction publique (`get_public_business`) en anonyme : 200 ;
-   - appeler `create_beta_invitation` en anonyme : refusé.
+3. Monter le jetable de version, comme on le fera pour staging :
+
+   ```bash
+   npx --no-install supabase migration list --db-url "$TARGET_DB_URL"        # 24 appliquées, 11 en attente
+   npx --no-install supabase db push --db-url "$TARGET_DB_URL" --dry-run      # exactement les 11, dans l'ordre
+   npx --no-install supabase db push --db-url "$TARGET_DB_URL"                # applique les 11 sur le JETABLE
+   SQL_DB_URL="$TARGET_DB_URL" node scripts/staging/sql.mjs scripts/staging/postcheck.sql
+   #   attendu : 13 lignes se terminant par |t (true)
+   ```
+
+4. Contrôle fonctionnel sur le jetable (tableau de bord : Auth et Table Editor) :
+
+   - les 2 comptes et les 2 établissements sont là ;
+   - le rendez-vous est présent, avec `options_snapshot = []` ;
+   - `private.beta_access` contient 2 lignes `existing` ;
+   - `public.email_events` montre ce qui partirait si un transport était activé.
+
 5. Supprimer le projet jetable.
 
-**Répétition faite en local** (stack source avec 30 comptes, 397 établissements et 403 rendez-vous, puis une stack vierge comme cible) :
+**Répétition faite en local, depuis l'état exact de staging.** On a construit une base à 24 migrations, puis on y a créé des données par les vrais points d'entrée de cette version :
 
-- `backup.sh`, puis `restore.sh` : 87 tables identiques (dont les 35 versions de l'historique), 345 droits identiques, `RESTORE VERIFIED` ;
-- connexion avec le mot de passe d'un compte restauré : OK, et un mauvais mot de passe est refusé ;
-- RPC publique : 200 ; `create_beta_invitation` en anonyme : `permission denied` ;
-- **tests négatifs :** une ligne modifiée donne `DATA DIFFERS`, et un `EXECUTE` accordé à `anon` donne `PRIVILEGES DIFFER`. La vérification détecte donc bien un écart.
+- 2 comptes confirmés (Auth) ;
+- 2 établissements (`complete_onboarding`) et 2 prestations ;
+- les horaires ;
+- 1 réservation publique future, avec email client.
 
-Ce qui reste à prouver sur l'hébergé : la même répétition sur un projet jetable Supabase (étape 2 ci-dessus).
+| Étape                                                                   | Résultat                                                                                                                                                                            |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `backup.sh` de cet état ancien, puis `restore.sh` vers une stack vierge | 62 tables identiques (dont les 24 versions de l'historique), 170 droits identiques, `RESTORE VERIFIED`                                                                              |
+| Montée de version 24 → 35 sur la **source**                             | les 11 migrations passent, dans l'ordre ; 13/13 contrôles                                                                                                                           |
+| Montée de version 24 → 35 sur la **copie restaurée**                    | les 11 passent ; 13/13 ; mêmes droits que la source mise à niveau                                                                                                                   |
+| Comparaison avec une base neuve à 35 migrations (celle que teste la CI) | schéma **identique** (0 ligne de différence), droits identiques                                                                                                                     |
+| Données existantes                                                      | le rendez-vous est identique, colonne nouvelle mise à part ; 2 comptes, 2 établissements, 2 prestations conservés                                                                   |
+| Effets attendus                                                         | 2 accès bêta `existing` ; 2 programmes de fidélité inactifs ; journal anti-abus vidé ; 1 rappel mis en file (plus la confirmation déjà en attente) ; prestations « sans catégorie » |
+| Contrôles fonctionnels après montée de version                          | 11/11 (détail ci-dessous)                                                                                                                                                           |
 
-### 2.4 Pourquoi le risque est limité
+Les 11 contrôles fonctionnels :
 
-Les quatre migrations sont **additives** : nouvelles tables et fonctions, un bucket, un déclencheur sur `businesses`. Le seul remplissage est `beta_access` pour les comptes existants. Elles ne suppriment ni ne réécrivent aucune donnée existante.
+- un compte existant se connecte et garde son accès bêta ;
+- il voit son établissement et son rendez-vous ;
+- il ne voit pas l'autre établissement ;
+- l'établissement et la disponibilité publics répondent ;
+- une nouvelle réservation passe par le chemin serveur, et l'appel anonyme est refusé (401) ;
+- la création de catégorie fonctionne ;
+- `create_beta_invitation` est refusée à un compte connecté (403).
 
-La CI rejoue toutes les migrations depuis zéro, puis la montée de version sur des données (« Migrations and upgrade », vert sur `1965f8a`).
+Reproductible : `scripts/staging/rehearsal/rehearse.sh`, sur la stack locale uniquement (il efface la base locale et ne touche jamais un projet hébergé).
 
-Chaque migration est transactionnelle : un échec ne laisse rien de partiel. En cas d'échec, on **arrête et on analyse** ; restaurer n'est pas nécessaire.
+Ce qui reste à prouver sur l'hébergé : les étapes 2 à 4 ci-dessus, sur le projet jetable.
 
-## 3. 🔒 Migration de staging (après accord)
+### 2.4 Retour arrière
 
-Cette étape écrit : elle demande un accès en écriture, accordé seulement pour elle.
+- **Si `db push` échoue :** chaque migration est transactionnelle, donc celle qui échoue est entièrement annulée, et les précédentes restent appliquées. On **arrête**, on relance `audit.mjs` pour voir où en est l'historique, et on analyse.
+  - L'application n'est pas encore déployée : aucun utilisateur n'est touché.
+  - On ne fait aucune réparation automatique.
+- **S'il faut revenir à l'état d'avant :**
+  - on restaure la sauvegarde (§ 2.2) dans un **nouveau** projet avec `restore.sh` ;
+  - on pointe l'application vers ce projet ;
+  - on garde l'ancien staging pour analyse.
+
+  `restore.sh` refuse d'écrire sur staging ou sur une base non vide : il n'y a jamais d'écrasement en place.
+
+- **Avant tout cela :** la répétition du § 2.3 sur le jetable doit avoir réussi, sinon on ne touche pas staging.
+
+## 3. 🔒 Migration de staging (après accord, et après le § 2.3 réussi)
+
+C'est l'étape qui écrit. Elle demande le mot de passe de la base, que seul la CLI utilise, dans ton terminal.
 
 ```bash
-node scripts/staging/audit.mjs                       # rien n'a bougé depuis l'audit (code 0)
+node scripts/staging/audit.mjs                         # code 0 : toujours 24 appliquées, les 11 attendues
 npx --no-install supabase link --project-ref osvlzlnwjnmjscpubawa
-npx --no-install supabase db push --linked --dry-run  # exactement les 4 migrations
-npx --no-install supabase db push --linked            # 🔒 applique 20261105 → 20261108
-node scripts/staging/audit.mjs --after                # postcheck : 13 lignes « ok »
+npx --no-install supabase db push --linked --dry-run    # exactement les 11, dans l'ordre
+npx --no-install supabase db push --linked              # 🔒 applique 20261017 → 20261108
+node scripts/staging/audit.mjs --after                  # code 0 : 35 appliquées, 13 contrôles « ok »
 ```
 
 Ensuite :
 
-- révoquer le jeton d'écriture, s'il en a fallu un ;
-- réinitialiser le mot de passe de la base, s'il a été utilisé.
+- réinitialiser le mot de passe de la base (Project settings > Database) ;
+- révoquer ou laisser expirer le jeton.
 
-`scripts/staging/postcheck.sql` (13 contrôles, vérifiés en local, en lecture seule) :
+`scripts/staging/postcheck.sql` (13 contrôles, en lecture seule) :
 
-- les 4 versions sont enregistrées, sans version postérieure inconnue ;
+- les migrations 20261105 à 20261108 sont enregistrées ; `audit.mjs --after` exige en plus l'historique complet jusqu'à 20261108 ;
 - RLS est active sur les tables du mini-site ;
 - le bucket `site-photos` est privé (10 Mo, 4 types d'image), et aucune politique Storage ne l'ouvre ;
 - les colonnes `storage.objects` lues par la réconciliation sont présentes ;
@@ -185,7 +272,11 @@ Ensuite :
 - `create_beta_invitation` n'est exécutable ni par `anon` ni par `authenticated` ;
 - tout membre d'un établissement existant a l'accès bêta.
 
-**Ne jamais lancer `supabase config push`** vers staging : `config.toml` contient `site_url = http://localhost:3000`. Les réglages Auth se font à la main (§ 4.3).
+**Ne jamais lancer `supabase config push`** vers staging : `config.toml` contient `site_url = http://localhost:3000`. Les réglages Auth se font à la main (§ 4.3) :
+
+- `site_url` à remplacer (aujourd'hui DuckDNS) ;
+- mot de passe minimum de 6 à 10 caractères ;
+- SMTP à configurer séparément.
 
 ## 4. Hébergement de l'application
 
@@ -254,13 +345,13 @@ Les secrets sont saisis par vous dans Vercel (Settings > Environment Variables, 
 
 | #   | Étape                                                                                                                                                   | Qui                      | Externe                         |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ------------------------------- |
-| 1   | Jeton à droits restreints, puis `audit.mjs` ; transmettre `summary.txt`                                                                                 | toi                      | lecture seule                   |
-| 2   | Décision compte par compte (`accounts.local.json`) : garder ou supprimer                                                                                | toi                      | —                               |
-| 3   | `backup.sh`, puis `restore.sh` sur un projet jetable : `RESTORE VERIFIED`                                                                               | toi                      | lecture seule sur staging       |
+| 1   | Audit `audit.mjs` (fait le 8 nov. : 24/35, verdict STOP attendu sur l'ancienne hypothèse) ; relancer avec le garde-fou à jour : code 0 attendu          | toi                      | lecture seule                   |
+| 2   | Les 2 comptes existants sont conservés (identification en cours) ; vérifier si l'application à l'adresse DuckDNS utilise encore staging                 | toi                      | —                               |
+| 3   | `backup.sh`, puis sur un projet jetable : `restore.sh` (`RESTORE VERIFIED`) et montée de version 24 → 35 (13 contrôles « true »)                        | toi                      | lecture seule sur staging       |
 | 4   | Revue et fusion de #51 (ingress Vercel), CI verte                                                                                                       | équipe, puis Cloud       | 🔒 **fusion**                   |
-| 5   | 🔒 `db push`, puis `audit.mjs --after` (13 « ok »)                                                                                                      | toi ou Cloud, sur accord | **migration**                   |
-| 6   | 🔒 Auth : URLs, modèle de récupération, puis SMTP (séparément)                                                                                          | toi                      | config                          |
-| 7   | 🔒 Projet Vercel : plan, variables, `vercel.json`, premier déploiement                                                                                  | toi ou Cloud, sur accord | **déploiement**                 |
+| 5   | 🔒 `db push` des 11 migrations sur staging, puis `audit.mjs --after` (code 0)                                                                           | toi ou Cloud, sur accord | **migration**                   |
+| 6   | 🔒 Auth : `site_url`, URLs de redirection, mot de passe minimum 10, modèle de récupération ; puis SMTP (séparément)                                     | toi                      | config                          |
+| 7   | 🔒 Projet Vercel : plan, variables (`EMAIL_TRANSPORT` vide), `vercel.json`, premier déploiement                                                         | toi ou Cloud, sur accord | **déploiement**                 |
 | 8   | Fumée : `/`, `/login`, `/b/<inconnu>` en 404, `/apercu` en 404, cron avec secret (200) et sans (401), vérification 429 de l'ingress (contrat § 9.1 bis) | Cloud                    | lecture, 3 réservations de test |
 | 9   | 🔒 Première invitation, à une adresse de l'équipe, puis parcours § 7                                                                                    | toi                      | **invitation**                  |
 | 10  | Invitations réelles                                                                                                                                     | toi                      | **invitation**                  |

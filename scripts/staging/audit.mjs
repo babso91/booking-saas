@@ -25,8 +25,9 @@
 //   postcheck.json       with --after only (scripts/staging/postcheck.sql)
 //
 // Exit code 0: the hosted history is a prefix of the repository's (no
-// remote-only version, no gap) and the pending migrations are exactly the
-// expected ones; 2 otherwise (STOP: analyse, no repair).
+// remote-only version, no gap), ends exactly at EXPECTED_LAST_HOSTED (or,
+// with --after, at the last migration) and the pending migrations are
+// exactly EXPECTED_PENDING; 2 otherwise (STOP: analyse, no repair).
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -36,7 +37,20 @@ const REF = process.env.STAGING_PROJECT_REF ?? "osvlzlnwjnmjscpubawa";
 const API =
   process.env.SUPABASE_MANAGEMENT_API ?? "https://api.supabase.com/v1";
 const BASE = "1965f8a"; // main, the integrated beta
+// The state observed by the real audit of 8 Nov 2026: 24 migrations applied,
+// the last one 20261016090000. The upgrade rehearsed from that exact state
+// (runbook § 3) applies these eleven, in this order. Any other hosted state
+// (another last version, a remote-only version, a gap) is a STOP: the
+// rehearsal no longer describes it.
+const EXPECTED_LAST_HOSTED = "20261016090000";
 const EXPECTED_PENDING = [
+  "20261017090000",
+  "20261018090000",
+  "20261019090000",
+  "20261020090000",
+  "20261021090000",
+  "20261031090000",
+  "20261103090000",
   "20261105090000",
   "20261106090000",
   "20261107090000",
@@ -147,10 +161,13 @@ say(`  gaps (older, absent): ${gaps.join(", ") || "none"}`);
 say(`  pending:            ${pending.join(", ") || "none"}`);
 
 const expected = after ? [] : EXPECTED_PENDING;
+const expectedLast = after ? EXPECTED_PENDING.at(-1) : EXPECTED_LAST_HOSTED;
 const migrationsOk =
   remoteOnly.length === 0 &&
   gaps.length === 0 &&
+  last === expectedLast &&
   JSON.stringify(pending) === JSON.stringify(expected);
+say(`  expected:           last ${expectedLast}, ${expected.length} pending`);
 say(
   `  verdict:            ${migrationsOk ? "OK" : "STOP — analyse, no repair"}`,
 );

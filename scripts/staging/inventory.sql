@@ -52,6 +52,20 @@ extensions as (
   select 'extension' as section, e.extname::text as item, e.extversion as value
   from pg_catalog.pg_extension e
 ),
+emails as (
+  -- 20261019 queues a reminder for every future confirmed appointment with a
+  -- client email, and the outbox may already hold pending emails: what an
+  -- email transport would send once enabled.
+  select 'email' as section, 'pending in outbox' as item,
+    case when pg_catalog.to_regclass('public.email_events') is null then 'absent'
+      else (pg_catalog.xpath('/row/c/text()', pg_catalog.query_to_xml(
+        'select count(*) as c from public.email_events where status = ''pending''',
+        false, true, '')))[1]::text end as value
+  union all
+  select 'email', 'future confirmed appointments',
+    (select count(*)::text from public.appointments a
+      where a.status = 'confirmed' and a.starts_at > pg_catalog.now())
+),
 server as (
   select 'server' as section, 'postgres' as item,
     pg_catalog.current_setting('server_version') as value
@@ -62,4 +76,5 @@ union all select * from counts
 union all select * from buckets
 union all select * from storage_columns
 union all select * from extensions
+union all select * from emails
 order by 1, 2;
