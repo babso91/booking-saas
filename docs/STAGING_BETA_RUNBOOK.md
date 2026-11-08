@@ -274,7 +274,12 @@ Reproductible : `scripts/staging/rehearsal/rehearse.sh`, sur la stack locale uni
 
 Les garde-fous ont été provoqués un par un, et tous ont arrêté le script sans rien écrire.
 
-Ce qui reste à prouver sur l'hébergé : les étapes 2 à 4 ci-dessus, sur le projet jetable.
+**Répétition sur l'hébergé, faite le 8 nov. 2026** (projet jetable `booking-saas-restore-test`, depuis le Mac, sauvegarde réelle de staging `staging-20261108T125608Z` : 17.11, 24 migrations, 2 comptes) :
+
+- `restore.sh` : `RESTORE VERIFIED` (62 tables, historique compris ; 170 droits ; 3 réglages des rôles d'API, `supabase_admin` laissé à la plateforme) ;
+- `upgrade-throwaway.sh` : `UPGRADE REHEARSED: 35 migrations, 13/13 post-checks`.
+
+La sauvegarde est donc prouvée restaurable, et la montée de version 24 → 35 passe sur une vraie infrastructure Supabase, avec les données de staging.
 
 ### 2.4 Retour arrière
 
