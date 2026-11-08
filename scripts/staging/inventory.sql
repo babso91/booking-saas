@@ -1,6 +1,7 @@
 -- Read-only inventory of a hosted project, before (and after) a migration.
--- Runs one SELECT: no write, no lock beyond what a SELECT takes.
--- Usage: scripts/staging/preflight.sh (or `supabase db query --linked -f`).
+-- One SELECT, every name schema-qualified (the Management API's read-only
+-- endpoint runs it as supabase_read_only_user and requires that).
+-- Usage: node scripts/staging/audit.mjs (or psql against a local stack).
 --
 -- Output: one row per fact (section, item, value). Counts only: no row
 -- content, no email, no personal data.
@@ -14,24 +15,26 @@ tables(name) as (
     ('public.appointments'), ('public.clients'), ('public.email_events'),
     ('public.sites'), ('public.site_versions'), ('public.site_assets'),
     ('private.beta_invitations'), ('private.beta_access'),
-    ('storage.objects')
+    ('storage.buckets'), ('storage.objects')
 ),
 counts as (
   select 'rows' as section, t.name as item,
     case
       when pg_catalog.to_regclass(t.name) is null then 'absent'
-      else (xpath('/row/c/text()', query_to_xml(
-        format('select count(*) as c from %s', t.name), false, true, '')))[1]::text
+      else (pg_catalog.xpath('/row/c/text()', pg_catalog.query_to_xml(
+        pg_catalog.format('select count(*) as c from %s', t.name),
+        false, true, '')))[1]::text
     end as value
   from tables t
 ),
 migrations as (
-  select 'migration' as section, version as item, coalesce(name, '') as value
-  from supabase_migrations.schema_migrations
+  select 'migration' as section, m.version as item,
+    coalesce(m.name, '') as value
+  from supabase_migrations.schema_migrations m
 ),
 buckets as (
   select 'bucket' as section, b.id as item,
-    format('public=%s limit=%s types=%s objects=%s',
+    pg_catalog.format('public=%s limit=%s types=%s objects=%s',
       b.public, b.file_size_limit, b.allowed_mime_types,
       (select count(*) from storage.objects o where o.bucket_id = b.id)) as value
   from storage.buckets b
@@ -46,8 +49,8 @@ storage_columns as (
     and c.column_name in ('archived_at', 'is_delete_marker')
 ),
 extensions as (
-  select 'extension' as section, extname::text as item, extversion as value
-  from pg_extension
+  select 'extension' as section, e.extname::text as item, e.extversion as value
+  from pg_catalog.pg_extension e
 ),
 server as (
   select 'server' as section, 'postgres' as item,

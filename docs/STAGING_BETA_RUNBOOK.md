@@ -2,101 +2,190 @@
 
 Base : `main` @ `1965f8a`. Projet Supabase `booking-saas-staging` (`osvlzlnwjnmjscpubawa`). Ce document décrit **quoi faire et dans quel ordre**. Chaque étape marquée 🔒 est une opération externe qui attend un accord explicite.
 
-## 0. Ce qui n'a pas pu être vérifié depuis la session
+## 0. Préparer la copie de travail (sans toucher à `main`)
 
-Sans jeton Supabase, l'état réel de la base hébergée n'a pas été lu. Il faut d'abord lancer l'audit en lecture seule (étape 1), qui remplace toute supposition.
-
-## 1. Audit en lecture seule
+Les scripts sont sur `ops/staging-beta`, une branche partie de `main` @ `1965f8a` avec des migrations identiques. On l'ouvre dans un **dossier séparé** : la copie de `main` n'est pas touchée, et rien n'est fusionné.
 
 ```bash
-git checkout main && git pull            # 1965f8a ou plus récent
-npm ci
-export SUPABASE_ACCESS_TOKEN=…           # jeton dédié, à révoquer après la bêta
-export SUPABASE_DB_PASSWORD=…            # Project settings > Database
-scripts/staging/preflight.sh
+git fetch origin
+git worktree add ../booking-saas-ops origin/ops/staging-beta   # dossier séparé, sans branche locale
+cd ../booking-saas-ops
 ```
 
-Le script n'écrit rien à distance : `migration list`, `db push --dry-run`, et un `SELECT` de comptage (`scripts/staging/inventory.sql`, aucune donnée personnelle). Résultats dans `backups/staging-audit-*/` (ignoré par git).
+`audit.mjs` vérifie de lui-même que `supabase/migrations` est identique à `1965f8a`, et s'arrête sinon. Node 20 ou plus suffit pour l'audit. Pour la sauvegarde, `npm ci` est nécessaire (CLI Supabase du dépôt, 2.118.0) ainsi que `psql` (client PostgreSQL 17).
 
-**Attendu pour continuer :**
+Après la bêta : `git worktree remove ../booking-saas-ops`.
 
-- l'historique hébergé s'arrête à `20261103090000_service_catalog`, sans version inconnue du dépôt ;
-- le dry run liste exactement, dans cet ordre :
+## 1. Audit en lecture seule (jeton à droits restreints, aucun mot de passe)
+
+### 1.1 Créer le jeton
+
+supabase.com > Account > Access Tokens > **jeton à portée restreinte** (« scoped »), limité au projet `booking-saas-staging` :
+
+- `database:read` : historique des migrations, sauvegardes, requêtes SQL en lecture seule ;
+- `auth:read` : réglages Auth ;
+- `storage:read` : buckets ;
+- `projects:read` (si demandé).
+
+Aucun droit d'écriture. Expiration courte (7 jours). À révoquer après la bêta.
+
+### 1.2 Lancer l'audit
+
+```bash
+export SUPABASE_ACCESS_TOKEN=…        # dans le terminal, jamais dans un fichier ni un message
+node scripts/staging/audit.mjs
+```
+
+Tout passe par l'API de gestion Supabase :
+
+- `GET …/database/migrations` : historique hébergé ;
+- `GET …/database/backups` : état des sauvegardes ;
+- `GET …/config/auth` : réglages Auth. **Seuls des champs non secrets sont conservés** (liste fixe : pas de mot de passe SMTP, pas de secret de fournisseur ni de hook) ;
+- `GET …/storage/buckets` : buckets ;
+- `POST …/database/query/read-only` : `inventory.sql` (comptages) et `accounts.sql`, exécutés sous `supabase_read_only_user`.
+
+Résultats dans `backups/staging-audit-<horodatage>/` (dossier en mode 700, fichiers en 600, ignoré par git) :
+
+- **`summary.txt` : la partie à partager**, sans email ni secret ;
+- `accounts.local.json` : **données personnelles** (emails des comptes). Il reste sur ta machine et ne doit être collé nulle part.
+
+Le script a été testé de bout en bout contre une API simulée, adossée à une vraie base sous `supabase_read_only_user`. Trois cas :
+
+- avant migration : verdict OK ;
+- après migration : 13 contrôles OK ;
+- dérive (une version présente seulement à distance) : STOP, code 2.
+
+Aucun des secrets factices de la configuration Auth ne s'est retrouvé dans les fichiers.
+
+### 1.3 Lire le résultat
+
+**Pour continuer (code de sortie 0) :**
+
+- dernière version hébergée `20261103090000`, aucune version « remote only », aucun trou ;
+- migrations en attente, exactement dans cet ordre :
   1. `20261105090000_site_publishing.sql`
   2. `20261106090000_site_photos.sql`
   3. `20261107090000_beta_invitations.sql`
   4. `20261108090000_category_move.sql`
-- `storage_column` liste `archived_at` et `is_delete_marker` (lus par la réconciliation des photos, 20261106).
+- `storage.objects columns for 20261106: present`.
 
-**Sinon : arrêt.** Version présente seulement à distance, trou dans l'historique, ordre différent : on analyse avant tout `migration repair` ou `--include-all`. Aucune réparation automatique.
+**Sinon (code 2) : arrêt.** Version présente seulement à distance, trou ou autre ordre : on analyse avant tout `migration repair` ou `--include-all`. Aucune réparation automatique.
 
-**À lire dans l'inventaire :**
-
-- `auth.users` : chaque compte existant au moment de la migration 20261107 reçoit l'accès bêta (`source = 'existing'`). Les comptes de test présents aujourd'hui garderont donc l'accès. Si certains ne doivent pas l'avoir, il faut les supprimer **avant** la migration (décision à prendre).
-- `storage.objects` : s'il n'est pas à 0, ces fichiers ne sont pas dans un dump SQL (étape 2).
+**Comptes existants.** La migration 20261107 donne l'accès bêta à **tous** les comptes présents au moment où elle tourne (`source = 'existing'`). Le résumé les compte. `accounts.local.json` les liste, pour que tu décides, compte par compte : garder ou supprimer. **Aucun compte n'est supprimé** sans cette décision explicite, et aucun script ne supprime quoi que ce soit.
 
 ## 2. Sauvegarde et retour arrière
 
-Le tableau de bord indique « No backups » : c'est le cas du plan Free (aucune sauvegarde automatique ni PITR). On ne compte donc que sur une sauvegarde logique faite par nous.
+Le plan Free n'a ni sauvegarde automatique ni PITR (l'audit l'affiche : `Backups: 0 listed`). On ne compte donc que sur notre propre sauvegarde. **Elle n'est considérée complète qu'une fois restaurée et vérifiée** (§ 2.3).
 
-### 2.1 Sauvegarder (avant toute migration)
+### 2.1 Ce que contient la sauvegarde, et ce qu'elle ne contient pas
+
+Ce que `backup.sh` contient (vérifié sur la répétition locale) :
+
+| Fichier                              | Contenu                                                                                                                                                                      |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `roles.sql`                          | réglages des rôles                                                                                                                                                           |
+| `schema.sql`                         | nos schémas : tables, fonctions, politiques RLS, déclencheurs                                                                                                                |
+| `history-schema.sql` + `history.sql` | **l'historique des migrations** (`supabase_migrations`), absent des dumps standards : sans lui, un projet restauré ne saurait plus quelles migrations sont appliquées        |
+| `data.sql`                           | données de `auth` (comptes, identités, hachages de mots de passe), `public`, `private` (dont les clés HMAC anti-abus et les jetons calendrier chiffrés) et l'index `storage` |
+| `acl.sql`                            | **les droits exacts** de nos schémas, rejoués en dernier (voir l'encadré)                                                                                                    |
+| `fingerprint.txt`                    | pour chaque table, le nombre de lignes et le md5 du contenu, pris juste après le dump                                                                                        |
+| `acl-fingerprint.txt`                | les droits, sous forme normalisée                                                                                                                                            |
+| `inventory.txt`, `SHA256SUMS`        | —                                                                                                                                                                            |
+
+Ce que la sauvegarde **ne contient pas** :
+
+- **Fichiers Storage :** un dump SQL n'en contient pas. Le script **s'arrête** si l'index compte des fichiers. On s'attend à 0, puisque le bucket `site-photos` n'existe qu'après 20261106. S'il y en avait : `npx supabase storage cp -r ss:///<bucket> backups/…/storage --experimental --linked` avant de continuer.
+- **Réglages Auth et modèles d'email :** l'instantané non secret est dans `auth.json` (audit). Les secrets (mot de passe SMTP, clés d'API) ne sont jamais exportés : ils se ressaisissent.
+- **Vault :** non utilisé (0 secret, aucune migration n'y fait référence).
+- **Deux tables internes de Storage** (`buckets_vectors`, `vector_indexes`) : elles appartiennent à la plateforme, sont inutilisées, et `postgres` ne peut pas y écrire. Leur vide est contrôlé par l'empreinte.
+
+> **Piège évité (constaté à la répétition).** `pg_dump` écrit les droits par rapport aux défauts de PostgreSQL, pas à ceux d'un projet Supabase neuf, qui accordent `EXECUTE` et l'accès aux tables à `anon` et `authenticated`. Restaurée telle quelle, la base avait **198 droits différents** : `create_beta_invitation`, réservée au service, devenait exécutable par `anon`. `acl.sql` retire d'abord tout aux rôles de l'API, puis rend exactement les droits de la source, droits par défaut de `postgres` compris. Après restauration, les droits sont identiques (345 objets), et l'appel anonyme à `create_beta_invitation` est refusé (`permission denied`).
+
+Ce dossier contient des données personnelles et des secrets. Il reste sur ta machine (mode 700), ne va jamais dans le dépôt, un disque partagé ou un message, et est supprimé après la bêta.
+
+### 2.2 Sauvegarder
 
 ```bash
+npm ci
+export SUPABASE_ACCESS_TOKEN=…     # le même jeton en lecture seule
+export SUPABASE_DB_PASSWORD=…      # Project settings > Database ; pg_dump en a besoin
 scripts/staging/backup.sh
 ```
 
-Le script produit `roles.sql`, `schema.sql`, `data.sql` (COPY), `migration-list.txt` et `SHA256SUMS` dans `backups/staging-<horodatage>/` (`umask 077`, ignoré par git). Il échoue si un dump est vide. Les commandes ont été vérifiées sur la base locale.
+Seule la lecture se fait sur staging : `pg_dump` via la CLI, puis des `SELECT` via l'API en lecture seule. Le mot de passe de la base n'est utilisé que par `pg_dump`. Il reste dans le terminal, n'est jamais dans un fichier ni dans le chat, et on peut le **réinitialiser après la sauvegarde** (Project settings > Database > Reset password).
 
-Ces fichiers contiennent des données (comptes Auth compris). Ils ne vont ni dans le dépôt ni sur un disque partagé, et sont supprimés après la bêta.
+À lancer quand personne n'écrit sur staging (c'est le cas : aucune application n'y est branchée). L'empreinte est prise juste après le dump.
 
-**Fichiers Storage :** si l'inventaire compte des objets, il faut les télécharger à part. Le bucket `site-photos` n'existe pas avant 20261106, donc on s'attend à 0.
+### 2.3 Restaurer sur un projet jetable, puis vérifier (obligatoire avant de migrer)
 
-### 2.2 Restaurer (procédure Supabase, sur décision)
+1. Créer un projet Supabase **jetable** (gratuit, même région, même version Postgres 17), vide.
+2. Restaurer et vérifier :
 
-La restauration se fait de préférence dans un **nouveau** projet vide, pour ne pas mélanger deux états :
+   ```bash
+   export TARGET_DB_URL='postgresql://postgres:<mdp du projet jetable>@db.<ref jetable>.supabase.co:5432/postgres'
+   scripts/staging/restore.sh backups/staging-<horodatage>
+   ```
 
-```bash
-psql --single-transaction -v ON_ERROR_STOP=1 \
-  --file roles.sql --file schema.sql \
-  --command 'SET session_replication_role = replica' \
-  --file data.sql \
-  --dbname "postgresql://postgres:<mdp>@db.<nouveau-ref>.supabase.co:5432/postgres"
-```
+   `restore.sh` :
 
-Ensuite, on pointe les variables de l'application vers ce projet.
+   - contrôle les sommes SHA-256 ;
+   - **refuse** une cible qui serait le projet staging, ou une cible non vide ;
+   - restaure en **une seule transaction** : rôles (sans les droits propres à la plateforme), schémas, historique, données (contraintes différées), puis les droits ;
+   - lance `verify-restore.sh`, qui compare table par table les lignes et le md5, historique compris, ainsi que les droits normalisés.
 
-### 2.3 Répétition (recommandée, 15 min)
+3. Attendu : `data: identical`, `privileges: identical`, `RESTORE VERIFIED`.
+4. Contrôle fonctionnel :
+   - se connecter avec un compte de test sur le projet jetable (Auth > Users, ou l'API) ;
+   - appeler une fonction publique (`get_public_business`) en anonyme : 200 ;
+   - appeler `create_beta_invitation` en anonyme : refusé.
+5. Supprimer le projet jetable.
 
-Restaurer la sauvegarde dans un projet jetable et y relancer `inventory.sql` : les comptages doivent être identiques. La restauration n'est pas prouvée tant qu'on ne l'a pas faite une fois.
+**Répétition faite en local** (stack source avec 30 comptes, 397 établissements et 403 rendez-vous, puis une stack vierge comme cible) :
+
+- `backup.sh`, puis `restore.sh` : 87 tables identiques (dont les 35 versions de l'historique), 345 droits identiques, `RESTORE VERIFIED` ;
+- connexion avec le mot de passe d'un compte restauré : OK, et un mauvais mot de passe est refusé ;
+- RPC publique : 200 ; `create_beta_invitation` en anonyme : `permission denied` ;
+- **tests négatifs :** une ligne modifiée donne `DATA DIFFERS`, et un `EXECUTE` accordé à `anon` donne `PRIVILEGES DIFFER`. La vérification détecte donc bien un écart.
+
+Ce qui reste à prouver sur l'hébergé : la même répétition sur un projet jetable Supabase (étape 2 ci-dessus).
 
 ### 2.4 Pourquoi le risque est limité
 
 Les quatre migrations sont **additives** : nouvelles tables et fonctions, un bucket, un déclencheur sur `businesses`. Le seul remplissage est `beta_access` pour les comptes existants. Elles ne suppriment ni ne réécrivent aucune donnée existante.
 
-La CI rejoue toutes les migrations depuis zéro, puis rejoue la montée de version sur des données (job « Migrations and upgrade », vert sur `1965f8a`).
+La CI rejoue toutes les migrations depuis zéro, puis la montée de version sur des données (« Migrations and upgrade », vert sur `1965f8a`).
 
-Chaque migration est transactionnelle : un échec au milieu ne laisse rien de partiel de cette migration. En cas d'échec, l'action est donc d'**arrêter et d'analyser**, pas de restaurer.
+Chaque migration est transactionnelle : un échec ne laisse rien de partiel. En cas d'échec, on **arrête et on analyse** ; restaurer n'est pas nécessaire.
 
-## 3. 🔒 Migration de staging
+## 3. 🔒 Migration de staging (après accord)
+
+Cette étape écrit : elle demande un accès en écriture, accordé seulement pour elle.
 
 ```bash
-scripts/staging/preflight.sh                       # rien n'a bougé depuis l'audit
-npx --no-install supabase db push --linked          # applique 20261105 → 20261108
-scripts/staging/preflight.sh --after                # postcheck : chaque ligne ok = t
+node scripts/staging/audit.mjs                       # rien n'a bougé depuis l'audit (code 0)
+npx --no-install supabase link --project-ref osvlzlnwjnmjscpubawa
+npx --no-install supabase db push --linked --dry-run  # exactement les 4 migrations
+npx --no-install supabase db push --linked            # 🔒 applique 20261105 → 20261108
+node scripts/staging/audit.mjs --after                # postcheck : 13 lignes « ok »
 ```
 
-`scripts/staging/postcheck.sql` (13 contrôles, vérifiés en local) :
+Ensuite :
 
-- les 4 versions sont enregistrées, et aucune version postérieure inconnue ;
+- révoquer le jeton d'écriture, s'il en a fallu un ;
+- réinitialiser le mot de passe de la base, s'il a été utilisé.
+
+`scripts/staging/postcheck.sql` (13 contrôles, vérifiés en local, en lecture seule) :
+
+- les 4 versions sont enregistrées, sans version postérieure inconnue ;
 - RLS est active sur les tables du mini-site ;
 - le bucket `site-photos` est privé (10 Mo, 4 types d'image), et aucune politique Storage ne l'ouvre ;
-- les colonnes `storage.objects` dont dépend la réconciliation sont présentes ;
+- les colonnes `storage.objects` lues par la réconciliation sont présentes ;
 - les tables de maintenance des photos existent ;
 - le déclencheur bêta est installé ;
-- `create_beta_invitation` n'est pas exécutable par `anon` ni `authenticated` ;
+- `create_beta_invitation` n'est exécutable ni par `anon` ni par `authenticated` ;
 - tout membre d'un établissement existant a l'accès bêta.
 
-**Ne jamais lancer `supabase config push`** vers staging : `config.toml` contient `site_url = http://localhost:3000`. La configuration Auth se fait à la main (§ 4.3).
+**Ne jamais lancer `supabase config push`** vers staging : `config.toml` contient `site_url = http://localhost:3000`. Les réglages Auth se font à la main (§ 4.3).
 
 ## 4. Hébergement de l'application
 
@@ -104,7 +193,7 @@ scripts/staging/preflight.sh --after                # postcheck : chaque ligne o
 
 C'est le chemin le plus court : Next.js 16 natif, `sharp` (conversion des photos) supporté sous Linux x64, HTTPS et domaine `*.vercel.app` immédiats, crons intégrés.
 
-- **Plan Pro requis.** Les crons tournent toutes les 5 et 15 min, alors que Hobby limite les crons à une exécution par jour (le déploiement échoue sinon : à confirmer à la création du projet). Hobby est aussi réservé à l'usage non commercial.
+- **Plan Pro nécessaire au moment de déployer (aucun abonnement souscrit pour l'instant).** Les crons tournent toutes les 5 et 15 min, alors que Hobby limite les crons à une exécution par jour (le déploiement échoue sinon : à confirmer à la création du projet). Hobby est aussi réservé à l'usage non commercial.
 - Branche de production : `main`. Les previews n'ont pas d'accès à la base de staging (variables limitées à Production).
 - `vercel.json` (branche `ops/staging-beta`) déclare les deux crons nécessaires. Vercel envoie `Authorization: Bearer $CRON_SECRET`, que les routes vérifient déjà :
   - `/api/cron/site-photos`, toutes les 15 min : nettoyage, purges, conversions expirées, réconciliation du bucket ;
@@ -121,7 +210,7 @@ C'est le chemin le plus court : Next.js 16 natif, `sharp` (conversion des photos
 | `NEXT_PUBLIC_APP_URL`                   | l'origine publique exacte, ex. `https://<projet>.vercel.app`, sans `/` final | non                 |
 | `SUPABASE_SERVICE_ROLE_KEY`             | clé service_role / secret                                                    | **oui** (Sensitive) |
 | `CRON_SECRET`                           | `openssl rand -hex 32`                                                       | **oui**             |
-| `BOOKING_PROXY_SECRET`                  | voir § 5, blocage 1                                                          | **oui**             |
+| `BOOKING_TRUSTED_INGRESS`               | `vercel` (après fusion de #51)                                               | non                 |
 | `EMAIL_TRANSPORT`                       | vide pour la bêta (emails transactionnels gardés dans l'outbox), ou `resend` | non                 |
 | `EMAIL_FROM` / `RESEND_API_KEY`         | seulement si `resend`                                                        | clé : **oui**       |
 | `DASHBOARD_PREVIEW`                     | **absent** (les pages `/apercu` répondent alors 404)                         | non                 |
@@ -148,12 +237,11 @@ Les secrets sont saisis par vous dans Vercel (Settings > Environment Variables, 
 
 ## 5. Blocages réels
 
-1. **Réservation publique sur Vercel (bloquant pour « recevoir des réservations »).**
-   - `POST /api/bookings` exige l'en-tête `x-booking-client-ip`, prouvé par `x-booking-proxy-secret`, posé par un reverse proxy de confiance. Sans cela, la réponse est 503 `booking_unavailable`, sans aucune écriture : c'est l'échec fermé voulu.
-   - Vercel ne pose pas ces en-têtes. En revanche, Vercel **écrase** `x-forwarded-for` / `x-real-ip` / `x-vercel-forwarded-for` avec l'adresse réelle du client (documentation Vercel, « Request headers »).
-   - Deux options :
-     - **A (recommandée, petit changement de code) :** un mode d'ingress explicite `BOOKING_TRUSTED_INGRESS=vercel`, actif seulement si `VERCEL=1`. Il lit `x-vercel-forwarded-for`, avec la même validation stricte d'une seule IP littérale. Il faut des tests, la mise à jour du contrat § 9.1, puis une PR à faire relire. Sans cette variable, le comportement reste identique à aujourd'hui.
-     - **B :** un reverse proxy à nous (Caddy ou nginx, ou Cloudflare) devant Vercel. Cela ajoute une brique à héberger et à sécuriser : plus lourd pour une bêta.
+1. **Réservation publique sur Vercel : option A retenue, PR à relire.** [babso91/booking-saas#51](https://github.com/babso91/booking-saas/pull/51) ajoute `BOOKING_TRUSTED_INGRESS=vercel`.
+   - Ce mode lit l'adresse écrite par l'edge de Vercel, seulement avec des preuves de la plateforme : `VERCEL=1`, `x-vercel-id`, et `x-vercel-forwarded-for` égal à `x-real-ip`.
+   - Il n'y a aucun proxy à ajouter.
+   - Sur Vercel, la variable remplace `BOOKING_PROXY_SECRET`.
+   - Après le premier déploiement, il faut faire la vérification en production décrite au contrat § 9.1 bis : la quatrième réservation, avec des en-têtes forgés, doit répondre **429**.
 2. **Emails Auth.** Sans SMTP personnalisé, le service d'email de Supabase n'envoie qu'aux adresses des membres de l'équipe du projet, avec un débit très bas. Une professionnelle invitée ne recevrait ni la confirmation ni le lien de récupération.
    - Il faut un SMTP personnalisé (Resend, par exemple), avec un domaine d'envoi vérifié (SPF/DKIM). Le même compte peut servir ensuite à `EMAIL_TRANSPORT=resend`.
    - Il faut ensuite relever « Rate limits > emails » (à environ 30/h).
@@ -164,19 +252,18 @@ Les secrets sont saisis par vous dans Vercel (Settings > Environment Variables, 
 
 ## 6. Plan d'exécution
 
-| #   | Étape                                                                                                                           | Qui                       | Externe         |
-| --- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------- | --------------- |
-| 1   | Audit `preflight.sh`, résultat transmis                                                                                         | vous                      | lecture seule   |
-| 2   | Décision sur les comptes existants (accès bêta hérité)                                                                          | vous                      | —               |
-| 3   | `backup.sh` + répétition de restauration                                                                                        | vous                      | lecture seule   |
-| 4   | Décisions : option A ou B (réservations), SMTP, plans Vercel et Supabase                                                        | vous                      | —               |
-| 5   | Si option A : PR du mode d'ingress Vercel, CI verte, revue                                                                      | Cloud                     | —               |
-| 6   | 🔒 `db push` puis `preflight.sh --after`                                                                                        | vous ou Cloud, sur accord | **migration**   |
-| 7   | 🔒 Auth : URLs, modèle de récupération, SMTP                                                                                    | vous                      | config          |
-| 8   | 🔒 Projet Vercel : variables, `vercel.json`, premier déploiement                                                                | vous ou Cloud, sur accord | **déploiement** |
-| 9   | Fumée : `/`, `/login`, `/b/<slug>` en 404, `/apercu` en 404, cron appelé à la main avec le secret (200), cron sans secret (401) | Cloud                     | lecture         |
-| 10  | 🔒 Première invitation, à une adresse de l'équipe, puis parcours § 7                                                            | vous                      | **invitation**  |
-| 11  | Invitations réelles                                                                                                             | vous                      | **invitation**  |
+| #   | Étape                                                                                                                                                   | Qui                      | Externe                         |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ------------------------------- |
+| 1   | Jeton à droits restreints, puis `audit.mjs` ; transmettre `summary.txt`                                                                                 | toi                      | lecture seule                   |
+| 2   | Décision compte par compte (`accounts.local.json`) : garder ou supprimer                                                                                | toi                      | —                               |
+| 3   | `backup.sh`, puis `restore.sh` sur un projet jetable : `RESTORE VERIFIED`                                                                               | toi                      | lecture seule sur staging       |
+| 4   | Revue et fusion de #51 (ingress Vercel), CI verte                                                                                                       | équipe, puis Cloud       | 🔒 **fusion**                   |
+| 5   | 🔒 `db push`, puis `audit.mjs --after` (13 « ok »)                                                                                                      | toi ou Cloud, sur accord | **migration**                   |
+| 6   | 🔒 Auth : URLs, modèle de récupération, puis SMTP (séparément)                                                                                          | toi                      | config                          |
+| 7   | 🔒 Projet Vercel : plan, variables, `vercel.json`, premier déploiement                                                                                  | toi ou Cloud, sur accord | **déploiement**                 |
+| 8   | Fumée : `/`, `/login`, `/b/<inconnu>` en 404, `/apercu` en 404, cron avec secret (200) et sans (401), vérification 429 de l'ingress (contrat § 9.1 bis) | Cloud                    | lecture, 3 réservations de test |
+| 9   | 🔒 Première invitation, à une adresse de l'équipe, puis parcours § 7                                                                                    | toi                      | **invitation**                  |
+| 10  | Invitations réelles                                                                                                                                     | toi                      | **invitation**                  |
 
 ## 7. Parcours de validation
 
