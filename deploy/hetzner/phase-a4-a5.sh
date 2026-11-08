@@ -91,6 +91,9 @@ cron = '''
     cpus: 0.10
     pids_limit: 16
     env_file: ./runtime.env
+    # The image's HEALTHCHECK probes the web server, which cron does not run.
+    healthcheck:
+      disable: true
     entrypoint: ["node", "-e"]
     command:
       - |
