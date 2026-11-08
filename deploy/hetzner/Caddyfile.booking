@@ -1,5 +1,10 @@
-# Booking SaaS site block for the server's Caddy (to merge into the existing
-# Caddyfile next to the Luminys blocks, never replacing them). Caddy is the
+# REFERENCE of what the existing `booking-saas-staging` block of
+# /opt/luminys/Caddyfile gains at the cutover (deploy/hetzner/README.md):
+# the two header_up lines and, if decided, the public paths. Its current
+# handlers (/staging/auth-email for the Auth email hook, /mailpit/*) and the
+# n8n. and stats. blocks stay as they are. Caddy's environment cannot change
+# without recreating its container (Luminys): the proxy secret is written in
+# the Caddyfile itself (file mode 600), not taken from {$ENV}. Caddy is the
 # trusted ingress of src/lib/client-identity.ts (proxy mode, the default):
 #   - X-Booking-Client-Ip  := the TCP peer Caddy accepted ({remote_host}),
 #   - X-Booking-Proxy-Secret := BOOKING_PROXY_SECRET (from Caddy's env),
