@@ -13,11 +13,13 @@ import type { PhotoSource } from "../engine/engine";
 import {
   studioConfirmPhotoAction,
   studioCreatePhotoUploadAction,
+  studioDeletePhotoAction,
   studioGetVersionAction,
   studioListVersionsAction,
   studioPublishAction,
   studioReadSiteAction,
   studioRestoreVersionAction,
+  studioRevokePhotoAction,
   studioSaveDraftAction,
 } from "./server-actions";
 
@@ -47,6 +49,11 @@ export type StudioActions = {
   ) => Promise<UiResult<{ revision: number }>>;
   /** Sends a photo: created, uploaded, then verified by the server. */
   upload: (file: File, type: UploadType) => Promise<UiResult<{ id: string }>>;
+  /**
+   * Out of her library: deleted if nothing uses it (`site_asset_in_use`
+   * otherwise), or `forGood`: revoked everywhere, published versions too.
+   */
+  removePhoto: (id: string, forGood: boolean) => Promise<UiResult<unknown>>;
   /** Where its photos are shown, for a server that keeps them elsewhere. */
   photo?: PhotoSource;
 };
@@ -66,6 +73,10 @@ export const studioActionsFor = (businessId: string): StudioActions => ({
   publish: (expectedRevision) =>
     callAction(() => studioPublishAction({ businessId, expectedRevision })),
   versions: () => callAction(() => studioListVersionsAction({ businessId })),
+  removePhoto: (assetId, forGood) =>
+    forGood
+      ? callAction(() => studioRevokePhotoAction({ businessId, assetId }))
+      : callAction(() => studioDeletePhotoAction({ businessId, assetId })),
   version: (versionId) =>
     callAction(() => studioGetVersionAction({ businessId, versionId })),
   restore: (versionId, expectedRevision) =>
