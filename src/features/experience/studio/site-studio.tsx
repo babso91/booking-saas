@@ -162,6 +162,32 @@ export function SiteStudio({
     return effective(dressed ? withDemoPhotos(shown, universe) : shown, plan);
   }, [view, online, draft, revoked, plan, dressed, universe]);
 
+  /**
+   * Out of her library ("Mes photos"): deleted when nothing uses it, or
+   * revoked for good (also from what is online). Her list follows the
+   * server's answer only.
+   */
+  async function removeFromLibrary(
+    id: string,
+    forGood: boolean,
+  ): Promise<{ ok: true } | { ok: false; code: string }> {
+    const result = await actions.removePhoto(id, forGood);
+    if (!result.ok) return { ok: false, code: result.error.code };
+    setPhotos((list) =>
+      forGood
+        ? list.map((item) =>
+            item.id === id ? { ...item, status: "revoked" as const } : item,
+          )
+        : list.filter((item) => item.id !== id),
+    );
+    say(
+      forGood
+        ? "Photo retirée partout, définitivement."
+        : "Photo supprimée de tes photos.",
+    );
+    return { ok: true };
+  }
+
   async function upload(file: File): Promise<UploadOutcome> {
     if (!UPLOAD_TYPES.includes(file.type))
       return { ok: false, code: "site_photo_unsupported" };
@@ -325,6 +351,7 @@ export function SiteStudio({
           onReplay={() => setReplay((value) => value + 1)}
           library={library}
           onUpload={upload}
+          onDeletePhoto={removeFromLibrary}
           flash={flash}
           publicPath={`/b/${slug}`}
           onLeave={leave}

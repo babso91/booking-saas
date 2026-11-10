@@ -156,6 +156,17 @@ export function memoryStudioActions(options: MemoryOptions): StudioActions & {
       photos.set(id, URL.createObjectURL(file));
       return { ok: true, data: { id } };
     },
+    async removePhoto(id, forGood) {
+      await pause();
+      // As the server: in use by the draft or a published version, a
+      // deletion is refused; a revocation takes it out everywhere.
+      const used = [config, ...versions.map((version) => version.config)].some(
+        (held) => held !== null && JSON.stringify(held).includes(id),
+      );
+      if (used && !forGood) return fail("site_asset_in_use");
+      photos.delete(id);
+      return { ok: true, data: null };
+    },
     photo: (id, width) => photos.get(id) ?? studioPhoto(id, width),
   };
 }

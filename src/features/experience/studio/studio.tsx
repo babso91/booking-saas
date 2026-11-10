@@ -148,6 +148,7 @@ export function Studio({
   onReplay,
   library,
   onUpload,
+  onDeletePhoto,
   status,
   history,
   flash,
@@ -176,6 +177,11 @@ export function Studio({
   /** Her photos already sent and ready (asset ids, latest first). */
   library: string[];
   onUpload: (file: File) => Promise<UploadOutcome>;
+  /** Out of her library: deleted, or `forGood` revoked everywhere. */
+  onDeletePhoto: (
+    id: string,
+    forGood: boolean,
+  ) => Promise<{ ok: true } | { ok: false; code: string }>;
   /** Where her draft stands (saved, saving, a conflict…): said at the top. */
   status: ReactNode;
   /** Her published versions and their restoring. */
@@ -522,6 +528,7 @@ export function Studio({
                   id={slotPhoto(photoSlot)}
                   library={library}
                   onUpload={onUpload}
+                  onDelete={onDeletePhoto}
                   onRemove={() => removePhoto(photoSlot)}
                   focal={
                     config.content.focals[slotPhoto(photoSlot) ?? ""] ?? {
