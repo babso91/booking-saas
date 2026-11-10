@@ -10,6 +10,8 @@ import {
 import {
   confirmSitePhoto,
   createSitePhotoUpload,
+  deleteSitePhoto,
+  revokeSitePhoto,
 } from "@/features/sites/data/photos";
 import {
   getSite,
@@ -129,4 +131,20 @@ export async function studioConfirmPhotoAction(input: unknown) {
   return bound(sitePhotoSchema, input, (context, data) =>
     confirmSitePhoto(writer(context), data.assetId),
   );
+}
+
+/** Deletes a photo nothing refers to (`site_asset_in_use` otherwise). */
+export async function studioDeletePhotoAction(input: unknown) {
+  return bound(sitePhotoSchema, input, (context, data) =>
+    deleteSitePhoto(writer(context), data.assetId),
+  );
+}
+
+/** Revokes a photo for good, wherever it is used, published included. */
+export async function studioRevokePhotoAction(input: unknown) {
+  const result = await bound(sitePhotoSchema, input, (context, data) =>
+    revokeSitePhoto(writer(context), data.assetId),
+  );
+  if (result.ok) revalidatePath("/b/[slug]", "page");
+  return result;
 }

@@ -34,6 +34,7 @@ export function PhotoEditor({
   onReplace,
   onRemove,
   onUpload,
+  onDelete,
   onBack,
 }: {
   slot: PhotoSlot;
@@ -47,6 +48,11 @@ export function PhotoEditor({
   /** Takes the photo out of this place (a work: the work itself). */
   onRemove?: () => void;
   onUpload: (file: File) => Promise<UploadOutcome>;
+  /** Out of her library: deleted, or `forGood` revoked everywhere. */
+  onDelete?: (
+    id: string,
+    forGood: boolean,
+  ) => Promise<{ ok: true } | { ok: false; code: string }>;
   onBack: () => void;
 }) {
   const photo = useStudioPhoto();
@@ -56,6 +62,31 @@ export function PhotoEditor({
   const [picking, setPicking] = useState(false);
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  /** The photo she asked to delete, and where that stands. */
+  const [deleting, setDeleting] = useState<{
+    id: string;
+    inUse: boolean;
+    busy: boolean;
+    error: string | null;
+  } | null>(null);
+
+  async function remove(target: string, forGood: boolean) {
+    if (!onDelete) return;
+    setDeleting({ id: target, inUse: forGood, busy: true, error: null });
+    const result = await onDelete(target, forGood);
+    if (result.ok) {
+      setDeleting(null);
+      return;
+    }
+    // Still used by her draft or a published version: she may revoke it.
+    const inUse = result.code === "site_asset_in_use";
+    setDeleting({
+      id: target,
+      inUse: inUse || forGood,
+      busy: false,
+      error: inUse ? null : photoErrorText(result.code),
+    });
+  }
 
   async function send(picked: File) {
     setFailure(null);
@@ -291,24 +322,78 @@ export function PhotoEditor({
 
       {picking ? (
         <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
-          {library.map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => onReplace(item)}
-              aria-label="Utiliser cette photo"
-              aria-pressed={item === id}
-              className={`relative aspect-square cursor-pointer overflow-hidden rounded-lg ${item === id ? "ring-3 ring-[#2B3BFF] ring-offset-2" : ""}`}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={photo(item, 480)}
-                alt=""
-                className="h-full w-full object-cover"
-                loading="lazy"
-              />
-            </button>
+          {library.map((item, index) => (
+            <div key={item} className="relative">
+              <button
+                type="button"
+                onClick={() => onReplace(item)}
+                aria-label={`Utiliser la photo ${index + 1}`}
+                aria-pressed={item === id}
+                className={`relative block aspect-square w-full cursor-pointer overflow-hidden rounded-lg ${item === id ? "ring-3 ring-[#2B3BFF] ring-offset-2" : ""}`}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photo(item, 480)}
+                  alt=""
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                />
+              </button>
+              {onDelete ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDeleting({
+                      id: item,
+                      inUse: false,
+                      busy: false,
+                      error: null,
+                    })
+                  }
+                  aria-label={`Supprimer la photo ${index + 1}`}
+                  className="absolute top-1 right-1 flex size-8 cursor-pointer items-center justify-center rounded-full bg-black/65 text-[15px] text-white hover:bg-black/80"
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              ) : null}
+            </div>
           ))}
+        </div>
+      ) : null}
+      {picking && deleting ? (
+        <div
+          role="alertdialog"
+          aria-label="Supprimer une photo"
+          className="flex flex-col gap-2 rounded-xl bg-[#FDECEA] p-3 text-[13px] text-[#7A1F17]"
+        >
+          <p>
+            {deleting.inUse
+              ? "Cette photo est utilisée par ton brouillon ou par ton site en ligne. La retirer partout l’enlève aussi de tes versions publiées, définitivement."
+              : "Supprimer cette photo de tes photos ? Elle ne pourra plus être utilisée."}
+          </p>
+          {deleting.error ? <p role="alert">{deleting.error}</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={deleting.busy}
+              onClick={() => void remove(deleting.id, deleting.inUse)}
+              className="h-10 cursor-pointer rounded-full bg-[#7A1F17] px-4 font-semibold text-white disabled:cursor-wait disabled:opacity-60"
+            >
+              {deleting.busy
+                ? "Suppression…"
+                : deleting.inUse
+                  ? "Retirer partout, définitivement"
+                  : "Supprimer"}
+            </button>
+            <button
+              type="button"
+              disabled={deleting.busy}
+              onClick={() => setDeleting(null)}
+              className="h-10 cursor-pointer rounded-full bg-white/70 px-4 font-medium"
+            >
+              Annuler
+            </button>
+          </div>
         </div>
       ) : null}
     </div>

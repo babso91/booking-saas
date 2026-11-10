@@ -6,11 +6,13 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   studioConfirmPhotoAction,
   studioCreatePhotoUploadAction,
+  studioDeletePhotoAction,
   studioGetVersionAction,
   studioListVersionsAction,
   studioPublishAction,
   studioReadSiteAction,
   studioRestoreVersionAction,
+  studioRevokePhotoAction,
   studioSaveDraftAction,
 } from "@/features/experience/studio/server-actions";
 import type { SiteConfig } from "@/features/sites/config";
@@ -200,6 +202,12 @@ describe("a studio is bound to the business it was opened for", () => {
     ).toMatchObject(refused);
     expect(
       await studioConfirmPhotoAction({ businessId: of, assetId: version }),
+    ).toMatchObject(refused);
+    expect(
+      await studioDeletePhotoAction({ businessId: of, assetId: version }),
+    ).toMatchObject(refused);
+    expect(
+      await studioRevokePhotoAction({ businessId: of, assetId: version }),
     ).toMatchObject(refused);
 
     // Nothing was published, nothing was created for B.
