@@ -112,7 +112,14 @@ const linkAction =
  * make it a no-op (the state is already the requested one), never undo a
  * change made elsewhere; the returned service replaces the row.
  */
-export function ServicesManager({ scope }: { scope: DraftScope }) {
+export function ServicesManager({
+  scope,
+  slug,
+}: {
+  scope: DraftScope;
+  /** Her public page's address (/b/[slug]): for a link to one service. */
+  slug?: string;
+}) {
   // One screen per identity (signed-in user and business). The page can be
   // rendered again for another identity without being unmounted (sign-in
   // as someone else, another business): the key replaces the whole screen
@@ -120,13 +127,15 @@ export function ServicesManager({ scope }: { scope: DraftScope }) {
   // previous identity is ever shown, kept or sent under the new one. Late
   // answers of the previous screen land on an unmounted tree and are
   // dropped.
-  return <ServicesScreen key={scopeId(scope)} scope={scope} />;
+  return <ServicesScreen key={scopeId(scope)} scope={scope} slug={slug} />;
 }
 
-function ServicesScreen({ scope }: { scope: DraftScope }) {
+function ServicesScreen({ scope, slug }: { scope: DraftScope; slug?: string }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [run, setRun] = useState(0);
   const [sheet, setSheet] = useState<ServiceSheetTarget | null>(null);
+  /** The service whose link was just copied (said on its button). */
+  const [copied, setCopied] = useState<string | null>(null);
   const [categorySheet, setCategorySheet] =
     useState<CategorySheetTarget | null>(null);
   const [row, setRow] = useState<RowState | null>(null);
@@ -321,6 +330,23 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
     if (result.error.code === "category_not_found") reload();
   }
 
+  /**
+   * The address that opens her booking on this service
+   * (/b/[slug]?prestation=<id>): copied, and said. If the clipboard is
+   * refused the address itself is announced, to copy by hand.
+   */
+  async function copyLink(service: ServiceView) {
+    const url = `${window.location.origin}/b/${slug}?prestation=${service.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setAnnouncement(`Lien de ${service.name} copié.`);
+      setCopied(service.id);
+      window.setTimeout(() => setCopied(null), 2000);
+    } catch {
+      setAnnouncement(`Lien de ${service.name} : ${url}`);
+    }
+  }
+
   function openCreate(categoryId?: string) {
     setSheet(categoryId ? { mode: "create", categoryId } : { mode: "create" });
   }
@@ -473,6 +499,12 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
                     row={row?.id === service.id ? row : null}
                     locked={pending || ordering === "saving"}
                     onEdit={() => setSheet({ mode: "edit", service })}
+                    onCopyLink={
+                      slug && service.active
+                        ? () => void copyLink(service)
+                        : undefined
+                    }
+                    linkCopied={copied === service.id}
                     onToggle={() => void toggleActive(service)}
                     onMove={(delta) => void move(service, delta)}
                     onDelete={() => {
@@ -662,6 +694,8 @@ function ServiceRow({
   row,
   locked,
   onEdit,
+  onCopyLink,
+  linkCopied,
   onToggle,
   onMove,
   onDelete,
@@ -677,6 +711,9 @@ function ServiceRow({
   row: RowState | null;
   locked: boolean;
   onEdit: () => void;
+  /** Copies the link to this service; absent: not bookable online. */
+  onCopyLink?: () => void;
+  linkCopied: boolean;
   onToggle: () => void;
   onMove: (delta: -1 | 1) => void;
   onDelete: () => void;
@@ -751,6 +788,16 @@ function ServiceRow({
         >
           Modifier
         </button>
+        {onCopyLink ? (
+          <button
+            type="button"
+            onClick={onCopyLink}
+            aria-label={`Copier le lien de réservation de ${service.name}`}
+            className={small}
+          >
+            {linkCopied ? "Lien copié" : "Lien"}
+          </button>
+        ) : null}
         {/* Alone in its section: nowhere to go, no arrows to read. */}
         {count > 1 ? (
           <>

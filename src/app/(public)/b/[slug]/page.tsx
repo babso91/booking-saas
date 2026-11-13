@@ -57,9 +57,28 @@ export async function generateMetadata({
 
 export default async function PublicBookingPage({
   params,
+  searchParams,
 }: PageProps<"/b/[slug]">) {
   const page = await readPublicPage((await params).slug);
   if (!page) notFound();
+
+  // A link to one service (?prestation=<id>), resolved only within this
+  // business's public catalogue: found, the booking opens on it; anything
+  // else (removed, hidden, another business's, not an id), her current
+  // catalogue is shown and that is said. Nothing is read by that id.
+  const { prestation } = await searchParams;
+  const asked = typeof prestation === "string" ? prestation : null;
+  const found =
+    asked !== null &&
+    page.catalog.groups.some((group) =>
+      group.services.some((service) => service.id === asked),
+    );
+  const arrival =
+    asked === null
+      ? undefined
+      : found
+        ? { serviceId: asked }
+        : { serviceGone: true };
 
   if (page.site)
     return (
@@ -71,8 +90,16 @@ export default async function PublicBookingPage({
         // included, priced and timed by the server.
         booking={{ business: page.business, catalog: page.catalog }}
         fontClasses={siteFontClasses}
+        arrival={arrival}
       />
     );
 
-  return <PublicBooking business={page.business} catalog={page.catalog} />;
+  return (
+    <PublicBooking
+      business={page.business}
+      catalog={page.catalog}
+      initialServiceId={arrival?.serviceId}
+      linkedServiceGone={arrival?.serviceGone}
+    />
+  );
 }
