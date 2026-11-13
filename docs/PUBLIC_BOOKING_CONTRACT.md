@@ -242,6 +242,41 @@ reverse_proxy 127.0.0.1:3000 {
 
 **Limite de ce document :** la topologie réelle de l'ingress (proxy, répartiteur, hébergeur) n'est pas décrite dans le dépôt et n'a pas pu être établie. Les tests prouvent le comportement du code, **pas** la configuration du proxy en production. Le déploiement de la réservation publique reste **bloqué** tant que cette configuration n'a pas été faite et vérifiée.
 
+### 9.1 bis Ingress Vercel (`BOOKING_TRUSTED_INGRESS=vercel`)
+
+Sur Vercel, il n'y a pas de proxy à nous : le proxy de confiance est la périphérie (edge) de Vercel elle-même. C'est le seul chemin vers une fonction Vercel. Elle **écrase** `x-forwarded-for`, `x-real-ip` et `x-vercel-forwarded-for` avec l'adresse de l'appelant, sans jamais transmettre celles que le client a envoyées (documentation Vercel, « Request headers » : _« Vercel overwrites this header and does not forward external IPs to prevent IP spoofing »_).
+
+Cette garantie ne vaut que sur Vercel. Le mode ne se contente donc pas de la variable, il exige des preuves de la plateforme :
+
+- `VERCEL=1`, variable posée par Vercel lui-même dans ses fonctions (exactement `1`) ;
+- `x-vercel-id` présent sur la requête (posé par l'edge) ;
+- `x-vercel-forwarded-for` et `x-real-ip` contiennent chacun **une** adresse littérale (mêmes règles qu'au § 9.1), et **la même**. L'edge écrit les deux : un désaccord signifie que l'une ne vient pas de lui, et rien n'est accepté.
+
+Dans tous les autres cas, la réponse est `booking_unavailable` (503), avant toute écriture.
+
+| Mode                                 | Lu                                                                       | Ignoré                                                     |
+| ------------------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `proxy` ou absent (défaut, inchangé) | `x-booking-client-ip` prouvé par `x-booking-proxy-secret`                | les en-têtes Vercel, même sur Vercel                       |
+| `vercel`                             | `x-vercel-forwarded-for` = `x-real-ip`, avec `x-vercel-id` et `VERCEL=1` | `x-booking-*`, même avec le bon secret ; `x-forwarded-for` |
+| toute autre valeur                   | rien : tout est refusé (erreur de configuration journalisée)             | —                                                          |
+
+Le même mode s'applique aux codes de l'espace client (`/api/client-hub/session/code` et `verify`), qui utilisent la même identité.
+
+**Tests :**
+
+- unitaires (`src/lib/client-identity.test.ts`) : en-têtes usurpés, désaccord, en-tête manquant, IPv4, IPv6 canonique, IPv4 encapsulée, listes, ports, zones, plateforme absente, mode désactivé, mode inconnu. 6 mutations des gardes, toutes détectées ;
+- d'intégration, sur la vraie route et PostgreSQL (`public-booking-guarantees.test.ts`) : la limite par réseau s'applique à l'adresse de l'edge, quels que soient les en-têtes du proxy (même avec le vrai secret) ; un attaquant ne consomme pas le quota d'une victime ; IPv6 /64 ; refus avant écriture et sans journal.
+
+**Ce que les tests ne prouvent pas :** le comportement réel de l'edge. Après le premier déploiement, il faut vérifier en production, avec une entreprise de test :
+
+1. une réservation normale répond 201 ;
+2. quatre réservations depuis le même réseau, chacune avec des `X-Forwarded-For`, `X-Real-IP`, `X-Vercel-Forwarded-For` et `X-Booking-Client-Ip` forgés et différents : la quatrième répond **429**. Si l'usurpation passait, elle répondrait 201 ;
+3. annuler les rendez-vous de test.
+
+**Limite :** un proxy placé devant Vercel (Cloudflare, par exemple) ferait de sa propre adresse celle de tous les visiteurs (un seul quota partagé), sans jamais permettre de choisir une adresse. Pour ce cas, on revient au mode `proxy`.
+
+**Retour arrière :** retirer `BOOKING_TRUSTED_INGRESS`. Les réservations répondent alors 503, sans écriture.
+
 ### 9.2 Limites anti-abus
 
 Les limites s'appliquent aux nouvelles réservations ; les rejeux ne comptent jamais. Elles sont vérifiées sous un verrou consultatif par réseau, donc des requêtes simultanées ne peuvent pas les dépasser (testé : 8 simultanées, exactement 3 acceptées).

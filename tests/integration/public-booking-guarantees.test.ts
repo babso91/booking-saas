@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { POST as postBooking } from "@/app/api/bookings/route";
 import { serverContactErrors } from "@/features/public-booking/client/contact";
@@ -562,6 +562,155 @@ describe("client identity from the trusted ingress", () => {
         await post(body({ startsAt: at("17:00") }), { ip: `::ffff:${mapped}` }),
       ),
     ).toEqual([429, "rate_limited"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The same guarantees behind Vercel's edge (BOOKING_TRUSTED_INGRESS=vercel)
+// ---------------------------------------------------------------------------
+
+/**
+ * A request as Vercel's edge hands it to the function: it writes the
+ * caller's address in x-vercel-forwarded-for, x-real-ip and x-forwarded-for
+ * (replacing whatever the client sent) and stamps x-vercel-id. `forged`:
+ * what else the client sent, which the edge passes through.
+ */
+function edgePost(
+  body: Body,
+  ip: string,
+  forged: Record<string, string> = {},
+  edge: Record<string, string | null> = {},
+) {
+  const headers: Record<string, string> = {
+    ...forged,
+    "x-vercel-id": "cdg1::iad1::test-1730000000000",
+    "x-vercel-forwarded-for": ip,
+    "x-real-ip": ip,
+    "x-forwarded-for": ip,
+  };
+  for (const [name, value] of Object.entries(edge)) {
+    if (value === null) delete headers[name];
+    else headers[name] = value;
+  }
+  return postBooking(
+    new Request("http://localhost/api/bookings", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+describe("client identity from Vercel's edge", () => {
+  beforeEach(() => {
+    process.env.BOOKING_TRUSTED_INGRESS = "vercel";
+    process.env.VERCEL = "1";
+  });
+  afterEach(() => {
+    delete process.env.BOOKING_TRUSTED_INGRESS;
+    delete process.env.VERCEL;
+  });
+
+  it("books with the edge's address; forged proxy headers (even with the real secret) do not change the identity", async () => {
+    const peer = v4(160);
+    const results = [];
+    for (let index = 0; index < 5; index += 1) {
+      const response = await edgePost(
+        body({ startsAt: at(`${String(9 + index).padStart(2, "0")}:00`) }),
+        peer,
+        {
+          "x-booking-client-ip": `203.0.113.${index}`,
+          "x-booking-proxy-secret": SECRET,
+        },
+      );
+      results.push(await status(response));
+    }
+    expect(results).toEqual([
+      [201, "ok"],
+      [201, "ok"],
+      [201, "ok"],
+      [429, "rate_limited"],
+      [429, "rate_limited"],
+    ]);
+    expect(await appointments()).toHaveLength(3);
+  });
+
+  it("an attacker naming a victim's address in the proxy headers spends only its own quota", async () => {
+    const victim = v4(161);
+    for (let index = 0; index < 5; index += 1) {
+      await edgePost(
+        body({ startsAt: at(`${String(9 + index).padStart(2, "0")}:00`) }),
+        `203.0.113.${70 + index}`,
+        {
+          "x-booking-client-ip": victim,
+          "x-booking-proxy-secret": SECRET,
+        },
+      );
+    }
+    expect(
+      await status(await edgePost(body({ startsAt: at("15:00") }), victim)),
+    ).toEqual([201, "ok"]);
+  });
+
+  it("IPv6 from the edge: one /64 is one identity", async () => {
+    for (const [index, ip] of [
+      `${V6}:99::1`,
+      `${V6}:99::2`,
+      `${V6}:99::3`,
+    ].entries()) {
+      expect(
+        await status(
+          await edgePost(
+            body({ startsAt: at(`${String(9 + index).padStart(2, "0")}:00`) }),
+            ip,
+          ),
+        ),
+      ).toEqual([201, "ok"]);
+    }
+    expect(
+      await status(
+        await edgePost(body({ startsAt: at("13:00") }), `${V6}:99::99`),
+      ),
+    ).toEqual([429, "rate_limited"]);
+  });
+
+  it("refuses, before any write, a request whose edge evidence is incomplete or inconsistent", async () => {
+    const ip = v4(162);
+    const cases: Record<string, string | null>[] = [
+      { "x-real-ip": v4(163) }, // the two edge headers disagree
+      { "x-vercel-forwarded-for": null },
+      { "x-real-ip": null },
+      { "x-vercel-id": null },
+      {
+        "x-vercel-forwarded-for": `${ip}, 10.0.0.1`,
+        "x-real-ip": `${ip}, 10.0.0.1`,
+      },
+    ];
+    for (const edge of cases) {
+      expect(await status(await edgePost(body(), ip, {}, edge))).toEqual([
+        503,
+        "booking_unavailable",
+      ]);
+    }
+    expect(await appointments()).toHaveLength(0);
+    expect(await logRows()).toHaveLength(0);
+  });
+
+  it("refuses everything when the platform is not Vercel, and when the mode is off", async () => {
+    delete process.env.VERCEL;
+    expect(await status(await edgePost(body(), v4(164)))).toEqual([
+      503,
+      "booking_unavailable",
+    ]);
+    process.env.VERCEL = "1";
+    delete process.env.BOOKING_TRUSTED_INGRESS;
+    // Proxy mode (the default): the edge headers alone prove nothing.
+    expect(await status(await edgePost(body(), v4(164)))).toEqual([
+      503,
+      "booking_unavailable",
+    ]);
+    expect(await appointments()).toHaveLength(0);
+    expect(await logRows()).toHaveLength(0);
   });
 });
 
