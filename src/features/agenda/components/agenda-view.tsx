@@ -65,7 +65,16 @@ import { TimeGrid } from "./time-grid";
 type Panel =
   | { kind: "appointment"; appointment: AgendaAppointmentDto }
   | { kind: "editAppointment"; appointment: AgendaAppointmentDto }
-  | { kind: "createAppointment"; date: string; time: string }
+  | {
+      kind: "createAppointment";
+      date: string;
+      time: string;
+      from?: {
+        client: { id: string; displayName: string };
+        serviceId: string;
+        serviceName: string;
+      };
+    }
   | { kind: "block"; block: AgendaBlockDto }
   | { kind: "createBlock"; date: string; time: string };
 
@@ -317,6 +326,26 @@ export function AgendaView({
     else withDefaultDate(open);
   }
 
+  /**
+   * Taking a past or ended appointment again: the creation form, prepared
+   * with its client and service, on the agenda's day (she picks the date).
+   */
+  function rebook(appointment: AgendaAppointmentDto) {
+    ensureServices();
+    withDefaultDate((day) =>
+      setPanel({
+        kind: "createAppointment",
+        date: day,
+        time: DEFAULT_TIME,
+        from: {
+          client: appointment.client,
+          serviceId: appointment.service.id,
+          serviceName: appointment.service.name,
+        },
+      }),
+    );
+  }
+
   function openCreateAppointment(date?: string, time = DEFAULT_TIME) {
     ensureServices();
     const open = (day: string) =>
@@ -459,6 +488,7 @@ export function AgendaView({
           appointment={shown.appointment}
           zone={zone}
           onEdit={() => openEdit(shown.appointment)}
+          onRebook={() => rebook(shown.appointment)}
           onUpdated={showAppointment}
           onRefresh={() => refreshAppointment(shown.appointment, false)}
         />
@@ -474,7 +504,12 @@ export function AgendaView({
           mode={
             shown.kind === "editAppointment"
               ? { kind: "edit", appointment: shown.appointment }
-              : { kind: "create", date: shown.date, time: shown.time }
+              : {
+                  kind: "create",
+                  date: shown.date,
+                  time: shown.time,
+                  from: shown.from,
+                }
           }
           services={services ?? { status: "loading" }}
           zone={zone}
