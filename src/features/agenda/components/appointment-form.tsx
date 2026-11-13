@@ -37,7 +37,17 @@ export type ServicesState =
   | { status: "error"; error: UiError };
 
 export type AppointmentFormMode =
-  | { kind: "create"; date: string; time: string }
+  | {
+      kind: "create";
+      date: string;
+      time: string;
+      /**
+       * Taking an appointment again: the same client and service, chosen
+       * for her. Never its note, price or duration (the server computes
+       * them as they are now).
+       */
+      from?: { client: PickedClient; serviceId: string; serviceName: string };
+    }
   | { kind: "edit"; appointment: AgendaAppointmentDto };
 
 type NewClient = {
@@ -90,14 +100,17 @@ export function AppointmentForm({
       : "";
   const locked = original !== null && original.status !== "confirmed";
 
-  const [serviceId, setServiceId] = useState(original?.service.id ?? "");
+  const from = mode.kind === "create" ? (mode.from ?? null) : null;
+  const [serviceId, setServiceId] = useState(
+    original?.service.id ?? from?.serviceId ?? "",
+  );
   const [date, setDate] = useState(originalDate);
   const [time, setTime] = useState(originalTime);
   const [askOccurrence, setAskOccurrence] = useState(false);
   const [occurrence, setOccurrence] = useState<Occurrence | null>(null);
   const [clientMode, setClientMode] = useState<"existing" | "new">("existing");
   const [picked, setPicked] = useState<PickedClient | null>(
-    original ? original.client : null,
+    original ? original.client : (from?.client ?? null),
   );
   const [newClient, setNewClient] = useState<NewClient>(emptyClient);
   const [notes, setNotes] = useState(original?.internalNotes ?? "");
@@ -111,6 +124,11 @@ export function AppointmentForm({
     original !== null && (date !== originalDate || time !== originalTime);
   const catalog = services.status === "ready" ? services.data.services : [];
   const selectedService = catalog.find((service) => service.id === serviceId);
+  /** Taking it again, but its service is no longer offered: she chooses. */
+  const fromGone =
+    from !== null &&
+    services.status === "ready" &&
+    !catalog.some((service) => service.id === from.serviceId);
   const keepsSnapshot = original !== null && serviceId === original.service.id;
 
   function changeTime(nextDate: string, nextTime: string) {
@@ -134,6 +152,9 @@ export function AppointmentForm({
   function validateLocally() {
     const errors: Record<string, string> = {};
     if (!serviceId) errors.serviceId = "Choisis une prestation.";
+    else if (fromGone && serviceId === from?.serviceId)
+      errors.serviceId =
+        "Cette prestation n’est plus proposée : choisis-en une.";
     if (!date) errors.date = "Choisis une date.";
     if (!time) errors.time = "Choisis une heure.";
     if (askOccurrence && !occurrence)
@@ -277,9 +298,17 @@ export function AppointmentForm({
         <AgendaError error={services.error} subject="agenda" />
       ) : null}
 
+      {from ? (
+        <p className="rounded-2xl bg-sand/60 px-4 py-3 text-[14px] leading-relaxed text-ink-soft">
+          {fromGone
+            ? `${from.serviceName} n’est plus proposée : choisis une autre prestation pour ${from.client.displayName}.`
+            : `Nouveau rendez-vous pour ${from.client.displayName} : même prestation, au prix et à la durée d’aujourd’hui. La note du précédent n’est pas reprise.`}
+        </p>
+      ) : null}
+
       <SelectField
         label="Prestation"
-        value={serviceId}
+        value={fromGone && serviceId === from?.serviceId ? "" : serviceId}
         disabled={locked || services.status !== "ready"}
         error={fieldErrors.serviceId}
         onChange={(event) => {

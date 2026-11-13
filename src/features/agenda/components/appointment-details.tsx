@@ -65,6 +65,7 @@ export function AppointmentDetails({
   appointment,
   zone,
   onEdit,
+  onRebook,
   onUpdated,
   onRefresh,
 }: {
@@ -72,6 +73,11 @@ export function AppointmentDetails({
   /** The business zone sent by the server, or null (labels without offsets). */
   zone: Zone | null;
   onEdit: () => void;
+  /**
+   * A new appointment for the same client and service (a past or ended
+   * one): the form opens prepared, nothing else is copied.
+   */
+  onRebook?: () => void;
   onUpdated: (appointment: AgendaAppointmentDto) => void;
   onRefresh: () => Promise<UiError | null>;
 }) {
@@ -229,6 +235,11 @@ export function AppointmentDetails({
             Terminé et absente sont disponibles une fois le rendez-vous
             commencé.
           </p>
+        ) : null}
+        {onRebook && status !== "confirmed" ? (
+          <Button size="md" fullWidth onClick={onRebook}>
+            Reprendre rendez-vous
+          </Button>
         ) : null}
         {status === "completed" || status === "no_show" ? (
           <Button
