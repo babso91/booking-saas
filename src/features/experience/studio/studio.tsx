@@ -365,13 +365,17 @@ export function Studio({
                     Mode édition · tes clientes ne voient pas ce panneau
                   </p>
                 </div>
-                {/* Her plan, as the server keeps it: never switched from here. */}
-                <span
-                  className="shrink-0 rounded-full bg-black/5 px-3 py-2 text-[13px] font-semibold"
+                {/* Her plan, as the server keeps it: never switched from
+                    here; it leads to what her offer includes. */}
+                <Link
+                  href="/app/offre"
+                  onClick={onLeave}
                   title={plans[plan].promise}
+                  aria-label={`Mode ${plans[plan].mode} : voir mon offre`}
+                  className="shrink-0 rounded-full bg-black/5 px-3 py-2 text-[13px] font-semibold hover:bg-black/10"
                 >
                   Mode {plans[plan].mode}
-                </span>
+                </Link>
                 <button
                   type="button"
                   onClick={() => {
