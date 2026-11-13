@@ -4,6 +4,7 @@ import type {
   ClientHubLedgerPageDto,
   ClientHubLoyaltyDto,
   ClientHubProfileDto,
+  ClientHubRescheduleSlotsDto,
 } from "@/features/client-hub/types";
 import type { AppErrorCode } from "@/lib/errors";
 
@@ -157,6 +158,57 @@ export function fetchAppointment(
 ) {
   return request<ClientHubAppointmentDetailDto>(
     `${business(businessId)}/appointments/${encodeURIComponent(appointmentId)}`,
+    { method: "GET", signal },
+  );
+}
+
+// Her own changes to an appointment. PROPOSED routes
+// (docs/CLIENT_HUB_ACTIONS_PROPOSAL.md): the screens only offer them when
+// the appointment's `actions` say so, which no server does yet. Each is
+// idempotent by `requestId`: resending the same request after a lost
+// answer never cancels or moves twice. The answer is the appointment as it
+// is after the change; a refusal changes nothing.
+
+const appointmentUrl = (businessId: string, appointmentId: string) =>
+  `${business(businessId)}/appointments/${encodeURIComponent(appointmentId)}`;
+
+export type AppointmentCommand = {
+  requestId: string;
+  /** The version her screen showed (`actions.version`). */
+  expectedVersion: number;
+};
+
+export function cancelAppointment(
+  businessId: string,
+  appointmentId: string,
+  command: AppointmentCommand,
+) {
+  return request<ClientHubAppointmentDetailDto>(
+    `${appointmentUrl(businessId, appointmentId)}/cancel`,
+    json("POST", command),
+  );
+}
+
+export function rescheduleAppointment(
+  businessId: string,
+  appointmentId: string,
+  command: AppointmentCommand & { startsAt: string },
+) {
+  return request<ClientHubAppointmentDetailDto>(
+    `${appointmentUrl(businessId, appointmentId)}/reschedule`,
+    json("POST", command),
+  );
+}
+
+/** The slots of one civil day this appointment could move to. */
+export function fetchRescheduleSlots(
+  businessId: string,
+  appointmentId: string,
+  date: string,
+  signal?: AbortSignal,
+) {
+  return request<ClientHubRescheduleSlotsDto>(
+    `${appointmentUrl(businessId, appointmentId)}/reschedule-slots?${new URLSearchParams({ date })}`,
     { method: "GET", signal },
   );
 }
