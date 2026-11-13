@@ -53,6 +53,7 @@ export function MiniSite({
   booking: bookable,
   fontClasses,
   edit,
+  arrival,
 }: {
   config: SiteConfig;
   catalog: ShowcaseGroup[];
@@ -72,8 +73,24 @@ export function MiniSite({
   booking: { business: PublicBusiness; catalog: PublicCatalog } | null;
   /** The faces of the universes (fonts.ts), declared on the site's root. */
   fontClasses: string;
+  /**
+   * She arrived by a link to one service (/b/[slug]?prestation=…): the
+   * booking opens on it, or on her catalogue if it is no longer bookable.
+   */
+  arrival?: { serviceId?: string; serviceGone?: boolean };
 }) {
-  const [booking, setBooking] = useState<{ serviceId?: string } | null>(null);
+  const [booking, setBooking] = useState<{
+    serviceId?: string;
+    serviceGone?: boolean;
+  } | null>(null);
+  // Once, after the page is hers to use: the booking is a client-only
+  // sheet (it never opens in the server's HTML).
+  const arrived = useRef(arrival);
+  useEffect(() => {
+    const asked = arrived.current;
+    arrived.current = undefined;
+    if (asked) setBooking((current) => current ?? asked);
+  }, []);
   const siteRoot = useRef<HTMLDivElement>(null);
   const armed = useRevealArming(siteRoot);
   // Her choice of scenes (the opening and her services always show).
@@ -160,6 +177,7 @@ export function MiniSite({
                 key="booking"
                 booking={bookable}
                 initialServiceId={booking.serviceId}
+                linkedServiceGone={booking.serviceGone}
                 onClose={() => setBooking(null)}
               />
             ) : null}

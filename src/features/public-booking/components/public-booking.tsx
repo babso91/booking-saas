@@ -26,6 +26,7 @@ export function PublicBooking({
   catalog,
   embedded = false,
   initialServiceId,
+  linkedServiceGone = false,
 }: {
   business: PublicBusiness;
   /** As get_public_catalog projects it: services, categories, options. */
@@ -40,6 +41,11 @@ export function PublicBooking({
    * options when it has some, else on its slots.
    */
   initialServiceId?: string;
+  /**
+   * She came by a link to a service that is no longer bookable online:
+   * her current catalogue is shown, and that is said.
+   */
+  linkedServiceGone?: boolean;
 }) {
   const flow = useBookingFlow({ business, catalog });
   const heading = useRef<HTMLHeadingElement>(null);
@@ -103,7 +109,11 @@ export function PublicBooking({
         <>
           {flow.step !== "done" ? <PendingNotice flow={flow} /> : null}
           {flow.step === "service" ? (
-            <ServiceStep flow={flow} headingRef={heading} />
+            <ServiceStep
+              flow={flow}
+              headingRef={heading}
+              linkedServiceGone={linkedServiceGone}
+            />
           ) : flow.step === "options" ? (
             <OptionsStep flow={flow} headingRef={heading} />
           ) : flow.step === "slot" ? (

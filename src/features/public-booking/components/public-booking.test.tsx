@@ -1161,3 +1161,33 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
     expect(bookingBodies()[0]).not.toHaveProperty("optionChoiceIds");
   });
 });
+
+describe("arriving by a link to one service", () => {
+  it("still bookable: the booking opens on it at once", async () => {
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        initialServiceId={SERVICE_A}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Choisissez un créneau" });
+  });
+
+  it("no longer bookable: her current catalogue, and it is said", async () => {
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        linkedServiceGone
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Choisissez une prestation" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Cette prestation n’est plus proposée"),
+    ).toBeTruthy();
+    expect(api.availability).not.toHaveBeenCalled();
+  });
+});

@@ -24,7 +24,10 @@ vi.mock("next/navigation", () => ({
 
 import PublicBookingPage, { generateMetadata } from "./page";
 
-const params = (slug: string) => ({ params: Promise.resolve({ slug }) });
+const params = (slug: string, search: Record<string, string> = {}) => ({
+  params: Promise.resolve({ slug }),
+  searchParams: Promise.resolve(search),
+});
 const notPublished = () =>
   Promise.reject(new AppException("site_not_published"));
 const emptyCatalog = { currency: "EUR", groups: [] };
@@ -114,6 +117,57 @@ describe("/b/[slug]", () => {
           portrait: { photo: null },
         },
       },
+    });
+  });
+
+  describe("a link to one service (?prestation=)", () => {
+    const SERVICE = "30000000-0000-4000-8000-000000000001";
+    const withService = {
+      currency: "EUR",
+      groups: [{ category: null, services: [{ id: SERVICE, name: "Pose" }] }],
+    };
+
+    it("bookable here: the booking opens on it, on her booking page as on her site", async () => {
+      catalog.getPublicCatalog.mockResolvedValue(withService);
+      const page = await PublicBookingPage(
+        params("studio-mila", { prestation: SERVICE }) as never,
+      );
+      expect(page.props).toMatchObject({ initialServiceId: SERVICE });
+      expect(page.props.linkedServiceGone).toBeUndefined();
+
+      sites.getPublishedSite.mockResolvedValue({
+        versionId: "v1",
+        number: 1,
+        publishedAt: "2026-11-05T10:00:00.000Z",
+        plan: "core",
+        config: sampleSiteConfig(),
+      });
+      const site = await PublicBookingPage(
+        params("studio-mila", { prestation: SERVICE }) as never,
+      );
+      expect(site.props.arrival).toEqual({ serviceId: SERVICE });
+    });
+
+    it("removed, another business's or not an id: her catalogue, and it is said; nothing opens", async () => {
+      catalog.getPublicCatalog.mockResolvedValue(withService);
+      for (const prestation of [
+        "30000000-0000-4000-8000-00000000dead",
+        "../admin",
+        "",
+      ]) {
+        const page = await PublicBookingPage(
+          params("studio-mila", { prestation }) as never,
+        );
+        expect(page.props.initialServiceId).toBeUndefined();
+        expect(page.props.linkedServiceGone).toBe(true);
+      }
+    });
+
+    it("without the parameter: exactly as before", async () => {
+      catalog.getPublicCatalog.mockResolvedValue(withService);
+      const page = await PublicBookingPage(params("studio-mila") as never);
+      expect(page.props.initialServiceId).toBeUndefined();
+      expect(page.props.linkedServiceGone).toBeUndefined();
     });
   });
 

@@ -15,9 +15,12 @@ import { serviceFromLine, StepHeading } from "./booking-parts";
 export function ServiceStep({
   flow,
   headingRef,
+  linkedServiceGone = false,
 }: {
   flow: BookingFlow;
   headingRef: Ref<HTMLHeadingElement>;
+  /** The link she followed named a service no longer bookable online. */
+  linkedServiceGone?: boolean;
 }) {
   const { services, notice, service, catalog } = flow;
   return (
@@ -31,6 +34,13 @@ export function ServiceStep({
           Choisissez une prestation
         </StepHeading>
       </div>
+
+      {linkedServiceGone && notice === null ? (
+        <Notice tone="info" title="Cette prestation n’est plus proposée">
+          Le lien que vous avez suivi mène à une prestation qui n’est plus
+          réservable en ligne. Voici les prestations proposées actuellement.
+        </Notice>
+      ) : null}
 
       {notice === "service_unavailable" ? (
         <Notice tone="warning" title="Prestation plus proposée">

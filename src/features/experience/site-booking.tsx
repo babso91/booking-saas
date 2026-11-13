@@ -20,11 +20,13 @@ import { SitePortal, useModal } from "./engine/modal";
 export function SiteBooking({
   booking,
   initialServiceId,
+  linkedServiceGone,
   onClose,
 }: {
   /** null: a design preview, where no booking is ever taken. */
   booking: { business: PublicBusiness; catalog: PublicCatalog } | null;
   initialServiceId?: string;
+  linkedServiceGone?: boolean;
   onClose: () => void;
 }) {
   const { config, motion: language } = useEngine();
@@ -88,6 +90,7 @@ export function SiteBooking({
                 catalog={booking.catalog}
                 embedded
                 initialServiceId={initialServiceId}
+                linkedServiceGone={linkedServiceGone}
               />
             ) : (
               <p className="text-[15px] text-ink-soft">
