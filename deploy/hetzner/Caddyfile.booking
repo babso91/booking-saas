@@ -1,0 +1,42 @@
+# REFERENCE of what the existing `booking-saas-staging` block of
+# /opt/luminys/Caddyfile gains at the cutover (deploy/hetzner/README.md):
+# the two header_up lines and, if decided, the public paths. Its current
+# handlers (/staging/auth-email for the Auth email hook, /mailpit/*) and the
+# n8n. and stats. blocks stay as they are. Caddy's environment cannot change
+# without recreating its container (Luminys): the proxy secret is written in
+# the Caddyfile itself (file mode 600), not taken from {$ENV}. Caddy is the
+# trusted ingress of src/lib/client-identity.ts (proxy mode, the default):
+#   - X-Booking-Client-Ip  := the TCP peer Caddy accepted ({remote_host}),
+#   - X-Booking-Proxy-Secret := BOOKING_PROXY_SECRET (from Caddy's env),
+# both REPLACING whatever the client sent. The application is reachable only
+# through Caddy (no published port), so nothing else can write them.
+#
+# Upstream: the container name on the Docker network Caddy shares with it
+# (booking-saas:3000), or 127.0.0.1:3000 if Caddy runs on the host and the
+# container publishes 127.0.0.1:3000 only.
+
+booking-saas-staging.duckdns.org {
+	encode zstd gzip
+
+	# Private beta: the existing basic auth stays in front of the
+	# professional side. The public mini-sites and the public booking
+	# (clients have no password), the Auth callback (email links), the
+	# public photos and the scheduled jobs (own secret) are left open.
+	@restricted not path /b/* /api/public/* /api/bookings /api/sites/photos/* /auth/callback /api/cron/* /api/health /_next/* /favicon.ico
+	basic_auth @restricted {
+		# keep the existing user and hash of the current block
+		{$BOOKING_BASIC_AUTH_USER} {$BOOKING_BASIC_AUTH_HASH}
+	}
+
+	header {
+		X-Robots-Tag "noindex, nofollow, noarchive"
+		Referrer-Policy no-referrer
+		X-Content-Type-Options nosniff
+		-Server
+	}
+
+	reverse_proxy booking-saas:3000 {
+		header_up X-Booking-Client-Ip {remote_host}
+		header_up X-Booking-Proxy-Secret {$BOOKING_PROXY_SECRET}
+	}
+}
