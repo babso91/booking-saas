@@ -42,17 +42,28 @@ export async function requestLoginCode(
   };
 }
 
-export async function verifyLoginCode(
+/** The browser's session cookies, as presented to PostgreSQL. */
+type Presented = { sessions: string[]; tokens: string[] };
+
+/**
+ * Verifies a code and opens a session; the sessions the browser presented
+ * are ended (signing in replaces who the browser is). A refused code ends
+ * nothing.
+ */
+export async function signIn(
   admin: Admin,
   input: { challengeId: string; email: string; code: string },
   clientIp: string,
+  presented: Presented,
 ) {
   const { data, error } = await admin
-    .rpc("client_hub_verify_code", {
+    .rpc("client_hub_sign_in", {
       p_challenge_id: input.challengeId,
       p_email: input.email,
       p_code: input.code,
       p_client_ip: clientIp,
+      p_sessions: presented.sessions,
+      p_tokens: presented.tokens,
     })
     .single();
   if (error) throw databaseException(error);
@@ -63,15 +74,56 @@ export async function verifyLoginCode(
     });
   }
   return {
+    sessionId: data.session_id!,
     token: data.session_token!,
+    accountId: data.account_id!,
     email: data.email!,
     expiresAt: data.expires_at!,
   };
 }
 
-export async function endSession(admin: Admin, token: string, all: boolean) {
-  const { error } = await admin.rpc("client_hub_end_session", {
-    p_session_token: token,
+/**
+ * The session the request acts as, among those presented: `ok` (the other
+ * live sessions of its account are ended), `none`, or `conflict` (live
+ * sessions of several accounts: all ended, none chosen).
+ */
+export async function resolveSession(
+  admin: Admin,
+  presented: Presented,
+): Promise<
+  | { status: "ok"; sessionId: string; token: string; accountId: string }
+  | { status: "none" | "conflict" }
+> {
+  const { data, error } = await admin
+    .rpc("client_hub_resolve_session", {
+      p_sessions: presented.sessions,
+      p_tokens: presented.tokens,
+    })
+    .single();
+  if (error) throw databaseException(error);
+  if (data.status === "ok") {
+    return {
+      status: "ok",
+      sessionId: data.session_id,
+      token: data.session_token,
+      accountId: data.account_id,
+    };
+  }
+  if (data.status === "none" || data.status === "conflict") {
+    return { status: data.status };
+  }
+  throw new AppException("internal");
+}
+
+/** Ends the presented sessions (or every session of their accounts). */
+export async function signOut(
+  admin: Admin,
+  presented: Presented,
+  all: boolean,
+) {
+  const { error } = await admin.rpc("client_hub_sign_out", {
+    p_sessions: presented.sessions,
+    p_tokens: presented.tokens,
     p_all: all,
   });
   if (error) throw databaseException(error);
