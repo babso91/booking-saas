@@ -1579,7 +1579,7 @@ describe("her categories", () => {
     ).toBeTruthy();
   });
 
-  it("a service with options says how many; their editor is not offered yet", async () => {
+  it("a service with options says how many; they open in their own sheet", async () => {
     actions.getBookingSettingsAction.mockResolvedValue(settings);
     actions.listServicesAction.mockResolvedValue(
       ok([service({ name: "Henné" })]),
@@ -1614,9 +1614,18 @@ describe("her categories", () => {
     render(<ServicesManager scope={A} />);
     await flush();
     expect(list().getByText(/· 1 option$/)).toBeTruthy();
+    // Not in the service's own form: they have their sheet.
     fireEvent.click(list().getByRole("button", { name: "Modifier Henné" }));
     await flush();
-    // CATALOG_CONTRACT.md § 10: not before the public booking knows them.
-    expect(dialog().queryByText(/Motif/)).toBeNull();
+    expect(dialog().queryByDisplayValue("Motif")).toBeNull();
+    fireEvent.click(dialog().getByRole("button", { name: "Fermer" }));
+    await flush();
+
+    // CATALOG_CONTRACT.md § 10: offered now that online booking asks them.
+    fireEvent.click(list().getByRole("button", { name: "Options de Henné" }));
+    await flush();
+    expect(dialog().getByText("Options · Henné")).toBeTruthy();
+    expect(dialog().getByDisplayValue("Motif")).toBeTruthy();
+    expect(dialog().getByDisplayValue("Simple")).toBeTruthy();
   });
 });

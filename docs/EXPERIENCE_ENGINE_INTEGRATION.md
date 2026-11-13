@@ -27,7 +27,7 @@ De petites PR, chacune auditable seule, dans cet ordre. L'ordre suit le § 10 du
   - La catégorie se choisit dans le formulaire. Elle est préselectionnée quand la prestation est ajoutée depuis une catégorie.
   - Elle entre dans la comparaison des versions (`stale_service`) et elle est dite par son nom. Un brouillon gardé d'avant les catégories conserve celle de la prestation.
   - Monter et descendre restent à l'intérieur de la section, et la liste complète est envoyée (`reorderServicesAction`).
-- **Options : lues, pas éditées.** Une prestation qui en a dit combien (« · 2 options »). Leur éditeur arrive en PR 3 (§ 10).
+- **Options : lues ici, éditées dans leur feuille.** Une prestation qui en a dit combien (« · 2 options »). Leur éditeur est la PR 3 (plus bas).
 - **Raccordement au labo.** `showcase()` (`src/features/catalog/client/catalog-view.ts`) calcule depuis la lecture de la professionnelle exactement ce que voient ses clientes (`get_public_catalog`), sous la forme que le labo donnait à ses scènes. C'est prouvé sur PostgreSQL (`tests/integration/catalog-showcase.test.ts`). L'aperçu du studio et les univers liront cette projection, jamais une copie du catalogue.
 - **Styles préservés.** L'écran garde ses composants partagés : Classique, Studio, Écrin et Carnet l'habillent comme avant.
 
@@ -71,6 +71,22 @@ Empilée sur la PR 1. Même moteur de réservation (`useBookingFlow`, routes pub
 - **Récapitulatif et confirmation** : ses réponses, telles que le serveur les a tarifées puis enregistrées (`options`).
 
 Les conditions 1 à 5 du § 10 de `CATALOG_CONTRACT.md` sont remplies. L'éditeur d'options (PR 3) peut suivre.
+
+## PR 3 — l'éditeur d'options dans Prestations
+
+Chaque prestation a un bouton « Options », qui ouvre sa feuille (`options-sheet.tsx`). Rien n'y est propre à un métier : une longueur, la taille d'un motif, une zone, une finition.
+
+- **Une question, ses réponses.** Obligatoire ou facultative ; chaque réponse a un nom, un prix ajouté et des minutes ajoutées (vides : rien n'est ajouté). Ordre des questions modifiable.
+- **Enregistré d'un bloc, tout de suite** (`setServiceOptionsAction`), sur la version lue de la prestation. Le catalogue n'a pas de brouillon : c'est dit sous le bouton.
+- **Rien n'est supprimé par omission.** Une question ou une réponse retirée est nommée dans `deletedOptionIds` / `deletedChoiceIds` (`options-draft.ts`, `commandOf`).
+- **Modifiée ailleurs** (`stale_service`, `options_incomplete`) : rien n'est écrit. Elle reprend les options actuelles, en sachant que ses changements ici sont perdus.
+- **Sans réponse du serveur** : le même enregistrement peut être renvoyé (le contrat accepte une nouvelle tentative dont tous les effets sont présents).
+- **Modifications non enregistrées** : la croix, Échap et le fond demandent avant de fermer.
+- **Les prix et durées réservés restent ceux du serveur** : l'éditeur ne totalise rien.
+- **Téléphone** : le nom d'une réponse a sa propre ligne ; prix et minutes dessous (vérifié à 320 et 390 px).
+- **Tests** : `options-draft.test.ts` (8), `options-sheet.test.tsx` (8), `services-manager.test.tsx`.
+- **Aperçu sans compte** : `/apercu/options` (`?vide=1`), enregistrement en mémoire. Absent de la production.
+- **Pas encore** : test navigateur contre PostgreSQL (un e2e à ajouter : créer une option ici, la voir dans la réservation publique).
 
 ### Vérifications de la PR 2
 

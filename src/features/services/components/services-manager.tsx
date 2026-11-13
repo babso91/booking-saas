@@ -47,6 +47,7 @@ import {
   type CategorySheetTarget,
   type CurrentCategory,
 } from "./category-sheet";
+import { OptionsSheet } from "./options-sheet";
 import {
   ServiceSheet,
   type CurrentService,
@@ -60,7 +61,7 @@ type Load =
       status: "ready";
       categories: CatalogCategory[];
       services: ServiceView[];
-      /** Read only here: their editor comes with options booked online. */
+      /** Each service's options, edited in their own sheet. */
       options: Record<string, ServiceOption[]>;
       currency: string;
     };
@@ -127,6 +128,8 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [run, setRun] = useState(0);
   const [sheet, setSheet] = useState<ServiceSheetTarget | null>(null);
+  /** The service whose options are open (its id: read from the list). */
+  const [optionsFor, setOptionsFor] = useState<string | null>(null);
   const [categorySheet, setCategorySheet] =
     useState<CategorySheetTarget | null>(null);
   const [row, setRow] = useState<RowState | null>(null);
@@ -473,6 +476,7 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
                     row={row?.id === service.id ? row : null}
                     locked={pending || ordering === "saving"}
                     onEdit={() => setSheet({ mode: "edit", service })}
+                    onOptions={() => setOptionsFor(service.id)}
                     onToggle={() => void toggleActive(service)}
                     onMove={(delta) => void move(service, delta)}
                     onDelete={() => {
@@ -563,6 +567,40 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
           onGone={reload}
           onReload={reload}
           readCurrent={readCurrent}
+        />
+      ) : null}
+
+      {load.status === "ready" ? (
+        <OptionsSheet
+          service={
+            load.services.find((service) => service.id === optionsFor) ?? null
+          }
+          saved={optionsFor ? (load.options[optionsFor] ?? []) : []}
+          onClose={() => setOptionsFor(null)}
+          onSaved={(service) => {
+            // The server's answer: its new version and its options as kept.
+            setLoad((value) =>
+              value.status === "ready"
+                ? {
+                    ...value,
+                    services: value.services.map((item) =>
+                      item.id === service.id
+                        ? { ...item, version: service.version }
+                        : item,
+                    ),
+                    options: {
+                      ...value.options,
+                      [service.id]: service.options,
+                    },
+                  }
+                : value,
+            );
+            setOptionsFor(null);
+            setAnnouncement(
+              `Les options de ${service.name} sont enregistrées.`,
+            );
+          }}
+          onReload={reload}
         />
       ) : null}
 
@@ -662,6 +700,7 @@ function ServiceRow({
   row,
   locked,
   onEdit,
+  onOptions,
   onToggle,
   onMove,
   onDelete,
@@ -677,6 +716,7 @@ function ServiceRow({
   row: RowState | null;
   locked: boolean;
   onEdit: () => void;
+  onOptions: () => void;
   onToggle: () => void;
   onMove: (delta: -1 | 1) => void;
   onDelete: () => void;
@@ -750,6 +790,15 @@ function ServiceRow({
           className={small}
         >
           Modifier
+        </button>
+        <button
+          type="button"
+          onClick={onOptions}
+          disabled={locked}
+          aria-label={`Options de ${service.name}`}
+          className={small}
+        >
+          Options
         </button>
         {/* Alone in its section: nowhere to go, no arrows to read. */}
         {count > 1 ? (
