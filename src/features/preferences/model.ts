@@ -15,7 +15,17 @@ export const preferenceStyles = [
   "ecrin",
   "carnet",
 ] as const;
-export const preferenceAmbiances = ["atelier", "lin", "sauge"] as const;
+export const preferenceAmbiances = [
+  "atelier",
+  "lin",
+  "sauge",
+  "egyptien",
+  "moka",
+  "prune",
+  "neon",
+  "dune",
+  "indigo",
+] as const;
 export const preferenceModes = ["light", "dark", "system"] as const;
 export const preferenceMotions = ["standard", "discrete", "none"] as const;
 
@@ -72,7 +82,7 @@ export type PreferencesSnapshot = {
 /** What she has before saving anything (the table's defaults). */
 export const defaultAppearancePreferences: AppearancePreferences = {
   style: "classique",
-  ambiance: "atelier",
+  ambiance: "egyptien",
   mode: "light",
   accent: null,
   motion: "standard",

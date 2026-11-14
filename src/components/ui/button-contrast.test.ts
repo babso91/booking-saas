@@ -31,6 +31,9 @@ const tokens: Record<string, keyof Palette> = {
   "danger-strong": "dangerStrong",
   success: "success",
   accent: "accent",
+  pop: "pop",
+  "on-pop": "onPop",
+  "pop-hover": "popHover",
 };
 
 /** A colour class value (`ink`, `[#382d27]`, `[color-mix(...)]`…) → hex. */

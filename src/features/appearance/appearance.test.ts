@@ -61,10 +61,16 @@ const all = (Object.keys(ambiances) as AmbianceId[]).flatMap((ambiance) =>
 );
 
 const unreadable = (palette: Palette) =>
-  pairs
+  [
+    ...pairs,
+    // The loud colour carries the main action's label.
+    ...(palette.pop ? ([["onPop", "pop"]] as typeof pairs) : []),
+  ]
     .map(([text, on]) => ({
       pair: `${text} on ${on}`,
-      ratio: Number(contrast(palette[text], palette[on]).toFixed(2)),
+      ratio: Number(
+        contrast(palette[text] as string, palette[on] as string).toFixed(2),
+      ),
     }))
     .filter((item) => item.ratio < 4.5);
 
@@ -172,7 +178,7 @@ describe("the Écrin style", () => {
 
   it("is a value of the same cookie, and reversible", () => {
     const ecrin = { ...defaultAppearance, style: "ecrin" as const };
-    expect(serializeAppearance(ecrin)).toBe("atelier.light.standard.-.ecrin");
+    expect(serializeAppearance(ecrin)).toBe("egyptien.light.standard.-.ecrin");
     expect(parseAppearance(serializeAppearance(ecrin))).toEqual(ecrin);
     expect(parseAppearance("atelier.light.standard.-.classique").style).toBe(
       "classique",
@@ -187,7 +193,7 @@ describe("the Écrin style", () => {
 });
 
 describe("the Carnet style", () => {
-  const papers = Object.keys(ambiances) as AmbianceId[];
+  const papers = Object.keys(carnetPapers) as (keyof typeof carnetPapers)[];
 
   it.each(
     papers.flatMap((paper) =>
@@ -332,10 +338,60 @@ describe("names that exist on every object are not ambiances (no 500)", () => {
     "lin.valueOf.__proto__.-.constructor",
   ])("%s falls back value by value, and renders", (raw) => {
     const parsed = parseAppearance(raw);
-    expect(["atelier", "lin", "sauge"]).toContain(parsed.ambiance);
+    expect(Object.keys(ambiances)).toContain(parsed.ambiance);
     expect(["light", "dark", "system"]).toContain(parsed.mode);
     expect(["standard", "discrete", "none"]).toContain(parsed.motion);
     expect(["classique", "studio"]).toContain(parsed.style);
     expect(() => appearanceCss(parsed)).not.toThrow();
+  });
+});
+
+describe("colour trios", () => {
+  it.each(["studio", "ecrin", "carnet", "classique"] as const)(
+    "%s wears a trio as its ground, in both modes",
+    (style) => {
+      for (const mode of ["light", "dark"] as const) {
+        expect(paletteFor(style, "egyptien", mode, null).paper).toBe(
+          ambiances.egyptien[mode].paper,
+        );
+      }
+    },
+  );
+
+  it("Studio's field is the trio's quiet colour; the loud one is kept for the action", () => {
+    const palette = paletteFor("studio", "egyptien", "dark", null);
+    expect(palette.signature).toBe(ambiances.egyptien.dark.field);
+    expect(palette.pop).toBe(ambiances.egyptien.dark.pop);
+    expect(palette.signature).not.toBe(palette.pop);
+  });
+
+  it("the classic ambiances keep their ink button: pop is the ink", () => {
+    for (const ambiance of ["atelier", "lin", "sauge"] as const) {
+      const palette = paletteFor("classique", ambiance, "light", null);
+      expect(palette.pop).toBe(palette.ink);
+      expect(palette.onPop).toBe(palette.paperRaised);
+    }
+  });
+
+  it("the loud colour under the pointer still reads, in every trio and mode", () => {
+    for (const ambiance of [
+      "egyptien",
+      "moka",
+      "prune",
+      "neon",
+      "dune",
+      "indigo",
+    ] as const)
+      for (const mode of ["light", "dark"] as const) {
+        const palette = paletteFor("classique", ambiance, mode, null);
+        expect(
+          contrast(palette.onPop, palette.popHover),
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+  });
+
+  it("a trio is read back from the device cookie", () => {
+    const value = { ...defaultAppearance, ambiance: "dune" as const };
+    expect(parseAppearance(serializeAppearance(value)).ambiance).toBe("dune");
   });
 });

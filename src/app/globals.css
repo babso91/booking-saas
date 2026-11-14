@@ -1,38 +1,47 @@
 @import "tailwindcss";
 
 /*
- * Visual identity — "atelier" palette.
- * Warm ivory paper, deep espresso ink and a single rosewood accent. Colours
- * are defined once here and exposed to Tailwind through @theme so components
- * use semantic names (bg-paper, text-ink-soft, border-line…).
+ * Visual identity — "Égyptien" trio, the default.
+ * Two quiet colours do the work (Egyptian blue ink and fields on a pale
+ * stone-blue paper) and a loud one breaks them, sparingly: scarlet, for the
+ * main action. Colours are defined once here and exposed to Tailwind through
+ * @theme so components use semantic names (bg-paper, text-ink-soft, bg-pop…).
+ * Her area applies her own appearance over these (src/features/appearance).
  */
 :root {
-  --paper: #f6f1ea;
-  --paper-raised: #fffcf8;
-  --sand: #ece2d5;
-  --sand-deep: #e1d3c2;
-  --line: #e0d4c6;
-  --line-strong: #c9b6a2;
-  --ink: #231c18;
-  --ink-soft: #594e47;
-  --ink-muted: #756960;
-  --accent: #97493a;
-  --accent-strong: #7c3a2d;
-  --accent-soft: #f2e2d8;
+  --paper: #e7eef5;
+  --paper-raised: #f6f9fc;
+  --sand: #d3e2ee;
+  --sand-deep: #bfd5e7;
+  --line: #c6d8e7;
+  --line-strong: #8fb3d2;
+  --ink: #03203d;
+  --ink-soft: #2c4a66;
+  --ink-muted: #4a6580;
+  --accent: #1e5a8c;
+  --accent-strong: #03203d;
+  --accent-soft: #d3e2ee;
   /* Her colour as a field, and what is written on it. */
-  --signature: #97493a;
-  --on-signature: #fffcf8;
-  --success: #3d6a4c;
-  --success-soft: #e2ece3;
-  --success-strong: #2c4f38;
-  --danger: #9c3d2e;
-  --danger-soft: #f7e3dc;
-  --danger-strong: #7a2f23;
-  --warning: #8a5a1c;
-  --warning-soft: #f6ead4;
-  --warning-strong: #6b4613;
+  --signature: #03203d;
+  --on-signature: #f6f9fc;
+  /* The loud colour (the main action) and its ink. */
+  --pop: #e0262b;
+  --on-pop: #ffffff;
+  --pop-hover: #c52126;
+  /* A strong mark in a style's own composition: the loud colour here. */
+  --mark: #e0262b;
+  --on-mark: #ffffff;
+  --success: #2e5c3d;
+  --success-soft: #dce9dd;
+  --success-strong: #22472f;
+  --danger: #8e3326;
+  --danger-soft: #f5ddd6;
+  --danger-strong: #6e271d;
+  --warning: #774c12;
+  --warning-soft: #f2e3cb;
+  --warning-strong: #5c3a0e;
   /* Shadows' colour as "r g b" (each shadow sets its own alpha). */
-  --shadow-rgb: 35 28 24;
+  --shadow-rgb: 3 32 61;
 
   --background: var(--paper);
   --foreground: var(--ink);
@@ -56,6 +65,11 @@
   --color-accent: var(--accent);
   --color-accent-strong: var(--accent-strong);
   --color-accent-soft: var(--accent-soft);
+  --color-pop: var(--pop);
+  --color-on-pop: var(--on-pop);
+  --color-pop-hover: var(--pop-hover);
+  --color-mark: var(--mark);
+  --color-on-mark: var(--on-mark);
   --color-signature: var(--signature);
   --color-on-signature: var(--on-signature);
   --color-success: var(--success);
