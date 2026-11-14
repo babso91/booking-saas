@@ -22,7 +22,12 @@ import {
   PreferenceDriver,
   type SyncStatus,
 } from "@/features/preferences/client/preference-driver";
-import { renderableAppearance } from "@/features/preferences/model";
+import {
+  preferenceAmbiances,
+  renderableAppearance,
+  type AppearancePreferences,
+  type PreferenceAmbiance,
+} from "@/features/preferences/model";
 import type { AreaPreferences } from "@/features/preferences/server/area-preferences";
 
 import {
@@ -216,7 +221,7 @@ export function AccountAppearanceProvider({
   const value = useMemo<AppearanceContext>(
     () => ({
       appearance,
-      change: (patch) => driver.change(patch),
+      change: (patch) => driver.change(keepable(patch)),
       sync: view.status,
       savedHere: view.savedHere,
       retry: () => driver.retry(),
@@ -268,4 +273,17 @@ export function useAppearance() {
     throw new Error("useAppearance must be used inside AppearanceProvider");
   }
   return context;
+}
+
+/**
+ * Only what her account can keep is sent: an ambiance the database does not
+ * accept yet (a colour duo before its migration) is left out, never saved
+ * and then refused.
+ */
+function keepable(patch: Partial<Appearance>): Partial<AppearancePreferences> {
+  const { ambiance, ...rest } = patch;
+  if (ambiance === undefined) return rest;
+  return (preferenceAmbiances as readonly string[]).includes(ambiance)
+    ? { ...rest, ambiance: ambiance as PreferenceAmbiance }
+    : rest;
 }

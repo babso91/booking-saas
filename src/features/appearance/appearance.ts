@@ -4,6 +4,7 @@ import {
   ambiances,
   carnetPapers,
   ecrinPalettes,
+  isDuo,
   STUDIO_SIGNATURE,
   studioPalettes,
   type AmbianceId,
@@ -102,6 +103,8 @@ export function basePalette(
   ambiance: AmbianceId,
   mode: Mode,
 ): Palette {
+  // A colour duo is the ground of every style: that is its point.
+  if (isDuo(ambiance)) return ambiances[ambiance][mode];
   if (style === "studio") return studioPalettes[mode];
   if (style === "ecrin") return ecrinPalettes[mode];
   if (style === "carnet") return carnetPapers[ambiance][mode];
@@ -114,7 +117,7 @@ export const defaultAccent = (
   ambiance: AmbianceId,
   mode: Mode = "light",
 ) =>
-  style === "studio"
+  style === "studio" && !isDuo(ambiance)
     ? STUDIO_SIGNATURE
     : basePalette(style, ambiance, mode).accent;
 
@@ -133,7 +136,9 @@ export function paletteFor(
   accent: string | null,
 ): AppliedPalette {
   const base = basePalette(style, ambiance, mode);
-  const chosen = accent ?? (style === "studio" ? STUDIO_SIGNATURE : null);
+  const chosen =
+    accent ??
+    (style === "studio" && !isDuo(ambiance) ? STUDIO_SIGNATURE : null);
   const field = signatureOf(chosen ?? base.accent, base);
   if (!chosen) return { ...base, ...field };
   const surfaces = [base.paper, base.paperRaised, base.sand];

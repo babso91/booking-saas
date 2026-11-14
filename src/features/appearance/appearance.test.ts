@@ -187,7 +187,7 @@ describe("the Écrin style", () => {
 });
 
 describe("the Carnet style", () => {
-  const papers = Object.keys(ambiances) as AmbianceId[];
+  const papers = Object.keys(carnetPapers) as (keyof typeof carnetPapers)[];
 
   it.each(
     papers.flatMap((paper) =>
@@ -337,5 +337,29 @@ describe("names that exist on every object are not ambiances (no 500)", () => {
     expect(["standard", "discrete", "none"]).toContain(parsed.motion);
     expect(["classique", "studio"]).toContain(parsed.style);
     expect(() => appearanceCss(parsed)).not.toThrow();
+  });
+});
+
+describe("colour duos", () => {
+  it.each(["studio", "ecrin", "carnet", "classique"] as const)(
+    "%s wears a duo as its ground, in both modes",
+    (style) => {
+      for (const mode of ["light", "dark"] as const) {
+        expect(paletteFor(style, "egyptien", mode, null).paper).toBe(
+          ambiances.egyptien[mode].paper,
+        );
+      }
+    },
+  );
+
+  it("Studio's field is the duo's colour unless she picks one", () => {
+    expect(paletteFor("studio", "moka", "light", null).signature).toBe(
+      ambiances.moka.light.accent,
+    );
+  });
+
+  it("a duo is read back from the device cookie", () => {
+    const value = { ...defaultAppearance, ambiance: "dune" as const };
+    expect(parseAppearance(serializeAppearance(value)).ambiance).toBe("dune");
   });
 });
