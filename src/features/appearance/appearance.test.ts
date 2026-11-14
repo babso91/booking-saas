@@ -61,10 +61,16 @@ const all = (Object.keys(ambiances) as AmbianceId[]).flatMap((ambiance) =>
 );
 
 const unreadable = (palette: Palette) =>
-  pairs
+  [
+    ...pairs,
+    // The loud colour carries the main action's label.
+    ...(palette.pop ? ([["onPop", "pop"]] as typeof pairs) : []),
+  ]
     .map(([text, on]) => ({
       pair: `${text} on ${on}`,
-      ratio: Number(contrast(palette[text], palette[on]).toFixed(2)),
+      ratio: Number(
+        contrast(palette[text] as string, palette[on] as string).toFixed(2),
+      ),
     }))
     .filter((item) => item.ratio < 4.5);
 
@@ -340,9 +346,9 @@ describe("names that exist on every object are not ambiances (no 500)", () => {
   });
 });
 
-describe("colour duos", () => {
+describe("colour trios", () => {
   it.each(["studio", "ecrin", "carnet", "classique"] as const)(
-    "%s wears a duo as its ground, in both modes",
+    "%s wears a trio as its ground, in both modes",
     (style) => {
       for (const mode of ["light", "dark"] as const) {
         expect(paletteFor(style, "egyptien", mode, null).paper).toBe(
@@ -352,13 +358,39 @@ describe("colour duos", () => {
     },
   );
 
-  it("Studio's field is the duo's colour unless she picks one", () => {
-    expect(paletteFor("studio", "moka", "light", null).signature).toBe(
-      ambiances.moka.light.accent,
-    );
+  it("Studio's field is the trio's quiet colour; the loud one is kept for the action", () => {
+    const palette = paletteFor("studio", "egyptien", "dark", null);
+    expect(palette.signature).toBe(ambiances.egyptien.dark.field);
+    expect(palette.pop).toBe(ambiances.egyptien.dark.pop);
+    expect(palette.signature).not.toBe(palette.pop);
   });
 
-  it("a duo is read back from the device cookie", () => {
+  it("the classic ambiances keep their ink button: pop is the ink", () => {
+    for (const ambiance of ["atelier", "lin", "sauge"] as const) {
+      const palette = paletteFor("classique", ambiance, "light", null);
+      expect(palette.pop).toBe(palette.ink);
+      expect(palette.onPop).toBe(palette.paperRaised);
+    }
+  });
+
+  it("the loud colour under the pointer still reads, in every trio and mode", () => {
+    for (const ambiance of [
+      "egyptien",
+      "moka",
+      "prune",
+      "neon",
+      "dune",
+      "indigo",
+    ] as const)
+      for (const mode of ["light", "dark"] as const) {
+        const palette = paletteFor("classique", ambiance, mode, null);
+        expect(
+          contrast(palette.onPop, palette.popHover),
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+  });
+
+  it("a trio is read back from the device cookie", () => {
     const value = { ...defaultAppearance, ambiance: "dune" as const };
     expect(parseAppearance(serializeAppearance(value)).ambiance).toBe("dune");
   });

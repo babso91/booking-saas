@@ -187,7 +187,7 @@ export function StudioAgenda(props: StudioAgendaProps) {
               <button
                 type="button"
                 onClick={props.onNewAppointment}
-                className="flex h-11 cursor-pointer items-center gap-2 rounded-full bg-signature px-5 text-[14.5px] font-extrabold text-on-signature shadow-[0_12px_26px_-14px_rgb(var(--shadow-rgb)/0.7)] transition-transform hover:-translate-y-px focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink active:translate-y-0 motion-reduce:transition-none"
+                className="flex h-11 cursor-pointer items-center gap-2 rounded-full bg-mark px-5 text-[14.5px] font-extrabold text-on-mark shadow-[0_12px_26px_-14px_rgb(var(--shadow-rgb)/0.7)] transition-transform hover:-translate-y-px focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink active:translate-y-0 motion-reduce:transition-none"
               >
                 <PlusIcon size={18} />
                 Nouveau rendez-vous
@@ -328,7 +328,7 @@ export function StudioAgenda(props: StudioAgendaProps) {
           type="button"
           onClick={props.onNewAppointment}
           aria-label="Nouveau rendez-vous"
-          className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom)+84px)] z-30 grid size-14 cursor-pointer place-items-center rounded-full bg-signature text-on-signature shadow-[0_16px_32px_-12px_rgb(var(--shadow-rgb)/0.7)] transition-transform active:scale-95 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-ink motion-reduce:transition-none"
+          className="fixed right-4 bottom-[calc(env(safe-area-inset-bottom)+84px)] z-30 grid size-14 cursor-pointer place-items-center rounded-full bg-mark text-on-mark shadow-[0_16px_32px_-12px_rgb(var(--shadow-rgb)/0.7)] transition-transform active:scale-95 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-ink motion-reduce:transition-none"
         >
           <PlusIcon size={26} />
         </button>

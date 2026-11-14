@@ -25,7 +25,7 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 // around it, not hidden in a faint label).
 export const buttonVariants = {
   primary:
-    "bg-ink text-paper-raised shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] hover:bg-[color-mix(in_srgb,var(--ink)_86%,var(--paper))] disabled:bg-sand disabled:text-ink-soft disabled:shadow-none",
+    "bg-pop text-on-pop shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_10px_24px_-12px_rgb(var(--shadow-rgb)/0.55)] hover:bg-pop-hover disabled:bg-sand disabled:text-ink-soft disabled:shadow-none",
   secondary:
     "bg-paper-raised text-ink border border-line hover:border-line-strong hover:bg-[color-mix(in_srgb,var(--paper-raised)_94%,var(--ink))] disabled:text-ink-muted",
   ghost:

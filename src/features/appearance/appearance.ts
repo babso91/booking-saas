@@ -4,7 +4,7 @@ import {
   ambiances,
   carnetPapers,
   ecrinPalettes,
-  isDuo,
+  isTrio,
   STUDIO_SIGNATURE,
   studioPalettes,
   type AmbianceId,
@@ -36,7 +36,19 @@ export type Appearance = {
 };
 
 /** A palette as applied: with the colour of big fields and its ink. */
-export type AppliedPalette = Palette & {
+export type AppliedPalette = Omit<Palette, "pop" | "onPop"> & {
+  /** The loud colour and its ink, always set (the ink when none). */
+  pop: string;
+  onPop: string;
+  /** The loud colour under the pointer: away from its ink, still readable. */
+  popHover: string;
+  /**
+   * A strong mark in a style's own composition (Studio's new-appointment
+   * button, the "now" tag): a trio's loud colour, otherwise her field, as
+   * it always was.
+   */
+  mark: string;
+  onMark: string;
   /** Her colour as a field (Studio's "now", a filled button…). */
   signature: string;
   /** Text and icons written on the signature field. */
@@ -103,8 +115,8 @@ export function basePalette(
   ambiance: AmbianceId,
   mode: Mode,
 ): Palette {
-  // A colour duo is the ground of every style: that is its point.
-  if (isDuo(ambiance)) return ambiances[ambiance][mode];
+  // A colour trio is the ground of every style: that is its point.
+  if (isTrio(ambiance)) return ambiances[ambiance][mode];
   if (style === "studio") return studioPalettes[mode];
   if (style === "ecrin") return ecrinPalettes[mode];
   if (style === "carnet") return carnetPapers[ambiance][mode];
@@ -117,7 +129,7 @@ export const defaultAccent = (
   ambiance: AmbianceId,
   mode: Mode = "light",
 ) =>
-  style === "studio" && !isDuo(ambiance)
+  style === "studio" && !isTrio(ambiance)
     ? STUDIO_SIGNATURE
     : basePalette(style, ambiance, mode).accent;
 
@@ -136,11 +148,17 @@ export function paletteFor(
   accent: string | null,
 ): AppliedPalette {
   const base = basePalette(style, ambiance, mode);
+  // A trio's field is its quiet colour; the loud one stays for the action.
+  const own = isTrio(ambiance) ? (base.field ?? base.accent) : null;
   const chosen =
     accent ??
-    (style === "studio" && !isDuo(ambiance) ? STUDIO_SIGNATURE : null);
-  const field = signatureOf(chosen ?? base.accent, base);
-  if (!chosen) return { ...base, ...field };
+    (style === "studio" && !isTrio(ambiance) ? STUDIO_SIGNATURE : null);
+  const field = signatureOf(chosen ?? own ?? base.accent, base);
+  const loud = loudOf(base);
+  const marks = isTrio(ambiance)
+    ? { mark: loud.pop, onMark: loud.onPop }
+    : { mark: field.signature, onMark: field.onSignature };
+  if (!chosen) return { ...base, ...field, ...loud, ...marks };
   const surfaces = [base.paper, base.paperRaised, base.sand];
   const tone = readableTone(chosen, surfaces, base.ink);
   const soft = mix(chosen, base.paper, mode === "light" ? 0.86 : 0.78);
@@ -155,6 +173,8 @@ export function paletteFor(
     accentStrong: strong,
     accentSoft: soft,
     ...field,
+    ...loud,
+    ...marks,
   };
 }
 
@@ -190,6 +210,11 @@ const names: [keyof AppliedPalette, string][] = [
   ["accentSoft", "--accent-soft"],
   ["signature", "--signature"],
   ["onSignature", "--on-signature"],
+  ["pop", "--pop"],
+  ["onPop", "--on-pop"],
+  ["popHover", "--pop-hover"],
+  ["mark", "--mark"],
+  ["onMark", "--on-mark"],
   ["success", "--success"],
   ["successSoft", "--success-soft"],
   ["successStrong", "--success-strong"],
@@ -239,4 +264,26 @@ export function accentKeptAsIs(
   return [base.paper, base.paperRaised, base.sand].every(
     (surface) => contrast(accent, surface) >= 4.5,
   );
+}
+
+/**
+ * The loud colour of a palette. A trio has its own (its third colour); the
+ * classic ambiances keep the ink, so their main button is unchanged. Under
+ * the pointer it moves away from its ink: darker under light text, lighter
+ * under dark text (a classic ink button keeps its old hover).
+ */
+function loudOf(base: Palette) {
+  if (!base.pop || !base.onPop)
+    return {
+      pop: base.ink,
+      onPop: base.paperRaised,
+      popHover: mix(base.ink, base.paper, 0.14),
+    };
+  const lightInk =
+    contrast(base.onPop, "#000000") > contrast(base.onPop, "#FFFFFF");
+  return {
+    pop: base.pop,
+    onPop: base.onPop,
+    popHover: mix(base.pop, lightInk ? "#000000" : "#FFFFFF", 0.12),
+  };
 }

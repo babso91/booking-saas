@@ -10,15 +10,23 @@ export type Mode = "light" | "dark";
 /** The first three: neutral grounds, one accent. */
 export type ClassicAmbianceId = "atelier" | "lin" | "sauge";
 /**
- * Colour duos: two quiet colours as full fields (a deep tone and its
- * lighter sibling, or a tinted black and one accent). Unlike the classic
- * ambiances, every style wears them as its ground.
+ * Colour trios: two quiet colours do the work as full fields (ground, ink,
+ * Studio's field), and a loud one breaks them, sparingly (the main action,
+ * a strong mark): the `pop` token. Unlike the classic ambiances, every style
+ * wears them as its ground.
  */
-export const duoIds = ["egyptien", "moka", "prune", "indigo", "dune"] as const;
-export type DuoId = (typeof duoIds)[number];
-export type AmbianceId = ClassicAmbianceId | DuoId;
-export const isDuo = (id: AmbianceId): id is DuoId =>
-  (duoIds as readonly string[]).includes(id);
+export const trioIds = [
+  "egyptien",
+  "moka",
+  "prune",
+  "neon",
+  "dune",
+  "indigo",
+] as const;
+export type TrioId = (typeof trioIds)[number];
+export type AmbianceId = ClassicAmbianceId | TrioId;
+export const isTrio = (id: AmbianceId): id is TrioId =>
+  (trioIds as readonly string[]).includes(id);
 
 export type Palette = {
   paper: string;
@@ -44,11 +52,20 @@ export type Palette = {
   warningStrong: string;
   /** Shadows' colour, as "r g b" (they get their own alpha). */
   shadowRgb: string;
+  /**
+   * The loud colour (a trio's third): the main action, a strong mark; and
+   * what is written on it. Without one, the ink is the loud colour (the
+   * classic look: an ink button).
+   */
+  pop?: string;
+  onPop?: string;
+  /** A trio's quiet field colour (Studio's "now" when she picks none). */
+  field?: string;
 };
 
 export const ambiances: Record<
   AmbianceId,
-  { name: string; mood: string; duo?: true; light: Palette; dark: Palette }
+  { name: string; mood: string; trio?: true; light: Palette; dark: Palette }
 > = {
   atelier: {
     name: "Atelier",
@@ -208,8 +225,8 @@ export const ambiances: Record<
   },
   egyptien: {
     name: "Égyptien",
-    mood: "Bleu égyptien, bleu pierre",
-    duo: true,
+    mood: "Bleu égyptien, bleu pierre, rouge écarlate",
+    trio: true,
     light: {
       paper: "#E7EEF5",
       paperRaised: "#F6F9FC",
@@ -233,6 +250,9 @@ export const ambiances: Record<
       warningSoft: "#F2E3CB",
       warningStrong: "#5C3A0E",
       shadowRgb: "3 32 61",
+      pop: "#E0262B",
+      onPop: "#FFFFFF",
+      field: "#03203D",
     },
     dark: {
       paper: "#03203D",
@@ -257,12 +277,15 @@ export const ambiances: Record<
       warningSoft: "#30251A",
       warningStrong: "#F0CD97",
       shadowRgb: "0 0 0",
+      pop: "#E0262B",
+      onPop: "#FFFFFF",
+      field: "#639CC5",
     },
   },
   moka: {
     name: "Moka",
-    mood: "Sable doux, vert moka",
-    duo: true,
+    mood: "Sable doux, vert moka, rose pastèque",
+    trio: true,
     light: {
       paper: "#F0E5DB",
       paperRaised: "#F9F4EE",
@@ -286,6 +309,9 @@ export const ambiances: Record<
       warningSoft: "#F2E3CB",
       warningStrong: "#5C3A0E",
       shadowRgb: "42 40 23",
+      pop: "#FC75B4",
+      onPop: "#2A2817",
+      field: "#474329",
     },
     dark: {
       paper: "#1E1C10",
@@ -310,12 +336,15 @@ export const ambiances: Record<
       warningSoft: "#30251A",
       warningStrong: "#F0CD97",
       shadowRgb: "0 0 0",
+      pop: "#FC75B4",
+      onPop: "#1E1C10",
+      field: "#474329",
     },
   },
   prune: {
     name: "Prune",
-    mood: "Rose flamant, rose prune",
-    duo: true,
+    mood: "Rose flamant, rose prune, bleu électrique",
+    trio: true,
     light: {
       paper: "#FBE9F2",
       paperRaised: "#FFF6FA",
@@ -339,6 +368,9 @@ export const ambiances: Record<
       warningSoft: "#F2E3CB",
       warningStrong: "#5C3A0E",
       shadowRgb: "58 16 40",
+      pop: "#004AFD",
+      onPop: "#FFFFFF",
+      field: "#A5467C",
     },
     dark: {
       paper: "#2A0D1E",
@@ -363,25 +395,28 @@ export const ambiances: Record<
       warningSoft: "#30251A",
       warningStrong: "#F0CD97",
       shadowRgb: "0 0 0",
+      pop: "#2F63F5",
+      onPop: "#FFFFFF",
+      field: "#A5467C",
     },
   },
-  indigo: {
-    name: "Indigo",
-    mood: "Noir indigo, cyan",
-    duo: true,
+  neon: {
+    name: "Néon",
+    mood: "Noir, cyan, magenta",
+    trio: true,
     light: {
-      paper: "#ECEEF8",
-      paperRaised: "#F8F9FD",
-      sand: "#DDE1F2",
-      sandDeep: "#CED3EB",
-      line: "#D3D8EE",
-      lineStrong: "#9AA3CF",
-      ink: "#070C29",
-      inkSoft: "#2A3060",
-      inkMuted: "#4A5182",
-      accent: "#0B6F78",
-      accentStrong: "#07525A",
-      accentSoft: "#D2F3F5",
+      paper: "#EAF8FB",
+      paperRaised: "#F7FDFE",
+      sand: "#D3F1F7",
+      sandDeep: "#BDE9F2",
+      line: "#C4ECF4",
+      lineStrong: "#7FCBDA",
+      ink: "#020306",
+      inkSoft: "#24343A",
+      inkMuted: "#43565C",
+      accent: "#006F80",
+      accentStrong: "#004C58",
+      accentSoft: "#D3F1F7",
       success: "#2E5C3D",
       successSoft: "#DCE9DD",
       successStrong: "#22472F",
@@ -391,21 +426,24 @@ export const ambiances: Record<
       warning: "#774C12",
       warningSoft: "#F2E3CB",
       warningStrong: "#5C3A0E",
-      shadowRgb: "7 12 41",
+      shadowRgb: "2 3 6",
+      pop: "#D1009A",
+      onPop: "#FFFFFF",
+      field: "#020306",
     },
     dark: {
-      paper: "#070C29",
-      paperRaised: "#10173D",
-      sand: "#18214F",
-      sandDeep: "#222C62",
-      line: "#222C5A",
-      lineStrong: "#3B4785",
-      ink: "#EEF1FF",
-      inkSoft: "#C2C9EC",
-      inkMuted: "#9AA3CF",
-      accent: "#5FE3EC",
-      accentStrong: "#9AF0F5",
-      accentSoft: "#10334A",
+      paper: "#020306",
+      paperRaised: "#0B0F14",
+      sand: "#141A21",
+      sandDeep: "#1C242D",
+      line: "#1D262F",
+      lineStrong: "#36505C",
+      ink: "#ECFBFE",
+      inkSoft: "#BCE3EC",
+      inkMuted: "#8DB7C2",
+      accent: "#7CE6FC",
+      accentStrong: "#B5F1FD",
+      accentSoft: "#0E2C35",
       success: "#8AC39C",
       successSoft: "#18281D",
       successStrong: "#B0DBBD",
@@ -416,22 +454,25 @@ export const ambiances: Record<
       warningSoft: "#30251A",
       warningStrong: "#F0CD97",
       shadowRgb: "0 0 0",
+      pop: "#FC38BE",
+      onPop: "#020306",
+      field: "#7CE6FC",
     },
   },
   dune: {
     name: "Dune",
-    mood: "Noir, ocre dune",
-    duo: true,
+    mood: "Ocre dune, terre d’ombre, turquoise",
+    trio: true,
     light: {
-      paper: "#F3E9DD",
-      paperRaised: "#FBF6F0",
-      sand: "#E8DAC8",
-      sandDeep: "#DDCBB4",
-      line: "#E0D0BC",
-      lineStrong: "#C2A889",
-      ink: "#0B0B0C",
-      inkSoft: "#3D342B",
-      inkMuted: "#5E5245",
+      paper: "#F3E6D9",
+      paperRaised: "#FBF5EE",
+      sand: "#E8D5C2",
+      sandDeep: "#DCC4AB",
+      line: "#E0CCB7",
+      lineStrong: "#BF9C7B",
+      ink: "#2B1A12",
+      inkSoft: "#4E3628",
+      inkMuted: "#6A5040",
       accent: "#8A4F22",
       accentStrong: "#6B3C17",
       accentSoft: "#F1DCC6",
@@ -444,21 +485,24 @@ export const ambiances: Record<
       warning: "#774C12",
       warningSoft: "#F2E3CB",
       warningStrong: "#5C3A0E",
-      shadowRgb: "11 11 12",
+      shadowRgb: "43 26 18",
+      pop: "#1FC7C9",
+      onPop: "#2B1A12",
+      field: "#AE6C37",
     },
     dark: {
-      paper: "#0B0B0C",
-      paperRaised: "#17140F",
-      sand: "#231D15",
-      sandDeep: "#2F261B",
-      line: "#2E261C",
-      lineStrong: "#5A4632",
-      ink: "#F3E9DD",
-      inkSoft: "#D3C2AE",
-      inkMuted: "#AD9B86",
-      accent: "#D48A4E",
-      accentStrong: "#E8A874",
-      accentSoft: "#3A2614",
+      paper: "#2B1A12",
+      paperRaised: "#36231A",
+      sand: "#432D21",
+      sandDeep: "#503829",
+      line: "#4C3527",
+      lineStrong: "#7A5A44",
+      ink: "#F6EBE0",
+      inkSoft: "#DDC7B4",
+      inkMuted: "#BFA58F",
+      accent: "#E3A574",
+      accentStrong: "#F0C49F",
+      accentSoft: "#4A2F1E",
       success: "#8AC39C",
       successSoft: "#18281D",
       successStrong: "#B0DBBD",
@@ -469,6 +513,68 @@ export const ambiances: Record<
       warningSoft: "#30251A",
       warningStrong: "#F0CD97",
       shadowRgb: "0 0 0",
+      pop: "#1FC7C9",
+      onPop: "#2B1A12",
+      field: "#AE6C37",
+    },
+  },
+  indigo: {
+    name: "Indigo",
+    mood: "Noir indigo, os, ambre",
+    trio: true,
+    light: {
+      paper: "#EFE7DA",
+      paperRaised: "#F8F3EA",
+      sand: "#E3D8C6",
+      sandDeep: "#D6C8B2",
+      line: "#DCD0BC",
+      lineStrong: "#AFA28C",
+      ink: "#070C29",
+      inkSoft: "#2A3060",
+      inkMuted: "#4A4F72",
+      accent: "#2E3A8C",
+      accentStrong: "#070C29",
+      accentSoft: "#E1E3F2",
+      success: "#2E5C3D",
+      successSoft: "#DCE9DD",
+      successStrong: "#22472F",
+      danger: "#8E3326",
+      dangerSoft: "#F5DDD6",
+      dangerStrong: "#6E271D",
+      warning: "#774C12",
+      warningSoft: "#F2E3CB",
+      warningStrong: "#5C3A0E",
+      shadowRgb: "7 12 41",
+      pop: "#FF9E0D",
+      onPop: "#070C29",
+      field: "#070C29",
+    },
+    dark: {
+      paper: "#070C29",
+      paperRaised: "#10173D",
+      sand: "#18214F",
+      sandDeep: "#222C62",
+      line: "#222C5A",
+      lineStrong: "#3B4785",
+      ink: "#EFE7DA",
+      inkSoft: "#CFC7B9",
+      inkMuted: "#A9A396",
+      accent: "#C7CCEE",
+      accentStrong: "#E3E6F8",
+      accentSoft: "#1A2250",
+      success: "#8AC39C",
+      successSoft: "#18281D",
+      successStrong: "#B0DBBD",
+      danger: "#F09B88",
+      dangerSoft: "#381C17",
+      dangerStrong: "#F7BBAD",
+      warning: "#E5B36A",
+      warningSoft: "#30251A",
+      warningStrong: "#F0CD97",
+      shadowRgb: "0 0 0",
+      pop: "#FF9E0D",
+      onPop: "#070C29",
+      field: "#EFE7DA",
     },
   },
 };
@@ -818,7 +924,7 @@ export const inkPresets = [
   { name: "Noir", color: "#1D1814" },
 ] as const;
 
-/** What a choice of ambiance looks like for a style: Carnet's own paper, or the duo. */
+/** What a choice of ambiance looks like for a style: Carnet's own paper, or the trio. */
 export function ambianceLook(id: AmbianceId, carnet: boolean) {
-  return carnet && !isDuo(id) ? carnetPapers[id] : ambiances[id];
+  return carnet && !isTrio(id) ? carnetPapers[id] : ambiances[id];
 }

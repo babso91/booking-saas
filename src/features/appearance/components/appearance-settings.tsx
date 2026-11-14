@@ -22,7 +22,7 @@ import {
   ambianceLook,
   ambiances,
   carnetPapers,
-  duoIds,
+  trioIds,
   ecrinPalettes,
   inkPresets,
   signaturePresets,
@@ -47,11 +47,11 @@ import { useAppearance } from "./appearance-provider";
 let styleToFocus: StyleId | null = null;
 
 /**
- * The colour duos her account can keep: only those the database accepts
+ * The colour trios her account can keep: only those the database accepts
  * (member_preferences). Offering one it would refuse would look applied and
  * then fail to save.
  */
-const offeredDuos = duoIds.filter((id) =>
+const offeredTrios = trioIds.filter((id) =>
   (preferenceAmbiances as readonly string[]).includes(id),
 );
 
@@ -172,14 +172,14 @@ export function AppearanceSettings() {
             </div>
           </Group>
 
-          {(studio || ecrin) && !offeredDuos.length ? null : (
+          {(studio || ecrin) && !offeredTrios.length ? null : (
             <Group legend={carnet ? "Ton papier" : "Ambiance"}>
               <div className="grid gap-3 sm:grid-cols-3">
                 {(studio || ecrin
-                  ? (["atelier", ...offeredDuos] as AmbianceId[])
+                  ? (["atelier", ...offeredTrios] as AmbianceId[])
                   : ([
                       ...(Object.keys(carnetPapers) as AmbianceId[]),
-                      ...offeredDuos,
+                      ...offeredTrios,
                     ] as AmbianceId[])
                 ).map((id) => (
                   <Choice

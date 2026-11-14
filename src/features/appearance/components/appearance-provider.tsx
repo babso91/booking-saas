@@ -277,7 +277,7 @@ export function useAppearance() {
 
 /**
  * Only what her account can keep is sent: an ambiance the database does not
- * accept yet (a colour duo before its migration) is left out, never saved
+ * accept yet (a colour trio before its migration) is left out, never saved
  * and then refused.
  */
 function keepable(patch: Partial<Appearance>): Partial<AppearancePreferences> {
