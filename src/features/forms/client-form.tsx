@@ -51,9 +51,12 @@ type Read =
 export function ClientForm({
   assignmentId,
   actions,
+  preview = false,
 }: {
   assignmentId: string;
   actions: ClientFormActions;
+  /** Her own look at it: answers can be tried, nothing is ever sent. */
+  preview?: boolean;
 }) {
   const [read, setRead] = useState<Read>({ status: "loading" });
   const [run, setRun] = useState(0);
@@ -92,11 +95,11 @@ export function ClientForm({
 
   // Leaving with unsent answers asks first; nothing is kept elsewhere.
   useEffect(() => {
-    if (!open || !dirty) return;
+    if (!open || !dirty || preview) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [open, dirty]);
+  }, [open, dirty, preview]);
 
   if (read.status === "loading")
     return (
@@ -190,6 +193,7 @@ export function ClientForm({
       setNotice(null);
       return focusField(first.id);
     }
+    if (preview) return;
     const body = visibleFields(form.fields, kept)
       .filter((field) => field.id in kept)
       .map((field) => ({
@@ -305,18 +309,27 @@ export function ClientForm({
             </li>
           ))}
         </ol>
-        <Button
-          type="submit"
-          size="lg"
-          state={busy ? "loading" : "idle"}
-          loadingLabel="Envoi…"
-        >
-          Envoyer mes réponses
-        </Button>
-        <p className="text-[13px] text-ink-muted">
-          Vos réponses ne sont enregistrées qu’à l’envoi. Seule{" "}
-          {form.businessName} peut les lire.
-        </p>
+        {preview ? (
+          <p className="rounded-2xl bg-sand px-4 py-3 text-[13.5px] text-ink-soft">
+            Aperçu : c’est ce que verra ta cliente. Tu peux essayer les réponses
+            ; rien n’est envoyé.
+          </p>
+        ) : (
+          <>
+            <Button
+              type="submit"
+              size="lg"
+              state={busy ? "loading" : "idle"}
+              loadingLabel="Envoi…"
+            >
+              Envoyer mes réponses
+            </Button>
+            <p className="text-[13px] text-ink-muted">
+              Vos réponses ne sont enregistrées qu’à l’envoi. Seule{" "}
+              {form.businessName} peut les lire.
+            </p>
+          </>
+        )}
       </form>
     </div>
   );
