@@ -34,6 +34,7 @@ type Business = { name: string; slug: string };
 type Section = DashboardSection;
 
 const CALENDAR_SETTINGS = "/app/settings/calendar";
+const TEAM = "/app/equipe";
 const CLIENTS = "/app/clients";
 const SERVICES = "/app/services";
 const HOURS = "/app/settings/hours";
@@ -159,6 +160,13 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
             <CalendarSyncIcon size={18} /> Google Calendar
           </Link>
           <Link
+            href={TEAM}
+            aria-current={current === "team" ? "page" : undefined}
+            className={item("team")}
+          >
+            <UsersIcon size={18} /> Équipe
+          </Link>
+          <Link
             href={SITE}
             aria-current={current === "site" ? "page" : undefined}
             className={item("site")}
@@ -278,6 +286,16 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
           >
             <CalendarSyncIcon size={20} className="text-ink-soft" />
             <span className="flex-1">Google Calendar</span>
+            <ChevronRightIcon size={18} className="text-ink-muted" />
+          </Link>
+          <Link
+            href={TEAM}
+            onClick={() => setAccountOpen(false)}
+            aria-current={current === "team" ? "page" : undefined}
+            className="flex min-h-14 items-center gap-3 rounded-2xl border border-line bg-paper px-4 text-[15px] font-medium text-ink transition-colors hover:border-line-strong"
+          >
+            <UsersIcon size={20} className="text-ink-soft" />
+            <span className="flex-1">Équipe</span>
             <ChevronRightIcon size={18} className="text-ink-muted" />
           </Link>
           <Link
