@@ -45,7 +45,7 @@ describe("the team list", () => {
     expect(within(ines).getByText("Réservable")).toBeTruthy();
     expect(within(ines).getByText("Sans accès au logiciel")).toBeTruthy();
     expect(ines.textContent).toMatch(
-      /Invitation envoyée à ines@exemple\.fr, valable jusqu’au 21 novembre/,
+      /Invitation en attente pour ines@exemple\.fr, valable jusqu’au 21 novembre/,
     );
     expect(ines.textContent).toMatch(/Motif au henné/);
   });
@@ -178,7 +178,7 @@ describe("access to the software", () => {
     fireEvent.click(
       dialog().getByRole("button", { name: "Renvoyer l’invitation" }),
     );
-    await screen.findByText("Invitation envoyée à ines@exemple.fr.");
+    await screen.findByText("Invitation enregistrée pour ines@exemple.fr.");
     expect(server.state.members[1]?.invite).toMatchObject({
       status: "pending",
       role: "admin",
@@ -207,5 +207,27 @@ describe("access to the software", () => {
     ).toBeTruthy();
     fireEvent.click(dialog().getByRole("button", { name: "Retirer l’accès" }));
     await dialog().findByText(/seule propriétaire/);
+  });
+});
+
+describe("on the real backend, before any email transport", () => {
+  it("no invitation is offered, so none can stay unanswered; access can still be removed", async () => {
+    const server = memoryTeam();
+    render(<TeamManager actions={server.actions} invitations="not_sent_yet" />);
+    await screen.findByRole("heading", { name: "Équipe" });
+    click("Gérer Inès");
+    expect(
+      dialog().getByText(/Les invitations par e-mail arrivent/),
+    ).toBeTruthy();
+    expect(dialog().queryByLabelText("Son email")).toBeNull();
+    expect(dialog().queryByRole("button", { name: /invitation/i })).toBeNull();
+  });
+
+  it("a pending invitation is described as pending, never as sent", async () => {
+    await open();
+    expect(document.body.textContent).toMatch(
+      /Invitation en attente pour ines@exemple\.fr/,
+    );
+    expect(document.body.textContent).not.toMatch(/Invitation envoyée/);
   });
 });

@@ -42,7 +42,17 @@ function useOperationIds() {
   };
 }
 
-export function TeamManager({ actions }: { actions: TeamActions }) {
+export function TeamManager({
+  actions,
+  invitations = "enabled",
+}: {
+  actions: TeamActions;
+  /**
+   * "not_sent_yet" while no email transport is validated: an invitation
+   * could be recorded but would never reach her, so none is offered.
+   */
+  invitations?: "enabled" | "not_sent_yet";
+}) {
   const [read, setRead] = useState<Read>({ status: "loading" });
   const [run, setRun] = useState(0);
   const [open, setOpen] = useState<{ memberId: string | null } | null>(null);
@@ -183,6 +193,7 @@ export function TeamManager({ actions }: { actions: TeamActions }) {
             member={member}
             services={team.services}
             actions={actions}
+            invitations={invitations}
             onDone={(message) => {
               setSaid(message);
               setOpen(null);
@@ -227,7 +238,7 @@ function InviteLine({ member }: { member: TeamMemberDto }) {
   return (
     <p className="text-[13px] text-ink-muted">
       {invite.status === "pending"
-        ? `Invitation envoyée à ${invite.email}${day ? `, valable jusqu’au ${day}` : ""}.`
+        ? `Invitation en attente pour ${invite.email}${day ? `, valable jusqu’au ${day}` : ""}.`
         : invite.status === "expired"
           ? `L’invitation envoyée à ${invite.email} a expiré.`
           : invite.status === "revoked"
@@ -241,12 +252,14 @@ function MemberEditor({
   member,
   services,
   actions,
+  invitations,
   onDone,
   onStale,
 }: {
   member: TeamMemberDto | null;
   services: TeamDto["services"];
   actions: TeamActions;
+  invitations: "enabled" | "not_sent_yet";
   onDone: (message: string) => void;
   /** The profile changed elsewhere: the team is read again. */
   onStale: () => void;
@@ -288,7 +301,13 @@ function MemberEditor({
             ? "Tu n’as pas le droit de faire cela."
             : code === teamErrors.upcoming
               ? "Cette personne a des rendez-vous à venir : déplace-les d’abord."
-              : `${what} n’a pas abouti. Réessaie dans un instant.`,
+              : code === "role_unavailable"
+                ? "Ce rôle n’est pas encore disponible."
+                : code === "access_exists" || code === "already_member"
+                  ? "Cette personne a déjà accès au logiciel."
+                  : code === "not_found"
+                    ? "Cette personne n’est plus dans l’équipe."
+                    : `${what} n’a pas abouti. Réessaie dans un instant.`,
     );
   }
 
@@ -334,7 +353,7 @@ function MemberEditor({
       operationId: idFor(`invite:${member.revision}:${JSON.stringify(body)}`),
     });
     setBusy(null);
-    if (result.ok) return onDone(`Invitation envoyée à ${body.email}.`);
+    if (result.ok) return onDone(`Invitation enregistrée pour ${body.email}.`);
     failed(result, "L’invitation");
   }
 
@@ -482,6 +501,12 @@ function MemberEditor({
                 </button>
               )}
             </>
+          ) : invitations === "not_sent_yet" ? (
+            <p className="text-[14px] text-ink-soft">
+              Sans accès pour le moment. Les invitations par e-mail arrivent
+              bientôt : tant que l’envoi n’est pas activé, aucune n’est
+              proposée, pour qu’aucune ne reste sans réponse.
+            </p>
           ) : (
             <>
               <p className="text-[14px] text-ink-soft">
