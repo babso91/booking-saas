@@ -726,6 +726,32 @@ describe("refusals", () => {
     expect(bookingBodies()[1]).toEqual(bookingBodies()[0]);
   });
 
+  it("booking unavailable (ingress refused): nothing booked is said, nothing retried by itself, details kept", async () => {
+    api.booking.mockImplementationOnce(() =>
+      refuse(503, "booking_unavailable"),
+    );
+    renderPage();
+    await toReview();
+    fireEvent.click(confirmButton());
+    expect(
+      await screen.findByText(
+        "Réservation en ligne momentanément indisponible",
+      ),
+    ).toBeTruthy();
+    expect(document.body.textContent).toMatch(/Rien n’a été réservé/);
+    await act(() => new Promise((done) => setTimeout(done, 50)));
+    expect(api.booking).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Inès · ines.benali@exemple.fr/)).toBeTruthy();
+
+    // Later, on purpose: the same content keeps its request id.
+    api.booking.mockImplementationOnce(() =>
+      ok({ booking: bookingFor() }, 201),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    expect(bookingBodies()[1]).toEqual(bookingBodies()[0]);
+  });
+
   it("idempotency_conflict: explained, never resent with a new id by itself; a new request is an explicit choice", async () => {
     api.booking.mockImplementationOnce(() =>
       refuse(409, "idempotency_conflict"),

@@ -153,6 +153,16 @@ function Failure({ flow, code }: { flow: BookingFlow; code: string }) {
           plus tard ; vos informations sont conservées.
         </Notice>
       );
+    case "booking_unavailable":
+      return (
+        <Notice
+          tone="warning"
+          title="Réservation en ligne momentanément indisponible"
+        >
+          Rien n’a été réservé et vos informations sont conservées. Réessayez
+          dans quelques minutes.
+        </Notice>
+      );
     case "idempotency_conflict":
       return (
         <Notice

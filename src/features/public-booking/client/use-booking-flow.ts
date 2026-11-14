@@ -117,6 +117,8 @@ const DEFINITE = new Set<BookingError["code"]>([
   "business_not_found",
   "validation_error",
   "rate_limited",
+  // Refused by the ingress guard before anything is written.
+  "booking_unavailable",
   "idempotency_conflict",
   "options_required",
   "option_choice_unavailable",
