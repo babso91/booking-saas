@@ -10,27 +10,39 @@ import type { Answers, FormFieldDto } from "./contract";
  * EARLIER field (so no cycle can exist), choices for a choice, a text for
  * an attestation. Returns what is wrong, empty when it is valid.
  */
-export function checkTemplate(fields: FormFieldDto[]): string[] {
-  const problems: string[] = [];
+export type TemplateProblem = { fieldId: string; message: string };
+
+export function checkTemplate(fields: FormFieldDto[]): TemplateProblem[] {
+  const problems: TemplateProblem[] = [];
   const seen = new Map<string, FormFieldDto>();
+  const say = (fieldId: string, message: string) =>
+    problems.push({ fieldId, message });
   for (const field of fields) {
-    if (seen.has(field.id)) problems.push(`${field.id}: identifiant en double`);
+    if (seen.has(field.id)) say(field.id, "Identifiant en double.");
     if (field.showIf) {
       const target = seen.get(field.showIf.field);
       if (!target)
-        problems.push(
-          `${field.id}: condition sur une question inconnue ou placée après`,
+        say(
+          field.id,
+          "La condition doit porter sur une question placée avant celle-ci.",
         );
       else if (
         target.type === "single_choice" &&
         !target.options?.some((option) => option.id === field.showIf!.equals)
       )
-        problems.push(`${field.id}: condition sur un choix inexistant`);
+        say(field.id, "La condition porte sur un choix qui n’existe plus.");
+      else if (
+        (target.type === "boolean") !==
+          (typeof field.showIf.equals === "boolean") ||
+        target.type === "short_text" ||
+        target.type === "attestation"
+      )
+        say(field.id, "La condition ne correspond pas à cette question.");
     }
     if (field.type === "single_choice" && !field.options?.length)
-      problems.push(`${field.id}: choix sans options`);
+      say(field.id, "Ajoute au moins un choix.");
     if (field.type === "attestation" && !field.attestationText?.trim())
-      problems.push(`${field.id}: attestation sans texte`);
+      say(field.id, "Écris le texte à confirmer.");
     seen.set(field.id, field);
   }
   return problems;

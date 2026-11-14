@@ -6,9 +6,10 @@ serveur en mémoire. Aucune page réelle ne montre de formulaire tant que ce
 contrat n'est pas servi. Tables, RLS, RPC, verrous et notifications restent
 ceux de Cloud ; ce document dit seulement ce que l'écran attend.
 
-Hors de cette tranche : l'éditeur de modèles côté pro, la revue
-(contre-signature), le registre des consentements marketing et l'accès par
-terminal partagé ou lien signé.
+L'éditeur de modèles côté pro (section « Éditeur » plus bas) tourne dans
+`/apercu/formulaire-modele`. Hors de ces tranches : la revue
+(contre-signature), l'assignation, le registre des consentements marketing
+et l'accès par terminal partagé ou lien signé.
 
 ## Lecture (dans le Hub, session et relation attestée requises)
 
@@ -88,3 +89,46 @@ opaque** (`not_found`), sans distinguer les cas.
 Aucune réponse n'est écrite dans le stockage du navigateur (testé) ; un
 avertissement de sortie protège une saisie non envoyée. Pas de champ santé
 ni de catégorie particulière en V1 (arbitrage juridique préalable).
+
+## Éditeur (côté pro)
+
+Un modèle a **un brouillon** qu'elle modifie et des **versions publiées**
+que personne ne modifie.
+
+```ts
+FormTemplateDto = {
+  templateId: string;
+  status: "draft" | "active" | "retired";
+  draftVersion: number;          // verrou optimiste du brouillon
+  draft: {
+    title: string;
+    intro: string;
+    review: "none" | "professional";
+    frequency:
+      | { kind: "every_appointment" }
+      | { kind: "reuse_completed_for_days"; days: number }; // 1..365
+    fields: FormFieldDto[];
+  };
+  published: { versionId: string; number: number; publishedAt: string }[]; // récent d'abord
+};
+```
+
+| Action      | Entrée                                               | Effet                                                          |
+| ----------- | ---------------------------------------------------- | -------------------------------------------------------------- |
+| `read`      | `templateId`                                         | —                                                              |
+| `saveDraft` | `templateId, expectedDraftVersion, requestId, draft` | Remplace le brouillon, `draftVersion + 1`                      |
+| `publish`   | `templateId, expectedDraftVersion, requestId`        | Fige le brouillon **enregistré** en version `n + 1` (immuable) |
+
+- `requestId` rejoué → même réponse, sans réappliquer.
+- `version_conflict` : l'écran garde la version de la pro et lui fait
+  choisir entre « Garder ma version » (réenvoi sur la nouvelle
+  `draftVersion`) et « Prendre la version enregistrée ».
+- `invalid_template` : le serveur revérifie à la publication les mêmes
+  règles que l'écran (`draftProblems` + `checkTemplate`) : titre, libellés,
+  choix distincts et non vides, attestation avec texte, condition sur une
+  question antérieure et une valeur existante, fréquence 1..365.
+- L'écran ne propose de publier qu'un brouillon enregistré, avec
+  confirmation (« les formulaires déjà envoyés gardent leur version »).
+- Une question dont d'autres dépendent ne peut pas être retirée tant que
+  leur condition n'a pas changé (règle d'écran ; le serveur la refuse aussi
+  via `checkTemplate`).
