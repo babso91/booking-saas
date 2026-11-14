@@ -59,7 +59,7 @@ export const APPEARANCE_COOKIE = "dash_appearance";
 
 export const defaultAppearance: Appearance = {
   style: "classique",
-  ambiance: "atelier",
+  ambiance: "egyptien",
   mode: "light",
   accent: null,
   motion: "standard",

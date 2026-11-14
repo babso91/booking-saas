@@ -178,7 +178,7 @@ describe("the Écrin style", () => {
 
   it("is a value of the same cookie, and reversible", () => {
     const ecrin = { ...defaultAppearance, style: "ecrin" as const };
-    expect(serializeAppearance(ecrin)).toBe("atelier.light.standard.-.ecrin");
+    expect(serializeAppearance(ecrin)).toBe("egyptien.light.standard.-.ecrin");
     expect(parseAppearance(serializeAppearance(ecrin))).toEqual(ecrin);
     expect(parseAppearance("atelier.light.standard.-.classique").style).toBe(
       "classique",
@@ -338,7 +338,7 @@ describe("names that exist on every object are not ambiances (no 500)", () => {
     "lin.valueOf.__proto__.-.constructor",
   ])("%s falls back value by value, and renders", (raw) => {
     const parsed = parseAppearance(raw);
-    expect(["atelier", "lin", "sauge"]).toContain(parsed.ambiance);
+    expect(Object.keys(ambiances)).toContain(parsed.ambiance);
     expect(["light", "dark", "system"]).toContain(parsed.mode);
     expect(["standard", "discrete", "none"]).toContain(parsed.motion);
     expect(["classique", "studio"]).toContain(parsed.style);

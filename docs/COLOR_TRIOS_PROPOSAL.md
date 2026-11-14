@@ -1,11 +1,11 @@
 # Ambiances « trio » — direction artistique
 
-Statut : **côté écran prêt**. Les pages hors compte (connexion, inscription,
-accueil, aperçus) sont déjà en trio Égyptien, le nouveau défaut. Le
-tableau de bord des pros attend **une migration de Cloud** pour qu'un trio
-soit choisi, gardé sur le compte, et devienne leur défaut. Visible dès
-maintenant dans les aperçus via
-`?apparence=<trio>.<light|dark>.standard.-.<style>`.
+Statut : **prêt, base comprise**. La migration
+`20261114100000_color_trios.sql` ajoute les six trios à la liste fermée des
+préférences et fait d'Égyptien le défaut (colonne, lecture et enregistrement
+d'une pro sans préférence). Les pros qui ont déjà choisi une ambiance la
+gardent ; celles qui n'ont rien choisi passent en Égyptien, comme les pages
+hors compte. Les trios sont proposés dans la page Apparence.
 
 ## La règle
 
@@ -42,15 +42,12 @@ Toutes les paires texte/surface (et texte sur pop, sur pop survolé) passent
 4,5:1, vérifiées par `appearance.test.ts` et `button-contrast.test.ts` dans
 chaque style, ambiance et mode.
 
-## Pour Cloud (seule dépendance)
+## Base de données
 
-1. Ajouter `egyptien`, `moka`, `prune`, `neon`, `dune`, `indigo` à la liste
-   fermée `private.member_preferences_valid` (ambiance) et à
-   `preferenceAmbiances` (`src/features/preferences/model.ts`), test
-   `tests/integration/member-preferences.test.ts` compris.
-2. Passer le défaut d'ambiance à `egyptien` (base et
-   `src/features/preferences/model.ts`, `defaultAppearance` dans
-   `src/features/appearance/appearance.ts`).
-
-Avant cela, la page Apparence ne propose pas les trios et le fournisseur
-n'envoie jamais au compte une ambiance que la base refuserait.
+- Domaine `public.member_preference_ambiance` : les six trios ajoutés.
+- Défaut `egyptien` : colonne `member_preferences.ambiance`,
+  `read_member_preferences` (pas de ligne) et `save_member_preferences`
+  (premier enregistrement), qui doivent rester d'accord, sinon un premier
+  enregistrement depuis les défauts de l'appareil serait jugé périmé.
+- `preferenceAmbiances` et les défauts TypeScript suivent ;
+  `tests/integration/member-preferences.test.ts` vérifie l'accord.

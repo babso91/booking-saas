@@ -92,8 +92,10 @@ describe("Studio 1's device cookie (dash_appearance)", () => {
   });
 
   it("reads its four-field values (before styles) as Classique", () => {
+    // The ambiance she had is kept as she had it, whatever today's default.
     expect(parseLegacyAppearanceCookie("atelier.system.standard.-")).toEqual({
       ...defaultAppearancePreferences,
+      ambiance: "atelier",
       mode: "system",
     });
   });
