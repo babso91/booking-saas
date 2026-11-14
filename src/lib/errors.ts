@@ -151,6 +151,18 @@ export const appErrorMessages = {
     "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
+  version_conflict:
+    "Cette fiche a changé entre-temps. Vos saisies sont gardées : vérifiez puis renvoyez.",
+  last_owner:
+    "C’est la seule propriétaire : son accès ne peut pas être retiré.",
+  upcoming_appointments:
+    "Cette personne a des rendez-vous à venir : déplacez-les ou annulez-les avant de la retirer de la réservation.",
+  permission_denied: "Votre rôle ne permet pas cette action.",
+  role_unavailable:
+    "Ce rôle n’est pas encore disponible : invitez cette personne comme administratrice.",
+  access_exists: "Cette personne a déjà accès au logiciel.",
+  team_limit_reached: "Votre équipe a atteint le nombre maximal de profils.",
+  already_member: "Ce compte appartient déjà à une activité.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -295,6 +307,14 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_email_required: 409,
   context_changed: 409,
   auth_unavailable: 503,
+  version_conflict: 409,
+  last_owner: 409,
+  upcoming_appointments: 409,
+  permission_denied: 403,
+  role_unavailable: 422,
+  access_exists: 409,
+  team_limit_reached: 409,
+  already_member: 409,
   internal: 500,
 };
 

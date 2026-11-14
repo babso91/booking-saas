@@ -414,6 +414,41 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  version_conflict: {
+    title: "Fiche modifiée entre-temps",
+    message: "Tes saisies sont gardées. Vérifie la fiche à jour, puis renvoie.",
+  },
+  last_owner: {
+    title: "Seule propriétaire",
+    message:
+      "Son accès ne peut pas être retiré : il faut toujours une propriétaire.",
+  },
+  upcoming_appointments: {
+    title: "Rendez-vous à venir",
+    message:
+      "Cette personne a des rendez-vous à venir. Déplace-les ou annule-les avant de la retirer de la réservation.",
+  },
+  permission_denied: {
+    title: "Action réservée",
+    message: "Ton rôle ne permet pas cette action.",
+  },
+  role_unavailable: {
+    title: "Rôle pas encore disponible",
+    message: "Pour l’instant, invite cette personne comme administratrice.",
+  },
+  access_exists: {
+    title: "Accès déjà ouvert",
+    message: "Cette personne a déjà accès au logiciel.",
+  },
+  team_limit_reached: {
+    title: "Équipe complète",
+    message: "Ton équipe a atteint le nombre maximal de profils.",
+  },
+  already_member: {
+    title: "Compte déjà utilisé",
+    message:
+      "Ce compte appartient déjà à une activité. Utilise une autre adresse.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {
