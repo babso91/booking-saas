@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
+import { cn } from "@/lib/cn";
 
 import {
   exportErrors,
@@ -220,7 +221,7 @@ export function ExportPanel({
                     </Button>
                     <button
                       type="button"
-                      className={linkAction + " text-danger"}
+                      className={cn(linkAction, "text-danger")}
                       disabled={busy !== null}
                       onClick={() => void revoke(job)}
                     >
