@@ -15,7 +15,9 @@ document. Migration : `supabase/migrations/20261115140000_waitlist.sql`.
   publique reste ouverte : le premier qui réserve gagne.
 - **L'établissement l'active** : `business_settings.waitlist_enabled`
   (action `setWaitlistEnabledAction`, owner/admin). La fermer arrête les
-  offres en cours.
+  offres en cours. La page publique le lit dans
+  `PublicBusinessDto.waitlistEnabled` (`get_public_business`) : le bouton ne
+  s'affiche que si la liste est ouverte.
 - **Double opt-in.** Une demande commence `pending_confirmation`. Rien n'est
   proposé tant que la cliente n'a pas confirmé depuis l'e-mail reçu (24 h).
 

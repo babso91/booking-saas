@@ -40,6 +40,7 @@ const business: PublicBusiness = {
   // The server answers the business-local date; the test uses the same one.
   today: businessToday(TZ),
   maximumBookingAdvanceDays: 30,
+  waitlistEnabled: false,
 };
 const services: PublicService[] = [
   {

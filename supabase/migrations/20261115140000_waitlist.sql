@@ -662,3 +662,53 @@ grant execute on function public.waitlist_confirm_request(text) to service_role;
 grant execute on function public.waitlist_match(integer) to service_role;
 grant execute on function public.waitlist_offer(uuid, text) to service_role;
 grant execute on function public.waitlist_claim(uuid, text, uuid, integer, text, inet) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- The public page knows whether the list is open (its button shows only
+-- then). Same answer as before plus one boolean.
+-- ---------------------------------------------------------------------------
+
+drop function public.get_public_business(text);
+
+create function public.get_public_business(p_slug text)
+returns table (
+  slug text,
+  name text,
+  description text,
+  location text,
+  logo_path text,
+  timezone text,
+  cancellation_policy text,
+  currency text,
+  slot_interval_minutes integer,
+  minimum_booking_notice_minutes integer,
+  maximum_booking_advance_days integer,
+  today date,
+  waitlist_enabled boolean
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    b.slug::text,
+    b.name,
+    b.description,
+    b.location,
+    b.logo_path,
+    b.timezone,
+    b.cancellation_policy,
+    st.currency,
+    st.slot_interval_minutes,
+    st.minimum_booking_notice_minutes,
+    st.maximum_booking_advance_days,
+    private.local_date_of(pg_catalog.now(), b.timezone),
+    st.waitlist_enabled
+  from public.businesses b
+  join public.business_settings st on st.business_id = b.id
+  where b.id = private.business_id_by_slug(p_slug);
+$$;
+
+revoke all on function public.get_public_business(text) from public;
+grant execute on function public.get_public_business(text) to anon, authenticated, service_role;
