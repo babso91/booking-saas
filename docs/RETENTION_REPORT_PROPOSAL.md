@@ -1,9 +1,13 @@
 # Fidélisation par cohorte — contrat proposé (R4-01, tranche mesures)
 
-Statut : **proposé par l'UI, non implémenté**. Le tableau existe
-(`src/features/retention/`) et ne tourne que dans `/apercu/fidelisation`,
-contre un serveur en mémoire. Le calcul (faits d'agenda, `asOf`, fuseau
-métier) reste celui de Cloud.
+Statut : **implémenté, à relire par Cloud** (lecture seule).
+`public.crm_retention_report(p_business_id, p_window_days, p_as_of)`
+(migration `20261115090000_retention_report.sql`), SECURITY INVOKER : la RLS
+reste l'autorité, `crm_assert_member` refuse un non-membre, exécutable par
+`authenticated` seulement, STABLE. Action serveur `readRetentionAction`
+(l'établissement vient de la session). Page réelle :
+`/app/loyalty/retention`, liée depuis Fidélité. L'aperçu
+`/apercu/fidelisation` reste sur le serveur en mémoire.
 
 ## Définition (versionnée par le serveur)
 
@@ -43,7 +47,20 @@ lisibles** (`overallRate`) ; sinon « Données insuffisantes ». Une cohorte
 immature montre « N pour l'instant · fenêtre en cours », une trop petite
 « trop peu de clientes ».
 
-## À trancher par Cloud
+## Choix faits (retention-v1), à relire par Cloud
 
-Valeur de `minCohortSize` (10 proposé) et traitement d'une visite
-« terminée » puis corrigée (le fait de retour ne doit pas être dupliqué).
+- Visite = rendez-vous `completed` commencé au plus tard à `asOf` (même
+  sens que le read model CRM). Heure de la visite = son début, en heure
+  métier.
+- Cohortes : le mois courant et les 11 précédents ; un mois sans nouvelle
+  cliente n'apparaît pas.
+- Retour = une visite un jour métier **ultérieur** au premier, au plus
+  premier jour + N. Deux rendez-vous le même jour = une visite.
+- Cohorte entièrement observée quand `asOf` ≥ (1er du mois suivant + N
+  jours), heure métier.
+- `minCohortSize` = 10.
+- Visite « terminée » puis corrigée : le calcul part de l'état courant de
+  l'agenda, rien n'est stocké, donc rien n'est dupliqué.
+- Testé sur base réelle : `tests/integration/retention-report.test.ts`
+  (fenêtres 30/60, minuit à Paris, no-show jamais première visite, autre
+  établissement et anonyme refusés).

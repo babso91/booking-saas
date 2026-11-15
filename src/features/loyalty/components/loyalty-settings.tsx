@@ -90,6 +90,12 @@ export function LoyaltySettings() {
             </Link>
             .
           </p>
+          <Link
+            href="/app/loyalty/retention"
+            className="w-fit text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4"
+          >
+            Combien de nouvelles clientes reviennent ?
+          </Link>
         </header>
 
         {load.status === "loading" ? (
