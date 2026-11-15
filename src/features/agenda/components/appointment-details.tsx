@@ -180,6 +180,11 @@ export function AppointmentDetails({
             · prix convenu à la réservation
           </span>
         </Detail>
+        {appointment.staff ? (
+          <Detail icon={<UserIcon size={17} />} label="Avec">
+            {appointment.staff.displayName}
+          </Detail>
+        ) : null}
         <Detail icon={<UserIcon size={17} />} label="Origine">
           {appointment.source === "public"
             ? "Réservé en ligne"
