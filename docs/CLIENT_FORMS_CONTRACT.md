@@ -102,7 +102,12 @@ toutes les écritures du Hub. Réponses `no-store`.
    besoin pour en ouvrir un).
 6. **Hors de ce lot** : assignation automatique et règle de fréquence (la
    fréquence est enregistrée et validée, pas encore appliquée), e-mail qui
-   prévient la cliente (la demande est visible dans son Hub), registre des
-   consentements marketing, retrait d'un modèle (`retired`). Pas de champ
+   prévient la cliente (la demande est visible dans son Hub), retrait d'un modèle (`retired`). Pas de champ
    santé ni de catégorie particulière.
 7. **Rôles.** `owner` et `admin` seulement, jusqu'au lot « capacités ».
+8. **`assign`, `revoke` et `review` renvoient l'affectation seule,** pas
+   `VisitFormsDto`. C'est la réponse enregistrée pour le rejeu par
+   `requestId` : renvoyer la visite entière servirait, au rejeu, un état
+   ancien. Après une écriture, l'écran relit la visite (`read_visit_forms`).
+   Si cette relecture échoue, rejouer l'écriture avec le même `requestId`
+   est sans effet de bord.
