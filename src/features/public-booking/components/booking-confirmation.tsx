@@ -106,7 +106,7 @@ export function BookingConfirmation({
       >
         <div
           style={cut("bottom")}
-          className="flex flex-col gap-5 rounded-t-[28px] bg-paper-raised px-6 pt-6 pb-7"
+          className="flex flex-col gap-5 rounded-t-3xl bg-paper-raised px-6 pt-6 pb-7"
         >
           <div className="flex items-center justify-between gap-4 text-[12px] font-semibold tracking-[0.08em] text-ink-muted uppercase">
             <span className="min-w-0 truncate">{booking.businessName}</span>
@@ -160,7 +160,7 @@ export function BookingConfirmation({
 
         <div
           style={cut("top")}
-          className="relative rounded-b-[28px] bg-paper-raised"
+          className="relative rounded-b-3xl bg-paper-raised"
         >
           <span
             aria-hidden
