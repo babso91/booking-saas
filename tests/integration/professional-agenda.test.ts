@@ -502,6 +502,8 @@ describe("reading a range", () => {
         options: [],
         service: { id: a.service, name: "Pose complète" },
         client: { id: a.client, displayName: "Julie" },
+        // The person doing it: here the owner's profile (docs/TEAM_CONTRACT.md).
+        staff: { id: expect.any(String), displayName: expect.any(String) },
         internalNotes: "Allergie colle",
         cancellationReason: null,
         source: "manual",

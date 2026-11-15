@@ -174,6 +174,11 @@ const appointments: AgendaAppointmentDto[] = entries.map(
     options: [],
     service: { id: `service-${service}`, name: service },
     client: { id: `client-${index + 1}`, displayName: client },
+    // Two people in the team: one visit in three is Inès's.
+    staff:
+      index % 3 === 2
+        ? { id: "staff-ines", displayName: "Inès" }
+        : { id: "staff-maelys", displayName: "Maëlys" },
     internalNotes: null,
     cancellationReason: null,
     source: "manual",

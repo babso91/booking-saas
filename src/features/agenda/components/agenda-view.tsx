@@ -55,6 +55,7 @@ import {
   restrictToDays,
 } from "../client/layout";
 import { useCanonicalToday } from "../client/use-canonical-today";
+import { agendaOf, peopleOf, shownPerson } from "../client/people";
 import { zoneOf } from "../client/zone";
 import { AgendaError, TextAction } from "./agenda-error";
 import { AppointmentDetails } from "./appointment-details";
@@ -137,6 +138,8 @@ export function AgendaView({
 
   const [anchor, setAnchor] = useState(initialDate ?? initialToday);
   const [includeCancelled, setIncludeCancelled] = useState(false);
+  // Whose agenda: everyone's (null), or one person's of her team.
+  const [chosenPerson, setChosenPerson] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [failed, setFailed] = useState<Failed | null>(null);
@@ -206,8 +209,12 @@ export function AgendaView({
   // (AppShell starts it again from nothing).
   const refused = error !== null && IDENTITY_LOST.has(error.code);
   // Data of the visible range only (a previous range is never shown on new dates).
-  const data =
+  const rangeData =
     !refused && loaded && loaded.key.startsWith(rangeKey) ? loaded.data : null;
+  // With a team, one person's agenda can be shown (appointments only).
+  const people = rangeData ? peopleOf(rangeData.appointments) : [];
+  const person = shownPerson(people, chosenPerson);
+  const data = rangeData ? agendaOf(rangeData, person) : null;
   const shown = refused ? null : panel;
   const loading = loaded?.key !== key && !error;
   const empty =
@@ -407,6 +414,34 @@ export function AgendaView({
 
   const banners = (
     <>
+      {people.length >= 2 ? (
+        <div className="px-4 pt-3 sm:px-6 lg:px-8">
+          <div
+            role="group"
+            aria-label="Agenda de"
+            className="flex w-fit max-w-full flex-wrap items-center gap-1 rounded-full bg-sand p-1"
+          >
+            {[{ id: null, displayName: "Toute l’équipe" }, ...people].map(
+              (item) => (
+                <button
+                  key={item.id ?? "all"}
+                  type="button"
+                  aria-pressed={person === item.id}
+                  onClick={() => setChosenPerson(item.id)}
+                  className={cn(
+                    "h-8 cursor-pointer rounded-full px-3.5 text-[13px] font-medium transition-colors",
+                    person === item.id
+                      ? "bg-paper-raised text-ink shadow-sm"
+                      : "text-ink-soft hover:text-ink",
+                  )}
+                >
+                  {item.displayName}
+                </button>
+              ),
+            )}
+          </div>
+        </div>
+      ) : null}
       {notice ? (
         <div className="p-4 pb-0 sm:px-6 lg:px-8">
           <Notice

@@ -102,6 +102,7 @@ export function appointment(
     options: [],
     service: { id: SERVICE_A, name: "Rehaussement de cils" },
     client: { id: CLIENT_A, displayName: "Camille Roux" },
+    staff: null,
     internalNotes: null,
     cancellationReason: null,
     source: "manual",

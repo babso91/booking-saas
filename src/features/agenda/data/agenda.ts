@@ -70,6 +70,12 @@ export type AgendaAppointmentDto = {
   options: OptionSnapshot[];
   service: { id: string; name: string };
   client: { id: string; displayName: string };
+  /**
+   * The person doing it (docs/TEAM_CONTRACT.md), or null when none is set
+   * (appointments made before the team existed are given to the owner's
+   * profile; a new one may have none until assignment is served).
+   */
+  staff: { id: string; displayName: string } | null;
   internalNotes: string | null;
   cancellationReason: string | null;
   /** `public`: booked on the public page; `manual`: added by a professional. */
@@ -136,7 +142,8 @@ export const APPOINTMENT_COLUMNS = `
   price_cents_snapshot, currency, options_snapshot,
   service_id, service_name_snapshot, client_id,
   internal_notes, cancellation_reason, created_by, created_at, updated_at,
-  clients!inner(first_name, last_name)
+  clients!inner(first_name, last_name),
+  staff_id, staff:staff_members(display_name)
 `;
 
 type AppointmentRow = Pick<
@@ -159,7 +166,11 @@ type AppointmentRow = Pick<
   | "created_by"
   | "created_at"
   | "updated_at"
-> & { clients: Pick<Tables<"clients">, "first_name" | "last_name"> };
+  | "staff_id"
+> & {
+  clients: Pick<Tables<"clients">, "first_name" | "last_name">;
+  staff: { display_name: string } | null;
+};
 
 const iso = (value: string | Date) => new Date(value).toISOString();
 
@@ -191,6 +202,10 @@ export function toAppointmentDto(
     options: row.options_snapshot as OptionSnapshot[],
     service: { id: row.service_id, name: row.service_name_snapshot },
     client: { id: row.client_id, displayName: clientDisplayName(row.clients) },
+    staff:
+      row.staff_id && row.staff
+        ? { id: row.staff_id, displayName: row.staff.display_name }
+        : null,
     internalNotes: row.internal_notes,
     cancellationReason: row.cancellation_reason,
     source: row.created_by ? "manual" : "public",
