@@ -1124,6 +1124,9 @@ isOneToOne: false
 "crm_list_clients":
 { Args: { "p_after_at"?: string,"p_after_count"?: number,"p_after_id"?: string,"p_after_text"?: string,"p_as_of"?: string,"p_business_id": string,"p_filter"?: string,"p_limit"?: number,"p_query"?: string,"p_sort"?: string }; Returns: Json
                            },
+"crm_retention_report":
+{ Args: { "p_as_of"?: string,"p_business_id": string,"p_window_days": number }; Returns: Json
+                           },
 "crm_update_client":
 { Args: { "p_business_id": string,"p_client_id": string,"p_email"?: string,"p_expected_version": number,"p_first_name": string,"p_last_name"?: string,"p_phone"?: string }; Returns: {
               "client_id": string,"queued_emails_to_other_address": number,"status": string,"upcoming_with_other_email": number
