@@ -898,6 +898,9 @@ isOneToOne: false
 "agenda_update_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_starts_at"?: string }; Returns: string
                            },
+"assign_visit_form":
+{ Args: { "p_appointment_id": string,"p_business_id": string,"p_request_id": string,"p_template_version_id": string }; Returns: Json
+                           },
 "begin_site_photo_conversion":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: string
                            },
@@ -1084,6 +1087,12 @@ isOneToOne: false
 "client_hub_end_session":
 { Args: { "p_all"?: boolean,"p_session_token": string }; Returns: undefined
                            },
+"client_hub_form":
+{ Args: { "p_assignment_id": string,"p_business_id": string,"p_session_token": string }; Returns: Json
+                           },
+"client_hub_forms":
+{ Args: { "p_business_id": string,"p_session_token": string }; Returns: Json
+                           },
 "client_hub_loyalty":
 { Args: { "p_business_id": string,"p_session_token": string }; Returns: Json
                            },
@@ -1103,6 +1112,9 @@ isOneToOne: false
               "email": string,"granted": boolean,"granted_at": string
             }[]
                            },
+"client_hub_submit_form":
+{ Args: { "p_answers": Json,"p_assignment_id": string,"p_business_id": string,"p_request_id": string,"p_session_token": string,"p_template_version_id": string }; Returns: Json
+                           },
 "client_hub_verify_code":
 { Args: { "p_challenge_id": string,"p_client_ip": unknown,"p_code": string,"p_email": string }; Returns: {
               "account_id": string,"email": string,"expires_at": string,"session_token": string,"status": string
@@ -1121,6 +1133,9 @@ isOneToOne: false
                            },
 "create_beta_invitation":
 { Args: { "p_email": string,"p_expires_at": string,"p_note"?: string,"p_token_hash": string }; Returns: string
+                           },
+"create_form_template":
+{ Args: { "p_business_id": string,"p_draft": Json,"p_request_id": string }; Returns: Json
                            },
 "create_public_booking":
 { Args: { "p_client_ip": unknown,"p_email": string,"p_expected_duration_minutes"?: number,"p_expected_price_cents"?: number,"p_first_name": string,"p_last_name"?: string,"p_option_choice_ids"?: (string)[],"p_phone"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
@@ -1267,6 +1282,9 @@ isOneToOne: false
 "is_business_member":
 { Args: { "target_business_id": string }; Returns: boolean
                            },
+"list_form_templates":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
 "loyalty_adjust_points":
 { Args: { "p_business_id": string,"p_client_id": string,"p_points_delta": number,"p_reason": string,"p_request_id": string }; Returns: string
                            },
@@ -1319,6 +1337,9 @@ isOneToOne: false
 "public_site_photo":
 { Args: { "p_asset_id": string,"p_slug": string }; Returns: string
                            },
+"publish_form_template":
+{ Args: { "p_business_id": string,"p_expected_draft_version": number,"p_request_id": string,"p_template_id": string }; Returns: Json
+                           },
 "publish_site":
 { Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number }; Returns: {
               "created": boolean,"number": number,"published_at": string,"version_id": string
@@ -1329,10 +1350,16 @@ isOneToOne: false
               "currency": string,"duration_minutes": number,"options": Json,"price_cents": number,"service_name": string
             }[]
                            },
+"read_form_template":
+{ Args: { "p_business_id": string,"p_template_id": string }; Returns: Json
+                           },
 "read_member_preferences":
 { Args: { "p_business_id": string }; Returns: {
               "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"style": string,"version": number
             }[]
+                           },
+"read_visit_forms":
+{ Args: { "p_appointment_id": string,"p_business_id": string }; Returns: Json
                            },
 "record_site_photo_orphan_deletions":
 { Args: { "p_deleted": (string)[],"p_failed": (string)[],"p_run": string }; Returns: undefined
@@ -1365,6 +1392,9 @@ isOneToOne: false
 "restore_site_version":
 { Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number,"p_version_id": string }; Returns: number
                            },
+"review_visit_form":
+{ Args: { "p_assignment_id": string,"p_business_id": string,"p_expected_version": number,"p_request_id": string }; Returns: Json
+                           },
 "revoke_beta_invitation":
 { Args: { "p_invitation_id": string }; Returns: undefined
                            },
@@ -1376,6 +1406,12 @@ isOneToOne: false
                            },
 "revoke_team_access":
 { Args: { "p_business_id": string,"p_expected_revision": number,"p_operation_id": string,"p_staff_id": string }; Returns: Json
+                           },
+"revoke_visit_form":
+{ Args: { "p_assignment_id": string,"p_business_id": string,"p_expected_version": number,"p_request_id": string }; Returns: Json
+                           },
+"save_form_draft":
+{ Args: { "p_business_id": string,"p_draft": Json,"p_expected_draft_version": number,"p_request_id": string,"p_template_id": string }; Returns: Json
                            },
 "save_member_preferences":
 { Args: { "p_business_id": string,"p_changes": Json,"p_expected_incarnation": string,"p_expected_version": number,"p_membership_id": string }; Returns: {
