@@ -75,7 +75,7 @@ export function PublicBooking({
     >
       {embedded ? null : (
         <header className="flex flex-col gap-2">
-          <p className="text-[13px] font-medium tracking-wide text-ink-muted uppercase">
+          <p className="text-[14px] font-medium text-ink-muted">
             Réservation en ligne
           </p>
           <h1 className="font-display text-[36px] leading-none wrap-anywhere text-ink sm:text-[44px]">

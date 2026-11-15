@@ -11,7 +11,7 @@ describe("OnboardingSuccess (/app/welcome)", () => {
     render(<OnboardingSuccess businessName="Studio Mila" progress={fresh} />);
 
     expect(
-      screen.getByRole("heading", { name: "Ton espace est prêt." }),
+      screen.getByRole("heading", { name: "Ton espace est prêt" }),
     ).toBeTruthy();
     expect(screen.getByText("Studio Mila")).toBeTruthy();
     const steps = within(

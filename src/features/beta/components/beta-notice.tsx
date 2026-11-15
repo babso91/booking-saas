@@ -16,11 +16,7 @@ export function BetaNotice({ reason }: { reason: "signup" | "onboarding" }) {
       <div className="flex flex-col gap-9">
         <AuthHeading
           eyebrow="Bêta privée"
-          title={
-            <>
-              Sur <em className="text-accent">invitation</em>, pour l’instant.
-            </>
-          }
+          title="Sur invitation pour l’instant"
         >
           Pour créer ton espace, ouvre le lien personnel reçu dans ton
           invitation : il t’amène ici, prête à commencer.
@@ -42,11 +38,7 @@ export function BetaNotice({ reason }: { reason: "signup" | "onboarding" }) {
     <div className="flex flex-col gap-9">
       <AuthHeading
         eyebrow="Bêta privée"
-        title={
-          <>
-            Ton compte attend son <em className="text-accent">invitation</em>.
-          </>
-        }
+        title="Ton compte attend son invitation"
       >
         La bêta est ouverte sur invitation, et ce compte n’en a pas encore : la
         création de ton espace serait refusée. Si tu as reçu un lien

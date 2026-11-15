@@ -33,7 +33,7 @@ export function DetailsStep({
     <div className="flex flex-col gap-8">
       <StepHeader
         eyebrow="Quelques détails"
-        title="La touche finale."
+        title="Les derniers détails"
         headingRef={headingRef}
         aside={
           <span className="rounded-full bg-sand px-2.5 py-1 text-[12px] font-medium text-ink-soft">

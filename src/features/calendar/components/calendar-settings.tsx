@@ -629,9 +629,7 @@ function SectionHeading({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="text-[12px] font-semibold tracking-[0.08em] text-ink-muted uppercase">
-        {eyebrow}
-      </p>
+      <p className="text-[13px] font-medium text-ink-muted">{eyebrow}</p>
       <h2
         id={id}
         className="font-display text-[24px] leading-tight text-ink sm:text-[26px]"

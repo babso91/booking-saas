@@ -677,8 +677,8 @@ export function AgendaView({
             <div className="pointer-events-auto flex max-w-sm animate-rise flex-col items-center gap-3 rounded-3xl border border-line bg-paper-raised/95 px-6 py-7 text-center shadow-[0_24px_60px_-34px_rgb(var(--shadow-rgb)/0.45)]">
               <p className="font-display text-[28px] leading-tight text-ink">
                 {view === "week"
-                  ? "Ta semaine est encore libre."
-                  : "Ta journée est encore libre."}
+                  ? "Ta semaine est encore libre"
+                  : "Ta journée est encore libre"}
               </p>
               <p className="text-[14.5px] text-ink-soft">
                 Ajoute tes rendez-vous ici. Ceux que tes clientes réservent en

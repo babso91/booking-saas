@@ -73,9 +73,9 @@ export function LoyaltySettings() {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 pt-5 pb-16 sm:px-6 lg:px-8 lg:pt-8">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-4 pt-5 pb-16 sm:px-6 lg:px-8 lg:pt-8">
         <header className="flex flex-col gap-1.5">
-          <h1 className="font-display text-[34px] leading-none text-ink sm:text-[42px]">
+          <h1 className="font-display text-[34px] leading-none text-ink sm:text-[40px]">
             Fidélité
           </h1>
           <p className="max-w-2xl text-[14.5px] text-ink-soft">
@@ -113,8 +113,8 @@ export function LoyaltySettings() {
               : "La fidélité n’a pas pu être chargée."}
           </CrmError>
         ) : (
-          <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <div className="flex min-w-0 flex-col gap-5">
+          <div className="grid items-start gap-x-14 gap-y-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="flex min-w-0 flex-col gap-12">
               <ProgramSection
                 key={run}
                 program={load.program}
@@ -140,7 +140,7 @@ export function LoyaltySettings() {
                 }
               />
             </div>
-            <div className="flex min-w-0 flex-col gap-5">
+            <div className="flex min-w-0 flex-col gap-12">
               <RewardsSection
                 rewards={load.rewards}
                 services={load.services}
@@ -167,12 +167,10 @@ function Rules() {
   return (
     <section
       aria-label="Bon à savoir"
-      className="flex flex-col gap-2 rounded-3xl border border-line bg-sand/40 px-5 py-5 text-[14px] text-ink-soft sm:px-6"
+      className="flex flex-col gap-3 border-t border-line pt-6 text-[14px] text-ink-soft"
     >
-      <h2 className="font-display text-[20px] leading-tight text-ink">
-        Bon à savoir
-      </h2>
-      <ul className="flex list-disc flex-col gap-1.5 pl-5">
+      <h2 className="text-[15px] font-semibold text-ink">Bon à savoir</h2>
+      <ul className="flex max-w-prose list-disc flex-col gap-2 pl-5 marker:text-ink-muted">
         <li>
           Les points arrivent quand tu marques un rendez-vous « terminé » dans
           l’agenda. Une réservation seule ne rapporte rien.

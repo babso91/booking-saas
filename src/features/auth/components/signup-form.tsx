@@ -142,11 +142,7 @@ export function SignupForm({
     <div className="flex flex-col gap-9">
       <AuthHeading
         eyebrow="Créer mon espace"
-        title={
-          <>
-            Ton activité, <em className="text-accent">joliment</em> organisée.
-          </>
-        }
+        title="Ton agenda, tes clientes, ton lien de réservation"
       >
         Deux minutes pour créer ton compte, puis on prépare ta page de
         réservation ensemble.

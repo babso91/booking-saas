@@ -85,7 +85,7 @@ async function signedInBrowser({ invited = true } = {}) {
 const PRIVATE_BODIES = [
   "Chargement de l’agenda", // /app
   "Chargement de ton espace", // /onboarding
-  "Ton espace est prêt.", // /app/welcome
+  "Ton espace est prêt", // /app/welcome
 ];
 
 function expectRedirect(
@@ -104,7 +104,7 @@ describe("UI routes against the real backend", () => {
 
     const login = await browser.get("/login");
     expect(login.status).toBe(200);
-    expect(login.html).toContain("Bon retour.");
+    expect(login.html).toContain("Content de te revoir");
 
     // Without an invitation, the private beta is said, with no form.
     const signup = await browser.get("/signup");
@@ -170,7 +170,7 @@ describe("UI routes against the real backend", () => {
     expect(app.status).toBe(200);
     expect(app.html).toContain("Chargement de l’agenda");
     expect((await browser.get("/app/welcome")).html).toContain(
-      "Ton espace est prêt.",
+      "Ton espace est prêt",
     );
     expectRedirect(await browser.get("/onboarding"), "/app");
     expectRedirect(await browser.get("/login"), "/app");

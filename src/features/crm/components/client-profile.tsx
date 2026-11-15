@@ -658,9 +658,7 @@ function Fact({
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-1 border-r border-line px-5 py-4 last:border-r-0">
-      <dt className="text-[11.5px] font-semibold tracking-[0.08em] text-ink-muted uppercase">
-        {label}
-      </dt>
+      <dt className="text-[13px] text-ink-muted">{label}</dt>
       <dd
         className={cn(
           "font-display leading-tight wrap-anywhere text-ink tabular-nums",

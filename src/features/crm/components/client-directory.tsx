@@ -233,11 +233,25 @@ export function ClientDirectory({
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 pt-6 pb-16 sm:px-6 lg:px-8 lg:pt-10">
         <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
           <div className="flex flex-col gap-1.5">
-            <h1 className="font-display text-[34px] leading-none text-ink sm:text-[40px]">
-              Clientes
-            </h1>
+            <div className="flex items-baseline gap-3">
+              <h1 className="font-display text-[34px] leading-none text-ink sm:text-[40px]">
+                Clientes
+              </h1>
+              {current && !narrowed ? (
+                // The count as the screen's datum; said once, by the line below.
+                <span
+                  aria-hidden="true"
+                  className="font-display text-[34px] leading-none text-ink-muted tabular-nums sm:text-[40px]"
+                >
+                  {current.totalCount.toLocaleString("fr-FR")}
+                </span>
+              ) : null}
+            </div>
             <p
-              className="text-[14.5px] text-ink-muted tabular-nums"
+              className={cn(
+                "text-[14.5px] text-ink-muted tabular-nums",
+                current && !narrowed && "sr-only",
+              )}
               aria-live="polite"
             >
               {current
@@ -305,7 +319,7 @@ export function ClientDirectory({
 
         <fieldset className="-mx-4 min-w-0 px-4 sm:mx-0 sm:px-0">
           <legend className="sr-only">Afficher</legend>
-          <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap">
+          <div className="flex gap-6 overflow-x-auto sm:flex-wrap sm:gap-x-7">
             {CLIENT_FILTERS.map((filter) => (
               <FilterChip
                 key={filter}
@@ -357,13 +371,14 @@ export function ClientDirectory({
             aria-label="Liste des clientes"
             aria-busy={refreshing}
             className={cn(
-              "overflow-hidden rounded-3xl border border-line bg-paper-raised transition-opacity",
+              // A list on the page, not a boxed table (art direction).
+              "border-y border-line transition-opacity md:-mx-5",
               refreshing && "opacity-60",
             )}
           >
             <div
               aria-hidden="true"
-              className="hidden grid-cols-[minmax(0,2.4fr)_0.9fr_1.1fr_1.5fr_1.25rem] gap-4 border-b border-line px-5 py-3 text-[11.5px] font-semibold tracking-[0.08em] text-ink-muted uppercase md:grid"
+              className="hidden grid-cols-[minmax(0,2.4fr)_0.9fr_1.1fr_1.5fr_1.25rem] gap-4 border-b border-line px-5 py-3 text-[12.5px] font-medium text-ink-muted md:grid"
             >
               <span>Cliente</span>
               <span>Visites</span>
@@ -430,11 +445,12 @@ function FilterChip({
   return (
     <label
       className={cn(
-        "relative flex h-10 shrink-0 cursor-pointer items-center rounded-full border px-4 text-[14px] whitespace-nowrap transition-colors duration-200 ease-soft select-none",
+        // A filter is a word underlined, not a pill (art direction).
+        "relative flex h-10 shrink-0 cursor-pointer items-center border-b-2 text-[14.5px] whitespace-nowrap transition-colors duration-150 ease-soft select-none",
         "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent",
         checked
-          ? "border-ink bg-ink text-paper-raised"
-          : "border-line bg-paper-raised text-ink-soft hover:border-line-strong hover:text-ink",
+          ? "border-ink font-semibold text-ink"
+          : "border-transparent text-ink-muted hover:text-ink",
       )}
     >
       <input
@@ -536,10 +552,7 @@ function ClientRow({
 
 function ListSkeleton() {
   return (
-    <div
-      className="overflow-hidden rounded-3xl border border-line bg-paper-raised"
-      aria-busy="true"
-    >
+    <div className="border-y border-line md:-mx-5" aria-busy="true">
       <span className="sr-only" role="status">
         Chargement des clientes…
       </span>
@@ -567,7 +580,7 @@ function EmptyResult({
   onClear: () => void;
 }) {
   return (
-    <div className="flex flex-col items-start gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-6">
+    <div className="flex flex-col items-start gap-3 border-t border-line py-8">
       <p className="max-w-full font-display text-[24px] leading-tight wrap-anywhere text-ink">
         {query
           ? `Aucune cliente ne correspond à « ${query} »`
@@ -586,7 +599,7 @@ function EmptyResult({
 
 function NoClientsYet({ onCreate }: { onCreate: () => void }) {
   return (
-    <div className="flex flex-col items-start gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-7">
+    <div className="flex flex-col items-start gap-3 border-t border-line py-8">
       <p className="font-display text-[26px] leading-tight text-ink">
         Tes clientes apparaîtront ici
       </p>

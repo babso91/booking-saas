@@ -62,16 +62,16 @@ async function fillIdentity(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("Nom"), "Laurent");
   await user.type(screen.getByLabelText("Nom de ton activité"), "Studio Mila");
   await user.click(screen.getByRole("button", { name: /continuer/i }));
-  await screen.findByRole("heading", { name: "Ton adresse, rien qu’à toi." });
+  await screen.findByRole("heading", { name: "Ton lien à partager" });
 }
 
 /** From the slug step (slug available) to the final step. */
 async function toDetails(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByText("Disponible pour l’instant");
   await user.click(screen.getByRole("button", { name: /continuer/i }));
-  await screen.findByRole("heading", { name: "Tes règles, en douceur." });
+  await screen.findByRole("heading", { name: "Tes règles de réservation" });
   await user.click(screen.getByRole("button", { name: /continuer/i }));
-  await screen.findByRole("heading", { name: "La touche finale." });
+  await screen.findByRole("heading", { name: "Les derniers détails" });
 }
 
 /** Success hands over to /app/welcome, which reads the business server-side. */
@@ -208,7 +208,7 @@ describe("OnboardingWizard (real contract shapes)", () => {
     // Back on the slug step, with the product's copy and verified variants.
     expect(
       await screen.findByRole("heading", {
-        name: "Ton adresse, rien qu’à toi.",
+        name: "Ton lien à partager",
       }),
     ).toBeTruthy();
     expect(
@@ -263,7 +263,9 @@ describe("OnboardingWizard (real contract shapes)", () => {
     await user.click(finalButton());
 
     expect(
-      await screen.findByRole("heading", { name: "Faisons connaissance." }),
+      await screen.findByRole("heading", {
+        name: "Parle-nous de ton activité",
+      }),
     ).toBeTruthy();
     expect(
       screen.getByText(
@@ -452,7 +454,9 @@ describe("OnboardingWizard (real contract shapes)", () => {
       rerender(<OnboardingFlow owner={OTHER} />);
 
       expect(
-        await screen.findByRole("heading", { name: "Faisons connaissance." }),
+        await screen.findByRole("heading", {
+          name: "Parle-nous de ton activité",
+        }),
       ).toBeTruthy();
       expect((screen.getByLabelText("Prénom") as HTMLInputElement).value).toBe(
         "",
@@ -480,7 +484,7 @@ describe("OnboardingWizard (real contract shapes)", () => {
       rerender(<OnboardingFlow owner={OTHER} />);
 
       expect(
-        await screen.findByRole("heading", { name: "La touche finale." }),
+        await screen.findByRole("heading", { name: "Les derniers détails" }),
       ).toBeTruthy();
       expect(
         (screen.getByLabelText(/Téléphone/) as HTMLInputElement).value,

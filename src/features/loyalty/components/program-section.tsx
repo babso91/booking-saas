@@ -196,7 +196,7 @@ export function ProgramSection({
           </Badge>
         }
       >
-        <p className="text-[14.5px] text-ink">{earningSummary(program)}</p>
+        <EarningHero program={program} />
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Button
             size="md"
@@ -430,5 +430,39 @@ function ConflictNotice({
       {earningSummary(current).toLowerCase()}. En gardant tes réglages,
       vérifie-les puis enregistre à nouveau.
     </Notice>
+  );
+}
+
+/**
+ * The program's rule as the screen's hero datum: the figure large and in
+ * tabular figures, its unit beside it. Read as one sentence by assistive
+ * technology (the visual split is hidden from it).
+ */
+function EarningHero({ program }: { program: LoyaltyProgramDto }) {
+  const summary = earningSummary(program);
+  const match = /^([\d\s\u202f,]+)\s(.*)$/.exec(summary);
+  return (
+    <p className="flex flex-col gap-1">
+      <span className="sr-only">{summary}</span>
+      {match ? (
+        <span aria-hidden className="flex items-baseline gap-3">
+          <span
+            className={cn(
+              "text-[56px] leading-[0.9] font-bold tracking-[-0.03em] tabular-nums",
+              program.active ? "text-ink" : "text-ink-muted",
+            )}
+          >
+            {match[1]}
+          </span>
+          <span className="max-w-[16rem] text-[15px] leading-snug text-ink-soft">
+            {match[2]}
+          </span>
+        </span>
+      ) : (
+        <span aria-hidden className="text-[15px] text-ink">
+          {summary}
+        </span>
+      )}
+    </p>
   );
 }
