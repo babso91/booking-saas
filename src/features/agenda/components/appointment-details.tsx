@@ -7,12 +7,6 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { TextAreaField } from "@/components/ui/field";
 import {
-  CalendarIcon,
-  ClockIcon,
-  NoteIcon,
-  UserIcon,
-} from "@/components/ui/icons";
-import {
   cancelAppointmentAction,
   setAppointmentStatusAction,
 } from "@/features/agenda/actions/agenda";
@@ -132,7 +126,7 @@ export function AppointmentDetails({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <StatusBadge status={status} className="self-start" />
+        <StatusBadge status={status} plain className="self-start" />
         <p className="font-display text-[30px] leading-tight text-ink">
           {appointment.client.displayName}
         </p>
@@ -162,38 +156,35 @@ export function AppointmentDetails({
         />
       ) : null}
 
-      <div className="grid grid-cols-1 gap-3 rounded-2xl border border-line bg-paper p-4 text-[15px]">
-        <Detail icon={<CalendarIcon size={17} />} label="Date">
+      <div className="flex flex-col divide-y divide-line border-y border-line text-[15px]">
+        <Detail label="Date">
           <span className="first-letter:uppercase">{formatFullDate(date)}</span>
         </Detail>
-        <Detail icon={<ClockIcon size={17} />} label="Heure">
+        <Detail label="Heure">
           {start} – {timeOf(appointment.localEndsAt)} ·{" "}
           {formatDuration(appointment.durationMinutes)}
         </Detail>
-        <Detail
-          icon={<span className="text-[15px] font-semibold">€</span>}
-          label="Prix"
-        >
+        <Detail label="Prix">
           {formatPrice(appointment.priceCents, appointment.currency)}
           <span className="text-ink-muted">
             {" "}
             · prix convenu à la réservation
           </span>
         </Detail>
-        <Detail icon={<UserIcon size={17} />} label="Origine">
+        <Detail label="Origine">
           {appointment.source === "public"
             ? "Réservé en ligne"
             : "Ajouté par toi"}
         </Detail>
         {appointment.internalNotes ? (
-          <Detail icon={<NoteIcon size={17} />} label="Note interne">
+          <Detail label="Note interne">
             <span className="whitespace-pre-line">
               {appointment.internalNotes}
             </span>
           </Detail>
         ) : null}
         {appointment.cancellationReason ? (
-          <Detail icon={<NoteIcon size={17} />} label="Motif d’annulation">
+          <Detail label="Motif d’annulation">
             {appointment.cancellationReason}
           </Detail>
         ) : null}
@@ -278,27 +269,14 @@ export function AppointmentDetails({
   );
 }
 
-function Detail({
-  icon,
-  label,
-  children,
-}: {
-  icon: ReactNode;
-  label: string;
-  children: ReactNode;
-}) {
+function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-start gap-3">
-      <span
-        className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-sand text-ink-soft"
-        aria-hidden="true"
-      >
-        {icon}
-      </span>
-      <dl className="flex min-w-0 flex-col">
-        <dt className="text-[12.5px] text-ink-muted">{label}</dt>
-        <dd className="text-ink">{children}</dd>
-      </dl>
-    </div>
+    // A row of facts on the page: label and value, no boxed icon tiles.
+    <dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-baseline gap-3 py-3">
+      <dt className="flex items-center gap-1.5 text-[13px] text-ink-muted">
+        {label}
+      </dt>
+      <dd className="text-ink">{children}</dd>
+    </dl>
   );
 }

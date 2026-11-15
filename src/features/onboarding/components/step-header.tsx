@@ -16,15 +16,13 @@ export function StepHeader({
   return (
     <header className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2.5">
-        <p className="text-[12.5px] font-semibold tracking-[0.16em] text-accent uppercase">
-          {eyebrow}
-        </p>
+        <p className="text-[14px] font-medium text-ink-muted">{eyebrow}</p>
         {aside}
       </div>
       <h1
         ref={headingRef}
         tabIndex={-1}
-        className="font-display text-[38px] leading-[1.04] tracking-[-0.015em] text-balance text-ink outline-none sm:text-[46px]"
+        className="font-display text-[38px] leading-[1.04] text-balance text-ink outline-none sm:text-[46px]"
       >
         {title}
       </h1>

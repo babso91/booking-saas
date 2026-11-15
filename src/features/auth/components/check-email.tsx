@@ -55,15 +55,15 @@ export function CheckEmail({
       <Envelope />
 
       <div className="flex animate-rise flex-col gap-3 [animation-delay:80ms]">
-        <p className="text-[12.5px] font-semibold tracking-[0.16em] text-accent uppercase">
+        <p className="text-[14px] font-medium text-ink-muted">
           Presque terminé
         </p>
         <h1
           ref={headingRef}
           tabIndex={-1}
-          className="font-display text-[42px] leading-[1.02] tracking-[-0.015em] text-ink outline-none sm:text-[48px]"
+          className="font-display text-[42px] leading-[1.02] text-ink outline-none sm:text-[48px]"
         >
-          Vérifie ta boîte mail.
+          Vérifie ta boîte mail
         </h1>
         <p className="text-[16px] leading-relaxed text-ink-soft">
           Un lien d’activation vient de partir vers :

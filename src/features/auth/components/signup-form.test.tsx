@@ -64,7 +64,7 @@ describe("SignupForm", () => {
     await submit();
 
     expect(
-      await screen.findByRole("heading", { name: "Vérifie ta boîte mail." }),
+      await screen.findByRole("heading", { name: "Vérifie ta boîte mail" }),
     ).toBeTruthy();
     expect(screen.getByText("mila@studio.fr")).toBeTruthy();
     expect(router.replace).not.toHaveBeenCalled();

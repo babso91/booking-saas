@@ -55,7 +55,7 @@ export function ContactStep({
           Vos coordonnées
         </StepHeading>
       </div>
-      <div className="flex flex-col gap-1 rounded-2xl border border-line bg-paper-raised px-4 py-3">
+      <div className="flex flex-col gap-1 border-b border-line pb-4">
         <p className="text-[15px] font-semibold wrap-anywhere text-ink">
           {service.name}
         </p>

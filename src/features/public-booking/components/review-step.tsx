@@ -60,21 +60,23 @@ export function ReviewStep({
         </Notice>
       ) : null}
 
+      {/* The ticket to come: the moment first, large (art direction). */}
+      <div className="flex flex-col">
+        <span className="text-[16px] font-medium text-ink-soft first-letter:uppercase">
+          {dayLabel(wallDate(slot.localStartsAt), true)}
+        </span>
+        <span className="text-[56px] leading-[0.95] font-bold tracking-[-0.03em] text-ink tabular-nums">
+          {wallTime(slot.localStartsAt).replace(":", "h")}
+        </span>
+        <span className="mt-1 text-[14px] text-ink-muted">
+          Heure de {zoneCity(business.timezone)}
+        </span>
+      </div>
+
       <Facts
         rows={[
-          ["Établissement", business.name],
           ["Prestation", quote.serviceName],
           ...answerRows(quote.options),
-          [
-            "Date",
-            <span key="date" className="first-letter:uppercase">
-              {dayLabel(wallDate(slot.localStartsAt), true)}
-            </span>,
-          ],
-          [
-            "Heure",
-            `${wallTime(slot.localStartsAt)} (heure de ${zoneCity(business.timezone)})`,
-          ],
           // The server's quote: what is booked, and sent as expected.
           ["Durée", durationLabel(quote.durationMinutes)],
           ["Prix", formatPrice(quote.priceCents, quote.currency)],

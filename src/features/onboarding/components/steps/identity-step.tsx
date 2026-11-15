@@ -19,7 +19,7 @@ export function IdentityStep({
     <div className="flex flex-col gap-8">
       <StepHeader
         eyebrow="Ton activité"
-        title="Faisons connaissance."
+        title="Parle-nous de ton activité"
         headingRef={headingRef}
       >
         Quelques mots pour poser les bases de ton espace.

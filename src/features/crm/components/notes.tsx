@@ -235,7 +235,7 @@ export function DossierNotes({
   return (
     <section
       aria-labelledby={headingId}
-      className="flex flex-col gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-5"
+      className="flex flex-col gap-3 border-t border-line pt-5"
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <h2

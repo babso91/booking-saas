@@ -89,15 +89,15 @@ export function OnboardingSuccess({
         </svg>
       </div>
 
-      <p className="mt-8 animate-rise text-[12.5px] font-semibold tracking-[0.16em] text-accent uppercase [animation-delay:300ms]">
+      <p className="mt-8 animate-rise text-[14px] font-medium text-ink-muted [animation-delay:300ms]">
         {businessName}
       </p>
       <h1
         ref={headingRef}
         tabIndex={-1}
-        className="mt-3 animate-rise font-display text-[44px] leading-[1.02] tracking-[-0.015em] text-ink outline-none [animation-delay:360ms] sm:text-[54px]"
+        className="mt-3 animate-rise font-display text-[44px] leading-[1.02] text-ink outline-none [animation-delay:360ms] sm:text-[54px]"
       >
-        Ton espace est prêt.
+        Ton espace est prêt
       </h1>
       <p className="mt-4 max-w-[38ch] animate-rise text-[16px] leading-relaxed text-ink-soft [animation-delay:420ms]">
         Ajoute tes prestations et tes horaires : tes clientes pourront réserver

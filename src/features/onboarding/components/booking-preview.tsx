@@ -126,7 +126,7 @@ export function BookingPreview({
         </div>
 
         <div className="mx-4 mt-4 flex flex-col gap-2">
-          <p className="px-1 text-[11px] font-semibold tracking-[0.14em] text-ink-muted uppercase">
+          <p className="px-1 text-[13px] font-medium text-ink-muted">
             Prestations
           </p>
           {[68, 52, 60].map((width, index) => (

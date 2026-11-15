@@ -226,9 +226,7 @@ describe("loading", () => {
     actions.getAgendaAction.mockResolvedValue(ok(agenda(TODAY, TODAY)));
     renderAgenda();
 
-    expect(
-      await screen.findByText("Ta journée est encore libre."),
-    ).toBeTruthy();
+    expect(await screen.findByText("Ta journée est encore libre")).toBeTruthy();
     expect(
       screen.getByText(/Ceux que tes clientes réservent en ligne y arrivent/),
     ).toBeTruthy();
@@ -299,9 +297,7 @@ describe("rendering", () => {
 
     expect(await screen.findByText("Connexion interrompue")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Réessayer" }));
-    expect(
-      await screen.findByText("Ta journée est encore libre."),
-    ).toBeTruthy();
+    expect(await screen.findByText("Ta journée est encore libre")).toBeTruthy();
     expect(actions.getAgendaAction).toHaveBeenCalledTimes(2);
   });
 
@@ -1128,7 +1124,7 @@ describe("defaults and retries", () => {
         endDate: "2026-10-11",
       }),
     );
-    await screen.findByText("Ta semaine est encore libre.");
+    await screen.findByText("Ta semaine est encore libre");
 
     await user.click(buttons(/Nouveau rendez-vous/)[0]!);
     expect(
@@ -1159,7 +1155,7 @@ describe("defaults and retries", () => {
     await user.click(
       await screen.findByRole("button", { name: "Semaine suivante" }),
     );
-    await screen.findByText("Ta semaine est encore libre.");
+    await screen.findByText("Ta semaine est encore libre");
 
     await user.click(buttons(/Nouveau rendez-vous/)[0]!);
     expect(

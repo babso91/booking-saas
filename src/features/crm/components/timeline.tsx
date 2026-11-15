@@ -110,7 +110,7 @@ export function Timeline({
   return (
     <section
       aria-labelledby="client-history"
-      className="flex min-w-0 flex-col gap-4 rounded-3xl border border-line bg-paper-raised px-4 py-4 sm:px-6 lg:py-5"
+      className="flex min-w-0 flex-col gap-4 border-t border-line pt-5"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2
@@ -297,25 +297,25 @@ function TimelineEntry({
 
 const toneStyles: Record<
   StatusTone,
-  { pill: string; dot: string; icon: typeof CheckIcon }
+  { text: string; dot: string; icon: typeof CheckIcon }
 > = {
   done: {
-    pill: "bg-success-soft text-success",
+    text: "text-success-strong",
     dot: "border-success bg-success",
     icon: CheckIcon,
   },
   cancelled: {
-    pill: "bg-sand text-ink-soft",
+    text: "text-ink-soft",
     dot: "border-line-strong bg-paper-raised",
     icon: BanIcon,
   },
   absent: {
-    pill: "bg-warning-soft text-warning",
+    text: "text-warning-strong",
     dot: "border-warning bg-warning-soft",
     icon: UserOffIcon,
   },
   pending: {
-    pill: "bg-accent-soft text-accent-strong",
+    text: "text-accent-strong",
     dot: "border-accent bg-paper-raised",
     icon: ClockIcon,
   },
@@ -368,10 +368,9 @@ function AppointmentEntry({
   return (
     <article
       className={cn(
-        "flex flex-col gap-1 rounded-2xl border px-3.5 py-3",
-        appointment.status === "cancelled"
-          ? "border-dashed border-line-strong/70 bg-transparent"
-          : "border-line bg-paper",
+        // On the thread, not in a box (art direction).
+        "flex flex-col gap-1 py-1.5",
+        appointment.status === "cancelled" && "opacity-80",
       )}
     >
       <Dot className={tone.dot} />
@@ -386,8 +385,8 @@ function AppointmentEntry({
         </h4>
         <span
           className={cn(
-            "inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 text-[12.5px] font-medium",
-            tone.pill,
+            "inline-flex shrink-0 items-center gap-1 text-[12.5px] font-semibold",
+            tone.text,
           )}
         >
           <Icon size={13} strokeWidth={2} />
@@ -493,7 +492,7 @@ function NoteEntry({
   const { note } = event;
   const edited = editedLabel(note);
   return (
-    <article className="flex flex-col gap-1.5 rounded-2xl border border-line bg-sand/35 px-3.5 py-2.5">
+    <article className="flex flex-col gap-1.5 rounded-2xl bg-sand/45 px-3.5 py-2.5">
       <Dot className="border-ink-soft bg-paper-raised" />
       <div className="flex items-center justify-between gap-2">
         <h4 className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-ink-soft">

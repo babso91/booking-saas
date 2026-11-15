@@ -428,7 +428,7 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
             Tes prestations n’ont pas pu être chargées.
           </Notice>
         ) : load.services.length === 0 && load.categories.length === 0 ? (
-          <div className="flex flex-col items-start gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-7">
+          <div className="flex flex-col items-start gap-3 border-t border-line py-8">
             <p className="font-display text-[26px] leading-tight text-ink">
               Ajoute ta première prestation
             </p>
@@ -488,7 +488,7 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
                       key="all"
                       aria-label="Tes prestations, dans l’ordre"
                       aria-busy={ordering === "saving"}
-                      className="flex flex-col gap-3"
+                      className="flex flex-col divide-y divide-line border-y border-line"
                     >
                       {rows}
                     </ol>
@@ -689,8 +689,9 @@ function ServiceRow({
   return (
     <li
       className={cn(
-        "flex min-w-0 flex-col gap-3 rounded-3xl border border-line bg-paper-raised px-4 py-4 sm:px-5",
-        !service.active && "bg-paper",
+        // A row of the list, not a card (art direction).
+        "flex min-w-0 flex-col gap-3 py-4",
+        !service.active && "opacity-75",
       )}
     >
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -698,7 +699,7 @@ function ServiceRow({
           <Heading className="text-[16px] font-semibold wrap-anywhere text-ink">
             {service.name}
             {!service.active ? (
-              <span className="ml-2 rounded-full bg-sand px-2 py-0.5 align-middle text-[11.5px] font-medium text-ink-soft">
+              <span className="ml-2 align-middle text-[13px] font-medium text-ink-muted">
                 Désactivée
               </span>
             ) : null}
@@ -741,7 +742,7 @@ function ServiceRow({
         </p>
       ) : null}
 
-      <div className="-mx-1 flex flex-wrap items-center gap-1 border-t border-line pt-2">
+      <div className="-mx-1 flex flex-wrap items-center gap-1">
         <button
           type="button"
           onClick={onEdit}
@@ -880,7 +881,7 @@ function CategorySection({
         <ol
           aria-label={`Prestations : ${name}`}
           aria-busy={busy}
-          className="flex flex-col gap-3"
+          className="flex flex-col divide-y divide-line"
         >
           {children}
         </ol>

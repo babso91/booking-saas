@@ -38,7 +38,7 @@ export function PreferencesStep({ draft, update, headingRef }: StepProps) {
     <div className="flex flex-col gap-8">
       <StepHeader
         eyebrow="Tes réservations"
-        title="Tes règles, en douceur."
+        title="Tes règles de réservation"
         headingRef={headingRef}
       >
         On a choisi des réglages qui conviennent à la plupart des indépendantes.
@@ -137,7 +137,7 @@ export function PreferencesStep({ draft, update, headingRef }: StepProps) {
         className="rounded-3xl bg-ink px-5 py-4 text-paper-raised"
         aria-live="polite"
       >
-        <p className="text-[12px] font-semibold tracking-[0.14em] text-paper-raised/60 uppercase">
+        <p className="text-[13px] font-medium text-paper-raised/70">
           En résumé
         </p>
         <p

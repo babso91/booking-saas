@@ -88,7 +88,7 @@ export function LoginForm({
 
   return (
     <div className="flex flex-col gap-9">
-      <AuthHeading eyebrow="Espace pro" title="Bon retour.">
+      <AuthHeading eyebrow="Espace pro" title="Content de te revoir">
         Connecte-toi pour retrouver ton agenda et tes clientes.
       </AuthHeading>
 

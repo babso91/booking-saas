@@ -173,8 +173,8 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
             <PaletteIcon size={18} /> Apparence
           </Link>
         </nav>
-        <div className="mt-auto flex flex-col gap-3 rounded-2xl border border-line bg-paper p-4">
-          <p className="truncate font-display text-[20px] leading-tight text-ink">
+        <div className="mt-auto flex flex-col gap-3 border-t border-line px-1 pt-4">
+          <p className="truncate text-[15px] font-semibold text-ink">
             {business.name}
           </p>
           <PublicLink slug={business.slug} />

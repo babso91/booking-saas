@@ -421,6 +421,17 @@ p {
 }
 
 /*
+ * The booking inside her mini-site (SiteBooking): titles in her universe's
+ * display type, as her site sets them (features/experience/engine/tokens).
+ */
+[data-site-booking] .font-display {
+  font-family: var(--t-display);
+  font-weight: var(--t-display-weight);
+  text-transform: var(--t-display-case);
+  letter-spacing: var(--t-display-tracking);
+}
+
+/*
  * Studio style (professional area). One family, Archivo, across its widths:
  * the body in its normal width, every display title condensed and black.
  * Components keep their classes; the style decides how they are set.
@@ -541,7 +552,7 @@ p {
 
 /*
  * Carnet style (professional area). A printed book: the shared screens are set
- * in its book face, titles in light italic, every corner almost square. Its
+ * in its book face, titles upright, every corner almost square. Its
  * own screens carry their own sheet (features/dashboard/carnet/carnet.module.css).
  */
 [data-style="carnet"] {

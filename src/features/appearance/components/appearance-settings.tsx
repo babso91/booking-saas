@@ -454,7 +454,7 @@ function StyleSwatch({ id }: { id: StyleId }) {
         }}
       >
         <span
-          className="text-[30px] leading-none font-light italic"
+          className="text-[30px] leading-none font-medium tracking-[-0.03em]"
           style={{ fontFamily: "var(--font-carnet-serif), Georgia, serif" }}
         >
           Mardi
@@ -549,8 +549,8 @@ function StyleSwatch({ id }: { id: StyleId }) {
       />
       <span className="flex flex-1 flex-col gap-1.5 pt-1">
         <span
-          className="text-[17px] leading-none"
-          style={{ color: palette.ink, fontFamily: "var(--font-serif)" }}
+          className="text-[17px] leading-none font-semibold tracking-[-0.02em]"
+          style={{ color: palette.ink, fontFamily: "var(--font-body)" }}
         >
           Agenda
         </span>

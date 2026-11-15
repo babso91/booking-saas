@@ -72,7 +72,7 @@ export function InvitationPasswordForm() {
 
   return (
     <div className="flex flex-col gap-9">
-      <AuthHeading eyebrow="Ton invitation" title="Choisis ton mot de passe.">
+      <AuthHeading eyebrow="Ton invitation" title="Choisis ton mot de passe">
         Ton adresse est confirmée. Choisis le mot de passe de ton compte, puis
         on prépare ton espace.
       </AuthHeading>

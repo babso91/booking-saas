@@ -98,8 +98,9 @@ export function SetupChecklist({
     <section
       aria-labelledby="setup-title"
       className={cn(
-        "flex flex-col gap-3 rounded-3xl border border-line bg-paper-raised text-left",
-        compact ? "px-4 py-4 sm:px-5" : "px-5 py-5",
+        // A list on the page, not a card of cards (art direction).
+        "flex flex-col gap-3 border-t border-line text-left",
+        compact ? "pt-4" : "pt-5",
       )}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -116,12 +117,12 @@ export function SetupChecklist({
           {done} étape{done > 1 ? "s" : ""} sur 2 terminée{done > 1 ? "s" : ""}
         </p>
       </div>
-      <ol className="flex flex-col gap-2">
+      <ol className="flex flex-col divide-y divide-line">
         {steps.map((step, index) => (
           <li key={step.title}>
             <Link
               href={step.href}
-              className="flex min-w-0 items-center gap-3 rounded-2xl border border-line bg-paper px-3.5 py-3 hover:border-line-strong"
+              className="group -mx-2 flex min-w-0 items-center gap-3 rounded-xl px-2 py-3.5 transition-colors duration-150 hover:bg-sand/50"
             >
               <span
                 className={cn(
@@ -143,9 +144,12 @@ export function SetupChecklist({
                   {step.detail}
                 </span>
               </span>
-              <span className="flex shrink-0 items-center gap-1 text-[13.5px] font-medium text-ink-soft">
+              <span className="flex shrink-0 items-center gap-1 text-[13.5px] font-medium text-ink-soft group-hover:text-ink">
                 {step.action}
-                <ChevronRightIcon size={16} />
+                <ChevronRightIcon
+                  size={16}
+                  className="transition-transform duration-150 group-hover:translate-x-0.5"
+                />
               </span>
             </Link>
           </li>

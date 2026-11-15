@@ -14,7 +14,7 @@ export function AuthShowcase() {
       <div className="pointer-events-none absolute -top-40 -right-32 size-[520px] animate-drift rounded-full bg-[radial-gradient(circle_at_center,color-mix(in_srgb,var(--accent)_22%,transparent),transparent_65%)]" />
       <div className="pointer-events-none absolute -bottom-48 -left-24 size-[480px] animate-drift rounded-full bg-[radial-gradient(circle_at_center,rgba(255,252,248,0.9),transparent_60%)] [animation-delay:-8s]" />
 
-      <p className="relative max-w-sm text-[13px] font-medium tracking-[0.16em] text-ink-soft uppercase">
+      <p className="relative max-w-sm text-[15px] leading-snug font-medium text-ink-soft">
         Pour les techniciennes cils, prothésistes ongulaires, brow artists et
         coiffeuses indépendantes
       </p>
@@ -63,9 +63,8 @@ export function AuthShowcase() {
       </div>
 
       <figure className="relative max-w-md">
-        <blockquote className="font-display text-[34px] leading-[1.1] tracking-[-0.01em] text-ink xl:text-[40px]">
-          Tes clientes réservent.{" "}
-          <em className="text-accent">Toi, tu te concentres sur ton art.</em>
+        <blockquote className="font-display text-[32px] leading-[1.1] text-ink xl:text-[38px]">
+          Tes clientes réservent, tu te concentres sur ton travail
         </blockquote>
       </figure>
     </div>

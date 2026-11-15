@@ -25,7 +25,7 @@ Principe : on améliore le back-office qui existe. Pas de second dashboard, pas 
 **Identité visuelle :**
 
 - Palette « atelier » : ivoire, espresso et accent bois de rose.
-- Polices : Hanken Grotesk et Instrument Serif.
+- Polices : Hanken Grotesk pour tout, titres compris (Instrument Serif retirée le 15/11, direction artistique).
 - Variables CSS sémantiques (`--paper`, `--ink`, `--accent`…) exposées à Tailwind.
 - Pas de mode sombre. « Réduire les animations » est respecté.
 

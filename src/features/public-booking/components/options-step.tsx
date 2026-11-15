@@ -41,7 +41,7 @@ export function OptionsStep({
         </StepHeading>
       </div>
 
-      <div className="flex flex-col gap-1 rounded-2xl border border-line bg-paper-raised px-4 py-3">
+      <div className="flex flex-col gap-1 border-b border-line pb-4">
         <p className="text-[15px] font-semibold wrap-anywhere text-ink">
           {service.name}
         </p>
@@ -72,7 +72,7 @@ export function OptionsStep({
       ))}
 
       <div
-        className="flex flex-col gap-1 rounded-2xl border border-line bg-paper px-4 py-3"
+        className="flex flex-col gap-1 border-t border-line pt-4"
         aria-live="polite"
       >
         <p className="text-[13.5px] text-ink-muted">Votre prestation</p>

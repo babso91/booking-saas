@@ -141,7 +141,7 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
   return (
     <section
       aria-label="Maintenant"
-      className="mx-2 grid gap-5 rounded-[28px] bg-signature px-5 pt-6 pb-5 text-on-signature lg:mx-6 lg:grid-cols-[auto_minmax(0,1fr)_minmax(240px,320px)] lg:items-end lg:gap-12 lg:px-10 lg:pt-9 lg:pb-8"
+      className="mx-2 grid gap-5 rounded-[28px] bg-signature px-5 pt-6 pb-5 text-on-signature lg:mx-6 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-end lg:gap-x-12 lg:px-10 lg:pt-9 lg:pb-8 xl:grid-cols-[auto_minmax(0,1fr)_minmax(240px,320px)]"
     >
       <Clock time={model.nowTime} date={model.date} />
 
@@ -157,7 +157,7 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
                 <li key={visit.appointment.id}>
                   <Link
                     href={visitHref(visit)}
-                    className="font-expanded block text-[clamp(24px,6vw,36px)] leading-tight font-extrabold [overflow-wrap:anywhere] hover:underline focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-on-signature"
+                    className="font-expanded block text-[clamp(24px,6vw,36px)] leading-tight font-extrabold [overflow-wrap:break-word] hover:underline focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-on-signature"
                   >
                     {visit.appointment.client.displayName}
                   </Link>
@@ -245,7 +245,7 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
 
 function Name({ visit }: { visit: TodayVisit }) {
   return (
-    <span className="font-expanded text-[clamp(34px,9vw,66px)] leading-[0.95] font-extrabold tracking-[-0.02em] [overflow-wrap:anywhere]">
+    <span className="font-expanded text-[clamp(34px,9vw,66px)] leading-[0.95] font-extrabold tracking-[-0.02em] [overflow-wrap:break-word]">
       {visit.appointment.client.displayName}
     </span>
   );
@@ -309,7 +309,7 @@ function Aside({
   phase: TodayModel["phase"];
 }) {
   return (
-    <div className="flex flex-col gap-1 border-t-2 border-on-signature pt-3.5 lg:border-t-0 lg:border-l-2 lg:pt-0 lg:pl-6">
+    <div className="flex flex-col gap-1 border-t-2 border-on-signature pt-3.5 lg:col-span-2 xl:col-span-1 xl:border-t-0 xl:border-l-2 xl:pt-0 xl:pl-6">
       {visit ? (
         <>
           <span className={eyebrow}>

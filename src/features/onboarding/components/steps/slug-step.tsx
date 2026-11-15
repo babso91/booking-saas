@@ -49,7 +49,7 @@ export function SlugStep({
     <div className="flex flex-col gap-8">
       <StepHeader
         eyebrow="Ton lien de réservation"
-        title="Ton adresse, rien qu’à toi."
+        title="Ton lien à partager"
         headingRef={headingRef}
       >
         C’est le lien que tu partageras sur Instagram, WhatsApp ou dans ta bio.

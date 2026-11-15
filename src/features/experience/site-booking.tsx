@@ -7,6 +7,7 @@ import type { PublicCatalog } from "@/features/catalog/model";
 import type { PublicBusiness } from "@/features/public-booking/client/api";
 import { PublicBooking } from "@/features/public-booking/components/public-booking";
 
+import { bookingTokens } from "./engine/booking-tokens";
 import { Detail, Display, useEngine } from "./engine/engine";
 import { SitePortal, useModal } from "./engine/modal";
 
@@ -14,8 +15,9 @@ import { SitePortal, useModal } from "./engine/modal";
  * Booking from her mini-site: the real public booking (useBookingFlow, the
  * public routes; docs/PUBLIC_BOOKING_CONTRACT.md), in a sheet or a page as
  * her site enters it. No second booking engine: the lab's fictional slots
- * are not here. The steps keep the booking's own presentation for now; a
- * universe-styled one will render the same flow.
+ * are not here. The steps and the ticket render in her universe: the
+ * booking's tokens are set from her palette, her booking colour and her
+ * type (bookingTokens), on the dialog.
  */
 export function SiteBooking({
   booking,
@@ -49,19 +51,21 @@ export function SiteBooking({
         role="dialog"
         aria-modal="true"
         aria-label={`Réserver chez ${config.brand.name}`}
+        data-site-booking=""
         className={
           sheet
             ? "fixed inset-x-0 bottom-0 z-50 flex max-h-[92dvh] flex-col overflow-hidden bg-paper text-ink shadow-[0_-30px_80px_-20px_rgba(0,0,0,.5)] outline-none"
             : "fixed inset-0 z-50 flex flex-col bg-paper text-ink outline-none"
         }
-        style={
-          sheet
+        style={{
+          ...bookingTokens(config.tokens),
+          ...(sheet
             ? {
                 borderTopLeftRadius: "max(var(--s-radius), 20px)",
                 borderTopRightRadius: "max(var(--s-radius), 20px)",
               }
-            : undefined
-        }
+            : undefined),
+        }}
         initial={sheet ? { y: "100%" } : { opacity: 0 }}
         animate={sheet ? { y: 0 } : { opacity: 1 }}
         exit={sheet ? { y: "100%" } : { opacity: 0 }}

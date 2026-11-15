@@ -133,7 +133,7 @@ export function RewardsSection({
       ) : null}
 
       {rewards.length === 0 ? (
-        <div className="flex flex-col items-start gap-2 rounded-2xl border border-dashed border-line-strong px-4 py-5">
+        <div className="flex flex-col items-start gap-1.5 py-2">
           <p className="text-[15px] font-medium text-ink">
             Aucune récompense pour l’instant
           </p>
@@ -143,7 +143,7 @@ export function RewardsSection({
           </p>
         </div>
       ) : (
-        <ul className="flex flex-col gap-3">
+        <ul className="flex flex-col divide-y divide-line">
           {rewards.map((reward) => {
             const state = row?.id === reward.id ? row : null;
             const missingService =
@@ -152,7 +152,7 @@ export function RewardsSection({
             return (
               <li
                 key={reward.id}
-                className="flex flex-col gap-3 rounded-2xl border border-line bg-paper px-4 py-4"
+                className="flex flex-col gap-3 py-4 first:pt-1"
               >
                 <div className="flex flex-col gap-3">
                   <div className="flex min-w-0 flex-col gap-1">

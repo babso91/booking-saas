@@ -103,7 +103,8 @@ export function Card({
     <section
       aria-labelledby={id}
       className={cn(
-        "flex min-w-0 flex-col gap-4 rounded-3xl border border-line bg-paper-raised px-5 py-5 sm:px-6",
+        // Grouped by space and a hairline, not boxed (art direction, 15/11).
+        "flex min-w-0 flex-col gap-4 border-t border-line pt-6",
         className,
       )}
     >
@@ -111,7 +112,7 @@ export function Card({
         <div className="flex min-w-0 flex-col gap-1">
           <Heading
             id={id}
-            className="font-display text-[22px] leading-tight text-ink"
+            className="font-display text-[21px] leading-tight text-ink"
           >
             {title}
           </Heading>
@@ -138,13 +139,15 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex h-6 shrink-0 items-center rounded-full px-2.5 text-[12px] font-semibold",
-        tone === "success" && "bg-success-soft text-success-strong",
-        tone === "muted" && "bg-sand text-ink-soft",
-        tone === "warning" && "bg-warning-soft text-warning-strong",
-        tone === "neutral" && "bg-accent-soft text-ink",
+        // A state said in words with a dot, not a pill (art direction).
+        "inline-flex shrink-0 items-center gap-1.5 text-[13px] font-semibold",
+        tone === "success" && "text-success-strong",
+        tone === "muted" && "text-ink-muted",
+        tone === "warning" && "text-warning-strong",
+        tone === "neutral" && "text-ink",
       )}
     >
+      <span aria-hidden className="size-1.5 rounded-full bg-current" />
       {children}
     </span>
   );
