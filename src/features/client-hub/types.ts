@@ -36,6 +36,51 @@ export type ClientHubAppointmentDetailDto = ClientHubAppointmentDto & {
     location: string | null;
     cancellationPolicy: string | null;
   };
+  /**
+   * What she may do herself with this appointment, decided by the server.
+   * PROPOSED (docs/CLIENT_HUB_ACTIONS_PROPOSAL.md), not served yet: absent
+   * or null, nothing can be changed from her space and she is told to
+   * contact the business, as before.
+   */
+  actions?: ClientHubAppointmentActionsDto | null;
+};
+
+/** Why an action is closed, in the server's words (proposed codes). */
+export type ClientHubActionRefusal =
+  /** The deadline of the business's policy has passed. */
+  | "policy_cutoff_passed"
+  /** No structured policy was kept with this appointment. */
+  | "policy_unavailable"
+  /** Its state no longer allows it (cancelled, completed, started). */
+  | "appointment_not_editable";
+
+export type ClientHubAppointmentActionDto = {
+  allowed: boolean;
+  /** The last instant it is allowed until; null when there is none. */
+  deadlineAt: string | null;
+  reason: ClientHubActionRefusal | null;
+};
+
+export type ClientHubAppointmentActionsDto = {
+  /** The appointment's version these answers are for (`expectedVersion`). */
+  version: number;
+  cancel: ClientHubAppointmentActionDto;
+  reschedule: ClientHubAppointmentActionDto;
+};
+
+/** A slot she may move her appointment to (same shape as public slots). */
+export type ClientHubSlotDto = {
+  startsAt: string;
+  endsAt: string;
+  /** Wall clock in the business's time zone: `YYYY-MM-DDTHH:MM`. */
+  localStartsAt: string;
+  localEndsAt: string;
+};
+
+export type ClientHubRescheduleSlotsDto = {
+  date: string;
+  timezone: string;
+  slots: ClientHubSlotDto[];
 };
 
 export type ClientHubAppointmentsPageDto = {

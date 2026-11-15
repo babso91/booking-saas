@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import {
   ArrowRightIcon,
@@ -10,6 +10,7 @@ import {
   InfoIcon,
   PinIcon,
 } from "@/components/ui/icons";
+import { Notice } from "@/components/ui/notice";
 import { formatPrice } from "@/features/agenda/client/money";
 import type { ClientHubBusinessDto } from "@/features/client-hub/types";
 
@@ -22,6 +23,7 @@ import {
   timeOf,
 } from "../client/format";
 import { useHubRead } from "../client/session";
+import { AppointmentActions } from "./appointment-actions";
 import { DateTile, HubErrorNotice, Loading, Pill, Skeleton } from "./hub-parts";
 import { HubPage, bookingHref, hubHref } from "./hub-shell";
 
@@ -52,6 +54,16 @@ function Detail({
   const read = useHubRead(`${id}:${appointmentId}`, (signal) =>
     fetchAppointment(id, appointmentId, signal),
   );
+  /**
+   * What the server last answered to a change of hers, said above the
+   * appointment as it is read again: confirmed, or refused because it was
+   * no longer as shown.
+   */
+  const [said, setSaid] = useState<{
+    tone: "success" | "warning";
+    title: string;
+    message: string;
+  } | null>(null);
   const back = (
     <Link
       href={hubHref.appointments(id)}
@@ -107,10 +119,18 @@ function Detail({
       ? relativeDay(appointment.startsAt, zone)
       : null;
   const upcoming = appointment.status === "confirmed";
+  // What she may change herself, when the server says so (not served yet:
+  // without it she is told to contact the business, as before).
+  const actions = upcoming ? (appointment.actions ?? null) : null;
 
   return (
     <>
       {back}
+      {said ? (
+        <Notice tone={said.tone} title={said.title}>
+          {said.message}
+        </Notice>
+      ) : null}
       <article
         className="flex flex-col gap-5"
         aria-labelledby="appointment-title"
@@ -156,6 +176,22 @@ function Detail({
           </dl>
         </div>
 
+        {actions ? (
+          <AppointmentActions
+            businessId={id}
+            appointment={appointment}
+            actions={actions}
+            onChanged={(message) => {
+              setSaid({ tone: "success", title: "C’est enregistré", message });
+              read.reload();
+            }}
+            onStale={(failure) => {
+              setSaid({ tone: "warning", ...failure });
+              read.reload();
+            }}
+          />
+        ) : null}
+
         <section
           aria-label="Établissement"
           className="flex flex-col gap-4 rounded-[28px] border border-line bg-paper-raised p-5 sm:p-6"
@@ -174,11 +210,13 @@ function Detail({
               </p>
             ) : null}
           </div>
-          <p className="flex items-start gap-2 rounded-2xl bg-sand/60 px-4 py-3 text-[14px] leading-relaxed text-ink-soft">
-            <InfoIcon size={17} className="mt-0.5 shrink-0" />
-            Pour déplacer ou annuler ce rendez-vous, contactez directement{" "}
-            {place.name}. Rien ne peut être modifié depuis votre espace.
-          </p>
+          {actions ? null : (
+            <p className="flex items-start gap-2 rounded-2xl bg-sand/60 px-4 py-3 text-[14px] leading-relaxed text-ink-soft">
+              <InfoIcon size={17} className="mt-0.5 shrink-0" />
+              Pour déplacer ou annuler ce rendez-vous, contactez directement{" "}
+              {place.name}. Rien ne peut être modifié depuis votre espace.
+            </p>
+          )}
           {place.cancellationPolicy ? (
             <div className="flex flex-col gap-1.5">
               <p className="flex items-center gap-1.5 text-[14px] font-semibold text-ink">
