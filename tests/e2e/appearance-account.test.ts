@@ -676,6 +676,13 @@ describe("removed from the business, then back: what the wire and the database s
     const wire = await savesOnWire(page);
     await choose(page, /^Studio/);
     await said(page, SAVED);
+    // "Enregistré" is the action's own answer: the page has it before the
+    // render that comes with it (the device cookie is set) is all here, and
+    // that render's layout reads her membership. Removed under it, she is
+    // sent to /onboarding, rightly: not the race this test is about. So the
+    // whole answer first; the click below still races the page learning
+    // that she is back under a new membership.
+    await wire.saves();
     const after = await removedAndBack(browser);
 
     await choose(page, /^Sombre/);
