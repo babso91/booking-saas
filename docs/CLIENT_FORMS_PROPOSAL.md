@@ -132,3 +132,23 @@ FormTemplateDto = {
 - Une question dont d'autres dépendent ne peut pas être retirée tant que
   leur condition n'a pas changé (règle d'écran ; le serveur la refuse aussi
   via `checkTemplate`).
+
+## Côté pro : les formulaires d'une visite
+
+`read(appointmentId)` → `{ appointmentId, clientName, assignments[], templates[] }`
+
+- `assignments[]` : `{ assignmentId, title, versionNumber, status, sentAt, expiresAt, review, version, submission | null, reviewedAt }`.
+  `submission` = `{ submittedAt, fields[], answers[] }` : les questions de la
+  version envoyée et les réponses telles qu'envoyées (attestation avec le
+  texte affiché). Seules les questions répondues sont listées à l'écran.
+- `templates[]` : versions publiées envoyables `{ templateVersionId, title, versionNumber }`.
+
+| Action   | Entrée                                        | Effet                                              |
+| -------- | --------------------------------------------- | -------------------------------------------------- |
+| `assign` | `appointmentId, templateVersionId, requestId` | Crée la demande (`assigned`), visible dans son Hub |
+| `revoke` | `assignmentId, expectedVersion, requestId`    | Seulement si `assigned` (pas encore répondu)       |
+| `review` | `assignmentId, expectedVersion, requestId`    | `submitted` → `completed`, `reviewedAt` serveur    |
+
+Refus : `version_conflict` (relu, dit), `form_already_submitted` (« elle
+vient de répondre »), `form_already_assigned` (même formulaire déjà ouvert
+pour la visite). Même `requestId` → même réponse.
