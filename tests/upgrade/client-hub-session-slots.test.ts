@@ -6,7 +6,7 @@ import { db } from "../integration/support/fixtures";
 import { migrateUp, resetTo } from "./support";
 
 // Upgrade from the Client Hub (20261021090000) to one cookie per session
-// (20261024090000) with sessions in the database: no session, account or
+// (20261115110000) with sessions in the database: no session, account or
 // challenge is rewritten or ended by the upgrade; the existing sessions are
 // usable through the new resolver (by id and token); the superseded
 // single-token entry points are no longer open to the service role.

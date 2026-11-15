@@ -16,7 +16,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const HUB = "supabase/migrations/20261021090000_client_hub.sql";
-const SLOTS = "supabase/migrations/20261024090000_client_hub_session_slots.sql";
+const SLOTS = "supabase/migrations/20261115110000_client_hub_session_slots.sql";
 const ROUTE = "src/features/client-hub/data/route.ts";
 const COOKIES = "src/features/client-hub/data/session.ts";
 const VERIFY = "src/app/api/client-hub/session/verify/route.ts";

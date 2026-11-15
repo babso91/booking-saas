@@ -1,6 +1,6 @@
 # Client Hub V1 : contrat backend (PR #25)
 
-Backend livré par la PR #25, interface et sessions dans le navigateur par la PR #26 (§ 3, § 11). Ce document décrit l'architecture retenue, les règles d'identité et d'autorisation, et les contrats que l'interface (Claude UI) peut utiliser **sans rien supposer d'autre**. Migrations : `supabase/migrations/20261021090000_client_hub.sql`, `supabase/migrations/20261024090000_client_hub_session_slots.sql`. Code : `src/features/client-hub/`, `src/app/api/client-hub/`. Tests : `tests/integration/client-hub.test.ts`, `tests/upgrade/client-hub.test.ts`, `tests/upgrade/client-hub-session-slots.test.ts`, `tests/e2e/client-hub-browser.test.ts` (Chromium réel, derrière une entrée TLS locale).
+Backend livré par la PR #25, interface et sessions dans le navigateur par la PR #26 (§ 3, § 11). Ce document décrit l'architecture retenue, les règles d'identité et d'autorisation, et les contrats que l'interface (Claude UI) peut utiliser **sans rien supposer d'autre**. Migrations : `supabase/migrations/20261021090000_client_hub.sql`, `supabase/migrations/20261115110000_client_hub_session_slots.sql`. Code : `src/features/client-hub/`, `src/app/api/client-hub/`. Tests : `tests/integration/client-hub.test.ts`, `tests/upgrade/client-hub.test.ts`, `tests/upgrade/client-hub-session-slots.test.ts`, `tests/e2e/client-hub-browser.test.ts` (Chromium réel, derrière une entrée TLS locale).
 
 > **Pas encore utilisable en production.** La connexion envoie un code par email via le transport configuré (`EMAIL_TRANSPORT`). Tant que l'envoi réel (Resend) n'est pas configuré, `POST /api/client-hub/session/code` répond `client_hub_unavailable` (503) et n'émet aucun code. Il n'existe aucun contournement de développement dans le code de production. Seul le transport Mailpit local, ou le transport en mémoire des tests, permet de se connecter aujourd'hui.
 
@@ -75,7 +75,7 @@ L'outbox est rattachée à une activité et à un rendez-vous, et fige chaque me
 ## 3. Session cliente
 
 - **Durée :** 7 jours, absolue, sans prolongation. Jeton opaque de 256 bits ; seul son SHA-256 est stocké.
-- **Un cookie par session** (migration `20261024090000_client_hub_session_slots`) : `__Host-client_hub_s_<id de la session>=<jeton>`.
+- **Un cookie par session** (migration `20261115110000_client_hub_session_slots`) : `__Host-client_hub_s_<id de la session>=<jeton>`.
   - `HttpOnly`, `SameSite=Lax`, `Secure` (dans tous les environnements), `Path=/`, sans `Domain` : ce que le préfixe `__Host-` exige ;
   - `Max-Age` égal à la durée de la session.
 - **Pourquoi `__Host-` :** un navigateur n'accepte un cookie de ce préfixe que posé par cet hôte même, en HTTPS, sans `Domain` et sur `Path=/`. Un sous-domaine voisin peut planter des cookies `Domain=` pour l'hôte du Hub, mais jamais un cookie `__Host-`, ni sous ce nom, ni par un cookie sans nom dont la valeur l'imiterait (refusés par Chromium, testé). Le Hub ne lit **que** ce préfixe, à la casse près ; tout autre cookie est ignoré, jamais compté ni supprimé. D'où :
