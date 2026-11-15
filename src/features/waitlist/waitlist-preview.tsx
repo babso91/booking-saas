@@ -10,7 +10,7 @@ import { WaitlistOffer } from "./waitlist-offer";
 
 /**
  * The waitlist's two screens on fictional data, answered in this page's
- * memory: to review them before the backend exists. Never in a real page.
+ * memory: every state without a link. Never in a real page.
  * `pris`: the offer is taken by someone else when she taps it.
  */
 export function WaitlistPreview({

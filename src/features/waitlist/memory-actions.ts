@@ -6,7 +6,7 @@ import type {
 } from "./contract";
 import { offerErrors } from "./contract";
 
-// An in-memory server of the PROPOSED waitlist contract, for the design
+// An in-memory server of the waitlist contract, for the design
 // preview and the tests only: a request id answers once, an offer can be
 // taken by someone else, expire, or change price. Nothing here reaches a
 // database; never used by a real page.
@@ -32,7 +32,7 @@ export function sampleOffer(
     priceCents: 6000,
     durationMinutes: 75,
     currency: "EUR",
-    quoteRevision: 1,
+    quoteRevision: "0123456789abcdef0123456789abcdef",
     expiresAt: new Date(Date.now() + 20 * 60_000).toISOString(),
     requestActive: true,
     ...over,

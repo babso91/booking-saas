@@ -39,6 +39,8 @@ export type BookingSettingsDto = {
    */
   cancellationLeadMinutes: number | null;
   rescheduleLeadMinutes: number | null;
+  /** Her waitlist is open (docs/WAITLIST_CONTRACT.md). */
+  waitlistEnabled: boolean;
 };
 
 export type AvailabilityExceptionDto = {
@@ -79,6 +81,7 @@ function toSettingsDto(row: Tables<"business_settings">): BookingSettingsDto {
     maximumBookingAdvanceDays: row.maximum_booking_advance_days,
     cancellationLeadMinutes: row.cancellation_lead_minutes,
     rescheduleLeadMinutes: row.reschedule_lead_minutes,
+    waitlistEnabled: row.waitlist_enabled,
   };
 }
 

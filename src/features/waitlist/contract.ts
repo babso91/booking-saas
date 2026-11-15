@@ -1,7 +1,7 @@
-// The waitlist (M2-R06). PROPOSED contract (docs/WAITLIST_PROPOSAL.md): no
-// server serves it yet. The screens take their actions as a whole, so the
-// design preview and the tests give them an in-memory server, and no real
-// page shows a waitlist until Cloud provides the real ones.
+// The waitlist (M2-R06), as served (docs/WAITLIST_CONTRACT.md). The screens
+// take their actions as a whole: real pages give them the HTTP ones
+// (http-actions.ts, bound to the link's token), the design preview and the
+// tests an in-memory server.
 //
 // No slot is ever held: an offer says a slot is free now, the first
 // booking committed wins, and a missed offer leaves her request active.
@@ -50,18 +50,15 @@ export type WaitlistOfferDto = {
   priceCents: number;
   durationMinutes: number;
   currency: string;
-  /** The quote this offer stands for: sent back when she books it. */
-  quoteRevision: number;
+  /** The quote this offer stands for (a digest): sent back when she books it. */
+  quoteRevision: string;
   /** Until when the offer can be taken (server's clock). */
   expiresAt: string;
   /** Her request is still active (another offer may come). */
   requestActive: boolean;
 };
 
-/**
- * An answer of the proposed routes. Its error codes are the proposed ones
- * (not yet in src/lib/errors.ts), so they are plain strings here.
- */
+/** An answer of the routes; error codes as the contract names them. */
 export type WaitlistResult<T> =
   { ok: true; data: T } | { ok: false; error: { code: string } };
 
@@ -74,11 +71,11 @@ export type WaitlistActions = {
     offerId: string;
     requestId: string;
     expectedVersion: number;
-    expectedQuoteRevision: number;
+    expectedQuoteRevision: string;
   }) => Promise<WaitlistResult<WaitlistOfferDto>>;
 };
 
-/** Refusals the offer screen handles by name (proposed codes). */
+/** Refusals the offer screen handles by name. */
 export const offerErrors = {
   notFound: "waitlist_offer_not_found",
   expired: "offer_expired",

@@ -14,9 +14,9 @@ import { memoryWaitlist, sampleOffer } from "./memory-actions";
 import { WaitlistOffer } from "./waitlist-offer";
 import { checkJoin, eligibleDays, windowsOf } from "./windows";
 
-// The waitlist's screens against an in-memory server of the PROPOSED
-// contract (docs/WAITLIST_PROPOSAL.md). The real guarantees (matching,
-// FIFO, first booking wins) are the backend's to prove.
+// The waitlist's screens against an in-memory server of the
+// contract (docs/WAITLIST_CONTRACT.md). The real guarantees (matching,
+// FIFO, first booking wins) are proved by tests/integration/waitlist.test.ts.
 
 afterEach(cleanup);
 
@@ -221,7 +221,7 @@ describe("an offer", () => {
     await screen.findByRole("button", { name: "Réserver ce créneau" });
     server.state.offer = {
       ...server.state.offer,
-      quoteRevision: 2,
+      quoteRevision: "fedcba9876543210fedcba9876543210",
       priceCents: 6500,
     };
     click("Réserver ce créneau");

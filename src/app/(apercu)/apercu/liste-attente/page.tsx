@@ -2,8 +2,8 @@ import { WaitlistPreview } from "@/features/waitlist/waitlist-preview";
 
 export const metadata = { title: "Liste d’attente · Aperçu" };
 
-// The waitlist's screens against an in-memory server of the PROPOSED
-// contract (docs/WAITLIST_PROPOSAL.md). Like every preview, a 404 in
+// The waitlist's screens against an in-memory server of the
+// contract (docs/WAITLIST_CONTRACT.md). Like every preview, a 404 in
 // production unless DASHBOARD_PREVIEW=1.
 // ?ecran=inscription (default) | offre ; ?pris=1: someone books first.
 export default async function WaitlistPreviewPage({

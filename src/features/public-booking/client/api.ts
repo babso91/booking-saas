@@ -13,7 +13,14 @@ import type { AppErrorCode } from "@/lib/errors";
 // request never got a readable answer (offline, timeout, cut connection):
 // for a booking that is ambiguous, the booking may exist.
 
-export type PublicBusiness = PublicBusinessDto;
+export type PublicBusiness = PublicBusinessDto & {
+  /**
+   * Her waitlist is open (business_settings.waitlist_enabled). Asked of
+   * Cloud for get_public_business (docs/WAITLIST_CONTRACT.md: no button
+   * when it is closed); absent until then, and the entry stays hidden.
+   */
+  waitlistEnabled?: boolean;
+};
 export type PublicService = PublicServiceDto;
 export type Slot = SlotDto;
 export type Booking = PublicBookingDto;

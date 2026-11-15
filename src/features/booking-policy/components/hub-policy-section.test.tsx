@@ -42,6 +42,7 @@ const settings = (
   maximumBookingAdvanceDays: 60,
   cancellationLeadMinutes,
   rescheduleLeadMinutes,
+  waitlistEnabled: false,
 });
 
 beforeEach(() => {

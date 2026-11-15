@@ -5,6 +5,8 @@ import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { BusinessHoursEditor } from "@/features/availability/components/business-hours-editor";
 import { HubPolicySection } from "@/features/booking-policy/components/hub-policy-section";
+import { getEmailTransport } from "@/features/notifications/transport";
+import { WaitlistSection } from "@/features/waitlist/waitlist-section";
 
 export const metadata: Metadata = {
   title: "Horaires",
@@ -25,7 +27,13 @@ export default async function BusinessHoursPage() {
       <BusinessHoursEditor
         timezone={business.timezone}
         scope={{ userId: user.id, businessId: business.id }}
-        after={<HubPolicySection />}
+        after={
+          <div className="flex flex-col gap-10">
+            <HubPolicySection />
+            {/* Its emails need a transport: read here, on the server. */}
+            <WaitlistSection emailReady={getEmailTransport() !== null} />
+          </div>
+        }
       />
     </AppShell>
   );
