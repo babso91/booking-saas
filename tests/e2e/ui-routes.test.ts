@@ -85,7 +85,8 @@ async function signedInBrowser({ invited = true } = {}) {
 const PRIVATE_BODIES = [
   "Chargement de l’agenda", // /app
   "Chargement de ton espace", // /onboarding
-  "Ton espace est prêt", // /app/welcome
+  // Body text, not the heading: the heading matches the page <title>.
+  "tes clientes pourront réserver", // /app/welcome
 ];
 
 function expectRedirect(
@@ -170,7 +171,7 @@ describe("UI routes against the real backend", () => {
     expect(app.status).toBe(200);
     expect(app.html).toContain("Chargement de l’agenda");
     expect((await browser.get("/app/welcome")).html).toContain(
-      "Ton espace est prêt",
+      "tes clientes pourront réserver",
     );
     expectRedirect(await browser.get("/onboarding"), "/app");
     expectRedirect(await browser.get("/login"), "/app");
