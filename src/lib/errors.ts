@@ -151,6 +151,9 @@ export const appErrorMessages = {
     "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
+  unsubscribe_link_invalid: "Ce lien de désinscription n’est pas valide.",
+  unsubscribe_undo_unavailable:
+    "Ce changement ne peut plus être annulé depuis ce lien.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -295,6 +298,8 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_email_required: 409,
   context_changed: 409,
   auth_unavailable: 503,
+  unsubscribe_link_invalid: 404,
+  unsubscribe_undo_unavailable: 409,
   internal: 500,
 };
 

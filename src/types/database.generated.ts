@@ -1202,6 +1202,9 @@ isOneToOne: false
 "is_business_member":
 { Args: { "target_business_id": string }; Returns: boolean
                            },
+"issue_unsubscribe_link":
+{ Args: { "p_business_id": string,"p_channel": string,"p_client_id": string,"p_token_hash": string }; Returns: string
+                           },
 "loyalty_adjust_points":
 { Args: { "p_business_id": string,"p_client_id": string,"p_points_delta": number,"p_reason": string,"p_request_id": string }; Returns: string
                            },
@@ -1236,6 +1239,12 @@ isOneToOne: false
                            },
 "loyalty_update_reward":
 { Args: { "p_active": boolean,"p_business_id": string,"p_description": string,"p_expected_version": number,"p_name": string,"p_points_required": number,"p_reward_id": string,"p_reward_value": number,"p_service_id": string }; Returns: number
+                           },
+"marketing_client_consents":
+{ Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
+                           },
+"marketing_set_consent":
+{ Args: { "p_action": string,"p_business_id": string,"p_channel": string,"p_client_id": string,"p_proof_version": string,"p_purpose": string,"p_request_id": string }; Returns: Json
                            },
 "member_site_photo":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: boolean
@@ -1336,6 +1345,15 @@ isOneToOne: false
                            },
 "site_photo_reconciliation_status":
 { Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"unsubscribe_read":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
+"unsubscribe_undo":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
+"unsubscribe_withdraw":
+{ Args: { "p_token_hash": string }; Returns: Json
                            },
 "update_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_expected_version": number,"p_name"?: string,"p_visible"?: boolean }; Returns: {

@@ -414,6 +414,14 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  unsubscribe_link_invalid: {
+    title: "Lien non valide",
+    message: "Ce lien de désinscription n’est pas valide.",
+  },
+  unsubscribe_undo_unavailable: {
+    title: "Annulation impossible",
+    message: "Ce changement ne peut plus être annulé depuis ce lien.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {
