@@ -31,6 +31,7 @@ import type {
   ClientTimelineEvent,
   UpdateClientResultDto,
 } from "@/features/crm/types";
+import { ClientHubAccess } from "@/features/client-hub/components/client-hub-access";
 import {
   ClientLoyalty,
   type LoyaltyVisit,
@@ -441,10 +442,23 @@ export function ClientProfile({
       onChanged={reloadTimeline}
     />
   );
+  const clientHub = (
+    <ClientHubAccess
+      // One card per signed-in user, business and customer, like loyalty.
+      key={`${scope.userId}:${scope.businessId}:${clientId}`}
+      clientId={clientId}
+      email={data.client.email}
+      displayName={data.client.displayName}
+      timezone={data.timezone}
+      onEditClient={() => setEditingClient(true)}
+      onStale={() => setProfileRun((value) => value + 1)}
+    />
+  );
   const dossier = (
     <Dossier
       profile={data}
       loyalty={loyalty}
+      clientHub={clientHub}
       notes={notesList.state}
       noteHandlers={noteHandlers}
       onNotesRetry={notesList.reload}
@@ -818,6 +832,7 @@ function Tabs({
 function Dossier({
   profile,
   loyalty,
+  clientHub,
   notes,
   noteHandlers,
   onNotesRetry,
@@ -829,6 +844,8 @@ function Dossier({
   profile: ClientProfileDto;
   /** The customer's loyalty (its own reads and writes). */
   loyalty: ReactNode;
+  /** Her Client Hub access (its own reads and writes). */
+  clientHub: ReactNode;
   notes: NotesListState;
   noteHandlers: NoteHandlers;
   onNotesRetry: () => void;
@@ -901,6 +918,8 @@ function Dossier({
           Fiche créée le {dayMonthYear(client.createdAt)}
         </p>
       </DossierSection>
+
+      {clientHub}
 
       {loyalty}
 
