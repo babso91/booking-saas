@@ -121,6 +121,7 @@ describe("booking settings", () => {
       // Her Hub policy: never by default (CLIENT_HUB_CONTRACT § 12).
       cancellationLeadMinutes: null,
       rescheduleLeadMinutes: null,
+      waitlistEnabled: false,
     });
 
     expect(
