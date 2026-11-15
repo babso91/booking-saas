@@ -541,7 +541,7 @@ p {
 
 /*
  * Carnet style (professional area). A printed book: the shared screens are set
- * in its book face, titles in light italic, every corner almost square. Its
+ * in its book face, titles upright, every corner almost square. Its
  * own screens carry their own sheet (features/dashboard/carnet/carnet.module.css).
  */
 [data-style="carnet"] {

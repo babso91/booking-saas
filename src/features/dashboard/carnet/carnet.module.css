@@ -43,12 +43,12 @@
   font-family: var(--mono);
   letter-spacing: 0.02em;
 }
+/* A ledger heading, typed: mono in its own case, not spaced capitals. */
 .label {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 400;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
   color: var(--ink-soft);
 }
 .labelRow {
@@ -335,11 +335,11 @@
   font-weight: 400;
   outline: none;
 }
+/* The day, upright and set firm (art direction: no light italic display). */
 .weekday {
-  font-size: clamp(56px, 17vw, 132px);
+  font-size: clamp(56px, 17vw, 128px);
   line-height: 0.86;
-  font-style: italic;
-  font-weight: 300;
+  font-weight: 450;
   letter-spacing: -0.035em;
   font-variation-settings: "opsz" 72;
   margin-left: -0.04em;
@@ -366,8 +366,9 @@
   text-wrap: pretty;
   overflow-wrap: anywhere;
 }
+/* Marked with the highlighter only, not with an italic accent word. */
 .lede em {
-  font-style: italic;
+  font-style: normal;
   background: linear-gradient(
     transparent 58%,
     var(--accent-soft) 58%,
@@ -836,8 +837,7 @@ button.pause {
   }
 }
 .weekTitle {
-  font-weight: 300;
-  font-style: italic;
+  font-weight: 450;
   font-size: clamp(32px, 4.4vw, 56px);
   line-height: 1;
   letter-spacing: -0.03em;

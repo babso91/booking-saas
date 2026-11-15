@@ -578,7 +578,7 @@ function Card({
   return (
     <section
       className={cn(
-        "flex animate-rise flex-col gap-3 rounded-3xl border border-line bg-paper-raised p-5 shadow-[0_18px_40px_-34px_rgb(var(--shadow-rgb)/0.45)] sm:p-6",
+        "flex animate-rise flex-col gap-3 border-t border-line pt-6",
         className,
       )}
       {...props}
@@ -588,12 +588,13 @@ function Card({
   );
 }
 
+// The icon in the state's colour, without a tinted tile (art direction).
 const iconTones = {
-  idle: "bg-sand text-ink-soft",
-  progress: "bg-sand text-ink-soft",
-  active: "bg-success-soft text-success",
-  delayed: "bg-sand text-ink-soft",
-  action: "bg-warning-soft text-warning-strong",
+  idle: "text-ink-muted",
+  progress: "text-ink-muted",
+  active: "text-success-strong",
+  delayed: "text-ink-muted",
+  action: "text-warning-strong",
 } as const;
 
 function CardIcon({
@@ -604,13 +605,7 @@ function CardIcon({
   children: ReactNode;
 }) {
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "flex size-11 shrink-0 items-center justify-center rounded-2xl",
-        iconTones[tone],
-      )}
-    >
+    <span aria-hidden="true" className={cn("flex shrink-0", iconTones[tone])}>
       {children}
     </span>
   );

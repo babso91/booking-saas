@@ -421,15 +421,19 @@ function HoursEditor({
           </Notice>
         ) : null}
 
-        {week.map((day) => (
-          <DayEditor
-            key={day.weekday}
-            day={day}
-            error={errors[day.weekday]}
-            locked={busy}
-            onChange={(change) => edit(day.weekday, change)}
-          />
-        ))}
+        <WeekTotal week={week} />
+
+        <div className="flex flex-col border-t border-line">
+          {week.map((day) => (
+            <DayEditor
+              key={day.weekday}
+              day={day}
+              error={errors[day.weekday]}
+              locked={busy}
+              onChange={(change) => edit(day.weekday, change)}
+            />
+          ))}
+        </div>
 
         {conflict ? (
           // Clear of the sticky save bar.
@@ -582,6 +586,39 @@ function Frame({
   );
 }
 
+/** The week's opening as the screen's hero datum (display only). */
+function WeekTotal({ week }: { week: DayDraft[] }) {
+  const minutes = (clock: string) => {
+    const [h, m] = clock.split(":").map(Number) as [number, number];
+    return h * 60 + m;
+  };
+  const open = week.filter((day) => day.open && day.ranges.length > 0);
+  const total = open.reduce(
+    (sum, day) =>
+      sum +
+      day.ranges.reduce(
+        (part, range) =>
+          part + Math.max(0, minutes(range.endsAt) - minutes(range.startsAt)),
+        0,
+      ),
+    0,
+  );
+  if (open.length === 0) return null;
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
+  return (
+    <p className="flex items-baseline gap-3 pb-2">
+      <span className="text-[48px] leading-none font-bold tracking-[-0.03em] text-ink tabular-nums">
+        {hours} h{rest ? ` ${String(rest).padStart(2, "0")}` : ""}
+      </span>
+      <span className="text-[15px] text-ink-soft">
+        d’ouverture par semaine, sur {open.length} jour
+        {open.length > 1 ? "s" : ""}
+      </span>
+    </p>
+  );
+}
+
 function DayEditor({
   day,
   error,
@@ -600,16 +637,23 @@ function DayEditor({
       id={`day-${day.weekday}`}
       tabIndex={-1}
       aria-describedby={error ? `day-${day.weekday}-error` : undefined}
+      // A row of the week, not a card (art direction): the day and its
+      // switch on the left, its ranges on the right.
       className={cn(
-        "relative flex min-w-0 flex-col gap-3 rounded-3xl border bg-paper-raised px-4 py-4 focus:outline-none sm:px-5",
-        error ? "border-danger/60" : "border-line",
-        !day.open && "bg-paper",
+        "relative grid min-w-0 gap-x-8 gap-y-3 border-b border-line py-4 focus:outline-none sm:grid-cols-[9.5rem_minmax(0,1fr)]",
+        error && "border-l-2 border-l-danger pl-3",
       )}
     >
       {/* The fieldset's name (a legend names it only as its first child). */}
       <legend className="sr-only">{label}</legend>
-      <div className="flex items-center justify-between gap-3">
-        <span aria-hidden="true" className="text-[16px] font-semibold text-ink">
+      <div className="flex items-center justify-between gap-3 sm:h-11 sm:flex-col sm:items-start sm:justify-center sm:gap-1">
+        <span
+          aria-hidden="true"
+          className={cn(
+            "text-[16px] font-semibold",
+            day.open ? "text-ink" : "text-ink-muted",
+          )}
+        >
           {label}
         </span>
         <label
@@ -636,121 +680,123 @@ function DayEditor({
         </label>
       </div>
 
-      {day.open ? (
-        <ol className="flex flex-col gap-2">
-          {day.ranges.map((range, index) => (
-            <li
-              key={index}
-              className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2"
-            >
-              <TimeSelect
-                label={`Début de la plage ${index + 1}, ${label}`}
-                visibleLabel="De"
-                value={range.startsAt}
-                disabled={locked}
-                onChange={(value) =>
-                  onChange((current) => ({
-                    ...current,
-                    ranges: current.ranges.map((item, position) =>
-                      position === index ? { ...item, startsAt: value } : item,
-                    ),
-                  }))
-                }
-              />
-              <TimeSelect
-                label={`Fin de la plage ${index + 1}, ${label}`}
-                visibleLabel="À"
-                value={range.endsAt}
-                disabled={locked}
-                onChange={(value) =>
-                  onChange((current) => ({
-                    ...current,
-                    ranges: current.ranges.map((item, position) =>
-                      position === index ? { ...item, endsAt: value } : item,
-                    ),
-                  }))
-                }
-              />
-              <button
-                type="button"
-                disabled={locked}
-                aria-label={`Retirer la plage ${index + 1}, ${label}`}
-                onClick={() =>
-                  onChange((current) => {
-                    const ranges = current.ranges.filter(
-                      (_, position) => position !== index,
-                    );
-                    return { ...current, ranges, open: ranges.length > 0 };
-                  })
-                }
-                className="flex size-12 cursor-pointer items-center justify-center rounded-xl text-ink-muted hover:bg-sand hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+      <div className="flex min-w-0 flex-col gap-2">
+        {day.open ? (
+          <ol className="flex flex-col gap-2">
+            {day.ranges.map((range, index) => (
+              <li
+                key={index}
+                className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2"
               >
-                <CloseIcon size={18} />
-              </button>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="text-[14px] text-ink-muted">Fermé ce jour-là.</p>
-      )}
+                <TimeSelect
+                  label={`Début de la plage ${index + 1}, ${label}`}
+                  value={range.startsAt}
+                  disabled={locked}
+                  onChange={(value) =>
+                    onChange((current) => ({
+                      ...current,
+                      ranges: current.ranges.map((item, position) =>
+                        position === index
+                          ? { ...item, startsAt: value }
+                          : item,
+                      ),
+                    }))
+                  }
+                />
+                <span aria-hidden="true" className="text-ink-muted">
+                  –
+                </span>
+                <TimeSelect
+                  label={`Fin de la plage ${index + 1}, ${label}`}
+                  value={range.endsAt}
+                  disabled={locked}
+                  onChange={(value) =>
+                    onChange((current) => ({
+                      ...current,
+                      ranges: current.ranges.map((item, position) =>
+                        position === index ? { ...item, endsAt: value } : item,
+                      ),
+                    }))
+                  }
+                />
+                <button
+                  type="button"
+                  disabled={locked}
+                  aria-label={`Retirer la plage ${index + 1}, ${label}`}
+                  onClick={() =>
+                    onChange((current) => {
+                      const ranges = current.ranges.filter(
+                        (_, position) => position !== index,
+                      );
+                      return { ...current, ranges, open: ranges.length > 0 };
+                    })
+                  }
+                  className="flex size-11 cursor-pointer items-center justify-center rounded-xl text-ink-muted hover:bg-sand hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <CloseIcon size={18} />
+                </button>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="text-[14px] text-ink-muted sm:flex sm:h-11 sm:items-center">
+            Fermé ce jour-là.
+          </p>
+        )}
 
-      {error ? (
-        <p
-          id={`day-${day.weekday}-error`}
-          role="alert"
-          className="text-[13.5px] text-danger"
-        >
-          {error}
-        </p>
-      ) : null}
+        {error ? (
+          <p
+            id={`day-${day.weekday}-error`}
+            role="alert"
+            className="text-[13.5px] text-danger"
+          >
+            {error}
+          </p>
+        ) : null}
 
-      {day.open &&
-      day.ranges.length < MAX_RANGES_PER_DAY &&
-      nextRange(day.ranges) ? (
-        <button
-          type="button"
-          disabled={locked}
-          onClick={() =>
-            onChange((current) => ({
-              ...current,
-              ranges: [...current.ranges, nextRange(current.ranges)!],
-            }))
-          }
-          aria-label={`Ajouter une plage le ${label.toLowerCase()}`}
-          className="flex h-10 w-fit cursor-pointer items-center gap-1.5 rounded-xl px-2 text-[13.5px] font-medium text-ink-soft hover:bg-sand hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <PlusIcon size={16} />
-          Ajouter une plage
-        </button>
-      ) : null}
+        {day.open &&
+        day.ranges.length < MAX_RANGES_PER_DAY &&
+        nextRange(day.ranges) ? (
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() =>
+              onChange((current) => ({
+                ...current,
+                ranges: [...current.ranges, nextRange(current.ranges)!],
+              }))
+            }
+            aria-label={`Ajouter une plage le ${label.toLowerCase()}`}
+            className="flex h-10 w-fit cursor-pointer items-center gap-1.5 rounded-xl px-2 text-[13.5px] font-medium text-ink-soft hover:bg-sand hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <PlusIcon size={16} />
+            Ajouter une plage
+          </button>
+        ) : null}
+      </div>
     </fieldset>
   );
 }
 
 function TimeSelect({
   label,
-  visibleLabel,
   value,
   disabled,
   onChange,
 }: {
   label: string;
-  visibleLabel: string;
   value: string;
   disabled: boolean;
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="flex min-w-0 flex-col gap-1">
-      <span className="text-[12.5px] text-ink-muted" aria-hidden="true">
-        {visibleLabel}
-      </span>
+    <label className="flex min-w-0 flex-col">
       <select
         aria-label={label}
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className="h-12 w-full min-w-0 cursor-pointer rounded-xl border border-line bg-paper-raised px-3 text-[16px] text-ink tabular-nums hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+        className="h-11 w-full min-w-0 cursor-pointer rounded-xl border border-line bg-paper-raised px-3 text-[16px] text-ink tabular-nums hover:border-line-strong focus-visible:border-ink focus-visible:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-70"
       >
         {timeOptions(value).map((time) => (
           <option key={time} value={time}>

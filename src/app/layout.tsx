@@ -43,55 +43,6 @@ const hankenGrotesk = localFont({
   fallback: ["sans-serif"],
 });
 
-const instrumentSerifExt = localFont({
-  src: [
-    {
-      path: "../fonts/instrument-serif-ext.woff2",
-      weight: "400",
-      style: "normal",
-    },
-    {
-      path: "../fonts/instrument-serif-italic-ext.woff2",
-      weight: "400",
-      style: "italic",
-    },
-  ],
-  declarations: [
-    { prop: "font-family", value: "'Instrument Serif'" },
-    {
-      prop: "unicode-range",
-      value:
-        "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
-    },
-  ],
-  variable: "--font-serif-ext",
-  display: "swap",
-  preload: false,
-  adjustFontFallback: false,
-});
-const instrumentSerif = localFont({
-  src: [
-    { path: "../fonts/instrument-serif.woff2", weight: "400", style: "normal" },
-    {
-      path: "../fonts/instrument-serif-italic.woff2",
-      weight: "400",
-      style: "italic",
-    },
-  ],
-  declarations: [
-    { prop: "font-family", value: "'Instrument Serif'" },
-    {
-      prop: "unicode-range",
-      value:
-        "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
-    },
-  ],
-  variable: "--font-serif",
-  display: "swap",
-  fallback: ["serif"],
-  adjustFontFallback: "Times New Roman",
-});
-
 // The professional area's Studio style, with its width axis. Not
 // preloaded: only downloaded on the pages that use it.
 const archivoExt = localFont({
@@ -329,7 +280,6 @@ const faceName = (declared: string, font: { style: { fontFamily: string } }) =>
 
 const faces = {
   "--font-body": faceName("Hanken Grotesk", hankenGrotesk),
-  "--font-serif": faceName("Instrument Serif", instrumentSerif),
   "--font-studio": faceName("Archivo", archivo),
   "--font-engraved": faceName("Marcellus", marcellus),
   "--font-ecrin": faceName("Jost", jost),
@@ -342,7 +292,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="fr"
       style={faces}
-      className={`${hankenGrotesk.variable} ${hankenGroteskExt.variable} ${instrumentSerif.variable} ${instrumentSerifExt.variable} ${archivo.variable} ${archivoExt.variable} ${marcellus.variable} ${marcellusExt.variable} ${jost.variable} ${jostExt.variable} ${newsreader.variable} ${newsreaderExt.variable} ${ibmPlexMono.variable} ${ibmPlexMonoExt.variable} h-full antialiased`}
+      className={`${hankenGrotesk.variable} ${hankenGroteskExt.variable} ${archivo.variable} ${archivoExt.variable} ${marcellus.variable} ${marcellusExt.variable} ${jost.variable} ${jostExt.variable} ${newsreader.variable} ${newsreaderExt.variable} ${ibmPlexMono.variable} ${ibmPlexMonoExt.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
         <BookingHostProvider host={bookingHost()}>
