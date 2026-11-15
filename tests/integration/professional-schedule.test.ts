@@ -118,6 +118,9 @@ describe("booking settings", () => {
       bufferMinutes: 0,
       minimumBookingNoticeMinutes: 120,
       maximumBookingAdvanceDays: 90,
+      // Her Hub policy: never by default (CLIENT_HUB_CONTRACT § 12).
+      cancellationLeadMinutes: null,
+      rescheduleLeadMinutes: null,
     });
 
     expect(
