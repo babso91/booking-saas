@@ -1,8 +1,7 @@
-// A series of appointments she books for one client (M2-R07). PROPOSED
-// contract (docs/APPOINTMENT_SERIES_PROPOSAL.md): no server serves it yet.
-// The planner takes its actions as a whole; only the design preview and
-// the tests give it an in-memory server. No real page offers a series
-// until Cloud provides it.
+// A series of appointments she books for one client (M2-R07), as served
+// (docs/APPOINTMENT_SERIES_CONTRACT.md). The planner takes its actions as a
+// whole: the agenda gives it Cloud's Server Actions (real-actions.ts), the
+// design preview and the tests an in-memory server.
 //
 // The preview books nothing. Confirming creates every kept occurrence or
 // none: one failure fails the whole batch.

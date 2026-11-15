@@ -8,7 +8,7 @@ export const metadata = { title: "Série de rendez-vous · Aperçu" };
 const SCENARIOS: SeriesScenario[] = ["automne", "printemps", "conflits"];
 
 // The series planner on fictional data, against an in-memory server of the
-// PROPOSED contract (docs/APPOINTMENT_SERIES_PROPOSAL.md).
+// contract (docs/APPOINTMENT_SERIES_CONTRACT.md).
 // ?cas=automne|printemps|conflits. Like every preview, a 404 in production
 // unless DASHBOARD_PREVIEW=1.
 export default async function SeriesPreviewPage({

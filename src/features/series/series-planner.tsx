@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
+import { addDaysToLocalDate } from "@/lib/time/local-date";
 import { SelectField } from "@/components/ui/select-field";
 import { cn } from "@/lib/cn";
 
@@ -64,13 +65,23 @@ function initialChoices(
 
 export function SeriesPlanner({
   clientName,
-  rule: base,
+  rule: source,
   actions,
+  afterSource = false,
+  onCreated,
 }: {
   clientName: string;
   /** Client, service, options and the first appointment, from the agenda. */
   rule: Omit<SeriesPreviewInput, "repeatEveryWeeks" | "end">;
   actions: SeriesActions;
+  /**
+   * The rule's start is an appointment that already exists (repeating it
+   * from the agenda): the series starts one repetition later, so it never
+   * asks for the slot that appointment already holds.
+   */
+  afterSource?: boolean;
+  /** After the series is created (the agenda reads itself again). */
+  onCreated?: () => void;
 }) {
   const [every, setEvery] = useState(2);
   const [endKind, setEndKind] = useState<"count" | "until">("count");
@@ -84,6 +95,15 @@ export function SeriesPlanner({
   const [ruleError, setRuleError] = useState<string | null>(null);
   const [done, setDone] = useState<number | null>(null);
   const requestIds = useRef(new Map<string, string>());
+  const base = afterSource
+    ? {
+        ...source,
+        firstLocalStart: `${addDaysToLocalDate(
+          source.firstLocalStart.slice(0, 10),
+          7 * every,
+        )}${source.firstLocalStart.slice(10)}`,
+      }
+    : source;
 
   const input = (): SeriesPreviewInput => ({
     ...base,
@@ -160,7 +180,10 @@ export function SeriesPlanner({
       selected,
     });
     setBusy(null);
-    if (result.ok) return setDone(result.data.appointmentIds.length);
+    if (result.ok) {
+      onCreated?.();
+      return setDone(result.data.appointmentIds.length);
+    }
     const { code, keys } = result.error;
     if (code === seriesErrors.calendarConflict)
       return load(
@@ -185,12 +208,18 @@ export function SeriesPlanner({
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
-        <h2 className="font-display text-[26px] leading-tight text-ink">
+        {/* In the agenda's panel, the panel already says it. */}
+        <h2
+          className={cn(
+            "font-display text-[26px] leading-tight text-ink",
+            afterSource && "sr-only",
+          )}
+        >
           Répéter ce rendez-vous
         </h2>
         <p className="text-[14.5px] text-ink-soft">
           Pour {clientName}, à partir du {dayOf(base.firstLocalStart)} à{" "}
-          {base.firstLocalStart.slice(11)}. Rien n’est réservé avant ta
+          {base.firstLocalStart.slice(11, 16)}. Rien n’est réservé avant ta
           confirmation.
         </p>
       </header>
@@ -247,7 +276,11 @@ export function SeriesPlanner({
           </div>
           {endKind === "count" ? (
             <SelectField
-              label="Nombre de rendez-vous, celui-ci compris"
+              label={
+                afterSource
+                  ? "Rendez-vous à ajouter"
+                  : "Nombre de rendez-vous, celui-ci compris"
+              }
               value={String(count)}
               onChange={(event) => {
                 setCount(Number(event.target.value));
@@ -399,7 +432,7 @@ function OccurrenceRow({
   onChoose: (choice: Choice) => void;
 }) {
   const day = dayOf(occurrence.requestedLocalStart);
-  const asked = occurrence.requestedLocalStart.slice(11);
+  const asked = occurrence.requestedLocalStart.slice(11, 16);
   const name = `occurrence-${occurrence.key}`;
   const frame = cn(
     "flex flex-col gap-2 rounded-2xl border px-4 py-3",

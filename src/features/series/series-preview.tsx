@@ -23,7 +23,7 @@ const scenarios: Record<
 
 /**
  * The series planner on fictional data, kept in this page's memory only:
- * to review it before the backend exists. Never part of a real page.
+ * every case without an account. Never part of a real page.
  */
 export function SeriesPreview({ scenario }: { scenario: SeriesScenario }) {
   const setup = scenarios[scenario];

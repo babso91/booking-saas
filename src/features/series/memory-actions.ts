@@ -8,7 +8,7 @@ import {
 } from "./contract";
 import { addWeeks, instantsOf } from "./local-time";
 
-// An in-memory server of the PROPOSED series contract, for the preview and
+// An in-memory server of the series contract, for the preview and
 // the tests only: real wall-clock resolution in the business's time zone,
 // a horizon, busy slots, all-or-nothing commit, a replayed request id.
 

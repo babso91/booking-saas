@@ -67,6 +67,7 @@ export function AppointmentDetails({
   onEdit,
   onUpdated,
   onRefresh,
+  onRepeat,
 }: {
   appointment: AgendaAppointmentDto;
   /** The business zone sent by the server, or null (labels without offsets). */
@@ -74,6 +75,8 @@ export function AppointmentDetails({
   onEdit: () => void;
   onUpdated: (appointment: AgendaAppointmentDto) => void;
   onRefresh: () => Promise<UiError | null>;
+  /** Repeat it as a series (absent: not offered). */
+  onRepeat?: () => void;
 }) {
   const [pending, setPending] = useState<Transition | null>(null);
   const [confirming, setConfirming] = useState<Transition | null>(null);
@@ -203,6 +206,11 @@ export function AppointmentDetails({
         <Button variant="secondary" size="md" fullWidth onClick={onEdit}>
           {status === "confirmed" ? "Modifier" : "Modifier la note"}
         </Button>
+        {status === "confirmed" && onRepeat ? (
+          <Button variant="secondary" size="md" fullWidth onClick={onRepeat}>
+            Répéter ce rendez-vous
+          </Button>
+        ) : null}
         {status === "confirmed" || status === "no_show" ? (
           <Button
             size="md"

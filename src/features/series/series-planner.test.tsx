@@ -13,9 +13,10 @@ import { addWeeks, dayOf, instantsOf } from "./local-time";
 import { memorySeries } from "./memory-actions";
 import { SeriesPlanner } from "./series-planner";
 
-// The series planner against an in-memory server of the PROPOSED contract
-// (docs/APPOINTMENT_SERIES_PROPOSAL.md). The real guarantees (one lock,
-// quote, occupation, atomic commit) are the backend's.
+// The series planner against an in-memory server of the contract
+// (docs/APPOINTMENT_SERIES_CONTRACT.md). The real guarantees (one lock,
+// quote, occupation, atomic commit) are proved by
+// tests/integration/appointment-series.test.ts.
 
 afterEach(cleanup);
 
@@ -206,5 +207,35 @@ describe("confirming", () => {
       screen.queryByRole("region", { name: "Dates de la série" }),
     ).toBeNull();
     expect(screen.getByRole("button", { name: "Voir les dates" })).toBeTruthy();
+  });
+});
+
+describe("repeating an appointment from the agenda", () => {
+  it("starts one repetition after it, and counts the ones to add", async () => {
+    const server = memorySeries();
+    const preview = vi.spyOn(server.actions, "preview");
+    render(
+      <SeriesPlanner
+        clientName="Lina"
+        rule={{
+          clientId: "c-lina",
+          serviceId: "s-gel",
+          optionChoiceIds: [],
+          firstLocalStart: "2026-11-17T10:00",
+        }}
+        actions={server.actions}
+        afterSource
+      />,
+    );
+    select("Fréquence", "1");
+    select("Rendez-vous à ajouter", "3");
+    expect(screen.getByText(/à partir du .*24 novembre/)).toBeTruthy();
+    click("Voir les dates");
+    await screen.findByRole("region", { name: "Dates de la série" });
+    expect(preview.mock.calls[0]![0]).toMatchObject({
+      firstLocalStart: "2026-11-24T10:00",
+      repeatEveryWeeks: 1,
+      end: { count: 3 },
+    });
   });
 });
