@@ -151,6 +151,10 @@ export const appErrorMessages = {
     "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
+  policy_cutoff_passed:
+    "Le délai pour modifier ce rendez-vous depuis votre espace est passé. Contactez l’établissement.",
+  policy_unavailable:
+    "Ce rendez-vous ne peut pas être modifié depuis votre espace. Contactez l’établissement.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -295,6 +299,8 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_email_required: 409,
   context_changed: 409,
   auth_unavailable: 503,
+  policy_cutoff_passed: 409,
+  policy_unavailable: 409,
   internal: 500,
 };
 

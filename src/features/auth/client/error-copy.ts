@@ -414,6 +414,15 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  policy_cutoff_passed: {
+    title: "Délai passé",
+    message:
+      "Le délai pour modifier ce rendez-vous depuis ton espace est passé.",
+  },
+  policy_unavailable: {
+    title: "Modification impossible ici",
+    message: "Ce rendez-vous se modifie avec l’établissement directement.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {
