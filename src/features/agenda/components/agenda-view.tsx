@@ -57,6 +57,7 @@ import {
 import { useCanonicalToday } from "../client/use-canonical-today";
 import { zoneOf } from "../client/zone";
 import { AgendaError, TextAction } from "./agenda-error";
+import { AgendaPulse, agendaPulse } from "./agenda-pulse";
 import { AppointmentDetails } from "./appointment-details";
 import { AppointmentForm, type ServicesState } from "./appointment-form";
 import { BlockForm } from "./block-form";
@@ -576,7 +577,7 @@ export function AgendaView({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <h1
-              className="truncate font-display text-[28px] leading-none text-ink sm:text-[34px]"
+              className="truncate font-display text-[22px] leading-none text-ink sm:text-[24px]"
               aria-live="polite"
             >
               {periodLabel(view, range)}
@@ -630,6 +631,21 @@ export function AgendaView({
             </Button>
           </div>
         </div>
+
+        {data && !empty ? (
+          <AgendaPulse
+            pulse={agendaPulse(
+              data,
+              range.days,
+              today,
+              clock ? clock * 30_000 : null,
+            )}
+            view={view}
+            onOpen={(appointment) =>
+              setPanel({ kind: "appointment", appointment })
+            }
+          />
+        ) : null}
 
         {view === "day" ? (
           <DayStrip anchor={anchor} today={today} onSelect={navigate} />
