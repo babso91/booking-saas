@@ -319,10 +319,29 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+// Each face is declared under its real family name ('Hanken Grotesk'…) so
+// that its latin and latin-ext files share it, but next/font's variable
+// points at the name it generates ('hankenGrotesk'), which no @font-face
+// carries: every style rendered in its fallback. The variables are set
+// again here, real name first, generated fallback (metric-matched) after.
+const faceName = (declared: string, font: { style: { fontFamily: string } }) =>
+  `'${declared}', ${font.style.fontFamily}`;
+
+const faces = {
+  "--font-body": faceName("Hanken Grotesk", hankenGrotesk),
+  "--font-serif": faceName("Instrument Serif", instrumentSerif),
+  "--font-studio": faceName("Archivo", archivo),
+  "--font-engraved": faceName("Marcellus", marcellus),
+  "--font-ecrin": faceName("Jost", jost),
+  "--font-carnet-serif": faceName("Newsreader", newsreader),
+  "--font-carnet-mono": faceName("IBM Plex Mono", ibmPlexMono),
+} as React.CSSProperties;
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="fr"
+      style={faces}
       className={`${hankenGrotesk.variable} ${hankenGroteskExt.variable} ${instrumentSerif.variable} ${instrumentSerifExt.variable} ${archivo.variable} ${archivoExt.variable} ${marcellus.variable} ${marcellusExt.variable} ${jost.variable} ${jostExt.variable} ${newsreader.variable} ${newsreaderExt.variable} ${ibmPlexMono.variable} ${ibmPlexMonoExt.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">

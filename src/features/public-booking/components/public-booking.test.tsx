@@ -444,7 +444,8 @@ describe("booking", () => {
     expect(
       screen.getByText("Pose cil à cil (au moment de la réservation)"),
     ).toBeTruthy();
-    expect(screen.getByText(/09:30 \(heure de Vancouver\)/)).toBeTruthy();
+    expect(screen.getByText("09h30")).toBeTruthy();
+    expect(screen.getByText(/heure de Vancouver/)).toBeTruthy();
     expect(screen.getByText("Confirmé")).toBeTruthy();
     expect(document.body.textContent).not.toMatch(
       /email (de confirmation )?(a été )?envoy/i,
@@ -491,9 +492,9 @@ describe("booking", () => {
     await toReview();
     fireEvent.click(confirmButton());
     expect(
-      await screen.findByText(/Modifiées depuis par l’établissement/),
+      await screen.findByText(/L’horaire a été modifié depuis par Studio Mila/),
     ).toBeTruthy();
-    expect(screen.queryByText(/09:30 \(heure de/)).toBeNull();
+    expect(screen.queryByText("09h30")).toBeNull();
   });
 
   it("while sending: one request whatever the clicks, nothing can be changed, no success before the answer", async () => {
