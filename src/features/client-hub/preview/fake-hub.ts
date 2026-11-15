@@ -10,9 +10,9 @@ import {
 
 // A stand-in for the Client Hub routes, in the browser's memory, for the
 // design preview only (/apercu/espace): fictional data, nothing read from
-// or written to any server. It answers as the PROPOSED contract of her own
-// changes describes (docs/CLIENT_HUB_ACTIONS_PROPOSAL.md), so the screens
-// can be reviewed before those routes exist. Never imported by a real page.
+// or written to any server. It answers as the contract of her own changes
+// does (docs/CLIENT_HUB_CONTRACT.md § 12), so every state can be reviewed
+// without an account. Never imported by a real page.
 
 export const PREVIEW_BUSINESS = "11111111-1111-4111-8111-111111111111";
 export const PREVIEW_APPOINTMENT = "a1111111-1111-4111-8111-111111111111";

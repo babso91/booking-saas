@@ -162,9 +162,8 @@ export function fetchAppointment(
   );
 }
 
-// Her own changes to an appointment. PROPOSED routes
-// (docs/CLIENT_HUB_ACTIONS_PROPOSAL.md): the screens only offer them when
-// the appointment's `actions` say so, which no server does yet. Each is
+// Her own changes to an appointment (docs/CLIENT_HUB_CONTRACT.md § 12):
+// the screens only offer them when the appointment's `actions` say so. Each is
 // idempotent by `requestId`: resending the same request after a lost
 // answer never cancels or moves twice. The answer is the appointment as it
 // is after the change; a refusal changes nothing.

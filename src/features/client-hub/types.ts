@@ -38,14 +38,14 @@ export type ClientHubAppointmentDetailDto = ClientHubAppointmentDto & {
   };
   /**
    * What she may do herself with this appointment, decided by the server.
-   * PROPOSED (docs/CLIENT_HUB_ACTIONS_PROPOSAL.md), not served yet: absent
-   * or null, nothing can be changed from her space and she is told to
-   * contact the business, as before.
+   * docs/CLIENT_HUB_CONTRACT.md § 12: null when it is no longer a confirmed
+   * appointment to come; then nothing can be changed from her space and
+   * she is told to contact the business.
    */
   actions?: ClientHubAppointmentActionsDto | null;
 };
 
-/** Why an action is closed, in the server's words (proposed codes). */
+/** Why an action is closed, in the server's words (contract § 12). */
 export type ClientHubActionRefusal =
   /** The deadline of the business's policy has passed. */
   | "policy_cutoff_passed"

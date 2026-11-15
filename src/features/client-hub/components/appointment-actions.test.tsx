@@ -28,10 +28,10 @@ import {
 import { HubAppointmentDetail } from "./appointment-detail";
 import { HubRoot } from "./hub-shell";
 
-// Her own changes to an appointment (proposed contract,
-// docs/CLIENT_HUB_ACTIONS_PROPOSAL.md), against a fake of the routes: what
-// the screen offers, sends and says. The server's own guarantees
-// (deadlines, concurrency, idempotence) are the backend's to prove.
+// Her own changes to an appointment (docs/CLIENT_HUB_CONTRACT.md § 12),
+// against a fake of the routes: what the screen offers, sends and says. The
+// server's own guarantees (deadlines, concurrency, idempotence) are proved
+// by tests/integration/client-hub-actions.test.ts.
 
 const router = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));

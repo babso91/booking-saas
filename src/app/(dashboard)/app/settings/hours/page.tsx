@@ -4,6 +4,7 @@ import { requireReadyBusiness } from "@/features/auth/data/guards";
 import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { BusinessHoursEditor } from "@/features/availability/components/business-hours-editor";
+import { HubPolicySection } from "@/features/booking-policy/components/hub-policy-section";
 
 export const metadata: Metadata = {
   title: "Horaires",
@@ -24,6 +25,7 @@ export default async function BusinessHoursPage() {
       <BusinessHoursEditor
         timezone={business.timezone}
         scope={{ userId: user.id, businessId: business.id }}
+        after={<HubPolicySection />}
       />
     </AppShell>
   );

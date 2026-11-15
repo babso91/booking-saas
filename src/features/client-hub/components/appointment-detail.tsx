@@ -119,8 +119,8 @@ function Detail({
       ? relativeDay(appointment.startsAt, zone)
       : null;
   const upcoming = appointment.status === "confirmed";
-  // What she may change herself, when the server says so (not served yet:
-  // without it she is told to contact the business, as before).
+  // What she may change herself, as the server says (contract § 12;
+  // without it she is told to contact the business).
   const actions = upcoming ? (appointment.actions ?? null) : null;
 
   return (
