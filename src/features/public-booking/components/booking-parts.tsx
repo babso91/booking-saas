@@ -119,7 +119,7 @@ export function StepHeading({
       <h2
         ref={headingRef}
         tabIndex={-1}
-        className="font-display text-[28px] leading-tight text-ink focus:outline-none sm:text-[32px]"
+        className="font-display text-[23px] leading-tight text-ink focus:outline-none sm:text-[26px]"
       >
         {children}
       </h2>
@@ -130,11 +130,11 @@ export function StepHeading({
 /** Label / value rows (recap, confirmation). */
 export function Facts({ rows }: { rows: [string, ReactNode][] }) {
   return (
-    <dl className="flex flex-col divide-y divide-line rounded-2xl border border-line bg-paper-raised">
+    <dl className="flex flex-col divide-y divide-line border-y border-line">
       {rows.map(([label, value]) => (
         <div
           key={label}
-          className="flex flex-col gap-0.5 px-4 py-3 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4"
+          className="flex flex-col gap-0.5 py-3 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4"
         >
           <dt className="text-[13.5px] text-ink-muted">{label}</dt>
           <dd className="min-w-0 text-[15px] font-medium wrap-anywhere text-ink sm:text-right">

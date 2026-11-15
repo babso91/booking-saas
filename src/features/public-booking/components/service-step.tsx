@@ -2,6 +2,7 @@
 
 import type { Ref } from "react";
 
+import { ChevronRightIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
 
 import type { BookingFlow } from "../client/use-booking-flow";
@@ -56,7 +57,7 @@ export function ServiceStep({
               </h3>
             ) : null}
             <ul
-              className="flex flex-col gap-3"
+              className="flex flex-col divide-y divide-line border-y border-line"
               aria-label={group.category?.name ?? "Prestations"}
             >
               {group.services.map(({ id }) => {
@@ -69,24 +70,33 @@ export function ServiceStep({
                       onClick={() => flow.actions.chooseService(item.id)}
                       aria-pressed={selected}
                       aria-describedby={`service-${item.id}-details`}
-                      className="flex w-full min-w-0 cursor-pointer flex-col gap-1 rounded-3xl border border-line bg-paper-raised px-4 py-4 text-left transition-colors hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink aria-pressed:border-ink sm:px-5"
+                      // A line of the salon's menu: name, then duration and price;
+                      // the row answers the hand (art direction).
+                      className="group -mx-3 flex w-[calc(100%+1.5rem)] min-w-0 cursor-pointer items-center gap-4 rounded-2xl px-3 py-4 text-left transition-[background-color,transform] duration-150 ease-soft hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink active:scale-[0.99] aria-pressed:bg-sand/70"
                     >
-                      <span className="text-[17px] font-semibold wrap-anywhere text-ink">
-                        {item.name}
-                      </span>
-                      <span
-                        id={`service-${item.id}-details`}
-                        className="flex flex-col gap-1"
-                      >
-                        <span className="text-[14.5px] text-ink-soft">
-                          {serviceFromLine(item)}
+                      <span className="flex min-w-0 flex-1 flex-col gap-1">
+                        <span className="text-[17px] font-semibold wrap-anywhere text-ink">
+                          {item.name}
                         </span>
-                        {item.description ? (
-                          <span className="text-[14px] leading-snug wrap-anywhere whitespace-pre-line text-ink-muted">
-                            {item.description}
+                        <span
+                          id={`service-${item.id}-details`}
+                          className="flex flex-col gap-1"
+                        >
+                          <span className="text-[14.5px] text-ink-soft tabular-nums">
+                            {serviceFromLine(item)}
                           </span>
-                        ) : null}
+                          {item.description ? (
+                            <span className="text-[14px] leading-snug wrap-anywhere whitespace-pre-line text-ink-muted">
+                              {item.description}
+                            </span>
+                          ) : null}
+                        </span>
                       </span>
+                      <ChevronRightIcon
+                        size={18}
+                        aria-hidden="true"
+                        className="shrink-0 text-ink-muted transition-transform duration-150 ease-soft group-hover:translate-x-0.5 group-hover:text-ink"
+                      />
                     </button>
                   </li>
                 );

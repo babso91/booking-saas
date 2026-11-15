@@ -55,7 +55,7 @@ export function SlotStep({
         </StepHeading>
       </div>
 
-      <div className="flex flex-col gap-1 rounded-2xl border border-line bg-paper-raised px-4 py-3">
+      <div className="flex flex-col gap-1 border-b border-line pb-4">
         <p className="text-[15px] font-semibold wrap-anywhere text-ink">
           {service.name}
         </p>
@@ -148,7 +148,7 @@ export function SlotStep({
                   "flex min-w-0 cursor-pointer flex-col items-center gap-0.5 rounded-2xl border px-0.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
                   selected
                     ? "border-ink bg-ink text-paper-raised"
-                    : "border-line bg-paper-raised text-ink hover:border-line-strong",
+                    : "border-transparent bg-sand/55 text-ink hover:bg-sand",
                 )}
               >
                 <span className="text-[11.5px] capitalize opacity-80">
@@ -216,7 +216,7 @@ export function SlotStep({
               : "Les créneaux n’ont pas pu être chargés."}
           </Notice>
         ) : slots.status === "ready" && slots.slots.length === 0 ? (
-          <div className="flex flex-col items-start gap-2 rounded-2xl border border-line bg-paper-raised px-4 py-4">
+          <div className="flex flex-col items-start gap-2 py-2">
             <p className="text-[14.5px] text-ink-soft">
               Aucun créneau disponible ce jour-là.
             </p>
@@ -245,10 +245,10 @@ export function SlotStep({
                     aria-pressed={selected}
                     aria-label={`${dayLabel(date)} à ${wallTime(item.localStartsAt)}`}
                     className={cn(
-                      "h-12 w-full cursor-pointer rounded-xl border text-[15.5px] font-semibold tabular-nums transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
+                      "h-12 w-full cursor-pointer rounded-xl border text-[15.5px] font-semibold tabular-nums transition-[background-color,transform] duration-150 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
                       selected
                         ? "border-ink bg-ink text-paper-raised"
-                        : "border-line bg-paper-raised text-ink hover:border-line-strong",
+                        : "border-transparent bg-sand/55 text-ink hover:bg-sand",
                     )}
                   >
                     {wallTime(item.localStartsAt)}
