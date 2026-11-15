@@ -7,13 +7,13 @@ export type Database = {
           Tables: {
             "appointments": {
                   Row: {
-                    "booking_window": unknown,"buffer_minutes_snapshot": number,"business_id": string,"cancellation_reason": string | null,"client_email_snapshot": string | null,"client_first_name_snapshot": string | null,"client_id": string,"client_last_name_snapshot": string | null,"client_phone_snapshot": string | null,"completed_at": string | null,"created_at": string,"created_by": string | null,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"currency": string,"duration_minutes_snapshot": number,"ends_at": string,"id": string,"internal_notes": string | null,"occupied_window": unknown,"options_snapshot": NonNullable<Json>,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status": Database["public"]['Enums']["appointment_status"],"updated_at": string,"version": number
+                    "booking_window": unknown,"buffer_minutes_snapshot": number,"business_id": string,"cancellation_reason": string | null,"client_email_snapshot": string | null,"client_first_name_snapshot": string | null,"client_id": string,"client_last_name_snapshot": string | null,"client_phone_snapshot": string | null,"completed_at": string | null,"created_at": string,"created_by": string | null,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"currency": string,"duration_minutes_snapshot": number,"ends_at": string,"id": string,"internal_notes": string | null,"occupied_window": unknown,"options_snapshot": NonNullable<Json>,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"staff_id": string | null,"starts_at": string,"status": Database["public"]['Enums']["appointment_status"],"updated_at": string,"version": number
                   }
                   Insert: {
-                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id": string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id": string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot": number,"ends_at": string,"id"?: string,"internal_notes"?: string | null,"occupied_window": unknown,"options_snapshot"?: NonNullable<Json>,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
+                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id": string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id": string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot": number,"ends_at": string,"id"?: string,"internal_notes"?: string | null,"occupied_window": unknown,"options_snapshot"?: NonNullable<Json>,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"staff_id"?: string | null,"starts_at": string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id"?: string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id"?: string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot"?: number,"ends_at"?: string,"id"?: string,"internal_notes"?: string | null,"occupied_window"?: unknown,"options_snapshot"?: NonNullable<Json>,"price_cents_snapshot"?: number,"service_id"?: string,"service_name_snapshot"?: string,"starts_at"?: string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
+                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id"?: string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id"?: string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot"?: number,"ends_at"?: string,"id"?: string,"internal_notes"?: string | null,"occupied_window"?: unknown,"options_snapshot"?: NonNullable<Json>,"price_cents_snapshot"?: number,"service_id"?: string,"service_name_snapshot"?: string,"staff_id"?: string | null,"starts_at"?: string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -39,6 +39,12 @@ isOneToOne: false
       columns: ["service_id","business_id"]
 isOneToOne: false
       referencedRelation: "services"
+      referencedColumns: ["id","business_id"]
+    },{
+      foreignKeyName: "appointments_staff_fkey"
+      columns: ["staff_id","business_id"]
+isOneToOne: false
+      referencedRelation: "staff_members"
       referencedColumns: ["id","business_id"]
     }
                   ]
@@ -800,6 +806,56 @@ isOneToOne: false
       referencedColumns: ["id","site_id"]
     }
                   ]
+                },"staff_members": {
+                  Row: {
+                    "bookable": boolean,"business_id": string,"created_at": string,"display_name": string,"id": string,"revision": number,"updated_at": string,"user_id": string | null
+                  }
+                  Insert: {
+                    "bookable"?: boolean,"business_id": string,"created_at"?: string,"display_name": string,"id"?: string,"revision"?: number,"updated_at"?: string,"user_id"?: string | null
+                  }
+                  Update: {
+                    "bookable"?: boolean,"business_id"?: string,"created_at"?: string,"display_name"?: string,"id"?: string,"revision"?: number,"updated_at"?: string,"user_id"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "staff_members_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "staff_members_user_id_fkey"
+      columns: ["user_id"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"staff_services": {
+                  Row: {
+                    "business_id": string,"created_at": string,"service_id": string,"staff_id": string
+                  }
+                  Insert: {
+                    "business_id": string,"created_at"?: string,"service_id": string,"staff_id": string
+                  }
+                  Update: {
+                    "business_id"?: string,"created_at"?: string,"service_id"?: string,"staff_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "staff_services_service_id_business_id_fkey"
+      columns: ["service_id","business_id"]
+isOneToOne: false
+      referencedRelation: "services"
+      referencedColumns: ["id","business_id"]
+    },{
+      foreignKeyName: "staff_services_staff_id_business_id_fkey"
+      columns: ["staff_id","business_id"]
+isOneToOne: false
+      referencedRelation: "staff_members"
+      referencedColumns: ["id","business_id"]
+    }
+                  ]
                 }
           }
           Views: {
@@ -827,6 +883,9 @@ isOneToOne: false
           Functions: {
             "accept_beta_invitation":
 { Args: { "p_email": string,"p_proof_session"?: string,"p_token_hash": string,"p_user_id": string }; Returns: string
+                           },
+"accept_team_invitation":
+{ Args: { "p_token_hash": string }; Returns: string
                            },
 "agenda_create_appointment":
 { Args: { "p_business_id": string,"p_client_email"?: string,"p_client_first_name"?: string,"p_client_id"?: string,"p_client_last_name"?: string,"p_client_phone"?: string,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_request_id"?: string,"p_service_id": string,"p_starts_at": string }; Returns: {
@@ -1081,6 +1140,9 @@ isOneToOne: false
 "create_site_asset":
 { Args: { "p_actor": string,"p_business_id": string,"p_byte_size": number,"p_content_type": string }; Returns: string
                            },
+"create_staff_member":
+{ Args: { "p_bookable": boolean,"p_business_id": string,"p_display_name": string,"p_operation_id": string,"p_service_ids": (string)[] }; Returns: Json
+                           },
 "crm_assert_member":
 { Args: { "p_business_id": string }; Returns: undefined
                            },
@@ -1196,6 +1258,9 @@ isOneToOne: false
               "config": Json,"number": number,"plan": string,"published_at": string,"schema_version": number,"unavailable_assets": (string)[],"version_id": string
             }[]
                            },
+"get_team":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
 "has_business_role":
 { Args: { "accepted_roles": (Database["public"]['Enums']["business_member_role"])[],"target_business_id": string }; Returns: boolean
                            },
@@ -1309,6 +1374,9 @@ isOneToOne: false
 "revoke_site_asset_for_privacy":
 { Args: { "p_asset_id": string,"p_business_id": string }; Returns: undefined
                            },
+"revoke_team_access":
+{ Args: { "p_business_id": string,"p_expected_revision": number,"p_operation_id": string,"p_staff_id": string }; Returns: Json
+                           },
 "save_member_preferences":
 { Args: { "p_business_id": string,"p_changes": Json,"p_expected_incarnation": string,"p_expected_version": number,"p_membership_id": string }; Returns: {
               "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"status": string,"style": string,"version": number
@@ -1321,6 +1389,9 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_limit"?: number,"p_query": string }; Returns: {
               "email": string,"first_name": string,"id": string,"last_name": string,"phone": string
             }[]
+                           },
+"send_team_invitation":
+{ Args: { "p_business_id": string,"p_email": string,"p_expected_revision": number,"p_operation_id": string,"p_role": string,"p_staff_id": string,"p_token_hash": string }; Returns: Json
                            },
 "set_service_options":
 { Args: { "p_business_id": string,"p_deleted_choice_ids"?: (string)[],"p_deleted_option_ids"?: (string)[],"p_expected_version": number,"p_options": Json,"p_service_id": string }; Returns: number
@@ -1341,6 +1412,9 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_category_id": string,"p_expected_version": number,"p_name"?: string,"p_visible"?: boolean }; Returns: {
               "display_order": number,"id": string,"name": string,"version": number,"visible": boolean
             }[]
+                           },
+"update_staff_member":
+{ Args: { "p_bookable": boolean,"p_business_id": string,"p_display_name": string,"p_expected_revision": number,"p_operation_id": string,"p_service_ids": (string)[],"p_staff_id": string }; Returns: Json
                            }
           }
           Enums: {

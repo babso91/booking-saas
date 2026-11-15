@@ -77,6 +77,8 @@ export type Professional = {
   userId: string;
   email: string;
   client: AppSupabaseClient;
+  /** To open another session of the same account. */
+  password: string;
 };
 
 /** Creates a real Supabase Auth user and returns a client signed in as them. */
@@ -106,7 +108,7 @@ export async function createProfessional(label: string): Promise<Professional> {
     throw signInError;
   }
 
-  return { userId: data.user.id, email, client };
+  return { userId: data.user.id, email, client, password };
 }
 
 export function uniqueSlug(prefix: string) {

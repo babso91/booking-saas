@@ -44,7 +44,7 @@ async function tables() {
         from public.services s where s.business_id = $1) as services,
        (select md5(string_agg(h::text, '|' order by h.id))
         from public.business_hours h where h.business_id = $1) as hours,
-       (select md5(string_agg((to_jsonb(a) - 'options_snapshot')::text, '|' order by a.id))
+       (select md5(string_agg((to_jsonb(a) - 'options_snapshot' - 'staff_id')::text, '|' order by a.id))
         from public.appointments a where a.business_id = $1) as appointments`,
     [businessId],
   );

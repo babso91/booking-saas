@@ -52,7 +52,7 @@ async function asServiceRole<T>(sql: string, params: unknown[]): Promise<T[]> {
 async function snapshot() {
   const { rows } = await db.query(
     `select
-       (select md5(string_agg((to_jsonb(a) - 'options_snapshot')::text, '|' order by a.id)) from public.appointments a where a.business_id = $1) as appointments,
+       (select md5(string_agg((to_jsonb(a) - 'options_snapshot' - 'staff_id')::text, '|' order by a.id)) from public.appointments a where a.business_id = $1) as appointments,
        (select md5(string_agg(c::text, '|' order by c.id)) from public.clients c where c.business_id = $1) as clients`,
     [business.id],
   );

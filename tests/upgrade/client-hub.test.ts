@@ -30,7 +30,7 @@ async function hash() {
   const { rows } = await db.query(
     `select md5(concat_ws('#',
        (select string_agg(c::text, '|' order by c.id) from public.clients c where c.business_id = $1),
-       (select string_agg((to_jsonb(a) - 'options_snapshot')::text, '|' order by a.id) from public.appointments a where a.business_id = $1),
+       (select string_agg((to_jsonb(a) - 'options_snapshot' - 'staff_id')::text, '|' order by a.id) from public.appointments a where a.business_id = $1),
        (select string_agg(e::text, '|' order by e.id) from public.loyalty_events e where e.business_id = $1)
      )) as hash`,
     [business.id],
