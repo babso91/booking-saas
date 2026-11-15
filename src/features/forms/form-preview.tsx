@@ -28,7 +28,7 @@ const starts: Record<FormScenario, Partial<ClientFormDto>> = {
 
 /**
  * The client's form on fictional data, kept in this page's memory only: to
- * review it before the backend exists. Never part of a real page.
+ * show every state without an account. Never part of a real page.
  */
 export function FormPreview({ scenario }: { scenario: FormScenario }) {
   const [server] = useState(() =>

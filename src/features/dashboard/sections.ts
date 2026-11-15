@@ -8,6 +8,7 @@ export type DashboardSection =
   | "agenda"
   | "clients"
   | "services"
+  | "forms"
   | "loyalty"
   | "hours"
   | "calendar"
@@ -19,6 +20,7 @@ export const sectionHref: Record<DashboardSection, Route> = {
   agenda: "/app",
   clients: "/app/clients",
   services: "/app/services",
+  forms: "/app/forms",
   loyalty: "/app/loyalty",
   hours: "/app/settings/hours",
   calendar: "/app/settings/calendar",

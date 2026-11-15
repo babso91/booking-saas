@@ -8,7 +8,7 @@ import {
 } from "./contract";
 import { missingAnswers, visibleFields } from "./engine";
 
-// An in-memory server of the PROPOSED client-form contract, for the preview
+// An in-memory server of the client-form contract, for the preview
 // and the tests only: hidden answers refused, a request id replayed, a
 // newer version said once.
 

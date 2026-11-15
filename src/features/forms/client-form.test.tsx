@@ -19,8 +19,8 @@ import {
 } from "./engine";
 import { memoryClientForm, sampleFields, sampleForm } from "./memory-actions";
 
-// The client's form against an in-memory server of the PROPOSED contract
-// (docs/CLIENT_FORMS_PROPOSAL.md). The real guarantees (Hub session,
+// The client's form against an in-memory server of the contract
+// (docs/CLIENT_FORMS_CONTRACT.md). The real guarantees (Hub session,
 // relation, hidden answers refused, server time) are the backend's.
 
 afterEach(cleanup);

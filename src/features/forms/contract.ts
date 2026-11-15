@@ -1,7 +1,8 @@
-// A form her client fills in before a visit (R3-02). PROPOSED contract
-// (docs/CLIENT_FORMS_PROPOSAL.md): no server serves it yet. The screen
-// takes its actions as a whole; only the design preview and the tests give
-// it an in-memory server. No real page shows a form until Cloud provides it.
+// A form her client fills in before a visit (R3-02), as served
+// (docs/CLIENT_FORMS_CONTRACT.md, Hub routes). The screen takes its actions
+// as a whole; it is mounted in her space by the Hub's own PR (the Hub
+// screens are not on this branch); the preview and the tests give it an
+// in-memory server.
 //
 // The server owns everything that matters: who may open the form (a Hub
 // session and an attested relation), the visible set of answers (hidden

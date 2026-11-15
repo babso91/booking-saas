@@ -7,7 +7,7 @@ import {
 } from "./contract";
 import { draftProblems } from "./draft";
 
-// An in-memory server of the PROPOSED template contract, for the preview
+// An in-memory server of the template contract, for the preview
 // and the tests only: the draft's lock, a replayed request id, a published
 // version frozen.
 

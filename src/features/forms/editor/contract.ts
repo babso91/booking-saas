@@ -1,5 +1,5 @@
-// Her form templates (R3-02, pro side). PROPOSED contract
-// (docs/CLIENT_FORMS_PROPOSAL.md, "Éditeur"): no server serves it yet. A
+// Her form templates (R3-02, pro side), as served
+// (docs/CLIENT_FORMS_CONTRACT.md; real-pro-actions.ts). A
 // template has one draft she edits and published versions nobody edits:
 // publishing freezes the draft as a new version.
 

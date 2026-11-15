@@ -7,7 +7,7 @@ import { memoryVisitForms, sampleVisitForms } from "./memory-actions";
 import { VisitForms } from "./visit-forms";
 
 // The forms of a visit, pro side, against an in-memory server of the
-// PROPOSED contract (docs/CLIENT_FORMS_PROPOSAL.md, "Côté pro").
+// contract (docs/CLIENT_FORMS_CONTRACT.md, "Côté pro").
 
 afterEach(cleanup);
 

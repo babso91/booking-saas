@@ -13,8 +13,8 @@ import { dependentsOf, draftProblems, move, newField } from "./draft";
 import { FormEditor } from "./form-editor";
 import { memoryFormEditor, sampleTemplate } from "./memory-editor";
 
-// The template editor against an in-memory server of the PROPOSED contract
-// (docs/CLIENT_FORMS_PROPOSAL.md, "Éditeur"). The real guarantees (frozen
+// The template editor against an in-memory server of the contract
+// (docs/CLIENT_FORMS_CONTRACT.md, "Éditeur"). The real guarantees (frozen
 // versions, canonical hash, tenant) are the backend's.
 
 afterEach(cleanup);

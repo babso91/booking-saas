@@ -7,7 +7,7 @@ import { memoryFormEditor } from "./memory-editor";
 
 /**
  * The template editor on fictional data, kept in this page's memory only:
- * to review it before the backend exists. Never part of a real page.
+ * every state without an account. Never part of a real page.
  */
 export function EditorPreview() {
   const [server] = useState(() =>

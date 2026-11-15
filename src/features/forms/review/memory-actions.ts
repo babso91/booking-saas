@@ -6,7 +6,7 @@ import {
   type VisitFormsDto,
 } from "./contract";
 
-// An in-memory server of the PROPOSED pro-side forms contract, for the
+// An in-memory server of the pro-side forms contract, for the
 // preview and the tests only. Nothing is sent to anyone.
 
 const fail = (code: string): ReviewResult<never> => ({
