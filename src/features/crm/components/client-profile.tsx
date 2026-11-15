@@ -607,7 +607,7 @@ function RelationshipHeader({ profile }: { profile: ClientProfileDto }) {
           .join(" · ")}
       </p>
 
-      <dl className="hidden grid-cols-4 overflow-hidden rounded-3xl border border-line bg-paper-raised md:grid">
+      <dl className="hidden grid-cols-4 border-y border-line md:grid">
         <Fact label="Visites terminées">
           {overview.completedCount === 0 ? (
             <span className="text-ink-muted">Aucune</span>
@@ -657,7 +657,7 @@ function Fact({
   children: ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-1 border-r border-line px-5 py-4 last:border-r-0">
+    <div className="flex min-w-0 flex-col gap-1 border-r border-line px-5 py-4 first:pl-0 last:border-r-0">
       <dt className="text-[13px] text-ink-muted">{label}</dt>
       <dd
         className={cn(
@@ -1036,7 +1036,7 @@ function DossierSection({
   return (
     <section
       aria-labelledby={id}
-      className="flex flex-col gap-3 rounded-3xl border border-line bg-paper-raised px-5 py-5"
+      className="flex flex-col gap-3 border-t border-line pt-5"
     >
       {/* Wraps when the action is long (a kept draft) on narrow phones. */}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
@@ -1104,7 +1104,7 @@ function ContactLine({
 
   return (
     <div className="flex items-center gap-3">
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sand text-ink-soft">
+      <span aria-hidden="true" className="shrink-0 text-ink-muted">
         {icon}
       </span>
       <div className="flex min-w-0 flex-1 flex-col">

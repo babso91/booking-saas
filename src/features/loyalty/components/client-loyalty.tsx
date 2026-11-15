@@ -549,7 +549,7 @@ function Frame({
     <section
       aria-labelledby="client-loyalty"
       aria-busy={busy || undefined}
-      className="flex flex-col gap-4 rounded-3xl border border-line bg-paper-raised px-5 py-5"
+      className="flex flex-col gap-4 border-t border-line pt-5"
     >
       <div className="flex items-center justify-between gap-3">
         <h2
