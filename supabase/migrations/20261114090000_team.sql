@@ -437,11 +437,14 @@ begin
     pg_catalog.jsonb_build_object('kind', p_kind, 'payload', p_payload)::text, 'UTF8'
   )), 'hex');
 
-  select r.kind, r.fingerprint, r.response into v_existing
+  select r.kind, r.fingerprint, r.response, r.created_by into v_existing
   from private.team_requests r
   where r.business_id = p_business_id and r.operation_id = p_operation_id;
   if found then
-    if v_existing.fingerprint <> v_fingerprint then
+    -- A replay belongs to its author: another account reusing the same
+    -- operationId (even with the same command) gets no recorded answer.
+    if v_existing.fingerprint <> v_fingerprint
+       or v_existing.created_by is distinct from (select auth.uid()) then
       raise exception using errcode = 'P0001', message = 'idempotency_conflict', hint = 'operationId';
     end if;
     return v_existing.response;
@@ -830,6 +833,11 @@ declare
 begin
   if v_user is null then
     raise exception using errcode = '42501', message = 'unauthenticated';
+  end if;
+  -- Same session rule as every professional door (is_business_member): an
+  -- access token from before her beta proof attaches her to nothing.
+  if not private.request_session_trusted() then
+    raise exception using errcode = '42501', message = 'forbidden';
   end if;
   if p_token_hash is null or p_token_hash !~ '^[0-9a-f]{64}$' then
     raise exception using errcode = 'P0001', message = 'invitation_invalid';

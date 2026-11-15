@@ -11,6 +11,7 @@ import {
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
 import {
+  anonClient,
   createBusiness,
   createClientRecord,
   createProfessional,
@@ -409,5 +410,91 @@ describe("team", () => {
       .select("id")
       .eq("business_id", otherBusiness.id);
     expect(data).toEqual([]);
+  });
+});
+
+describe("team: replay scope and session rule", () => {
+  it("never hands one account's recorded answer to another account of the business", async () => {
+    const boss = await createProfessional("team-replay-owner");
+    const shop = await createBusiness(boss.userId);
+    const colleague = await createProfessional("team-replay-admin");
+    await db.query(
+      "insert into public.business_members (business_id, user_id, role) values ($1, $2, 'admin')",
+      [shop.id, colleague.userId],
+    );
+    const args = {
+      p_business_id: shop.id,
+      p_operation_id: randomUUID(),
+      p_display_name: "Inès",
+      p_bookable: false,
+      p_service_ids: [],
+    };
+    const first = await ok<TeamMemberDto>(
+      call(boss.client, "create_staff_member", args),
+    );
+    // Same operationId, same command, another author: refused, nothing written.
+    expect(
+      await refusal(call(colleague.client, "create_staff_member", args)),
+    ).toBe("idempotency_conflict");
+    // Its author still gets her answer back.
+    expect(
+      await ok<TeamMemberDto>(call(boss.client, "create_staff_member", args)),
+    ).toEqual(first);
+    const { rows } = await db.query(
+      "select count(*)::int as n from public.staff_members where business_id = $1 and display_name = 'Inès'",
+      [shop.id],
+    );
+    expect(rows[0].n).toBe(1);
+  });
+
+  it("an access token from before her beta proof cannot accept; a later session can", async () => {
+    const boss = await createProfessional("team-session-owner");
+    const shop = await createBusiness(boss.userId);
+    const member = await ok<TeamMemberDto>(
+      call(boss.client, "create_staff_member", {
+        p_business_id: shop.id,
+        p_operation_id: randomUUID(),
+        p_display_name: "Admin invitée",
+        p_bookable: false,
+        p_service_ids: [],
+      }),
+    );
+    const invited = await createProfessional("team-session-invited");
+    const token = generateTeamInviteToken();
+    await ok<TeamMemberDto>(
+      invite(boss.client, shop, member, invited.email, { token }),
+    );
+
+    // Her beta rights were granted after the session `invited.client` holds.
+    await db.query(
+      "update private.beta_access set source = 'invitation', granted_at = now() where user_id = $1",
+      [invited.userId],
+    );
+    expect(
+      await refusal(
+        call(invited.client, "accept_team_invitation", {
+          p_token_hash: hashTeamInviteToken(token),
+        }),
+      ),
+    ).toBe("forbidden");
+    const { rows } = await db.query(
+      "select count(*)::int as n from public.business_members where user_id = $1",
+      [invited.userId],
+    );
+    expect(rows[0].n).toBe(0);
+
+    const later = anonClient();
+    const { error } = await later.auth.signInWithPassword({
+      email: invited.email,
+      password: invited.password,
+    });
+    expect(error).toBeNull();
+    expect(
+      await ok(
+        call(later, "accept_team_invitation", {
+          p_token_hash: hashTeamInviteToken(token),
+        }),
+      ),
+    ).toBe(shop.id);
   });
 });
