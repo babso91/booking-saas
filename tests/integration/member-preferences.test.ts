@@ -249,7 +249,7 @@ describe("her own preferences, saved and read again elsewhere", () => {
       {
         user_id: alice.userId,
         style: "ecrin",
-        ambiance: "atelier",
+        ambiance: "egyptien",
         color_mode: "dark",
         accent: null,
         motion: "standard",
@@ -698,7 +698,7 @@ describe("reading, through read_member_preferences", () => {
       membership_id: await membershipOf(business.id, reader.userId),
       incarnation: null,
       style: "classique",
-      ambiance: "atelier",
+      ambiance: "egyptien",
       color_mode: "light",
       accent: null,
       motion: "standard",

@@ -36,7 +36,8 @@ describe("preferences model", () => {
     // src/features/appearance/appearance.ts (#28): defaultAppearance.
     expect(defaultAppearancePreferences).toEqual({
       style: "classique",
-      ambiance: "atelier",
+      // The Égyptien trio (docs/COLOR_TRIOS_PROPOSAL.md), as the database.
+      ambiance: "egyptien",
       mode: "light",
       accent: null,
       motion: "standard",

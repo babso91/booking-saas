@@ -148,12 +148,12 @@ function Row({
         className="relative flex items-center gap-2 py-1"
         aria-label={`Il est ${item.time}`}
       >
-        <span className="rounded-full bg-signature px-2.5 py-0.5 text-[12.5px] font-extrabold text-on-signature tabular-nums">
+        <span className="rounded-full bg-mark px-2.5 py-0.5 text-[12.5px] font-extrabold text-on-mark tabular-nums">
           {item.time}
         </span>
         <span
           aria-hidden="true"
-          className="h-[3px] flex-1 rounded-full bg-signature"
+          className="h-[3px] flex-1 rounded-full bg-mark"
         />
       </li>
     );

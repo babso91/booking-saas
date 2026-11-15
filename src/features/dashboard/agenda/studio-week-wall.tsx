@@ -162,7 +162,7 @@ export function StudioWeekWall({
         <div className="relative h-5" aria-hidden="true">
           {nowMark !== null && nowMark >= startY && nowMark <= endY ? (
             <span
-              className="absolute top-[-2px] z-10 -translate-x-1/2 rounded-full bg-signature px-2 py-0.5 text-[12px] font-extrabold text-on-signature tabular-nums"
+              className="absolute top-[-2px] z-10 -translate-x-1/2 rounded-full bg-mark px-2 py-0.5 text-[12px] font-extrabold text-on-mark tabular-nums"
               style={{ left: x(nowMark) }}
             >
               {zone ? (wallOf(zone, nowMs!)?.slice(11, 16) ?? "") : ""}

@@ -462,7 +462,7 @@ function Day({ model, now }: { model: TodayModel; now: number }) {
                 className="absolute top-0 -bottom-2.5 z-10 border-l-[3px] border-signature"
                 style={{ left: `${left(now)}%` }}
               >
-                <span className="absolute -top-0.5 left-0 -translate-x-1/2 rounded-full bg-signature px-2 py-0.5 text-[12px] font-extrabold whitespace-nowrap text-on-signature tabular-nums">
+                <span className="absolute -top-0.5 left-0 -translate-x-1/2 rounded-full bg-mark px-2 py-0.5 text-[12px] font-extrabold whitespace-nowrap text-on-mark tabular-nums">
                   {model.nowTime}
                 </span>
               </span>

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { CalendarIcon, PlusIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
 import { StatusBadge } from "@/features/agenda/components/status-badge";
+import { preferenceAmbiances } from "@/features/preferences/model";
 import { isHexColor } from "@/lib/color/contrast";
 import { cn } from "@/lib/cn";
 
@@ -18,8 +19,10 @@ import {
 } from "../appearance";
 import {
   accentPresets,
+  ambianceLook,
   ambiances,
   carnetPapers,
+  trioIds,
   ecrinPalettes,
   inkPresets,
   signaturePresets,
@@ -42,6 +45,15 @@ import { useAppearance } from "./appearance-provider";
  * focus stays on the style she chose, not on nothing.
  */
 let styleToFocus: StyleId | null = null;
+
+/**
+ * The colour trios her account can keep: only those the database accepts
+ * (member_preferences). Offering one it would refuse would look applied and
+ * then fail to save.
+ */
+const offeredTrios = trioIds.filter((id) =>
+  (preferenceAmbiances as readonly string[]).includes(id),
+);
 
 const syncWords = {
   saving: "Enregistrement…",
@@ -160,10 +172,16 @@ export function AppearanceSettings() {
             </div>
           </Group>
 
-          {studio || ecrin ? null : (
+          {(studio || ecrin) && !offeredTrios.length ? null : (
             <Group legend={carnet ? "Ton papier" : "Ambiance"}>
               <div className="grid gap-3 sm:grid-cols-3">
-                {(Object.keys(ambiances) as AmbianceId[]).map((id) => (
+                {(studio || ecrin
+                  ? (["atelier", ...offeredTrios] as AmbianceId[])
+                  : ([
+                      ...(Object.keys(carnetPapers) as AmbianceId[]),
+                      ...offeredTrios,
+                    ] as AmbianceId[])
+                ).map((id) => (
                   <Choice
                     key={id}
                     name="ambiance"
@@ -172,10 +190,10 @@ export function AppearanceSettings() {
                   >
                     <AmbianceSwatch id={id} paper={carnet} />
                     <span className="mt-3 block text-[15px] font-semibold text-ink">
-                      {(carnet ? carnetPapers : ambiances)[id].name}
+                      {ambianceLook(id, carnet).name}
                     </span>
                     <span className="block text-[13px] leading-snug text-ink-soft">
-                      {(carnet ? carnetPapers : ambiances)[id].mood}
+                      {ambianceLook(id, carnet).mood}
                     </span>
                   </Choice>
                 ))}
@@ -556,7 +574,7 @@ function AmbianceSwatch({ id, paper }: { id: AmbianceId; paper?: boolean }) {
   return (
     <span aria-hidden="true" className="flex gap-1.5">
       {(["light", "dark"] as const).map((mode) => {
-        const palette = (paper ? carnetPapers : ambiances)[id][mode];
+        const palette = ambianceLook(id, Boolean(paper))[mode];
         return (
           <span
             key={mode}
