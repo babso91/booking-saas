@@ -173,6 +173,10 @@ export const appErrorMessages = {
   form_already_assigned: "Ce formulaire est déjà demandé pour ce rendez-vous.",
   form_limit_reached:
     "Vous avez atteint le nombre maximal de modèles de formulaire.",
+  too_many_occurrences: "Une série compte au plus 12 rendez-vous.",
+  calendar_conflict:
+    "Une ou plusieurs dates ne sont plus libres : rien n’a été créé.",
+  series_stale: "Cet aperçu n’est plus valable : rien n’a été créé.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -333,6 +337,9 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   form_already_submitted: 409,
   form_already_assigned: 409,
   form_limit_reached: 409,
+  too_many_occurrences: 422,
+  calendar_conflict: 409,
+  series_stale: 409,
   internal: 500,
 };
 
