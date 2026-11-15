@@ -61,13 +61,16 @@ import { AppointmentDetails } from "./appointment-details";
 import { AppointmentForm, type ServicesState } from "./appointment-form";
 import { BlockForm } from "./block-form";
 import { TimeGrid } from "./time-grid";
+import { realSeriesActions } from "@/features/series/real-actions";
+import { SeriesPlanner } from "@/features/series/series-planner";
 
 type Panel =
   | { kind: "appointment"; appointment: AgendaAppointmentDto }
   | { kind: "editAppointment"; appointment: AgendaAppointmentDto }
   | { kind: "createAppointment"; date: string; time: string }
   | { kind: "block"; block: AgendaBlockDto }
-  | { kind: "createBlock"; date: string; time: string };
+  | { kind: "createBlock"; date: string; time: string }
+  | { kind: "series"; appointment: AgendaAppointmentDto };
 
 type Loaded = { key: string; data: AgendaDto };
 type Failed = { key: string; error: UiError };
@@ -397,13 +400,15 @@ export function AgendaView({
         ? "Modifier le rendez-vous"
         : panel?.kind === "appointment"
           ? "Rendez-vous"
-          : panel?.kind === "createBlock"
-            ? "Bloquer un créneau"
-            : panel?.kind === "block"
-              ? panel.block.kind === "closed"
-                ? "Fermeture"
-                : "Créneau bloqué"
-              : "";
+          : panel?.kind === "series"
+            ? "Répéter le rendez-vous"
+            : panel?.kind === "createBlock"
+              ? "Bloquer un créneau"
+              : panel?.kind === "block"
+                ? panel.block.kind === "closed"
+                  ? "Fermeture"
+                  : "Créneau bloqué"
+                : "";
 
   const banners = (
     <>
@@ -461,6 +466,26 @@ export function AgendaView({
           onEdit={() => openEdit(shown.appointment)}
           onUpdated={showAppointment}
           onRefresh={() => refreshAppointment(shown.appointment, false)}
+          onRepeat={() =>
+            setPanel({ kind: "series", appointment: shown.appointment })
+          }
+        />
+      ) : null}
+      {shown?.kind === "series" ? (
+        <SeriesPlanner
+          key={shown.appointment.id}
+          clientName={shown.appointment.client.displayName}
+          rule={{
+            clientId: shown.appointment.client.id,
+            serviceId: shown.appointment.service.id,
+            optionChoiceIds: shown.appointment.options.map(
+              (option) => option.choiceId,
+            ),
+            firstLocalStart: shown.appointment.localStartsAt.slice(0, 16),
+          }}
+          afterSource
+          actions={realSeriesActions}
+          onCreated={reload}
         />
       ) : null}
       {shown?.kind === "createAppointment" ||
