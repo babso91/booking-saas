@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { passwordSchema } from "@/features/auth/schemas/auth";
+
 // Inputs of her team's actions (docs/TEAM_CONTRACT.md). The database checks
 // everything again (role, business, revision, services).
 
@@ -41,11 +43,27 @@ export const revokeAccessSchema = z.object({
   expectedRevision: revision,
 });
 
+/** A team invitation's token (`team_` + 32 random bytes, base64url). */
+export const TEAM_INVITE_TOKEN_PATTERN = /^team_[A-Za-z0-9_-]{43}$/;
+
+const inviteToken = z.string().regex(TEAM_INVITE_TOKEN_PATTERN);
+
+/**
+ * `token`: from her link. Absent: the invitation kept on this device by her
+ * sign-up through it (`beta_invitation_required` if there is none).
+ */
 export const acceptInviteSchema = z.object({
-  token: z.string().regex(/^team_[A-Za-z0-9_-]{43}$/),
+  token: inviteToken.optional(),
+});
+
+/** After her recovery link: her own password, then she joins. */
+export const completeTeamInviteSchema = z.object({
+  password: passwordSchema,
+  token: inviteToken.optional(),
 });
 
 export type CreateStaffInput = z.output<typeof createStaffSchema>;
 export type UpdateStaffInput = z.output<typeof updateStaffSchema>;
 export type SendInviteInput = z.output<typeof sendInviteSchema>;
 export type RevokeAccessInput = z.output<typeof revokeAccessSchema>;
+export type CompleteTeamInviteInput = z.output<typeof completeTeamInviteSchema>;

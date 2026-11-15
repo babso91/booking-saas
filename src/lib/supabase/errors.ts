@@ -61,6 +61,7 @@ const domainMessages: Record<string, AppErrorCode> = {
   invitation_invalid: "invitation_invalid",
   invitation_email_mismatch: "invitation_email_mismatch",
   already_member: "already_member",
+  invitation_password_required: "invitation_password_required",
   not_found: "not_found",
   rate_limited: "rate_limited",
   forbidden: "forbidden",
