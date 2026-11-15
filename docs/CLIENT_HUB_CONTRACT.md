@@ -248,7 +248,7 @@ La cliente ne peut pas, et aucune route ne le permet :
 - échanger une récompense ;
 - créer ou ajuster des points ;
 - modifier sa fiche CRM ;
-- modifier ou annuler un rendez-vous ;
+- modifier un rendez-vous autrement que par « Annuler ou déplacer » (§ 12) ;
 - marquer une récompense comme utilisée ;
 - se créer elle-même un accès à une activité.
 
@@ -400,3 +400,99 @@ Actions existantes : `getClientHubAccessAction`, `setClientHubAccessAction`. Auc
 - **Envoi d'invitation par email :** la professionnelle transmet le lien à la main.
 - **Fin de session :** `GET /me` ne renvoie pas `expiresAt`. Après un rechargement, ou pour une cliente connectée depuis un autre onglet, l'interface ne connaît la fin de session qu'au premier 401 (ou au retour sur l'onglet). Exposer la fin de la session résolue dans `/me` permettrait de voiler à l'heure dite dans tous les cas : c'est un choix de protocole, laissé au backend.
 - ~~**Identité des réponses**~~ : fournie par `X-Client-Hub-Account` (§ 3). `BroadcastChannel` ne sert plus qu'à accélérer la synchronisation entre onglets ; la correction n'en dépend pas (testé sans lui dans Chromium).
+
+## 12. Annuler ou déplacer un rendez-vous (M2-R04)
+
+Réponse de Cloud à `docs/CLIENT_HUB_ACTIONS_PROPOSAL.md` (PR #56). Les
+routes, les formes et les codes sont servis **tels que proposés**.
+Migration : `20261115120000_hub_appointment_actions.sql`.
+
+### Politique
+
+- Par établissement, dans `business_settings` :
+  `cancellation_lead_minutes` et `reschedule_lead_minutes` (0 à 43 200,
+  `null` = jamais depuis l'espace). Réglage par `set_booking_policy`
+  (action `setBookingPolicyAction`, `owner`/`admin`). Valeur par défaut :
+  `null`. Rien ne change pour une cliente tant que la professionnelle n'a rien
+  réglé.
+- **Figée à la création de chaque rendez-vous**
+  (`appointments.policy_snapshot`). Une politique modifiée vaut pour les
+  rendez-vous suivants seulement. Un rendez-vous plus ancien n'a pas de
+  politique : `policy_unavailable`, et la cliente contacte l'établissement.
+- Autorisé si le rendez-vous est `confirmed`, avant son début (exclu, même
+  avec 0 minute) et au plus tard à `startsAt - délai`. Heure du serveur au
+  moment de l'écriture, après les verrous.
+- `cancellationPolicy` reste le texte libre affiché ; le délai structuré
+  en est indépendant.
+
+### Détail d'un rendez-vous
+
+`GET …/appointments/:appointmentId` ajoute `actions` (forme de la
+proposition) : `null` si le rendez-vous n'est plus `confirmed` à venir,
+sinon `{ version, cancel, reschedule }` avec `allowed`, `deadlineAt` et
+`reason` (`policy_cutoff_passed`, `policy_unavailable`,
+`appointment_not_editable`).
+
+### Routes
+
+| Route                                                      | Entrée                                     | Réponse                     |
+| ---------------------------------------------------------- | ------------------------------------------ | --------------------------- |
+| `POST …/appointments/:appointmentId/cancel`                | `{ requestId, expectedVersion }`           | détail après annulation     |
+| `POST …/appointments/:appointmentId/reschedule`            | `{ requestId, expectedVersion, startsAt }` | détail après déplacement    |
+| `GET …/appointments/:appointmentId/reschedule-slots?date=` | jour civil de l'établissement              | `{ date, timezone, slots }` |
+
+- Les `POST` exigent JSON et la même origine.
+- `reschedule-slots` est une simple lecture, sans valeur d'engagement. Liste
+  vide si le déplacement n'est pas autorisé.
+
+### Garanties
+
+- **Même prestation, mêmes options, même prix, même durée et même tampon**
+  (les instantanés du rendez-vous). Seul l'horaire change. Le nouvel horaire
+  doit être l'un de ceux que la réservation publique proposerait pour cette
+  durée (heures d'ouverture, fermetures, agenda Google, délai minimal,
+  horizon de réservation), son propre intervalle mis à part. Un horaire qui
+  ne recouvre que l'ancien est donc possible.
+- **Atomique.** Verrou du planning, puis session (`FOR SHARE`), fiche et
+  accès Hub (`FOR SHARE`), puis rendez-vous (`FOR UPDATE`). Une
+  déconnexion, une révocation ou un changement d'e-mail en cours attend, ou
+  passe avant et la demande répond `client_hub_not_found` /
+  `client_hub_unauthenticated`. La contrainte d'exclusion a le dernier mot :
+  deux clientes qui visent le même créneau, une seule l'obtient.
+- **Un refus ne change rien.** L'ancien rendez-vous garde son horaire et ses
+  rappels.
+- **Rejeu.** Même `requestId`, même contenu, même compte : la réponse est le
+  rendez-vous tel qu'il est maintenant. Autre contenu ou autre compte :
+  `idempotency_conflict`. Chaque changement est tracé dans
+  `private.hub_appointment_changes` (compte, avant, après, version).
+- **E-mails.** L'annulation et le déplacement passent par les déclencheurs
+  existants : `appointment_cancelled` / `appointment_changed` sont mis en
+  file comme pour une modification par la professionnelle. Ils partent quand
+  un transport est activé.
+- **Capacité libérée.** Toute annulation ou tout déplacement, quel qu'en soit
+  l'auteur, inscrit une fois par version du rendez-vous l'intervalle libéré
+  dans `private.capacity_releases`, sans donnée personnelle. La liste
+  d'attente s'appuiera sur ce signal.
+
+### Refus
+
+`stale_appointment`, `policy_cutoff_passed`, `policy_unavailable`,
+`appointment_not_editable`, `slot_unavailable`, `idempotency_conflict`
+(409) ; `validation_error` (400) pour un horaire identique à l'actuel ou
+mal formé ; 401 et 404 comme le reste du Hub.
+
+### Réponses aux questions ouvertes de la proposition
+
+1. Les noms des routes sont gardés.
+2. Horizon : celui de la réservation publique (`maximum_booking_advance_days`),
+   avec le même délai minimal.
+3. E-mail de confirmation : celui des déclencheurs existants (voir
+   « Garanties »).
+4. `cancellationPolicy` reste le texte libre. Le délai structuré est servi
+   par `actions.*.deadlineAt`.
+
+### Hors lot
+
+Pas de frais, pas d'acompte, pas de limite de fréquence propre à ces routes
+(`rate_limited` n'est pas encore émis ici). Pas de changement de prestation
+ni d'options par la cliente.

@@ -7,13 +7,13 @@ export type Database = {
           Tables: {
             "appointments": {
                   Row: {
-                    "booking_window": unknown,"buffer_minutes_snapshot": number,"business_id": string,"cancellation_reason": string | null,"client_email_snapshot": string | null,"client_first_name_snapshot": string | null,"client_id": string,"client_last_name_snapshot": string | null,"client_phone_snapshot": string | null,"completed_at": string | null,"created_at": string,"created_by": string | null,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"currency": string,"duration_minutes_snapshot": number,"ends_at": string,"id": string,"internal_notes": string | null,"occupied_window": unknown,"options_snapshot": NonNullable<Json>,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status": Database["public"]['Enums']["appointment_status"],"updated_at": string,"version": number
+                    "booking_window": unknown,"buffer_minutes_snapshot": number,"business_id": string,"cancellation_reason": string | null,"client_email_snapshot": string | null,"client_first_name_snapshot": string | null,"client_id": string,"client_last_name_snapshot": string | null,"client_phone_snapshot": string | null,"completed_at": string | null,"created_at": string,"created_by": string | null,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"currency": string,"duration_minutes_snapshot": number,"ends_at": string,"id": string,"internal_notes": string | null,"occupied_window": unknown,"options_snapshot": NonNullable<Json>,"policy_snapshot": Json | null,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status": Database["public"]['Enums']["appointment_status"],"updated_at": string,"version": number
                   }
                   Insert: {
-                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id": string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id": string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot": number,"ends_at": string,"id"?: string,"internal_notes"?: string | null,"occupied_window": unknown,"options_snapshot"?: NonNullable<Json>,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
+                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id": string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id": string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot": number,"ends_at": string,"id"?: string,"internal_notes"?: string | null,"occupied_window": unknown,"options_snapshot"?: NonNullable<Json>,"policy_snapshot"?: Json | null,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id"?: string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id"?: string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot"?: number,"ends_at"?: string,"id"?: string,"internal_notes"?: string | null,"occupied_window"?: unknown,"options_snapshot"?: NonNullable<Json>,"price_cents_snapshot"?: number,"service_id"?: string,"service_name_snapshot"?: string,"starts_at"?: string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
+                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id"?: string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id"?: string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot"?: number,"ends_at"?: string,"id"?: string,"internal_notes"?: string | null,"occupied_window"?: unknown,"options_snapshot"?: NonNullable<Json>,"policy_snapshot"?: Json | null,"price_cents_snapshot"?: number,"service_id"?: string,"service_name_snapshot"?: string,"starts_at"?: string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -132,13 +132,13 @@ isOneToOne: true
                   ]
                 },"business_settings": {
                   Row: {
-                    "automatic_reactivation_enabled": boolean,"buffer_minutes": number,"business_id": string,"created_at": string,"currency": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"reactivation_after_days": number,"slot_interval_minutes": number,"updated_at": string
+                    "automatic_reactivation_enabled": boolean,"buffer_minutes": number,"business_id": string,"cancellation_lead_minutes": number | null,"created_at": string,"currency": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"reactivation_after_days": number,"reschedule_lead_minutes": number | null,"slot_interval_minutes": number,"updated_at": string
                   }
                   Insert: {
-                    "automatic_reactivation_enabled"?: boolean,"buffer_minutes"?: number,"business_id": string,"created_at"?: string,"currency"?: string,"maximum_booking_advance_days"?: number,"minimum_booking_notice_minutes"?: number,"reactivation_after_days"?: number,"slot_interval_minutes"?: number,"updated_at"?: string
+                    "automatic_reactivation_enabled"?: boolean,"buffer_minutes"?: number,"business_id": string,"cancellation_lead_minutes"?: number | null,"created_at"?: string,"currency"?: string,"maximum_booking_advance_days"?: number,"minimum_booking_notice_minutes"?: number,"reactivation_after_days"?: number,"reschedule_lead_minutes"?: number | null,"slot_interval_minutes"?: number,"updated_at"?: string
                   }
                   Update: {
-                    "automatic_reactivation_enabled"?: boolean,"buffer_minutes"?: number,"business_id"?: string,"created_at"?: string,"currency"?: string,"maximum_booking_advance_days"?: number,"minimum_booking_notice_minutes"?: number,"reactivation_after_days"?: number,"slot_interval_minutes"?: number,"updated_at"?: string
+                    "automatic_reactivation_enabled"?: boolean,"buffer_minutes"?: number,"business_id"?: string,"cancellation_lead_minutes"?: number | null,"created_at"?: string,"currency"?: string,"maximum_booking_advance_days"?: number,"minimum_booking_notice_minutes"?: number,"reactivation_after_days"?: number,"reschedule_lead_minutes"?: number | null,"slot_interval_minutes"?: number,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -1022,6 +1022,9 @@ isOneToOne: false
 "client_hub_appointments":
 { Args: { "p_after_id"?: string,"p_after_starts_at"?: string,"p_business_id": string,"p_limit"?: number,"p_scope": string,"p_session_token": string }; Returns: Json
                            },
+"client_hub_cancel_appointment":
+{ Args: { "p_appointment_id": string,"p_business_id": string,"p_expected_version": number,"p_request_id": string,"p_session_token": string }; Returns: Json
+                           },
 "client_hub_end_session":
 { Args: { "p_all"?: boolean,"p_session_token": string }; Returns: undefined
                            },
@@ -1038,6 +1041,12 @@ isOneToOne: false
 { Args: { "p_client_ip": unknown,"p_email": string }; Returns: {
               "challenge_id": string,"code": string,"email": string,"expires_at": string
             }[]
+                           },
+"client_hub_reschedule_appointment":
+{ Args: { "p_appointment_id": string,"p_business_id": string,"p_expected_version": number,"p_request_id": string,"p_session_token": string,"p_starts_at": string }; Returns: Json
+                           },
+"client_hub_reschedule_slots":
+{ Args: { "p_appointment_id": string,"p_business_id": string,"p_date": string,"p_session_token": string }; Returns: Json
                            },
 "client_hub_resolve_session":
 { Args: { "p_sessions": (string)[],"p_tokens": (string)[] }; Returns: {
@@ -1334,6 +1343,9 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_limit"?: number,"p_query": string }; Returns: {
               "email": string,"first_name": string,"id": string,"last_name": string,"phone": string
             }[]
+                           },
+"set_booking_policy":
+{ Args: { "p_business_id": string,"p_cancellation_lead_minutes": number,"p_reschedule_lead_minutes": number }; Returns: Json
                            },
 "set_service_options":
 { Args: { "p_business_id": string,"p_deleted_choice_ids"?: (string)[],"p_deleted_option_ids"?: (string)[],"p_expected_version": number,"p_options": Json,"p_service_id": string }; Returns: number
