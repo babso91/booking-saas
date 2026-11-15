@@ -377,7 +377,7 @@ describe("colour trios", () => {
     for (const ambiance of [
       "egyptien",
       "moka",
-      "prune",
+      "flamant",
       "neon",
       "dune",
       "indigo",

@@ -21,7 +21,7 @@ export const preferenceAmbiances = [
   "sauge",
   "egyptien",
   "moka",
-  "prune",
+  "flamant",
   "neon",
   "dune",
   "indigo",

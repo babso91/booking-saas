@@ -17,7 +17,7 @@ principale, une marque, l'heure en cours. Jamais en fond.
 | -------- | ---------------------------------------------- | -------------------------------------- |
 | Égyptien | bleu égyptien `#03203D`, bleu pierre `#639CC5` | écarlate `#E0262B`                     |
 | Moka     | sable doux `#F0E5DB`, vert moka `#474329`      | rose pastèque `#FC75B4`                |
-| Prune    | rose flamant `#FAC7E1`, prune `#A5467C`        | bleu électrique `#004AFD`              |
+| Flamant  | rose flamant `#FAC7E1`, prune `#A5467C`        | bleu électrique `#004AFD`              |
 | Néon     | noir `#020306`, cyan `#7CE6FC`                 | magenta `#FC38BE` (`#D1009A` en clair) |
 | Dune     | ocre dune `#AE6C37`, terre d'ombre `#2B1A12`   | turquoise `#1FC7C9`                    |
 | Indigo   | noir indigo `#070C29`, os `#EFE7DA`            | ambre `#FF9E0D`                        |

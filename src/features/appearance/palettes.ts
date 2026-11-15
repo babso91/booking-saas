@@ -18,7 +18,7 @@ export type ClassicAmbianceId = "atelier" | "lin" | "sauge";
 export const trioIds = [
   "egyptien",
   "moka",
-  "prune",
+  "flamant",
   "neon",
   "dune",
   "indigo",
@@ -341,9 +341,9 @@ export const ambiances: Record<
       field: "#474329",
     },
   },
-  prune: {
-    name: "Prune",
-    mood: "Rose flamant, rose prune, bleu électrique",
+  flamant: {
+    name: "Flamant",
+    mood: "Rose flamant, mauve profond, bleu électrique",
     trio: true,
     light: {
       paper: "#FBE9F2",

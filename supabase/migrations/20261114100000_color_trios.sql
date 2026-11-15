@@ -14,7 +14,7 @@ alter domain public.member_preference_ambiance
   add constraint member_preference_ambiance
     check (value in (
       'atelier', 'lin', 'sauge',
-      'egyptien', 'moka', 'prune', 'neon', 'dune', 'indigo'
+      'egyptien', 'moka', 'flamant', 'neon', 'dune', 'indigo'
     ));
 
 alter table public.member_preferences
