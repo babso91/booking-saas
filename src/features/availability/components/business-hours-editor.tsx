@@ -70,10 +70,13 @@ const linkAction =
 export function BusinessHoursEditor({
   timezone,
   scope,
+  after,
 }: {
   timezone: string;
   /** Whose week this is (signed-in user and business, from the session). */
   scope: DraftScope;
+  /** Further settings of the page, below the week (its own form). */
+  after?: ReactNode;
 }) {
   // One editor per identity. The page can be rendered again for another
   // identity without being unmounted: the key replaces the editor during
@@ -85,6 +88,7 @@ export function BusinessHoursEditor({
       key={scopeId(scope)}
       timezone={timezone}
       draftKey={draftKeyFor(scope, "hours")}
+      after={after}
     />
   );
 }
@@ -92,8 +96,10 @@ export function BusinessHoursEditor({
 function HoursEditor({
   timezone,
   draftKey,
+  after,
 }: {
   timezone: string;
+  after?: ReactNode;
   /** Session storage key of the unsaved week (this identity only). */
   draftKey: string;
 }) {
@@ -335,7 +341,7 @@ function HoursEditor({
 
   if (load.status === "loading") {
     return (
-      <Frame timezone={timezone}>
+      <Frame timezone={timezone} after={after}>
         <div className="flex flex-col gap-3" aria-busy="true">
           <span className="sr-only" role="status">
             Chargement des horaires…
@@ -353,7 +359,7 @@ function HoursEditor({
 
   if (load.status === "error") {
     return (
-      <Frame timezone={timezone}>
+      <Frame timezone={timezone} after={after}>
         <Notice
           tone={load.error.code === "network" ? "offline" : "error"}
           title={describeError(load.error).title}
@@ -383,7 +389,7 @@ function HoursEditor({
   }
 
   return (
-    <Frame timezone={timezone}>
+    <Frame timezone={timezone} after={after}>
       <form
         noValidate
         aria-busy={state === "loading"}
@@ -559,9 +565,11 @@ function HoursEditor({
 
 function Frame({
   timezone,
+  after,
   children,
 }: {
   timezone: string;
+  after?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -577,6 +585,7 @@ function Frame({
           </p>
         </header>
         {children}
+        {after ? <div className="pb-16">{after}</div> : null}
       </div>
     </div>
   );
