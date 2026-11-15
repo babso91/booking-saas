@@ -449,6 +449,14 @@ export const errorCopy: Record<
     message:
       "Ce compte appartient déjà à une activité. Utilise une autre adresse.",
   },
+  invitation_password_required: {
+    title: "Mot de passe à choisir",
+    message: "Choisis ton mot de passe pour rejoindre l’équipe.",
+  },
+  invitation_email_unavailable: {
+    title: "Invitation non envoyée",
+    message: "L’e-mail d’invitation n’a pas pu partir. Réessaie plus tard.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {

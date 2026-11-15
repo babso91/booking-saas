@@ -887,6 +887,9 @@ isOneToOne: false
 "accept_team_invitation":
 { Args: { "p_token_hash": string }; Returns: string
                            },
+"accept_team_invitation_for":
+{ Args: { "p_email": string,"p_proof_session": string,"p_token_hash": string,"p_user_id": string }; Returns: string
+                           },
 "agenda_create_appointment":
 { Args: { "p_business_id": string,"p_client_email"?: string,"p_client_first_name"?: string,"p_client_id"?: string,"p_client_last_name"?: string,"p_client_phone"?: string,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_request_id"?: string,"p_service_id": string,"p_starts_at": string }; Returns: {
               "appointment_id": string,"created": boolean
@@ -1337,6 +1340,9 @@ isOneToOne: false
 "record_site_photo_orphan_deletions":
 { Args: { "p_deleted": (string)[],"p_failed": (string)[],"p_run": string }; Returns: undefined
                            },
+"record_team_invitation_signup":
+{ Args: { "p_email": string,"p_token_hash": string,"p_user_id": string }; Returns: string
+                           },
 "release_site_photo_reconciliation":
 { Args: { "p_run": string }; Returns: undefined
                            },
@@ -1377,6 +1383,9 @@ isOneToOne: false
 "revoke_team_access":
 { Args: { "p_business_id": string,"p_expected_revision": number,"p_operation_id": string,"p_staff_id": string }; Returns: Json
                            },
+"rotate_team_invitation_token":
+{ Args: { "p_business_id": string,"p_operation_id": string,"p_token_hash": string }; Returns: boolean
+                           },
 "save_member_preferences":
 { Args: { "p_business_id": string,"p_changes": Json,"p_expected_incarnation": string,"p_expected_version": number,"p_membership_id": string }; Returns: {
               "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"status": string,"style": string,"version": number
@@ -1407,6 +1416,16 @@ isOneToOne: false
                            },
 "site_photo_reconciliation_status":
 { Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"team_invitation_email":
+{ Args: { "p_token_hash": string }; Returns: {
+              "business_name": string,"email": string,"expires_at": string,"inviter_name": string,"role": string
+            }[]
+                           },
+"team_invited_account":
+{ Args: { "p_email": string,"p_token_hash": string }; Returns: {
+              "state": string,"user_id": string
+            }[]
                            },
 "update_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_expected_version": number,"p_name"?: string,"p_visible"?: boolean }; Returns: {

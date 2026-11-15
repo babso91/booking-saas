@@ -18,6 +18,11 @@ import {
 } from "@/features/auth/data/session";
 import { authCallbackUrl } from "@/features/auth/data/redirects";
 import {
+  currentSessionId,
+  endOtherSessions,
+  isFreshRecovery,
+} from "@/features/auth/data/session-proof";
+import {
   acceptInvitationFor,
   assertInvitation,
   hasBetaAccess,
@@ -33,6 +38,11 @@ import {
   signInSchema,
   signUpSchema,
 } from "@/features/auth/schemas/auth";
+import {
+  joinTeamOnSignIn,
+  signUpThroughTeamInvite,
+} from "@/features/team/data/join";
+import { TEAM_INVITE_TOKEN_PATTERN } from "@/features/team/schemas";
 import { getPublicEnv } from "@/lib/env/public";
 import {
   AppException,
@@ -78,6 +88,10 @@ export type SignUpResult = SignUpOutcome & { next: SessionDestination | null };
  * password on /invitation (completeInvitationAction), which accepts it. A
  * confirmed one answers `email_taken` (she signs in with her invitation).
  * Otherwise the answer is always `status: "confirmation_required"`.
+ *
+ * A team invitation's token (`team_…`) works the same way for the invited
+ * address, without beta access; its links land on /equipe/invitation
+ * (docs/TEAM_CONTRACT.md, « Rejoindre l'équipe »).
  */
 export async function signUpAction(
   input: unknown,
@@ -92,6 +106,14 @@ export async function signUpAction(
     // The invitation first: no account is created without one.
     const service = createAdminSupabaseClient() as AppSupabaseClient;
     const { invitationToken, ...account } = parsed.data;
+    if (invitationToken && TEAM_INVITE_TOKEN_PATTERN.test(invitationToken)) {
+      return signUpThroughTeamInvite(
+        service,
+        await createServerSupabaseClient(),
+        invitationToken,
+        account,
+      );
+    }
     await assertInvitation(service, invitationToken, account.email);
 
     const client = await createServerSupabaseClient();
@@ -162,7 +184,8 @@ export async function signUpAction(
  * `invitation` says what happened (`accepted`, or why not). If the other
  * sessions cannot be ended, nothing is given and the action fails with
  * `session_revocation_failed` (she stays signed in; signing in again
- * retries).
+ * retries). A team invitation's token joins her to the team the same way
+ * (`invitation`: `accepted`, or why not).
  */
 export async function signInAction(
   input: unknown,
@@ -179,7 +202,9 @@ export async function signInAction(
     await signInWithPassword(client, credentials);
 
     let invitation: string | undefined;
-    if (invitationToken) {
+    if (invitationToken && TEAM_INVITE_TOKEN_PATTERN.test(invitationToken)) {
+      invitation = await joinTeamOnSignIn(client, invitationToken);
+    } else if (invitationToken) {
       invitation = await acceptOnSignIn(client, invitationToken);
     }
     const state = await getSessionState(client);
@@ -189,28 +214,6 @@ export async function signInAction(
       ? { next: destinationFor(state), invitation }
       : { next: destinationFor(state) };
   });
-}
-
-/**
- * The session of this request's own JWT (its `session_id` claim), verified,
- * for the signed-in `userId`.
- */
-async function currentSessionId(
-  client: AppSupabaseClient,
-  userId: string,
-): Promise<{
-  sessionId: string;
-  amr: { method: string; timestamp: number }[];
-}> {
-  const { data, error } = await client.auth.getClaims();
-  const claims = data?.claims;
-  if (error || !claims || claims.sub !== userId || !claims.session_id) {
-    throw new AppException("unauthenticated");
-  }
-  const amr = (claims.amr ?? []).flatMap((entry) =>
-    typeof entry === "string" ? [] : [entry],
-  );
-  return { sessionId: claims.session_id as string, amr };
 }
 
 async function acceptOnSignIn(
@@ -250,17 +253,6 @@ async function acceptOnSignIn(
   return "accepted";
 }
 
-async function endOtherSessions(client: AppSupabaseClient): Promise<void> {
-  const { error } = await client.auth.signOut({ scope: "others" });
-  if (error) {
-    console.error("Other sessions not ended", error.code ?? error.status);
-    throw new AppException("session_revocation_failed");
-  }
-}
-
-/** A recovery link followed within this time is a proof of her mailbox. */
-const RECOVERY_PROOF_MAX_AGE_SECONDS = 60 * 60;
-
 /**
  * /invitation, after the recovery link of signUpAction (an account made
  * before her invitation, not confirmed): sets HER password, ends every
@@ -289,12 +281,7 @@ export async function completeInvitationAction(
     const user = data.user;
     if (!user?.email) throw new AppException("unauthenticated");
     const { sessionId, amr } = await currentSessionId(client, user.id);
-    const now = Math.floor(Date.now() / 1000);
-    const provenMailbox = amr.some(
-      (entry) =>
-        entry.method === "recovery" &&
-        now - entry.timestamp <= RECOVERY_PROOF_MAX_AGE_SECONDS,
-    );
+    const provenMailbox = isFreshRecovery(amr);
     if (!user.email_confirmed_at || !provenMailbox) {
       throw new AppException("invitation_invalid");
     }

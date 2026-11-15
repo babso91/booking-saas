@@ -163,6 +163,10 @@ export const appErrorMessages = {
   access_exists: "Cette personne a déjà accès au logiciel.",
   team_limit_reached: "Votre équipe a atteint le nombre maximal de profils.",
   already_member: "Ce compte appartient déjà à une activité.",
+  invitation_password_required:
+    "Choisissez votre mot de passe pour rejoindre l’équipe.",
+  invitation_email_unavailable:
+    "L’e-mail d’invitation n’a pas pu partir. Réessayez plus tard.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -315,6 +319,8 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   access_exists: 409,
   team_limit_reached: 409,
   already_member: 409,
+  invitation_password_required: 403,
+  invitation_email_unavailable: 503,
   internal: 500,
 };
 
