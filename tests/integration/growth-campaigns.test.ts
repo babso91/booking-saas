@@ -190,6 +190,12 @@ const run = (
   }).then((result) => ({ result, transport }));
 
 beforeAll(async () => {
+  // The wording these tests grant with, as an operator registers it after
+  // legal validation (docs/MARKETING_CONSENT_CONTRACT.md).
+  await db.query(
+    `insert into private.consent_wording_versions (version, purpose, text_sha256)
+     values ('salon-v1', 'marketing', repeat('a', 64)) on conflict do nothing`,
+  );
   owner = await createProfessional("growth-owner");
   stranger = await createProfessional("growth-stranger");
   await createBusiness(stranger.userId);
