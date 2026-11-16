@@ -1221,6 +1221,34 @@ isOneToOne: false
               "config": Json,"number": number,"plan": string,"published_at": string,"schema_version": number,"unavailable_assets": (string)[],"version_id": string
             }[]
                            },
+"growth_authorize":
+{ Args: { "p_fence": number,"p_occurrence_id": string,"p_unsubscribe_token_hash": string }; Returns: Json
+                           },
+"growth_claim":
+{ Args: { "p_lease_seconds": number,"p_limit": number }; Returns: {
+              "fence": number,"occurrence_id": string
+            }[]
+                           },
+"growth_estimate":
+{ Args: { "p_business_id": string,"p_channel": string,"p_criteria": Json,"p_message": string }; Returns: Json
+                           },
+"growth_read":
+{ Args: { "p_business_id": string,"p_campaign_id": string }; Returns: Json
+                           },
+"growth_report":
+{ Args: { "p_actual_units"?: number,"p_fence": number,"p_occurrence_id": string,"p_outcome": string,"p_provider_ref"?: string }; Returns: string
+                           },
+"growth_schedule":
+{ Args: { "p_business_id": string,"p_estimate_id": string,"p_max_units": number,"p_request_id": string }; Returns: Json
+                           },
+"growth_set_state":
+{ Args: { "p_action": string,"p_business_id": string,"p_campaign_id": string,"p_expected_version": number,"p_request_id": string }; Returns: Json
+                           },
+"growth_uncertain":
+{ Args: { "p_limit": number }; Returns: {
+              "channel": string,"fence": number,"occurrence_id": string
+            }[]
+                           },
 "has_business_role":
 { Args: { "accepted_roles": (Database["public"]['Enums']["business_member_role"])[],"target_business_id": string }; Returns: boolean
                            },

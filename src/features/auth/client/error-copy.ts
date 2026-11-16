@@ -498,6 +498,26 @@ export const errorCopy: Record<
     message: "L’e-mail d’invitation n’a pas pu partir. Réessaie plus tard.",
   consent_text_conflict: {
   },
+  estimate_stale: {
+    title: "Estimation dépassée",
+    message: "Rien n’a été planifié. Relance l’estimation.",
+  },
+  quota_exceeded: {
+    title: "Budget dépassé",
+    message: "Ce plafond dépasse le budget restant du mois.",
+  },
+  campaign_not_found: {
+    title: "Campagne introuvable",
+    message: "Cette campagne n’existe pas ou plus.",
+  },
+  campaign_closed: {
+    title: "Campagne terminée",
+    message: "Cette campagne ne peut plus changer d’état.",
+  },
+  version_conflict: {
+    title: "Modifié entre-temps",
+    message: "Ces informations ont changé. Recharge puis réessaie.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {
