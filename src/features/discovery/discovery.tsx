@@ -104,13 +104,19 @@ function Experience({
     });
   }, [businessName, appearance, moment]);
 
-  // The browser's back button goes back a moment, not off the page.
+  // The browser's back button goes back a moment, not off the page; its
+  // forward button comes back to the choice, kept again for her account.
+  const latest = useRef(appearance);
+  useEffect(() => {
+    latest.current = appearance;
+  }, [appearance]);
   useEffect(() => {
     window.history.replaceState({ discovery: moment }, "");
     const onPop = (event: PopStateEvent) => {
       const step = (event.state as { discovery?: Moment } | null)?.discovery;
       if (step && MOMENTS.includes(step)) {
-        if (step !== "chosen") forgetForAccount();
+        if (step === "chosen") keepForAccount(latest.current);
+        else forgetForAccount();
         setMoment(step);
       }
     };

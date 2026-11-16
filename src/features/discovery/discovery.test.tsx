@@ -140,6 +140,23 @@ describe("the choice", () => {
     expect(screen.queryByRole("heading", { name: /en Classique/ })).toBeNull();
     expect(cookie()).not.toContain("dash_appearance");
   });
+
+  it("the forward button back to the choice keeps it again", async () => {
+    const user = await explore();
+    await user.click(screen.getByRole("button", { name: "C’est mon univers" }));
+    await act(async () => {
+      window.dispatchEvent(
+        new PopStateEvent("popstate", { state: { discovery: "exploring" } }),
+      );
+    });
+    expect(cookie()).not.toContain("dash_appearance");
+    await act(async () => {
+      window.dispatchEvent(
+        new PopStateEvent("popstate", { state: { discovery: "chosen" } }),
+      );
+    });
+    expect(cookie()).toContain("dash_appearance_origin=discovery");
+  });
 });
 
 describe("coming back", () => {
