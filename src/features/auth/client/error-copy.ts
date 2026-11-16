@@ -520,6 +520,7 @@ export const errorCopy: Record<
     title: "Modifié entre-temps",
     message: "Ces informations ont changé. Recharge puis réessaie.",
   quote_expired: {
+  domain_taken: {
   },
 };
 
