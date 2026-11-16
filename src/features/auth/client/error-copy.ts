@@ -414,6 +414,26 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  quote_expired: {
+    title: "Devis expiré",
+    message: "Ce devis a expiré : demandes-en un nouveau.",
+  },
+  billing_state_changed: {
+    title: "Abonnement modifié",
+    message: "Ton abonnement a changé entre-temps. Recharge puis réessaie.",
+  },
+  billing_unavailable: {
+    title: "Facturation indisponible",
+    message: "La facturation n’est pas encore disponible en ligne.",
+  },
+  promo_unavailable: {
+    title: "Code refusé",
+    message: "Ce code promotionnel ne peut pas être utilisé.",
+  },
+  permission_denied: {
+    title: "Action réservée",
+    message: "Ton rôle ne permet pas cette action.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {

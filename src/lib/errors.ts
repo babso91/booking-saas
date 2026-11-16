@@ -151,6 +151,12 @@ export const appErrorMessages = {
     "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
+  quote_expired: "Ce devis a expiré : demandez-en un nouveau.",
+  billing_state_changed:
+    "Votre abonnement a changé entre-temps. Rechargez puis réessayez.",
+  billing_unavailable: "La facturation n’est pas encore disponible en ligne.",
+  promo_unavailable: "Ce code promotionnel ne peut pas être utilisé.",
+  permission_denied: "Votre rôle ne permet pas cette action.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -295,6 +301,11 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_email_required: 409,
   context_changed: 409,
   auth_unavailable: 503,
+  quote_expired: 409,
+  billing_state_changed: 409,
+  billing_unavailable: 503,
+  promo_unavailable: 422,
+  permission_denied: 403,
   internal: 500,
 };
 
