@@ -98,10 +98,12 @@ jobs:
       # Sign-up → confirmation email → /auth/callback against `next start`.
       # Built for the local stack: the browser code (her studio's photo
       # upload) reads the public Supabase URL and key inlined at build time.
+      # Not the app's own URL: inlined, it would be the same for every
+      # server of this build, and the Client Hub's tests serve it on a
+      # second origin (its same-origin check reads it at run time).
       - name: Build for the local stack
         run: |
           status="$(npx supabase status --output json)"
-          export NEXT_PUBLIC_APP_URL=http://localhost:3000
           export NEXT_PUBLIC_SUPABASE_URL="$(jq -r .API_URL <<< "$status")"
           export NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$(jq -r .ANON_KEY <<< "$status")"
           npm run build
