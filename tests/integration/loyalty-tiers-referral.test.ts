@@ -432,6 +432,23 @@ describe("referral", () => {
     );
     expect(claims).toHaveLength(1);
 
+    // Two bookings made at the very same instant: still exactly one first.
+    const tied = email("egal");
+    const tiedIds = [await book(undefined, tied), await book(undefined, tied)];
+    await db.query(
+      "update public.appointments set created_at = now() where id = any($1::uuid[])",
+      [tiedIds],
+    );
+    const answers = [];
+    for (const id of tiedIds) {
+      const { rows } = await db.query(
+        "select public.referral_claim($1, $2) as answer",
+        [code, id],
+      );
+      answers.push(rows[0].answer as string);
+    }
+    expect(answers.filter((answer) => answer === "claimed")).toHaveLength(1);
+
     // A code is good for its own business only.
     const otherOwner = await createProfessional("tiers-other");
     const other = await createBusiness(otherOwner.userId);

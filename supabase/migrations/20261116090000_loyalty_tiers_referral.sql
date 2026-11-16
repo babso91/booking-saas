@@ -453,10 +453,12 @@ begin
   end if;
   -- Serialised per referred customer (her row), as every loyalty write.
   perform private.loyalty_lock_client(v_appointment.business_id, v_appointment.client_id);
+  -- An earlier booking of hers: two made at the same instant are ordered by
+  -- id, so exactly one of them is her first.
   if exists (
     select 1 from public.appointments a
     where a.business_id = v_appointment.business_id and a.client_id = v_appointment.client_id
-      and a.id <> v_appointment.id and a.created_at <= v_appointment.created_at
+      and (a.created_at, a.id) < (v_appointment.created_at, v_appointment.id)
   ) then
     return 'ineligible';
   end if;
