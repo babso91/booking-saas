@@ -10,6 +10,7 @@ import {
   InfoIcon,
   PinIcon,
 } from "@/components/ui/icons";
+import { VisitFormsLinks } from "./hub-forms";
 import { formatPrice } from "@/features/agenda/client/money";
 import type { ClientHubBusinessDto } from "@/features/client-hub/types";
 
@@ -197,6 +198,10 @@ function Detail({
             <ArrowRightIcon size={16} />
           </Link>
         </section>
+
+        {upcoming ? (
+          <VisitFormsLinks businessId={id} startsAt={appointment.startsAt} />
+        ) : null}
 
         <p className="text-[12.5px] text-ink-muted">
           Heures de {place.name} ({zone}).

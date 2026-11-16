@@ -1,4 +1,9 @@
 import type {
+  ClientFormDto,
+  FormStatus,
+  FormSubmission,
+} from "@/features/forms/contract";
+import type {
   ClientHubAppointmentDetailDto,
   ClientHubAppointmentsPageDto,
   ClientHubLedgerPageDto,
@@ -180,5 +185,42 @@ export function fetchLedger(
   return request<ClientHubLedgerPageDto>(
     `${business(businessId)}/loyalty/ledger${search}`,
     { method: "GET", signal },
+  );
+}
+
+// Her forms for a business (docs/CLIENT_FORMS_CONTRACT.md, Hub routes): the
+// list, one form, and her answers. Answered as the other Hub reads: shown
+// only for the account the page confirmed (client/session.tsx).
+
+export function fetchForms(businessId: string, signal?: AbortSignal) {
+  return request<ClientFormDto[]>(`${business(businessId)}/forms`, {
+    method: "GET",
+    signal,
+  });
+}
+
+export function fetchForm(
+  businessId: string,
+  assignmentId: string,
+  signal?: AbortSignal,
+) {
+  return request<ClientFormDto>(
+    `${business(businessId)}/forms/${encodeURIComponent(assignmentId)}`,
+    { method: "GET", signal },
+  );
+}
+
+export function submitForm(
+  businessId: string,
+  assignmentId: string,
+  body: Omit<FormSubmission, "assignmentId">,
+) {
+  return request<{
+    receiptId: string;
+    status: FormStatus;
+    submittedAt: string;
+  }>(
+    `${business(businessId)}/forms/${encodeURIComponent(assignmentId)}/submission`,
+    json("POST", body),
   );
 }
