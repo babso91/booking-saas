@@ -19,6 +19,11 @@ export type OnboardedBusiness = {
    * preferences are synchronised for (PreferenceContext).
    */
   membershipId: string;
+  /**
+   * Her role. A practitioner reaches only her own agenda and the customers
+   * she receives (docs/TEAM_CONTRACT.md, « Rôle praticienne »).
+   */
+  role: "owner" | "admin" | "practitioner";
   slug: string;
   name: string;
   timezone: string;
@@ -69,7 +74,7 @@ export async function getSessionState(
 
   const { data: membership, error: membershipError } = await client
     .from("business_members")
-    .select("id, business_id, businesses!inner(slug, name, timezone)")
+    .select("id, business_id, role, businesses!inner(slug, name, timezone)")
     .eq("user_id", user.id)
     .order("created_at", { ascending: true })
     .limit(1)
@@ -89,6 +94,7 @@ export async function getSessionState(
     business: {
       id: membership.business_id,
       membershipId: membership.id,
+      role: membership.role,
       slug: membership.businesses.slug,
       name: membership.businesses.name,
       timezone: membership.businesses.timezone,

@@ -18,6 +18,7 @@ describe("destinationFor", () => {
         business: {
           id: "b",
           membershipId: "m",
+          role: "owner",
           slug: "s",
           name: "n",
           timezone: "Europe/Paris",

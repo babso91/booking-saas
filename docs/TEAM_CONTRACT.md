@@ -1,4 +1,4 @@
-# Équipe : contrat servi (lots 1 et 2)
+# Équipe : contrat servi (lots 1 à 3)
 
 Réponse de Cloud à `docs/TEAM_PROPOSAL.md` (PR #64). Les formes `TeamDto`
 et `TeamMemberDto`, ainsi que les cinq actions, sont servies **telles que
@@ -61,7 +61,6 @@ Ni `last_owner` ni l'attribution de `owner` par invitation ne sont possibles
 | ------------------------------------ | ------------------------------------------------------------------------------------------- |
 | `not_found`                          | profil introuvable ou d'un autre établissement                                              |
 | `idempotency_conflict`               | même `operationId`, commande différente                                                     |
-| `role_unavailable`                   | invitation avec `role: "practitioner"` (voir « Écarts »)                                    |
 | `access_exists`                      | le profil a déjà un compte, ou l'adresse est déjà membre                                    |
 | `team_limit_reached`                 | 100 profils                                                                                 |
 | `validation_error`                   | nom vide ou > 80, service inconnu ou d'un autre établissement, e-mail                       |
@@ -122,14 +121,47 @@ lecture (`history.replaceState`).
 - sur `invitation_password_required` : champ mot de passe, puis
   `completeTeamInviteAction`.
 
+## Rôle praticienne (lot 3)
+
+L'owner invite avec `role: "practitioner"`. **Refus par défaut** :
+`is_business_member`, qui porte toutes les règles RLS et la plupart des
+portes, ne reconnaît que owner et admin. La praticienne n'obtient que ces
+droits explicites :
+
+| Elle peut                                                                                   | Comment                                                       |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| lire son établissement, ses réglages, horaires, exceptions et catalogue                     | lecture directe (RLS)                                         |
+| lire son appartenance, les profils de l'équipe (noms) et ses préférences                    | lecture directe (RLS)                                         |
+| lire **ses** rendez-vous (`staff_id` = son profil), notes internes du rendez-vous comprises | lecture directe                                               |
+| son agenda : ses rendez-vous avec nom, e-mail et téléphone de chaque cliente                | `practitioner_agenda(businessId, from, to)`, 62 jours au plus |
+| marquer ses visites réalisées ou manquées, et les rouvrir                                   | `agenda_set_appointment_status` sur ses propres rendez-vous   |
+
+**Fermé pour elle** :
+
+- les notes privées, la fidélité, les e-mails, le calendrier externe, le
+  site, l'accès au Hub, les campagnes, les formulaires, le consentement ;
+- l'équipe (`get_team`), le CRM (`crm_*`), le catalogue en écriture ;
+- toute autre écriture d'agenda : création, déplacement, annulation.
+- Le rendez-vous d'une collègue répond `appointment_not_found`.
+
+Les portes qui lisaient l'appartenance directement exigent désormais owner ou
+admin (agenda, site, connexion du calendrier).
+
+**Fiches clientes** : elle ne lit aucune ligne `clients` directement, car
+une fiche porte des colonnes privées (anciennes notes internes, jeton de
+fidélité). L'agenda pro joint `clients` : pour une praticienne, il faut
+utiliser `practitioner_agenda` à la place. **Quitter l'établissement** : une
+praticienne ne peut pas retirer son propre accès, c'est l'owner qui le fait.
+
+**Pour l'écran** : `SessionState.business.role` et `BusinessContext.role`
+donnent le rôle. Pour une praticienne, il faut afficher l'agenda (ses
+rendez-vous) et la sortie de session, et masquer le reste, que le serveur
+refuse de toute façon.
+
 ## Écarts avec la proposition
 
-1. **`practitioner` n'est pas encore attribuable** (`role_unavailable`).
-   Toutes les règles RLS écrites jusqu'ici ouvrent l'établissement entier à
-   n'importe quel membre. Un compte « praticienne » verrait donc tout ce que
-   voit une administratrice (fichier clientes, CRM, réglages). Il faut un lot
-   « capacités » qui restreint ces règles avant d'ouvrir ce rôle. D'ici là,
-   l'écran doit proposer `admin` seulement, ou griser `practitioner`.
+1. **`practitioner`** : attribuable depuis le lot 3 (voir « Rôle
+   praticienne »). `role_unavailable` ne sert plus.
 2. **E-mail d'invitation** : servi au lot 2 (voir « Rejoindre l'équipe »).
    En staging, tant qu'aucun transport n'est configuré, inviter répond
    `invitation_email_unavailable`.
