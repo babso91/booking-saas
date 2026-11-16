@@ -114,15 +114,25 @@ async function customer(options: {
       ...at(20),
     });
   }
-  if (options.consent) {
+  if (options.consent === "granted") {
+    // An agreement she confirmed from her mailbox (the consent register's
+    // own tests cover how one is given): arranged directly.
+    await db.query(
+      `insert into private.consent_events (business_id, client_id, purpose, channel, state,
+         proof_version, information_version, notice_version, source, evidence)
+       values ($1, $2, 'marketing', 'email', 'granted', 'email-v1', 'information-v1',
+         'notice-growth-test', 'booking', '{"confirmedBy": "email_link"}')`,
+      [business.id, clientId],
+    );
+  } else if (options.consent === "withdrawn") {
     await ok(
       call(owner.client, "marketing_set_consent", {
         p_business_id: business.id,
         p_client_id: clientId,
         p_purpose: "marketing",
         p_channel: "email",
-        p_action: options.consent === "granted" ? "grant" : "withdraw",
-        p_proof_version: "salon-v1",
+        p_action: "withdraw",
+        p_proof_version: null,
         p_request_id: randomUUID(),
       }),
     );
@@ -190,11 +200,10 @@ const run = (
   }).then((result) => ({ result, transport }));
 
 beforeAll(async () => {
-  // The wording these tests grant with, as an operator registers it after
-  // legal validation (docs/MARKETING_CONSENT_CONTRACT.md).
+  // A notice text for the arranged agreements (a draft is enough here).
   await db.query(
-    `insert into private.consent_wording_versions (version, purpose, text_sha256)
-     values ('salon-v1', 'marketing', repeat('a', 64)) on conflict do nothing`,
+    `insert into private.consent_texts (version, kind, body)
+     values ('notice-growth-test', 'notice', 'Notice de test') on conflict do nothing`,
   );
   owner = await createProfessional("growth-owner");
   stranger = await createProfessional("growth-stranger");
