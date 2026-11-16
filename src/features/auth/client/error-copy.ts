@@ -414,6 +414,23 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  atelier_access_expired: {
+    title: "Projet indisponible",
+    message: "Ce projet Atelier n’est pas accessible.",
+  },
+  atelier_quote_changed: {
+    title: "Devis modifié",
+    message: "Le devis de ce projet a changé : relis-le.",
+  },
+  atelier_out_of_scope: {
+    title: "Hors devis",
+    message:
+      "Cette demande sort du devis : un devis à part est nécessaire, rien n’est facturé sans ton accord.",
+  },
+  atelier_revision_limit_reached: {
+    title: "Corrections épuisées",
+    message: "Toutes les corrections incluses ont été utilisées.",
+  },
   policy_cutoff_passed: {
     title: "Délai passé",
     message:
@@ -443,7 +460,41 @@ export const errorCopy: Record<
   stale_offer: {
     title: "Offre modifiée",
     message: "Cette offre a changé. Relis-la.",
+  },
   version_conflict: {
+    title: "Modifié entre-temps",
+    message: "Ces informations ont changé. Recharge puis réessaie.",
+  },
+  last_owner: {
+    title: "Seule propriétaire",
+    message:
+      "Son accès ne peut pas être retiré : il faut toujours une propriétaire.",
+  },
+  upcoming_appointments: {
+    title: "Rendez-vous à venir",
+    message:
+      "Cette personne a des rendez-vous à venir. Déplace-les ou annule-les avant de la retirer de la réservation.",
+  },
+  permission_denied: {
+    title: "Action réservée",
+    message: "Ton rôle ne permet pas cette action.",
+  },
+  role_unavailable: {
+    title: "Rôle pas encore disponible",
+    message: "Pour l’instant, invite cette personne comme administratrice.",
+  },
+  access_exists: {
+    title: "Accès déjà ouvert",
+    message: "Cette personne a déjà accès au logiciel.",
+  },
+  team_limit_reached: {
+    title: "Équipe complète",
+    message: "Ton équipe a atteint le nombre maximal de profils.",
+  },
+  already_member: {
+    title: "Compte déjà utilisé",
+    message:
+      "Ce compte appartient déjà à une activité. Utilise une autre adresse.",
   },
   form_expired: {
     title: "Formulaire expiré",
@@ -496,7 +547,35 @@ export const errorCopy: Record<
   invitation_email_unavailable: {
     title: "Invitation non envoyée",
     message: "L’e-mail d’invitation n’a pas pu partir. Réessaie plus tard.",
+  },
   consent_text_conflict: {
+    title: "Version déjà prise",
+    message: "Cette version de texte existe déjà avec un autre contenu.",
+  },
+  consent_text_not_draft: {
+    title: "Texte non activable",
+    message: "Seul un texte en brouillon peut être activé.",
+  },
+  consent_text_changed: {
+    title: "Texte modifié",
+    message: "Le texte a changé depuis sa relecture : relis-le.",
+  },
+  consent_link_invalid: {
+    title: "Lien non valide",
+    message: "Ce lien de confirmation n’est pas valide ou a expiré.",
+  },
+  consent_direct_only: {
+    title: "Accord de la cliente requis",
+    message:
+      "Seule la cliente peut donner son accord, par exemple en réservant. Tu peux enregistrer un retrait.",
+  },
+  unsubscribe_link_invalid: {
+    title: "Lien non valide",
+    message: "Ce lien de désinscription n’est pas valide.",
+  },
+  unsubscribe_undo_unavailable: {
+    title: "Annulation impossible",
+    message: "Ce changement ne peut plus être annulé depuis ce lien.",
   },
   estimate_stale: {
     title: "Estimation dépassée",
@@ -513,15 +592,59 @@ export const errorCopy: Record<
   campaign_closed: {
     title: "Campagne terminée",
     message: "Cette campagne ne peut plus changer d’état.",
-  referral_unavailable: {
-  coupon_refused: {
   },
-  version_conflict: {
-    title: "Modifié entre-temps",
-    message: "Ces informations ont changé. Recharge puis réessaie.",
+  referral_unavailable: {
+    title: "Parrainage indisponible",
+    message: "Cet établissement ne propose pas de parrainage.",
+  },
+  coupon_refused: {
+    title: "Code refusé",
+    message: "Ce code ne peut pas être utilisé pour cette réservation.",
+  },
+  promotion_exhausted: {
+    title: "Offre épuisée",
+    message:
+      "Cette offre n’est plus disponible. Le nouveau total est à confirmer.",
+  },
+  coupon_code_taken: {
+    title: "Code déjà pris",
+    message: "Ce code existe déjà dans ton établissement.",
+  },
+  promotion_not_found: {
+    title: "Promotion introuvable",
+    message: "Cette promotion n’existe pas ou plus.",
+  },
   quote_expired: {
+    title: "Devis expiré",
+    message: "Ce devis a expiré : demandes-en un nouveau.",
+  },
+  billing_state_changed: {
+    title: "Abonnement modifié",
+    message: "Ton abonnement a changé entre-temps. Recharge puis réessaie.",
+  },
+  billing_unavailable: {
+    title: "Facturation indisponible",
+    message: "La facturation n’est pas encore disponible en ligne.",
+  },
+  promo_unavailable: {
+    title: "Code refusé",
+    message: "Ce code promotionnel ne peut pas être utilisé.",
+  },
   domain_taken: {
-  atelier_access_expired: {
+    title: "Domaine déjà pris",
+    message: "Ce nom de domaine est déjà relié à un autre site.",
+  },
+  proof_expired: {
+    title: "Vérification expirée",
+    message: "Une nouvelle valeur est à publier dans ton DNS.",
+  },
+  domain_generation_changed: {
+    title: "Vérification relancée",
+    message: "Une nouvelle vérification a été lancée ailleurs. Recharge.",
+  },
+  domain_unavailable: {
+    title: "Domaine indisponible",
+    message: "Le domaine personnalisé n’est pas disponible pour le moment.",
   },
 };
 

@@ -151,6 +151,13 @@ export const appErrorMessages = {
     "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
+  atelier_access_expired: "Ce projet Atelier n’est pas accessible.",
+  atelier_quote_changed: "Le devis de ce projet a changé : relisez-le.",
+  atelier_out_of_scope:
+    "Cette demande sort du devis : un devis à part est nécessaire, rien n’est facturé sans votre accord.",
+  atelier_revision_limit_reached:
+    "Toutes les corrections incluses ont été utilisées.",
+  internal: "Une erreur inattendue est survenue. Merci de réessayer.",
   policy_cutoff_passed:
     "Le délai pour modifier ce rendez-vous depuis votre espace est passé. Contactez l’établissement.",
   policy_unavailable:
@@ -163,7 +170,70 @@ export const appErrorMessages = {
   offer_expired: "Cette offre a expiré.",
   offer_unavailable: "Ce créneau vient d’être réservé.",
   stale_offer: "Cette offre a changé. Relisez-la.",
-  internal: "Une erreur inattendue est survenue. Merci de réessayer.",
+  version_conflict:
+    "Ces informations ont changé entre-temps. Rechargez puis réessayez.",
+  last_owner:
+    "C’est la seule propriétaire : son accès ne peut pas être retiré.",
+  upcoming_appointments:
+    "Cette personne a des rendez-vous à venir : déplacez-les ou annulez-les avant de la retirer de la réservation.",
+  permission_denied: "Votre rôle ne permet pas cette action.",
+  role_unavailable:
+    "Ce rôle n’est pas encore disponible : invitez cette personne comme administratrice.",
+  access_exists: "Cette personne a déjà accès au logiciel.",
+  team_limit_reached: "Votre équipe a atteint le nombre maximal de profils.",
+  already_member: "Ce compte appartient déjà à une activité.",
+  form_expired: "Ce formulaire n’est plus à remplir : la date est passée.",
+  form_revoked: "Ce formulaire n’est plus demandé.",
+  stale_form: "Ce formulaire a changé. Relisez-le avant de l’envoyer.",
+  field_required: "Cette réponse est obligatoire.",
+  invalid_template:
+    "Ce modèle n’est pas valide : vérifiez les questions et leurs conditions.",
+  form_already_submitted: "Ce formulaire a déjà été rempli.",
+  form_already_assigned: "Ce formulaire est déjà demandé pour ce rendez-vous.",
+  form_limit_reached:
+    "Vous avez atteint le nombre maximal de modèles de formulaire.",
+  too_many_occurrences: "Une série compte au plus 12 rendez-vous.",
+  calendar_conflict:
+    "Une ou plusieurs dates ne sont plus libres : rien n’a été créé.",
+  series_stale: "Cet aperçu n’est plus valable : rien n’a été créé.",
+  invitation_password_required:
+    "Choisissez votre mot de passe pour rejoindre l’équipe.",
+  invitation_email_unavailable:
+    "L’e-mail d’invitation n’a pas pu partir. Réessayez plus tard.",
+  unsubscribe_link_invalid: "Ce lien de désinscription n’est pas valide.",
+  consent_link_invalid: "Ce lien de confirmation n’est pas valide ou a expiré.",
+  consent_direct_only:
+    "Seule la cliente peut donner son accord, par exemple en réservant. Vous pouvez enregistrer un retrait.",
+  consent_text_conflict:
+    "Cette version de texte existe déjà avec un autre contenu.",
+  consent_text_not_draft: "Seul un texte en brouillon peut être activé.",
+  consent_text_changed: "Le texte a changé depuis sa relecture : relisez-le.",
+  unsubscribe_undo_unavailable:
+    "Ce changement ne peut plus être annulé depuis ce lien.",
+  estimate_stale:
+    "L’estimation n’est plus à jour : rien n’a été planifié. Relancez l’estimation.",
+  quota_exceeded: "Ce plafond dépasse le budget restant du mois.",
+  campaign_not_found: "Cette campagne est introuvable.",
+  campaign_closed: "Cette campagne ne peut plus changer d’état.",
+  referral_unavailable:
+    "Le parrainage n’est pas proposé par cet établissement.",
+  coupon_refused: "Ce code ne peut pas être utilisé pour cette réservation.",
+  promotion_exhausted:
+    "Cette offre n’est plus disponible. Le nouveau total est à confirmer.",
+  coupon_code_taken: "Ce code existe déjà.",
+  promotion_not_found: "Cette promotion est introuvable.",
+  quote_expired: "Ce devis a expiré : demandez-en un nouveau.",
+  billing_state_changed:
+    "Votre abonnement a changé entre-temps. Rechargez puis réessayez.",
+  billing_unavailable: "La facturation n’est pas encore disponible en ligne.",
+  promo_unavailable: "Ce code promotionnel ne peut pas être utilisé.",
+  domain_taken: "Ce nom de domaine est déjà relié à un autre site.",
+  proof_expired:
+    "La vérification a expiré : une nouvelle valeur est à publier dans le DNS.",
+  domain_generation_changed:
+    "Une nouvelle vérification a été lancée ailleurs. Rechargez.",
+  domain_unavailable:
+    "Le domaine personnalisé n’est pas disponible pour le moment.",
 } as const;
 
 export type AppErrorCode = keyof typeof appErrorMessages;
@@ -311,6 +381,11 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_email_required: 409,
   context_changed: 409,
   auth_unavailable: 503,
+  atelier_access_expired: 404,
+  atelier_quote_changed: 409,
+  atelier_out_of_scope: 422,
+  atelier_revision_limit_reached: 409,
+  internal: 500,
   policy_cutoff_passed: 409,
   policy_unavailable: 409,
   waitlist_unavailable: 409,
@@ -319,7 +394,51 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   offer_expired: 409,
   offer_unavailable: 409,
   stale_offer: 409,
-  internal: 500,
+  version_conflict: 409,
+  last_owner: 409,
+  upcoming_appointments: 409,
+  permission_denied: 403,
+  role_unavailable: 422,
+  access_exists: 409,
+  team_limit_reached: 409,
+  already_member: 409,
+  form_expired: 410,
+  form_revoked: 409,
+  stale_form: 409,
+  field_required: 422,
+  invalid_template: 422,
+  form_already_submitted: 409,
+  form_already_assigned: 409,
+  form_limit_reached: 409,
+  too_many_occurrences: 422,
+  calendar_conflict: 409,
+  series_stale: 409,
+  invitation_password_required: 403,
+  invitation_email_unavailable: 503,
+  unsubscribe_link_invalid: 404,
+  consent_link_invalid: 404,
+  consent_direct_only: 403,
+  consent_text_conflict: 409,
+  consent_text_not_draft: 409,
+  consent_text_changed: 409,
+  unsubscribe_undo_unavailable: 409,
+  estimate_stale: 409,
+  quota_exceeded: 409,
+  campaign_not_found: 404,
+  campaign_closed: 409,
+  referral_unavailable: 409,
+  coupon_refused: 422,
+  promotion_exhausted: 409,
+  coupon_code_taken: 409,
+  promotion_not_found: 404,
+  quote_expired: 409,
+  billing_state_changed: 409,
+  billing_unavailable: 503,
+  promo_unavailable: 422,
+  domain_taken: 409,
+  proof_expired: 409,
+  domain_generation_changed: 409,
+  domain_unavailable: 503,
 };
 
 export function validationException(error: ZodError) {

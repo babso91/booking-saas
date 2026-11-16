@@ -7,13 +7,13 @@ export type Database = {
           Tables: {
             "appointments": {
                   Row: {
-                    "booking_window": unknown,"buffer_minutes_snapshot": number,"business_id": string,"cancellation_reason": string | null,"client_email_snapshot": string | null,"client_first_name_snapshot": string | null,"client_id": string,"client_last_name_snapshot": string | null,"client_phone_snapshot": string | null,"completed_at": string | null,"created_at": string,"created_by": string | null,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"currency": string,"duration_minutes_snapshot": number,"ends_at": string,"id": string,"internal_notes": string | null,"occupied_window": unknown,"options_snapshot": NonNullable<Json>,"policy_snapshot": Json | null,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status": Database["public"]['Enums']["appointment_status"],"updated_at": string,"version": number
+                    "booking_window": unknown,"buffer_minutes_snapshot": number,"business_id": string,"cancellation_reason": string | null,"client_email_snapshot": string | null,"client_first_name_snapshot": string | null,"client_id": string,"client_last_name_snapshot": string | null,"client_phone_snapshot": string | null,"completed_at": string | null,"created_at": string,"created_by": string | null,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"currency": string,"duration_minutes_snapshot": number,"ends_at": string,"id": string,"internal_notes": string | null,"occupied_window": unknown,"options_snapshot": NonNullable<Json>,"policy_snapshot": Json | null,"price_cents_snapshot": number,"series_id": string | null,"service_id": string,"service_name_snapshot": string,"staff_id": string | null,"starts_at": string,"status": Database["public"]['Enums']["appointment_status"],"updated_at": string,"version": number
                   }
                   Insert: {
-                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id": string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id": string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot": number,"ends_at": string,"id"?: string,"internal_notes"?: string | null,"occupied_window": unknown,"options_snapshot"?: NonNullable<Json>,"policy_snapshot"?: Json | null,"price_cents_snapshot": number,"service_id": string,"service_name_snapshot": string,"starts_at": string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
+                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id": string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id": string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot": number,"ends_at": string,"id"?: string,"internal_notes"?: string | null,"occupied_window": unknown,"options_snapshot"?: NonNullable<Json>,"policy_snapshot"?: Json | null,"price_cents_snapshot": number,"series_id"?: string | null,"service_id": string,"service_name_snapshot": string,"staff_id"?: string | null,"starts_at": string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id"?: string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id"?: string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot"?: number,"ends_at"?: string,"id"?: string,"internal_notes"?: string | null,"occupied_window"?: unknown,"options_snapshot"?: NonNullable<Json>,"policy_snapshot"?: Json | null,"price_cents_snapshot"?: number,"service_id"?: string,"service_name_snapshot"?: string,"starts_at"?: string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
+                    "booking_window"?: never,"buffer_minutes_snapshot"?: number,"business_id"?: string,"cancellation_reason"?: string | null,"client_email_snapshot"?: string | null,"client_first_name_snapshot"?: string | null,"client_id"?: string,"client_last_name_snapshot"?: string | null,"client_phone_snapshot"?: string | null,"completed_at"?: string | null,"created_at"?: string,"created_by"?: string | null,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"currency"?: string,"duration_minutes_snapshot"?: number,"ends_at"?: string,"id"?: string,"internal_notes"?: string | null,"occupied_window"?: unknown,"options_snapshot"?: NonNullable<Json>,"policy_snapshot"?: Json | null,"price_cents_snapshot"?: number,"series_id"?: string | null,"service_id"?: string,"service_name_snapshot"?: string,"staff_id"?: string | null,"starts_at"?: string,"status"?: Database["public"]['Enums']["appointment_status"],"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -39,6 +39,12 @@ isOneToOne: false
       columns: ["service_id","business_id"]
 isOneToOne: false
       referencedRelation: "services"
+      referencedColumns: ["id","business_id"]
+    },{
+      foreignKeyName: "appointments_staff_fkey"
+      columns: ["staff_id","business_id"]
+isOneToOne: false
+      referencedRelation: "staff_members"
       referencedColumns: ["id","business_id"]
     }
                   ]
@@ -800,6 +806,56 @@ isOneToOne: false
       referencedColumns: ["id","site_id"]
     }
                   ]
+                },"staff_members": {
+                  Row: {
+                    "bookable": boolean,"business_id": string,"created_at": string,"display_name": string,"id": string,"revision": number,"updated_at": string,"user_id": string | null
+                  }
+                  Insert: {
+                    "bookable"?: boolean,"business_id": string,"created_at"?: string,"display_name": string,"id"?: string,"revision"?: number,"updated_at"?: string,"user_id"?: string | null
+                  }
+                  Update: {
+                    "bookable"?: boolean,"business_id"?: string,"created_at"?: string,"display_name"?: string,"id"?: string,"revision"?: number,"updated_at"?: string,"user_id"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "staff_members_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "staff_members_user_id_fkey"
+      columns: ["user_id"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"staff_services": {
+                  Row: {
+                    "business_id": string,"created_at": string,"service_id": string,"staff_id": string
+                  }
+                  Insert: {
+                    "business_id": string,"created_at"?: string,"service_id": string,"staff_id": string
+                  }
+                  Update: {
+                    "business_id"?: string,"created_at"?: string,"service_id"?: string,"staff_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "staff_services_service_id_business_id_fkey"
+      columns: ["service_id","business_id"]
+isOneToOne: false
+      referencedRelation: "services"
+      referencedColumns: ["id","business_id"]
+    },{
+      foreignKeyName: "staff_services_staff_id_business_id_fkey"
+      columns: ["staff_id","business_id"]
+isOneToOne: false
+      referencedRelation: "staff_members"
+      referencedColumns: ["id","business_id"]
+    }
+                  ]
                 }
           }
           Views: {
@@ -828,6 +884,12 @@ isOneToOne: false
             "accept_beta_invitation":
 { Args: { "p_email": string,"p_proof_session"?: string,"p_token_hash": string,"p_user_id": string }; Returns: string
                            },
+"accept_team_invitation":
+{ Args: { "p_token_hash": string }; Returns: string
+                           },
+"accept_team_invitation_for":
+{ Args: { "p_email": string,"p_proof_session": string,"p_token_hash": string,"p_user_id": string }; Returns: string
+                           },
 "agenda_create_appointment":
 { Args: { "p_business_id": string,"p_client_email"?: string,"p_client_first_name"?: string,"p_client_id"?: string,"p_client_last_name"?: string,"p_client_phone"?: string,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_request_id"?: string,"p_service_id": string,"p_starts_at": string }; Returns: {
               "appointment_id": string,"created": boolean
@@ -838,6 +900,9 @@ isOneToOne: false
                            },
 "agenda_update_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_starts_at"?: string }; Returns: string
+                           },
+"assign_visit_form":
+{ Args: { "p_appointment_id": string,"p_business_id": string,"p_request_id": string,"p_template_version_id": string }; Returns: Json
                            },
 "atelier_apply":
 { Args: { "p_expected_draft_revision": number,"p_proposal_id": string,"p_request_id": string }; Returns: Json
@@ -867,6 +932,9 @@ isOneToOne: false
 { Args: { "p_email": string,"p_token_hash": string }; Returns: {
               "state": string,"user_id": string
             }[]
+                           },
+"business_legal_profile":
+{ Args: { "p_business_id": string }; Returns: Json
                            },
 "business_time":
 { Args: { "p_business_id": string,"p_dates"?: (string)[],"p_instants"?: (string)[],"p_locals"?: (string)[],"p_open_ranges"?: boolean }; Returns: Json
@@ -1049,8 +1117,17 @@ isOneToOne: false
 "client_hub_cancel_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_expected_version": number,"p_request_id": string,"p_session_token": string }; Returns: Json
                            },
+"client_hub_create_referral_link":
+{ Args: { "p_business_id": string,"p_code": string,"p_request_id": string,"p_session_token": string }; Returns: Json
+                           },
 "client_hub_end_session":
 { Args: { "p_all"?: boolean,"p_session_token": string }; Returns: undefined
+                           },
+"client_hub_form":
+{ Args: { "p_assignment_id": string,"p_business_id": string,"p_session_token": string }; Returns: Json
+                           },
+"client_hub_forms":
+{ Args: { "p_business_id": string,"p_session_token": string }; Returns: Json
                            },
 "client_hub_loyalty":
 { Args: { "p_business_id": string,"p_session_token": string }; Returns: Json
@@ -1060,6 +1137,9 @@ isOneToOne: false
                            },
 "client_hub_profile":
 { Args: { "p_session_token": string }; Returns: Json
+                           },
+"client_hub_referral_link":
+{ Args: { "p_business_id": string,"p_session_token": string }; Returns: Json
                            },
 "client_hub_request_code":
 { Args: { "p_client_ip": unknown,"p_email": string }; Returns: {
@@ -1090,10 +1170,19 @@ isOneToOne: false
 "client_hub_sign_out":
 { Args: { "p_all"?: boolean,"p_sessions": (string)[],"p_tokens": (string)[] }; Returns: undefined
                            },
+"client_hub_submit_form":
+{ Args: { "p_answers": Json,"p_assignment_id": string,"p_business_id": string,"p_request_id": string,"p_session_token": string,"p_template_version_id": string }; Returns: Json
+                           },
+"client_hub_tier_progress":
+{ Args: { "p_business_id": string,"p_session_token": string }; Returns: Json
+                           },
 "client_hub_verify_code":
 { Args: { "p_challenge_id": string,"p_client_ip": unknown,"p_code": string,"p_email": string }; Returns: {
               "account_id": string,"email": string,"expires_at": string,"session_token": string,"status": string
             }[]
+                           },
+"commit_appointment_series":
+{ Args: { "p_business_id": string,"p_preview_version": string,"p_request_id": string,"p_selected": Json }; Returns: Json
                            },
 "complete_onboarding":
 { Args: { "p_buffer_minutes"?: number,"p_business_name": string,"p_cancellation_policy"?: string,"p_contact_email"?: string,"p_description"?: string,"p_first_name": string,"p_last_name": string,"p_location"?: string,"p_maximum_booking_advance_days"?: number,"p_minimum_booking_notice_minutes"?: number,"p_phone"?: string,"p_slug": string,"p_timezone"?: string }; Returns: {
@@ -1106,11 +1195,41 @@ isOneToOne: false
 "confirm_site_asset":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string,"p_byte_size": number,"p_content_type": string,"p_height": number,"p_width": number }; Returns: undefined
                            },
+"consent_confirm":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
+"consent_confirmation_read":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
+"consent_notice":
+{ Args: { "p_slug": string }; Returns: Json
+                           },
+"consent_request_from_booking":
+{ Args: { "p_appointment_id": string,"p_channels": Json,"p_information_version": string,"p_notice_version": string,"p_token_hash": string }; Returns: Json
+                           },
+"consent_text_activate":
+{ Args: { "p_expected_sha256": string,"p_note": string,"p_version": string }; Returns: Json
+                           },
+"consent_text_register":
+{ Args: { "p_body": string,"p_kind": string,"p_version": string }; Returns: Json
+                           },
+"consent_text_show":
+{ Args: { "p_version": string }; Returns: Json
+                           },
+"consent_texts_current":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"consent_texts_list":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
 "create_beta_invitation":
 { Args: { "p_email": string,"p_expires_at": string,"p_note"?: string,"p_token_hash": string }; Returns: string
                            },
+"create_form_template":
+{ Args: { "p_business_id": string,"p_draft": Json,"p_request_id": string }; Returns: Json
+                           },
 "create_public_booking":
-{ Args: { "p_client_ip": unknown,"p_email": string,"p_expected_duration_minutes"?: number,"p_expected_price_cents"?: number,"p_first_name": string,"p_last_name"?: string,"p_option_choice_ids"?: (string)[],"p_phone"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
+{ Args: { "p_client_ip": unknown,"p_email": string,"p_expected_duration_minutes"?: number,"p_expected_price_cents"?: number,"p_first_name": string,"p_last_name"?: string,"p_option_choice_ids"?: (string)[],"p_phone"?: string,"p_quote_ref"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
               "appointment_id": string,"business_name": string,"currency": string,"duration_minutes": number,"ends_at": string,"options": Json,"price_cents": number,"replayed": boolean,"service_name": string,"starts_at": string,"status": string,"timezone": string
             }[]
                            },
@@ -1126,6 +1245,9 @@ isOneToOne: false
                            },
 "create_site_asset":
 { Args: { "p_actor": string,"p_business_id": string,"p_byte_size": number,"p_content_type": string }; Returns: string
+                           },
+"create_staff_member":
+{ Args: { "p_bookable": boolean,"p_business_id": string,"p_display_name": string,"p_operation_id": string,"p_service_ids": (string)[] }; Returns: Json
                            },
 "crm_assert_member":
 { Args: { "p_business_id": string }; Returns: undefined
@@ -1242,6 +1364,9 @@ isOneToOne: false
               "config": Json,"number": number,"plan": string,"published_at": string,"schema_version": number,"unavailable_assets": (string)[],"version_id": string
             }[]
                            },
+"get_team":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
 "growth_authorize":
 { Args: { "p_fence": number,"p_occurrence_id": string,"p_unsubscribe_token_hash": string }; Returns: Json
                            },
@@ -1276,6 +1401,12 @@ isOneToOne: false
 "is_business_member":
 { Args: { "target_business_id": string }; Returns: boolean
                            },
+"issue_unsubscribe_link":
+{ Args: { "p_business_id": string,"p_channel": string,"p_client_id": string,"p_token_hash": string }; Returns: string
+                           },
+"list_form_templates":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
 "loyalty_adjust_points":
 { Args: { "p_business_id": string,"p_client_id": string,"p_points_delta": number,"p_reason": string,"p_request_id": string }; Returns: string
                            },
@@ -1290,6 +1421,9 @@ isOneToOne: false
 "loyalty_client_summary":
 { Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
                            },
+"loyalty_client_tier_progress":
+{ Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
+                           },
 "loyalty_configure_program":
 { Args: { "p_accrual_mode": Database["public"]['Enums']["loyalty_accrual_mode"],"p_active": boolean,"p_business_id": string,"p_expected_version": number,"p_points_per_completed_appointment": number,"p_points_per_euro"?: number }; Returns: number
                            },
@@ -1299,17 +1433,32 @@ isOneToOne: false
 "loyalty_fulfil_redemption":
 { Args: { "p_appointment_id"?: string,"p_business_id": string,"p_redemption_id": string }; Returns: undefined
                            },
+"loyalty_get_growth_rules":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
 "loyalty_redeem_reward":
 { Args: { "p_business_id": string,"p_client_id": string,"p_request_id": string,"p_reward_id": string }; Returns: string
                            },
 "loyalty_reverse_adjustment":
 { Args: { "p_business_id": string,"p_entry_id": string,"p_reason"?: string }; Returns: string
                            },
+"loyalty_set_growth_rules":
+{ Args: { "p_business_id": string,"p_expected_version": number,"p_referral_points": number,"p_tiers": Json,"p_window_days": number }; Returns: Json
+                           },
 "loyalty_set_service_rule":
 { Args: { "p_business_id": string,"p_points": number,"p_service_id": string }; Returns: undefined
                            },
 "loyalty_update_reward":
 { Args: { "p_active": boolean,"p_business_id": string,"p_description": string,"p_expected_version": number,"p_name": string,"p_points_required": number,"p_reward_id": string,"p_reward_value": number,"p_service_id": string }; Returns: number
+                           },
+"marketing_client_consent_history":
+{ Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
+                           },
+"marketing_client_consents":
+{ Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
+                           },
+"marketing_set_consent":
+{ Args: { "p_action": string,"p_business_id": string,"p_channel": string,"p_client_id": string,"p_proof_version": string,"p_purpose": string,"p_request_id": string }; Returns: Json
                            },
 "member_site_photo":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: boolean
@@ -1320,16 +1469,67 @@ isOneToOne: false
 "my_beta_access":
 { Args: Record<PropertyKey, never>; Returns: boolean
                            },
+"offer_quote":
+{ Args: { "p_client_ip": unknown,"p_coupon": string,"p_option_choice_ids": (string)[],"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: Json
+                           },
 "pending_site_photo_purges":
 { Args: { "p_before": string,"p_limit": number }; Returns: {
               "asset_id": string,"attempts": number,"business_id": string,"scope": string
             }[]
                            },
+"platform_billing_summary":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"platform_cancel_scheduled":
+{ Args: { "p_business_id": string,"p_command_id": string,"p_operation_id": string }; Returns: Json
+                           },
+"platform_confirm_change":
+{ Args: { "p_business_id": string,"p_expected_revision": number,"p_operation_id": string,"p_quote_id": string }; Returns: Json
+                           },
+"platform_ingest_event":
+{ Args: { "p_event": Json }; Returns: string
+                           },
+"platform_list_invoices":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"platform_list_offers":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"platform_quote_change":
+{ Args: { "p_business_id": string,"p_expected_revision": number,"p_promo_code": string,"p_target_cadence": string,"p_target_plan": string }; Returns: Json
+                           },
+"platform_request_cancellation":
+{ Args: { "p_business_id": string,"p_expected_revision": number,"p_operation_id": string }; Returns: Json
+                           },
+"platform_run_due":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"platform_set_flag":
+{ Args: { "p_enabled": boolean,"p_key": string,"p_note": string }; Returns: Json
+                           },
+"platform_undo_cancellation":
+{ Args: { "p_business_id": string,"p_expected_revision": number,"p_operation_id": string }; Returns: Json
+                           },
 "practitioner_agenda":
 { Args: { "p_business_id": string,"p_from": string,"p_to": string }; Returns: Json
                            },
+"preview_appointment_series":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_count": number,"p_first_local_start": string,"p_option_choice_ids": (string)[],"p_repeat_every_weeks": number,"p_service_id": string,"p_until_local_date": string }; Returns: Json
+                           },
+"promotion_create":
+{ Args: { "p_business_id": string,"p_input": Json }; Returns: Json
+                           },
+"promotion_list":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"promotion_set_state":
+{ Args: { "p_business_id": string,"p_expected_version": number,"p_promotion_id": string,"p_state": string }; Returns: Json
+                           },
 "public_site_photo":
 { Args: { "p_asset_id": string,"p_slug": string }; Returns: string
+                           },
+"publish_form_template":
+{ Args: { "p_business_id": string,"p_expected_draft_version": number,"p_request_id": string,"p_template_id": string }; Returns: Json
                            },
 "publish_site":
 { Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number }; Returns: {
@@ -1341,13 +1541,25 @@ isOneToOne: false
               "currency": string,"duration_minutes": number,"options": Json,"price_cents": number,"service_name": string
             }[]
                            },
+"read_form_template":
+{ Args: { "p_business_id": string,"p_template_id": string }; Returns: Json
+                           },
 "read_member_preferences":
 { Args: { "p_business_id": string }; Returns: {
               "accent": string,"ambiance": string,"color_mode": string,"incarnation": string,"membership_id": string,"motion": string,"style": string,"version": number
             }[]
                            },
+"read_visit_forms":
+{ Args: { "p_appointment_id": string,"p_business_id": string }; Returns: Json
+                           },
 "record_site_photo_orphan_deletions":
 { Args: { "p_deleted": (string)[],"p_failed": (string)[],"p_run": string }; Returns: undefined
+                           },
+"record_team_invitation_signup":
+{ Args: { "p_email": string,"p_token_hash": string,"p_user_id": string }; Returns: string
+                           },
+"referral_claim":
+{ Args: { "p_appointment_id": string,"p_code": string }; Returns: string
                            },
 "release_site_photo_reconciliation":
 { Args: { "p_run": string }; Returns: undefined
@@ -1377,6 +1589,9 @@ isOneToOne: false
 "restore_site_version":
 { Args: { "p_actor": string,"p_business_id": string,"p_expected_revision": number,"p_version_id": string }; Returns: number
                            },
+"review_visit_form":
+{ Args: { "p_assignment_id": string,"p_business_id": string,"p_expected_version": number,"p_request_id": string }; Returns: Json
+                           },
 "revoke_beta_invitation":
 { Args: { "p_invitation_id": string }; Returns: undefined
                            },
@@ -1385,6 +1600,18 @@ isOneToOne: false
                            },
 "revoke_site_asset_for_privacy":
 { Args: { "p_asset_id": string,"p_business_id": string }; Returns: undefined
+                           },
+"revoke_team_access":
+{ Args: { "p_business_id": string,"p_expected_revision": number,"p_operation_id": string,"p_staff_id": string }; Returns: Json
+                           },
+"revoke_visit_form":
+{ Args: { "p_assignment_id": string,"p_business_id": string,"p_expected_version": number,"p_request_id": string }; Returns: Json
+                           },
+"rotate_team_invitation_token":
+{ Args: { "p_business_id": string,"p_operation_id": string,"p_token_hash": string }; Returns: boolean
+                           },
+"save_form_draft":
+{ Args: { "p_business_id": string,"p_draft": Json,"p_expected_draft_version": number,"p_request_id": string,"p_template_id": string }; Returns: Json
                            },
 "save_member_preferences":
 { Args: { "p_business_id": string,"p_changes": Json,"p_expected_incarnation": string,"p_expected_version": number,"p_membership_id": string }; Returns: {
@@ -1399,8 +1626,14 @@ isOneToOne: false
               "email": string,"first_name": string,"id": string,"last_name": string,"phone": string
             }[]
                            },
+"send_team_invitation":
+{ Args: { "p_business_id": string,"p_email": string,"p_expected_revision": number,"p_operation_id": string,"p_role": string,"p_staff_id": string,"p_token_hash": string }; Returns: Json
+                           },
 "set_booking_policy":
 { Args: { "p_business_id": string,"p_cancellation_lead_minutes": number,"p_reschedule_lead_minutes": number }; Returns: Json
+                           },
+"set_business_legal_profile":
+{ Args: { "p_address": string,"p_business_id": string,"p_contact_email": string,"p_legal_name": string,"p_registration_number": string }; Returns: Json
                            },
 "set_service_options":
 { Args: { "p_business_id": string,"p_deleted_choice_ids"?: (string)[],"p_deleted_option_ids"?: (string)[],"p_expected_version": number,"p_options": Json,"p_service_id": string }; Returns: number
@@ -1411,6 +1644,34 @@ isOneToOne: false
 "set_waitlist_enabled":
 { Args: { "p_business_id": string,"p_enabled": boolean }; Returns: boolean
                            },
+"site_domain_begin_check":
+{ Args: { "p_business_id": string,"p_domain_id": string,"p_expected_generation": number,"p_fallback": string,"p_target": string }; Returns: Json
+                           },
+"site_domain_detach":
+{ Args: { "p_business_id": string,"p_domain_id": string,"p_expected_generation": number,"p_request_id": string }; Returns: Json
+                           },
+"site_domain_read":
+{ Args: { "p_business_id": string,"p_fallback": string,"p_target": string }; Returns: Json
+                           },
+"site_domain_report":
+{ Args: { "p_domain_id": string,"p_generation": number,"p_outcome": string,"p_reason": string }; Returns: string
+                           },
+"site_domain_request":
+{ Args: { "p_business_id": string,"p_fallback": string,"p_hostname": string,"p_request_id": string,"p_target": string }; Returns: Json
+                           },
+"site_domain_route":
+{ Args: { "p_hostname": string }; Returns: {
+              "domain_id": string,"generation": number,"slug": string,"state": string
+            }[]
+                           },
+"site_domain_tls_allowed":
+{ Args: { "p_hostname": string }; Returns: boolean
+                           },
+"site_domains_due":
+{ Args: { "p_limit": number }; Returns: {
+              "challenge": string,"domain_id": string,"generation": number,"hostname": string,"state": string
+            }[]
+                           },
 "site_photo_conversion_writable":
 { Args: { "p_asset_id": string,"p_business_id": string }; Returns: boolean
                            },
@@ -1420,10 +1681,32 @@ isOneToOne: false
 "site_photo_reconciliation_status":
 { Args: Record<PropertyKey, never>; Returns: Json
                            },
+"team_invitation_email":
+{ Args: { "p_token_hash": string }; Returns: {
+              "business_name": string,"email": string,"expires_at": string,"inviter_name": string,"role": string
+            }[]
+                           },
+"team_invited_account":
+{ Args: { "p_email": string,"p_token_hash": string }; Returns: {
+              "state": string,"user_id": string
+            }[]
+                           },
+"unsubscribe_read":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
+"unsubscribe_undo":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
+"unsubscribe_withdraw":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
 "update_service_category":
 { Args: { "p_business_id": string,"p_category_id": string,"p_expected_version": number,"p_name"?: string,"p_visible"?: boolean }; Returns: {
               "display_order": number,"id": string,"name": string,"version": number,"visible": boolean
             }[]
+                           },
+"update_staff_member":
+{ Args: { "p_bookable": boolean,"p_business_id": string,"p_display_name": string,"p_expected_revision": number,"p_operation_id": string,"p_service_ids": (string)[],"p_staff_id": string }; Returns: Json
                            },
 "waitlist_claim":
 { Args: { "p_client_ip": unknown,"p_expected_quote_revision": string,"p_expected_version": number,"p_offer_id": string,"p_request_id": string,"p_token_hash": string }; Returns: Json
@@ -1442,7 +1725,7 @@ isOneToOne: false
                            }
           }
           Enums: {
-            "appointment_status": "confirmed"|"completed"|"cancelled"|"no_show","availability_exception_kind": "closed"|"blocked"|"open_override","business_member_role": "owner"|"admin"|"practitioner","email_event_status": "pending"|"processing"|"sent"|"failed"|"cancelled","email_event_type": "booking_confirmation"|"appointment_reminder"|"appointment_changed"|"appointment_cancelled"|"points_earned"|"reward_unlocked"|"reactivation","loyalty_accrual_mode": "appointment"|"spend","loyalty_event_type": "appointment_completed"|"manual_adjustment"|"reward_redeemed"|"correction","reward_redemption_status": "issued"|"fulfilled"|"cancelled","reward_type": "percentage_discount"|"fixed_discount"|"free_service"
+            "appointment_status": "confirmed"|"completed"|"cancelled"|"no_show","availability_exception_kind": "closed"|"blocked"|"open_override","business_member_role": "owner"|"admin"|"practitioner","email_event_status": "pending"|"processing"|"sent"|"failed"|"cancelled","email_event_type": "booking_confirmation"|"appointment_reminder"|"appointment_changed"|"appointment_cancelled"|"points_earned"|"reward_unlocked"|"reactivation","loyalty_accrual_mode": "appointment"|"spend","loyalty_event_type": "appointment_completed"|"manual_adjustment"|"reward_redeemed"|"correction"|"referral_reward","reward_redemption_status": "issued"|"fulfilled"|"cancelled","reward_type": "percentage_discount"|"fixed_discount"|"free_service"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -1558,7 +1841,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "appointment_status": ["confirmed", "completed", "cancelled", "no_show"],"availability_exception_kind": ["closed", "blocked", "open_override"],"business_member_role": ["owner", "admin", "practitioner"],"email_event_status": ["pending", "processing", "sent", "failed", "cancelled"],"email_event_type": ["booking_confirmation", "appointment_reminder", "appointment_changed", "appointment_cancelled", "points_earned", "reward_unlocked", "reactivation"],"loyalty_accrual_mode": ["appointment", "spend"],"loyalty_event_type": ["appointment_completed", "manual_adjustment", "reward_redeemed", "correction"],"reward_redemption_status": ["issued", "fulfilled", "cancelled"],"reward_type": ["percentage_discount", "fixed_discount", "free_service"]
+            "appointment_status": ["confirmed", "completed", "cancelled", "no_show"],"availability_exception_kind": ["closed", "blocked", "open_override"],"business_member_role": ["owner", "admin", "practitioner"],"email_event_status": ["pending", "processing", "sent", "failed", "cancelled"],"email_event_type": ["booking_confirmation", "appointment_reminder", "appointment_changed", "appointment_cancelled", "points_earned", "reward_unlocked", "reactivation"],"loyalty_accrual_mode": ["appointment", "spend"],"loyalty_event_type": ["appointment_completed", "manual_adjustment", "reward_redeemed", "correction", "referral_reward"],"reward_redemption_status": ["issued", "fulfilled", "cancelled"],"reward_type": ["percentage_discount", "fixed_discount", "free_service"]
           }
         }
 } as const
