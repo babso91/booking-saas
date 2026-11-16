@@ -53,6 +53,7 @@ describe("business context", () => {
       userId: owner.userId,
       businessId: business.id,
       timezone: "Europe/Paris",
+      role: "owner",
     });
   });
 
