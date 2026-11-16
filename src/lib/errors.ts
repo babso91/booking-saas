@@ -151,6 +151,13 @@ export const appErrorMessages = {
     "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
+  domain_taken: "Ce nom de domaine est déjà relié à un autre site.",
+  proof_expired:
+    "La vérification a expiré : une nouvelle valeur est à publier dans le DNS.",
+  domain_generation_changed:
+    "Une nouvelle vérification a été lancée ailleurs. Rechargez.",
+  domain_unavailable:
+    "Le domaine personnalisé n’est pas disponible pour le moment.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -295,6 +302,10 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_email_required: 409,
   context_changed: 409,
   auth_unavailable: 503,
+  domain_taken: 409,
+  proof_expired: 409,
+  domain_generation_changed: 409,
+  domain_unavailable: 503,
   internal: 500,
 };
 

@@ -1328,6 +1328,34 @@ isOneToOne: false
 "set_site_plan":
 { Args: { "p_business_id": string,"p_plan": string }; Returns: undefined
                            },
+"site_domain_begin_check":
+{ Args: { "p_business_id": string,"p_domain_id": string,"p_expected_generation": number,"p_fallback": string,"p_target": string }; Returns: Json
+                           },
+"site_domain_detach":
+{ Args: { "p_business_id": string,"p_domain_id": string,"p_expected_generation": number,"p_request_id": string }; Returns: Json
+                           },
+"site_domain_read":
+{ Args: { "p_business_id": string,"p_fallback": string,"p_target": string }; Returns: Json
+                           },
+"site_domain_report":
+{ Args: { "p_domain_id": string,"p_generation": number,"p_outcome": string,"p_reason": string }; Returns: string
+                           },
+"site_domain_request":
+{ Args: { "p_business_id": string,"p_fallback": string,"p_hostname": string,"p_request_id": string,"p_target": string }; Returns: Json
+                           },
+"site_domain_route":
+{ Args: { "p_hostname": string }; Returns: {
+              "domain_id": string,"generation": number,"slug": string,"state": string
+            }[]
+                           },
+"site_domain_tls_allowed":
+{ Args: { "p_hostname": string }; Returns: boolean
+                           },
+"site_domains_due":
+{ Args: { "p_limit": number }; Returns: {
+              "challenge": string,"domain_id": string,"generation": number,"hostname": string,"state": string
+            }[]
+                           },
 "site_photo_conversion_writable":
 { Args: { "p_asset_id": string,"p_business_id": string }; Returns: boolean
                            },
