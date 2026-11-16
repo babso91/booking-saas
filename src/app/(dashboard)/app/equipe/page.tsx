@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { requireReadyBusiness } from "@/features/auth/data/guards";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { areaIdentityOf } from "@/features/dashboard/area-identity";
+import { getEmailTransport } from "@/features/notifications/transport";
 import { TeamScreen } from "@/features/team/team-screen";
 
 export const metadata: Metadata = {
@@ -20,7 +21,8 @@ export default async function TeamPage() {
       business={{ name: business.name, slug: business.slug }}
       current="team"
     >
-      <TeamScreen />
+      {/* Its invitations need an email transport: read on the server. */}
+      <TeamScreen emailReady={getEmailTransport() !== null} />
     </AppShell>
   );
 }

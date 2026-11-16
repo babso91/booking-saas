@@ -27,7 +27,7 @@ async function safely<T>(
 }
 
 /** Her team, on the real server actions (docs/TEAM_CONTRACT.md). */
-export function TeamScreen() {
+export function TeamScreen({ emailReady }: { emailReady: boolean }) {
   const actions = useMemo<TeamActions>(
     () => ({
       read: () => safely(() => readTeamAction()),
@@ -38,7 +38,13 @@ export function TeamScreen() {
     }),
     [],
   );
-  // No email transport is validated yet: no invitation is offered
-  // (docs/TEAM_CONTRACT.md, « Invitation »).
-  return <TeamManager actions={actions} invitations="not_sent_yet" />;
+  // The invitation leaves by email (docs/TEAM_CONTRACT.md, « Rejoindre
+  // l'équipe »): without a transport nothing would be recorded, so none is
+  // offered.
+  return (
+    <TeamManager
+      actions={actions}
+      invitations={emailReady ? "enabled" : "not_sent_yet"}
+    />
+  );
 }
