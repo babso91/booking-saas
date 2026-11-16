@@ -9,6 +9,10 @@ import { cn } from "@/lib/cn";
  * counted on the server). With them, her clients book online on her page.
  * Her site comes third and is optional: without one, the page is her
  * booking page, so it never counts as unfinished setup.
+ *
+ * Her space itself (account and booking link, made in onboarding) counts
+ * as the first step, done: it truly is, and a list that starts at zero
+ * says « nothing yet » when she has already begun (goal-gradient effect).
  */
 export function SetupChecklist({
   progress,
@@ -23,7 +27,9 @@ export function SetupChecklist({
 }) {
   const services = progress.activeServices > 0;
   const hours = progress.openingRanges > 0;
-  const done = Number(services) + Number(hours);
+  // Her space (created in onboarding), then services and hours.
+  const TOTAL = 3;
+  const done = 1 + Number(services) + Number(hours);
   const steps = [
     {
       done: services,
@@ -62,9 +68,13 @@ export function SetupChecklist({
         className="flex flex-wrap items-center gap-x-3 gap-y-2"
       >
         <h2 id="setup-title" className="text-[14.5px] font-semibold text-ink">
-          Mise en route · {done}/2
+          Mise en route · {done}/{TOTAL}
         </h2>
         <ul className="flex flex-wrap gap-2">
+          <li className="flex h-10 items-center gap-2 px-1 text-[13.5px] font-medium text-success">
+            <CheckIcon size={15} aria-hidden="true" />
+            Espace créé
+          </li>
           {steps.slice(0, 2).map((step, index) => (
             <li key={step.title}>
               <Link
@@ -79,7 +89,7 @@ export function SetupChecklist({
                 {step.done ? (
                   <CheckIcon size={15} aria-hidden="true" />
                 ) : (
-                  <span aria-hidden="true">{index + 1}.</span>
+                  <span aria-hidden="true">{index + 2}.</span>
                 )}
                 {index === 0 ? "Prestations" : "Horaires"}
                 {step.done ? <span className="sr-only"> (fait)</span> : null}
@@ -114,10 +124,37 @@ export function SetupChecklist({
           Mise en route
         </h2>
         <p className="text-[13.5px] text-ink-muted">
-          {done} étape{done > 1 ? "s" : ""} sur 2 terminée{done > 1 ? "s" : ""}
+          {done} étape{done > 1 ? "s" : ""} sur {TOTAL} terminée
+          {done > 1 ? "s" : ""}
         </p>
       </div>
+      <div
+        aria-hidden="true"
+        className="h-1 overflow-hidden rounded-full bg-sand"
+      >
+        <span
+          className="block h-full rounded-full bg-success transition-[width] duration-500 ease-soft"
+          style={{ width: `${(done / TOTAL) * 100}%` }}
+        />
+      </div>
       <ol className="flex flex-col divide-y divide-line">
+        <li className="flex min-w-0 items-center gap-3 py-3.5">
+          <span
+            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-success-soft text-success"
+            aria-hidden="true"
+          >
+            <CheckIcon size={16} />
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="text-[15px] font-medium text-ink">
+              Ton espace
+              <span className="sr-only"> (fait)</span>
+            </span>
+            <span className="text-[13px] text-ink-muted">
+              Ton compte et ton lien de réservation sont prêts
+            </span>
+          </span>
+        </li>
         {steps.map((step, index) => (
           <li key={step.title}>
             <Link
@@ -133,7 +170,7 @@ export function SetupChecklist({
                 )}
                 aria-hidden="true"
               >
-                {step.done ? <CheckIcon size={16} /> : index + 1}
+                {step.done ? <CheckIcon size={16} /> : index + 2}
               </span>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="text-[15px] font-medium text-ink">

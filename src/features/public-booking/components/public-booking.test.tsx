@@ -309,7 +309,7 @@ describe("days and slots", () => {
     ).toBe("true");
   });
 
-  it("a day without slots says so and offers the next day", async () => {
+  it("a first day without slots is skipped to the first day with one, and says so", async () => {
     api.availability.mockImplementation((_, date) =>
       ok({
         date,
@@ -320,15 +320,54 @@ describe("days and slots", () => {
     );
     renderPage();
     await chooseService();
+    const tomorrow = addDays(today, 1);
+    expect(await slotButton("09:30")).toBeTruthy();
+    expect(api.availability).toHaveBeenLastCalledWith(SERVICE_A, tomorrow);
+    expect(screen.getByText(/voici le premier jour disponible/)).toBeTruthy();
+  });
+
+  it("with no slot for two weeks, the search stops and says so", async () => {
+    api.availability.mockImplementation((_, date) =>
+      ok({ date, timezone: TZ, slots: [], quote: quoteOf(SERVICE_A) }),
+    );
+    renderPage();
+    await chooseService();
+    await waitFor(() =>
+      expect(
+        screen.getByText("Aucun créneau disponible ce jour-là."),
+      ).toBeTruthy(),
+    );
+    await flush();
+    expect(api.availability.mock.calls.length).toBeLessThanOrEqual(16);
+  });
+
+  it("a day she picks herself is shown as it is, even without slots", async () => {
+    const tomorrow = addDays(today, 1);
+    api.availability.mockImplementation((_, date) =>
+      ok({
+        date,
+        timezone: TZ,
+        slots: date === tomorrow ? [] : slotsFor(date),
+        quote: quoteOf(SERVICE_A),
+      }),
+    );
+    renderPage();
+    await chooseService();
+    await slotButton("09:30");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(`, ${dayLabel(tomorrow)}$`),
+      }),
+    );
     expect(
       await screen.findByText("Aucun créneau disponible ce jour-là."),
     ).toBeTruthy();
-    const tomorrow = addDays(today, 1);
+    const after = addDays(today, 2);
     fireEvent.click(
-      screen.getByRole("button", { name: `Voir le ${dayLabel(tomorrow)}` }),
+      screen.getByRole("button", { name: `Voir le ${dayLabel(after)}` }),
     );
     expect(await slotButton("09:30")).toBeTruthy();
-    expect(api.availability).toHaveBeenLastCalledWith(SERVICE_A, tomorrow);
+    expect(api.availability).toHaveBeenLastCalledWith(SERVICE_A, after);
   });
 
   it("a later answer for an earlier day or service never replaces the latest choice", async () => {

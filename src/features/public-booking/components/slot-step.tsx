@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type Ref } from "react";
+import { useEffect, useState, type Ref } from "react";
 
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
@@ -16,6 +16,8 @@ import {
 } from "./booking-parts";
 
 const WEEK = 7;
+/** How far the smart default looks for a first day with a slot. */
+const MAX_AUTO_DAYS = 14;
 
 /**
  * Step 2: a civil day (business time zone), then one of its real slots, as
@@ -41,6 +43,28 @@ export function SlotStep({
   const pages = Math.ceil(days.length / WEEK);
   const week = days.slice(page * WEEK, page * WEEK + WEEK);
   const nextDay = days[index + 1];
+  // Smart default: the day first shown has no slot left (late in the day,
+  // full): go on to the first day that has one, instead of an empty screen.
+  // Only until she picks a day herself, and at most two weeks ahead.
+  const [auto, setAuto] = useState<{ on: boolean; from: string | null }>({
+    on: true,
+    from: null,
+  });
+  const emptyHere =
+    slots.status === "ready" && slots.date === date && slots.slots.length === 0;
+  const skipping =
+    auto.on &&
+    emptyHere &&
+    nextDay !== undefined &&
+    index - days.indexOf(auto.from ?? date) < MAX_AUTO_DAYS;
+  useEffect(() => {
+    if (skipping) flow.actions.chooseDate(nextDay!);
+  }, [skipping, nextDay, flow.actions]);
+  if (skipping && auto.from === null) setAuto({ on: true, from: date });
+  const pick = (day: string) => {
+    setAuto({ on: false, from: null });
+    flow.actions.chooseDate(day);
+  };
 
   if (!service) return null;
   return (
@@ -142,7 +166,7 @@ export function SlotStep({
               <button
                 key={day}
                 type="button"
-                onClick={() => flow.actions.chooseDate(day)}
+                onClick={() => pick(day)}
                 aria-pressed={selected}
                 className={cn(
                   "flex min-w-0 cursor-pointer flex-col items-center gap-0.5 rounded-2xl border px-0.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
@@ -182,6 +206,13 @@ export function SlotStep({
           </button>
         </div>
         <TimeZoneNote timezone={business.timezone} />
+        {auto.on && auto.from && auto.from !== date && !emptyHere ? (
+          // Said, never hidden: the day she was shown had no slot left.
+          <p className="text-[14px] text-ink-soft">
+            Plus de créneau {dayLabel(auto.from).toLowerCase()} : voici le
+            premier jour disponible.
+          </p>
+        ) : null}
 
         {slots.status === "loading" ? (
           <div className="flex flex-col gap-2" aria-busy="true">
@@ -224,7 +255,7 @@ export function SlotStep({
               <button
                 type="button"
                 className={linkAction}
-                onClick={() => flow.actions.chooseDate(nextDay)}
+                onClick={() => pick(nextDay)}
               >
                 Voir le {dayLabel(nextDay)}
               </button>
