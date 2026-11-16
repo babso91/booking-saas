@@ -41,6 +41,19 @@ changement confirmé reste donc `requested`.
 - **Résumé** : `BillingSummaryDto` (proposition de #77), avec en plus
   `cadence` et `pending`, le changement en cours au format `PlanChangeDto`.
   Il sert aussi de `current` pour #76 : `{ plan, cadence, revision, pending }`.
+- **Prix provisoires** : le modèle commercial n'est pas arrêté. Chaque offre
+  porte `provisional: true`, et rien n'est jamais débité.
+- **Composant par professionnelle réservable**, prévu sans être figé :
+  - une version de prix peut porter `included_bookable_staff` (le nombre de
+    professionnelles incluses) et `extra_staff_amount_minor` (le prix de
+    chacune au-delà) ;
+  - le montant récurrent vaut alors la base, plus chaque professionnelle
+    réservable au-delà des incluses ;
+  - un compte administratif non réservable ne compte jamais ;
+  - **aucune version n'en a aujourd'hui** (`perBookableStaff: null`).
+  - Le décompte passe par une seule fonction,
+    `private.platform_bookable_staff_count`, qui vaut 1 tant que le lot Équipe
+    n'est pas fusionné. À sa fusion, elle comptera les profils réservables.
 - **Prix** : versions immuables (`price_version_id`). Au départ : Core
   2900/mois ou 29000/an, Signature 4900/mois ou 49000/an. Un nouveau prix
   passe par une nouvelle version, et un devis valide garde l'ancienne.

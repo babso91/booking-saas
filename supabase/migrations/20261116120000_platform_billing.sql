@@ -18,11 +18,24 @@ create table private.platform_price_versions (
   id text primary key check (id ~ '^[a-z0-9_]{3,40}$'),
   plan text not null check (plan in ('core', 'signature')),
   cadence text not null check (cadence in ('monthly', 'yearly')),
+  -- The base price (including `included_bookable_staff` bookable
+  -- professionals when a per-professional component is set).
   amount_minor integer not null check (amount_minor >= 0),
+  -- An optional per-professional component: each bookable professional
+  -- beyond the included ones adds `extra_staff_amount_minor`. Both null:
+  -- the price does not depend on the team (none is set today: the
+  -- commercial model is not decided). Accounts that are not bookable
+  -- never count.
+  included_bookable_staff integer check (included_bookable_staff >= 0),
+  extra_staff_amount_minor integer check (extra_staff_amount_minor >= 0),
+  -- Provisional prices are shown as such; nothing is charged anyway.
+  commercial_status text not null default 'provisional'
+    check (commercial_status in ('provisional', 'validated')),
   currency text not null default 'EUR',
   display_tax_mode text not null default 'ttc' check (display_tax_mode in ('ttc', 'ht')),
   active boolean not null default true,
-  created_at timestamptz not null default pg_catalog.now()
+  created_at timestamptz not null default pg_catalog.now(),
+  check ((included_bookable_staff is null) = (extra_staff_amount_minor is null))
 );
 
 -- One active version per plan and cadence.
@@ -43,6 +56,8 @@ set search_path = ''
 as $$
 begin
   if tg_op = 'DELETE' or new.amount_minor <> old.amount_minor or new.plan <> old.plan
+     or new.included_bookable_staff is distinct from old.included_bookable_staff
+     or new.extra_staff_amount_minor is distinct from old.extra_staff_amount_minor
      or new.cadence <> old.cadence or new.currency <> old.currency
      or new.display_tax_mode <> old.display_tax_mode then
     raise exception using errcode = '55000', message = 'price_version_immutable';
@@ -54,6 +69,37 @@ $$;
 create trigger platform_price_versions_immutable
   before update or delete on private.platform_price_versions
   for each row execute function private.platform_price_immutable();
+
+-- The bookable professionals a business is billed for. One today: the
+-- team (staff_members, a separate lot) replaces this function when it is
+-- merged, counting bookable profiles only (an administrative account that
+-- is not bookable never counts).
+create function private.platform_bookable_staff_count(p_business_id uuid)
+returns integer
+language sql
+stable
+set search_path = ''
+as $$
+  select 1;
+$$;
+
+-- The recurring amount of a price version for a business: the base, plus
+-- each bookable professional beyond the included ones when the version has
+-- a per-professional component.
+create function private.platform_price_amount(p_version_id text, p_business_id uuid)
+returns integer
+language sql
+stable
+set search_path = ''
+as $$
+  select p.amount_minor + case
+    when p.extra_staff_amount_minor is null then 0
+    else greatest(0, private.platform_bookable_staff_count(p_business_id) - p.included_bookable_staff)
+         * p.extra_staff_amount_minor
+  end
+  from private.platform_price_versions p
+  where p.id = p_version_id;
+$$;
 
 create table private.platform_subscriptions (
   business_id uuid primary key references public.businesses (id) on delete cascade,
@@ -335,6 +381,8 @@ declare
 begin
   foreach v_signature in array array[
     'private.platform_price_immutable()',
+    'private.platform_bookable_staff_count(uuid)',
+    'private.platform_price_amount(text, uuid)',
     'private.platform_period(text)',
     'private.platform_subscription(uuid, boolean)',
     'private.platform_effective_plan(uuid)',
@@ -363,7 +411,11 @@ as $$
   select pg_catalog.jsonb_build_object(
     'offers', coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
       'planCode', p.plan, 'priceVersionId', p.id, 'cadence', case p.cadence when 'yearly' then 'year' else 'month' end,
-      'amountMinor', p.amount_minor, 'currency', p.currency, 'displayTaxMode', p.display_tax_mode
+      'amountMinor', p.amount_minor, 'currency', p.currency, 'displayTaxMode', p.display_tax_mode,
+      'perBookableStaff', case when p.extra_staff_amount_minor is null then null
+        else pg_catalog.jsonb_build_object(
+          'included', p.included_bookable_staff, 'extraAmountMinor', p.extra_staff_amount_minor) end,
+      'provisional', p.commercial_status = 'provisional'
     ) order by p.plan, p.cadence), '[]'::jsonb),
     'catalogRevision', pg_catalog.md5(coalesce(pg_catalog.string_agg(p.id, ',' order by p.id), ''))
   )
@@ -415,6 +467,7 @@ as $$
 declare
   v_subscription private.platform_subscriptions;
   v_target private.platform_price_versions;
+  v_target_amount integer;
   v_current_amount integer := 0;
   v_due integer := 0;
   v_mode text;
@@ -436,6 +489,7 @@ begin
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'target';
   end if;
   v_subscription := private.platform_subscription(p_business_id, true);
+  v_target_amount := private.platform_price_amount(v_target.id, p_business_id);
   if v_subscription.revision is distinct from p_expected_revision then
     raise exception using errcode = 'P0001', message = 'billing_state_changed';
   end if;
@@ -449,24 +503,23 @@ begin
   end if;
 
   if v_subscription.price_version_id is not null then
-    select p.amount_minor into v_current_amount from private.platform_price_versions p
-    where p.id = v_subscription.price_version_id;
+    v_current_amount := private.platform_price_amount(v_subscription.price_version_id, p_business_id);
   end if;
 
   if v_subscription.source = 'legacy' or v_subscription.state = 'ended'
      or v_target.cadence <> v_subscription.cadence then
     v_mode := 'after_verified_payment';
     v_restarts := true;
-    v_due := v_target.amount_minor;
+    v_due := v_target_amount;
     v_next_at := pg_catalog.now() + private.platform_period(v_target.cadence);
   elsif v_subscription.state <> 'active' or v_subscription.current_period_end <= pg_catalog.now() then
     -- A period not paid or already over: renew first.
     raise exception using errcode = 'P0001', message = 'billing_state_changed';
-  elsif v_target.amount_minor > v_current_amount then
+  elsif v_target_amount > v_current_amount then
     v_mode := 'after_verified_payment';
     v_remaining := extract(epoch from v_subscription.current_period_end - pg_catalog.now())
       / extract(epoch from v_subscription.current_period_end - v_subscription.current_period_start);
-    v_due := greatest(1, pg_catalog.round((v_target.amount_minor - v_current_amount) * v_remaining)::integer);
+    v_due := greatest(1, pg_catalog.round((v_target_amount - v_current_amount) * v_remaining)::integer);
     v_next_at := v_subscription.current_period_end;
     v_period_end := v_subscription.current_period_end;
   else
@@ -482,7 +535,7 @@ begin
     effective_at, restarts_period, period_end, subscription_revision, expires_at, created_by
   ) values (
     v_id, p_business_id, private.platform_effective_plan(p_business_id), v_subscription.cadence,
-    v_target.id, v_due, v_next_at, v_target.amount_minor, v_target.amount_minor, v_mode,
+    v_target.id, v_due, v_next_at, v_target_amount, v_target_amount, v_mode,
     v_effective_at, v_restarts, v_period_end, v_subscription.revision,
     pg_catalog.now() + interval '15 minutes', (select auth.uid())
   );
@@ -495,8 +548,8 @@ begin
     'target', pg_catalog.jsonb_build_object(
       'plan', v_target.plan, 'cadence', v_target.cadence, 'priceVersionId', v_target.id),
     'dueNowMinor', v_due,
-    'nextCharge', pg_catalog.jsonb_build_object('at', v_next_at, 'amountMinor', v_target.amount_minor),
-    'recurring', pg_catalog.jsonb_build_object('amountMinor', v_target.amount_minor, 'cadence', v_target.cadence),
+    'nextCharge', pg_catalog.jsonb_build_object('at', v_next_at, 'amountMinor', v_target_amount),
+    'recurring', pg_catalog.jsonb_build_object('amountMinor', v_target_amount, 'cadence', v_target.cadence),
     'effective', case v_mode
       when 'end_of_period' then pg_catalog.jsonb_build_object('mode', 'end_of_period', 'at', v_effective_at)
       else pg_catalog.jsonb_build_object('mode', 'after_verified_payment') end,
@@ -870,8 +923,8 @@ begin
       where c.business_id = v_business and c.status = 'scheduled'
         and c.effective_at <= v_subscription.current_period_end
       for update;
-      select p.amount_minor into v_price from private.platform_price_versions p
-      where p.id = coalesce(v_command.target_price_version_id, v_subscription.price_version_id);
+      v_price := private.platform_price_amount(
+        coalesce(v_command.target_price_version_id, v_subscription.price_version_id), v_business);
       if v_amount is distinct from v_price or v_currency <> 'EUR' then
         v_outcome := 'rejected';
       else

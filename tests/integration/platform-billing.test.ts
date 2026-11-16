@@ -152,6 +152,39 @@ describe("offers and summary", () => {
         "update private.platform_price_versions set amount_minor = 1 where id = 'core_m_v1'",
       ),
     ).rejects.toThrow(/price_version_immutable/);
+    // Every price is provisional (the commercial model is not decided).
+    expect(
+      (
+        data as unknown as {
+          offers: { provisional: boolean; perBookableStaff: unknown }[];
+        }
+      ).offers.every((o) => o.provisional && o.perBookableStaff === null),
+    ).toBe(true);
+    // A version may carry a per-professional component (none does today):
+    // one bookable professional is counted, the included one costs nothing.
+    await db.query(
+      `insert into private.platform_price_versions
+         (id, plan, cadence, amount_minor, included_bookable_staff, extra_staff_amount_minor, active)
+       values ('test_staff_v1', 'core', 'monthly', 2900, 1, 700, false)
+       on conflict (id) do nothing`,
+    );
+    const { rows } = await db.query(
+      "select private.platform_price_amount('test_staff_v1', $1) as amount",
+      [business.id],
+    );
+    expect(rows[0].amount).toBe(2900);
+    // With none included, her one bookable professional is charged on top.
+    await db.query(
+      `insert into private.platform_price_versions
+         (id, plan, cadence, amount_minor, included_bookable_staff, extra_staff_amount_minor, active)
+       values ('test_staff_v0', 'core', 'monthly', 2900, 0, 700, false)
+       on conflict (id) do nothing`,
+    );
+    const extra = await db.query(
+      "select private.platform_price_amount('test_staff_v0', $1) as amount",
+      [business.id],
+    );
+    expect(extra.rows[0].amount).toBe(3600);
 
     expect(await summary()).toMatchObject({
       plan: "core",
