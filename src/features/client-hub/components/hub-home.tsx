@@ -121,7 +121,7 @@ function BusinessCard({ business }: { business: ClientHubBusinessDto }) {
   return (
     <section
       aria-labelledby={headingId}
-      className="flex flex-col gap-5 rounded-[32px] border border-line bg-paper-raised/90 p-4 shadow-[0_24px_60px_-40px_rgba(35,28,24,0.4)] sm:p-6"
+      className="flex flex-col gap-5 border-t border-line pt-6"
     >
       <div className="flex items-center gap-3.5 px-1">
         <span
@@ -259,13 +259,13 @@ export function NextTicket({
   return (
     <Link
       href={hubHref.appointment(business.businessId, appointment.id)}
-      className="group block drop-shadow-[0_18px_30px_rgba(35,28,24,0.12)] transition-transform duration-300 ease-soft hover:-translate-y-0.5"
+      className="group block drop-shadow-[0_18px_30px_rgb(var(--shadow-rgb)/0.14)] transition-transform duration-300 ease-soft hover:-translate-y-0.5 active:scale-[0.99]"
     >
-      <span className="ticket flex flex-col bg-[linear-gradient(140deg,#fffcf8,#f7ede4)] [--notch:calc(100%_-_3rem)]">
+      <span className="ticket flex flex-col bg-paper-raised [--notch:calc(100%_-_3rem)]">
         <span className="flex items-start gap-4 px-5 pt-5 pb-4">
           <DateTile iso={appointment.startsAt} timeZone={zone} size="lg" />
           <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <span className="flex flex-wrap items-center gap-1.5">
+            <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
               {when ? <Pill tone="accent">{when}</Pill> : null}
               {appointment.status !== "confirmed" ? (
                 <Pill tone={status.tone}>{status.label}</Pill>

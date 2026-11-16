@@ -78,19 +78,12 @@ export function BalanceCard({
   return (
     <div
       className={cn(
-        "grain relative isolate overflow-hidden bg-ink text-paper-raised shadow-[0_34px_70px_-34px_rgba(35,28,24,0.75)]",
-        size === "lg" ? "rounded-[30px] p-6 sm:p-8" : "rounded-[24px] p-5",
+        // Her loyalty card: one dark object, its shadow tinted by the
+        // ground; no decorative light inside (art direction).
+        "relative isolate overflow-hidden bg-ink text-paper-raised shadow-[0_34px_70px_-34px_rgb(var(--shadow-rgb)/0.75)]",
+        size === "lg" ? "rounded-3xl p-6 sm:p-8" : "rounded-2xl p-5",
       )}
     >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -top-24 -right-20 -z-10 size-72 rounded-full bg-[radial-gradient(circle_at_center,rgba(242,226,216,0.32),transparent_65%)]"
-      />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -bottom-32 -left-24 -z-10 size-80 rounded-full bg-[radial-gradient(circle_at_center,rgba(151,73,58,0.55),transparent_62%)]"
-      />
-
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col">
           <span className="text-[12px] font-semibold tracking-[0.16em] text-paper-raised/60 uppercase">
@@ -147,7 +140,7 @@ export function BalanceCard({
             className="h-2 overflow-hidden rounded-full bg-paper-raised/15"
           >
             <span
-              className="block h-full origin-left animate-[grow_900ms_var(--ease-out-soft)_both] rounded-full bg-[linear-gradient(90deg,var(--accent-soft),#fff7f1)]"
+              className="block h-full origin-left animate-[grow_900ms_var(--ease-out-soft)_both] rounded-full bg-accent-soft"
               style={{ width: `${Math.max(share * 100, 4)}%` }}
             />
           </div>

@@ -73,7 +73,7 @@ function Loyalty({
 
       {read.status === "loading" ? (
         <Loading label="Chargement de votre fidélité…">
-          <Skeleton className="h-[260px] w-full rounded-[30px] bg-ink/10" />
+          <Skeleton className="h-[260px] w-full rounded-3xl bg-ink/10" />
           <Skeleton className="h-24 w-full rounded-[24px]" />
           <Skeleton className="h-24 w-full rounded-[24px]" />
         </Loading>
@@ -203,10 +203,9 @@ function RewardRow({
     <article
       aria-label={reward.name}
       className={cn(
-        "flex flex-col gap-3.5 rounded-[24px] border px-4 py-4 sm:px-5",
-        reward.eligible
-          ? "border-accent/25 bg-[linear-gradient(135deg,#fffcf8,var(--accent-soft))]"
-          : "border-line bg-paper-raised",
+        "flex flex-col gap-3.5 rounded-2xl px-4 py-4 sm:px-5",
+        // Available: the one tinted object; otherwise plain paper.
+        reward.eligible ? "bg-accent-soft" : "bg-paper-raised",
       )}
     >
       <div className="flex items-start gap-3.5">

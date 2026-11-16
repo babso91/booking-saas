@@ -73,12 +73,13 @@ export function HubErrorNotice({
   );
 }
 
+// The word's colour only: no tinted ground (each reads 4.5:1 on paper).
 const pillTones = {
-  accent: "bg-accent-soft text-accent-strong",
-  success: "bg-success-soft text-success",
-  muted: "bg-sand text-ink-soft",
-  danger: "bg-danger-soft text-danger",
-  dark: "bg-paper-raised/12 text-paper-raised",
+  accent: "text-accent-strong",
+  success: "text-success-strong",
+  muted: "text-ink-soft",
+  danger: "text-danger-strong",
+  dark: "text-paper-raised",
 } as const;
 
 export function Pill({
@@ -93,7 +94,8 @@ export function Pill({
   return (
     <span
       className={cn(
-        "inline-flex h-6 shrink-0 items-center gap-1 rounded-full px-2.5 text-[12px] font-semibold tracking-[0.01em] whitespace-nowrap",
+        // A state said with a dot and a word, not a pill (art direction).
+        "inline-flex shrink-0 items-center gap-1.5 text-[13px] font-semibold whitespace-nowrap before:size-1.5 before:shrink-0 before:rounded-full before:bg-current",
         pillTones[tone],
         className,
       )}
@@ -202,7 +204,7 @@ export function Skeleton({ className }: { className?: string }) {
       aria-hidden="true"
       className={cn(
         "relative block overflow-hidden rounded-xl bg-sand/70",
-        "after:absolute after:inset-0 after:animate-progress after:bg-[linear-gradient(90deg,transparent,rgba(255,252,248,0.65),transparent)]",
+        "after:absolute after:inset-0 after:animate-progress after:bg-[linear-gradient(90deg,transparent,color-mix(in_srgb,var(--paper-raised)_65%,transparent),transparent)]",
         className,
       )}
     />

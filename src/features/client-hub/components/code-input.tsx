@@ -68,7 +68,7 @@ export function CodeInput({
                           : "border-line",
                     current &&
                       !disabled &&
-                      "group-focus-within/code:border-ink group-focus-within/code:shadow-[0_0_0_4px_rgba(151,73,58,0.12)]",
+                      "group-focus-within/code:border-ink group-focus-within/code:shadow-[0_0_0_4px_color-mix(in_srgb,var(--accent)_12%,transparent)]",
                   )}
                 >
                   {digit ? (
