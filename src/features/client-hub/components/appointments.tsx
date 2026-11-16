@@ -86,7 +86,7 @@ function Appointments({
             className={cn(
               "h-10 cursor-pointer rounded-full text-[14.5px] font-medium transition-[background-color,color] duration-200",
               scope === value
-                ? "bg-ink text-paper-raised shadow-[0_8px_18px_-10px_rgba(35,28,24,0.6)]"
+                ? "bg-ink text-paper-raised shadow-[0_8px_18px_-10px_rgb(var(--shadow-rgb)/0.6)]"
                 : "text-ink-soft hover:text-ink",
             )}
           >
@@ -182,7 +182,7 @@ function AppointmentList({
           <h2 className="px-1 text-[13px] font-semibold tracking-[0.14em] text-ink-muted uppercase first-letter:uppercase">
             {group.month}
           </h2>
-          <ul className="flex flex-col gap-2.5">
+          <ul className="flex flex-col divide-y divide-line border-y border-line">
             {group.items.map((appointment) => (
               <li key={appointment.id}>
                 <AppointmentRow business={business} appointment={appointment} />
@@ -225,7 +225,8 @@ function AppointmentRow({
   return (
     <Link
       href={hubHref.appointment(business.businessId, appointment.id)}
-      className="group flex items-center gap-4 rounded-[24px] border border-line bg-paper-raised px-3.5 py-3.5 transition-[border-color,box-shadow,transform] duration-200 ease-soft hover:-translate-y-px hover:border-line-strong hover:shadow-[0_16px_34px_-26px_rgba(35,28,24,0.5)] sm:px-4"
+      // A row of her list, not a card (art direction).
+      className="group -mx-2 flex items-center gap-4 rounded-xl px-2 py-3.5 transition-colors duration-150 hover:bg-sand/50"
     >
       <DateTile iso={appointment.startsAt} timeZone={zone} muted={inactive} />
       <span className="flex min-w-0 flex-1 flex-col gap-1">
@@ -243,7 +244,7 @@ function AppointmentRow({
           {timeOf(appointment.startsAt, zone)} ·{" "}
           {duration(appointment.durationMinutes)}
         </span>
-        <span className="flex flex-wrap gap-1.5 pt-0.5">
+        <span className="flex flex-wrap gap-x-4 gap-y-1 pt-0.5">
           {when ? <Pill tone="accent">{when}</Pill> : null}
           <Pill tone={status.tone}>{status.label}</Pill>
         </span>

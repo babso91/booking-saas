@@ -295,15 +295,6 @@ function Chrome({
 
   return (
     <div className="relative isolate flex min-h-dvh flex-1 flex-col">
-      {/* Warm light behind the top of the page: decoration only. */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[420px] overflow-hidden"
-      >
-        <div className="absolute -top-48 left-1/2 size-[640px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle_at_center,rgba(151,73,58,0.13),transparent_62%)]" />
-        <div className="absolute -top-24 -right-40 size-[420px] rounded-full bg-[radial-gradient(circle_at_center,rgba(255,252,248,0.95),transparent_60%)]" />
-      </div>
-
       <header className="sticky top-0 z-30 border-b border-transparent bg-paper/80 pt-[env(safe-area-inset-top)] backdrop-blur-xl supports-[backdrop-filter]:bg-paper/65">
         <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-3 px-4 sm:px-6">
           <Link

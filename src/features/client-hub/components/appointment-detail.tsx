@@ -79,7 +79,7 @@ function Detail({
         {back}
         <Loading label="Chargement du rendez-vous…">
           <Skeleton className="h-10 w-2/3 rounded-2xl" />
-          <Skeleton className="h-[220px] w-full rounded-[30px]" />
+          <Skeleton className="h-[220px] w-full rounded-3xl" />
           <Skeleton className="h-28 w-full rounded-[26px]" />
         </Loading>
       </>
@@ -135,12 +135,10 @@ function Detail({
         className="flex flex-col gap-5"
         aria-labelledby="appointment-title"
       >
-        <div className="grain relative isolate flex animate-rise flex-col gap-6 overflow-hidden rounded-[32px] border border-line bg-[linear-gradient(150deg,#fffcf8_0%,#f6ebe1_100%)] p-5 sm:p-8">
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute -top-28 -right-24 -z-10 size-80 rounded-full bg-[radial-gradient(circle_at_center,rgba(151,73,58,0.16),transparent_62%)]"
-          />
-          <div className="flex flex-wrap items-center gap-2">
+        {/* The appointment as one object: flat paper, a shadow tinted by
+            the ground, no decorative light (art direction). */}
+        <div className="flex animate-rise flex-col gap-6 rounded-3xl bg-paper-raised p-5 shadow-[0_1px_0_rgb(var(--shadow-rgb)/0.05),0_22px_44px_-30px_rgb(var(--shadow-rgb)/0.4)] sm:p-8">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <Pill tone={status.tone}>{status.label}</Pill>
             {when ? <Pill tone="accent">{when}</Pill> : null}
           </div>
