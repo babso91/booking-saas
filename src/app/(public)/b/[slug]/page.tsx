@@ -64,11 +64,10 @@ export default async function PublicBookingPage({
   if (!page) notFound();
   // Her waitlist is offered only if she opened it AND its emails can leave
   // (without them a request is never confirmed nor answered: a dead end).
-  const opened =
-    (page.business as { waitlistEnabled?: boolean }).waitlistEnabled === true;
   const business: PublicBusiness = {
     ...page.business,
-    waitlistEnabled: opened && getEmailTransport() !== null,
+    waitlistEnabled:
+      page.business.waitlistEnabled && getEmailTransport() !== null,
   };
 
   if (page.site)
