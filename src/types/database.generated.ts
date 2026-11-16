@@ -1251,6 +1251,36 @@ isOneToOne: false
               "asset_id": string,"attempts": number,"business_id": string,"scope": string
             }[]
                            },
+"platform_billing_summary":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"platform_cancel_scheduled":
+{ Args: { "p_business_id": string,"p_command_id": string,"p_operation_id": string }; Returns: Json
+                           },
+"platform_confirm_change":
+{ Args: { "p_business_id": string,"p_expected_revision": number,"p_operation_id": string,"p_quote_id": string }; Returns: Json
+                           },
+"platform_ingest_event":
+{ Args: { "p_event": Json }; Returns: string
+                           },
+"platform_list_invoices":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"platform_list_offers":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"platform_quote_change":
+{ Args: { "p_business_id": string,"p_expected_revision": number,"p_promo_code": string,"p_target_cadence": string,"p_target_plan": string }; Returns: Json
+                           },
+"platform_request_cancellation":
+{ Args: { "p_business_id": string,"p_expected_revision": number,"p_operation_id": string }; Returns: Json
+                           },
+"platform_run_due":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"platform_undo_cancellation":
+{ Args: { "p_business_id": string,"p_expected_revision": number,"p_operation_id": string }; Returns: Json
+                           },
 "public_site_photo":
 { Args: { "p_asset_id": string,"p_slug": string }; Returns: string
                            },

@@ -95,6 +95,8 @@ describe("migrated schema", () => {
       "get_public_services",
       // The published version of a mini-site (site_publishing migration).
       "get_public_site",
+      // The SaaS offers on sale, for the pricing page (platform_billing).
+      "platform_list_offers",
       "quote_public_service",
     ]);
   });
