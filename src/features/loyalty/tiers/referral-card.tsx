@@ -14,6 +14,8 @@ import type { ReferralActions, ReferralLinkDto } from "./contract";
 type View =
   | { status: "loading" }
   | { status: "error" }
+  /** The business does not offer referral: nothing is shown. */
+  | { status: "off" }
   | { status: "ready"; link: ReferralLinkDto | null };
 
 export function ReferralCard({
@@ -38,8 +40,12 @@ export function ReferralCard({
       if (!current) return;
       setView(
         result.ok
-          ? { status: "ready", link: result.data }
-          : { status: "error" },
+          ? result.data?.state === "unavailable"
+            ? { status: "off" }
+            : { status: "ready", link: result.data }
+          : result.error.code === "referral_unavailable"
+            ? { status: "off" }
+            : { status: "error" },
       );
     });
     return () => {
@@ -57,6 +63,8 @@ export function ReferralCard({
     if (result.ok) {
       requestId.current = null;
       setView({ status: "ready", link: result.data });
+    } else if (result.error.code === "referral_unavailable") {
+      setView({ status: "off" });
     } else setFailed(true);
   }
 
@@ -77,15 +85,15 @@ export function ReferralCard({
       month: "long",
     }).format(new Date(iso));
 
+  if (view.status === "off") return null;
+
   return (
     <section
       aria-label="Parrainage"
-      className="flex flex-col gap-4 rounded-3xl border border-line bg-paper-raised px-5 py-5"
+      className="flex flex-col gap-4 border-t border-line pt-5"
     >
       <div className="flex flex-col gap-1">
-        <p className="text-[12.5px] font-semibold tracking-[0.14em] text-ink-muted uppercase">
-          Parrainage
-        </p>
+        <p className="text-[13px] font-medium text-ink-muted">Parrainage</p>
         <h2 className="font-display text-[24px] leading-tight text-ink">
           Faites découvrir {businessName}
         </h2>

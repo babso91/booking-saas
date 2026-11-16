@@ -1,5 +1,6 @@
 "use client";
 
+import { HubTiers } from "./hub-tiers";
 import type { ReactNode } from "react";
 
 import { GiftIcon, InfoIcon, SparkIcon } from "@/components/ui/icons";
@@ -107,6 +108,13 @@ function Content({
     <div className="flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:grid-rows-[auto_1fr] lg:items-start">
       <div className="animate-rise [animation-delay:60ms] lg:col-start-1 lg:row-start-1">
         <BalanceCard businessName={business.name} loyalty={loyalty} />
+        <div className="mt-8 flex flex-col gap-8">
+          <HubTiers
+            businessId={business.businessId}
+            businessName={business.name}
+            timezone={business.timezone}
+          />
+        </div>
       </div>
       <div className="flex flex-col gap-10 lg:col-start-2 lg:row-span-2 lg:row-start-1">
         <section

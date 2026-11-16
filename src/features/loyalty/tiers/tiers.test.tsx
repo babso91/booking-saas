@@ -178,3 +178,26 @@ describe("the referral card", () => {
     expect(server.state.created).toBe(1);
   });
 });
+
+describe("a business without referral", () => {
+  it("shows no referral card at all", async () => {
+    const off = {
+      current: async () => ({
+        ok: false as const,
+        error: { code: "referral_unavailable" },
+      }),
+      create: async () => ({
+        ok: false as const,
+        error: { code: "referral_unavailable" },
+      }),
+    };
+    const { container } = render(
+      <ReferralCard
+        actions={off}
+        businessName="Studio Mila"
+        timezone="Europe/Paris"
+      />,
+    );
+    await waitFor(() => expect(container.textContent).toBe(""));
+  });
+});

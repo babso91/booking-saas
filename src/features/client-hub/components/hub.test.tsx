@@ -78,6 +78,21 @@ beforeEach(() => {
       new RegExp(`${B1}/loyalty/ledger$`),
       ok({ items: [], nextCursor: null }),
     )
+    // Tiers and referral (LOYALTY_TIERS_CONTRACT): none by default.
+    .on(
+      "GET",
+      /\/tier-progress$/,
+      ok({
+        tiers: [],
+        tierId: null,
+        currentValue: 0,
+        nextThreshold: null,
+        windowDays: 365,
+        windowEnd: null,
+        ruleVersion: 0,
+      }),
+    )
+    .on("GET", /\/referral$/, fail("referral_unavailable", 409))
     .on("DELETE", /\/session$/, () => {
       me = null;
       return ok({ ended: true });

@@ -1,4 +1,8 @@
 import type {
+  ReferralLinkDto,
+  TierProgressDto,
+} from "@/features/loyalty/tiers/contract";
+import type {
   ClientHubAppointmentDetailDto,
   ClientHubAppointmentsPageDto,
   ClientHubLedgerPageDto,
@@ -180,5 +184,29 @@ export function fetchLedger(
   return request<ClientHubLedgerPageDto>(
     `${business(businessId)}/loyalty/ledger${search}`,
     { method: "GET", signal },
+  );
+}
+
+// Her tier and her referral link for a business
+// (docs/LOYALTY_TIERS_CONTRACT.md), under the Hub session like every read.
+
+export function fetchTierProgress(businessId: string, signal?: AbortSignal) {
+  return request<TierProgressDto>(`${business(businessId)}/tier-progress`, {
+    method: "GET",
+    signal,
+  });
+}
+
+export function fetchReferral(businessId: string, signal?: AbortSignal) {
+  return request<ReferralLinkDto | null>(`${business(businessId)}/referral`, {
+    method: "GET",
+    signal,
+  });
+}
+
+export function createReferral(businessId: string, requestId: string) {
+  return request<ReferralLinkDto>(
+    `${business(businessId)}/referral`,
+    json("POST", { requestId }),
   );
 }

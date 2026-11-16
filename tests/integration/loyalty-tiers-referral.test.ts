@@ -82,6 +82,9 @@ async function ok<T>(promise: Promise<Rpc>): Promise<T> {
   return data as T;
 }
 
+// Each issued token's session (its cookie's name), from the verify answers.
+const sessionOfToken = new Map<string, string>();
+
 function request(
   method: string,
   path: string,
@@ -93,7 +96,12 @@ function request(
     "x-booking-proxy-secret": SECRET,
     "x-booking-client-ip": randomIp(),
   });
-  if (cookie) headers.set("cookie", `client_hub_session=${cookie}`);
+  // The Hub's per-session cookie (docs/CLIENT_HUB_CONTRACT.md).
+  if (cookie)
+    headers.set(
+      "cookie",
+      `__Host-client_hub_s_${sessionOfToken.get(cookie)}=${cookie}`,
+    );
   return new NextRequest(new URL(path, BASE), {
     method,
     headers,
@@ -120,9 +128,11 @@ async function login(email: string) {
       code,
     }),
   );
-  return verified.headers
+  const [, session, token] = verified.headers
     .get("set-cookie")!
-    .match(/client_hub_session=([0-9a-f]{64})/)![1]!;
+    .match(/__Host-client_hub_s_([0-9a-f-]{36})=([0-9a-f]{64})/)!;
+  sessionOfToken.set(token!, session!);
+  return token!;
 }
 
 let owner: Professional;
