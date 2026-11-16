@@ -414,6 +414,14 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  referral_unavailable: {
+    title: "Parrainage indisponible",
+    message: "Cet établissement ne propose pas de parrainage.",
+  },
+  version_conflict: {
+    title: "Modifié entre-temps",
+    message: "Ces informations ont changé. Recharge puis réessaie.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {

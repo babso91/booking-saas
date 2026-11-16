@@ -89,7 +89,8 @@ export type ClientHubLedgerEntryDto = {
     | "appointment_completed"
     | "manual_adjustment"
     | "reward_redeemed"
-    | "correction";
+    | "correction"
+    | "referral_reward";
   pointsDelta: number;
   balanceAfter: number;
   createdAt: string;

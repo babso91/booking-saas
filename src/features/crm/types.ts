@@ -172,7 +172,8 @@ export type LoyaltyEntryType =
   | "appointment_completed"
   | "manual_adjustment"
   | "reward_redeemed"
-  | "correction";
+  | "correction"
+  | "referral_reward";
 
 /** A loyalty ledger entry, dated by its creation. */
 export type LoyaltyTimelineEvent = TimelineEventBase & {
