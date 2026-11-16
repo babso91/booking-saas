@@ -31,7 +31,7 @@ async function hash() {
     `select md5(concat_ws('#',
        (select string_agg(m::text, '|' order by m.id) from public.business_members m where m.business_id = $1),
        (select string_agg(s::text, '|' order by s.id) from public.services s where s.business_id = $1),
-       (select string_agg((to_jsonb(a) - 'staff_id' - 'series_id')::text, '|' order by a.id) from public.appointments a where a.business_id = $1),
+       (select string_agg((to_jsonb(a) - 'staff_id' - 'series_id' - 'policy_snapshot')::text, '|' order by a.id) from public.appointments a where a.business_id = $1),
        (select count(*) from public.email_events e where e.business_id = $1)
      )) as hash`,
     [business.id],

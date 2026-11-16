@@ -93,7 +93,7 @@ function request(
     "x-booking-proxy-secret": SECRET,
     "x-booking-client-ip": randomIp(),
   });
-  if (cookie) headers.set("cookie", `client_hub_session=${cookie}`);
+  if (cookie) headers.set("cookie", cookie);
   return new NextRequest(new URL(path, BASE), {
     method,
     headers,
@@ -107,7 +107,7 @@ async function json(response: Response) {
   return { status: response.status, body: await response.json() };
 }
 
-/** A real Client Hub login; the session token. */
+/** A real Client Hub login; her session cookie (`name=value`). */
 async function login(email: string) {
   const asked = await json(
     await postCode(request("POST", "/api/client-hub/session/code", { email })),
@@ -122,7 +122,7 @@ async function login(email: string) {
   );
   return verified.headers
     .get("set-cookie")!
-    .match(/client_hub_session=([0-9a-f]{64})/)![1]!;
+    .match(/(__Host-client_hub_s_[0-9a-f-]{36}=[0-9a-f]{64})/)![1]!;
 }
 
 let owner: Professional;

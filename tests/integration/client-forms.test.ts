@@ -88,6 +88,11 @@ async function visit(shop: Shop, clientId: string, hours = nextSlot()) {
   });
 }
 
+/** The cookie carrying a session token (`__Host-client_hub_s_<session>`). */
+const sessionOfToken = new Map<string, string>();
+const hubCookie = (token: string) =>
+  `__Host-client_hub_s_${sessionOfToken.get(token)}=${token}`;
+
 /** Her Hub session for `email` (as client_hub_verify_code would create it). */
 async function hubSession(email: string): Promise<string> {
   const token = randomBytes(32).toString("hex");
@@ -96,11 +101,12 @@ async function hubSession(email: string): Promise<string> {
      on conflict (email) do update set last_login_at = now() returning id`,
     [email],
   );
-  await db.query(
+  const session = await db.query<{ id: string }>(
     `insert into private.client_hub_sessions (account_id, token_hash, created_at, expires_at, last_seen_at)
-     values ($1, $2, now(), now() + interval '1 day', now())`,
+     values ($1, $2, now(), now() + interval '1 day', now()) returning id`,
     [rows[0]!.id, createHash("sha256").update(token).digest("hex")],
   );
+  sessionOfToken.set(token, session.rows[0]!.id);
   return token;
 }
 
@@ -752,7 +758,7 @@ describe("the submission route", () => {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            cookie: `client_hub_session=${sent.token}`,
+            cookie: hubCookie(sent.token),
             ...headers,
           },
           body: JSON.stringify(body),
