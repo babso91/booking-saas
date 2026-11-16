@@ -69,7 +69,12 @@ export function MiniSite({
    * For the real booking (its flow reads these); null in a design preview,
    * where no booking is ever taken.
    */
-  booking: { business: PublicBusiness; catalog: PublicCatalog } | null;
+  booking: {
+    business: PublicBusiness;
+    catalog: PublicCatalog;
+    /** From her referral link (`?parrainage=`). */
+    referralCode?: string;
+  } | null;
   /** The faces of the universes (fonts.ts), declared on the site's root. */
   fontClasses: string;
 }) {

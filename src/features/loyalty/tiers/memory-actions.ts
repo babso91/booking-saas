@@ -5,7 +5,7 @@ import type {
   TierResult,
 } from "./contract";
 
-// In-memory stand-ins of the PROPOSED tiers and referral contract, for the
+// In-memory stand-ins of the tiers and referral contract, for the
 // design preview and the tests only. Never used by a real page.
 
 export function sampleProgress(
@@ -24,6 +24,8 @@ export function sampleProgress(
     ],
     tierId: "t-silver",
     currentValue: 4,
+    nextThreshold: 6,
+    windowDays: 365,
     windowEnd: "2027-06-30T22:00:00.000Z",
     ruleVersion: 1,
     ...over,

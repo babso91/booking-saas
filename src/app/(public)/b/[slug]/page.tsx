@@ -55,11 +55,22 @@ export async function generateMetadata({
   };
 }
 
+// Her referral link: /b/<slug>?parrainage=<code> (docs/LOYALTY_TIERS_
+// CONTRACT.md). An attribution only, passed with the booking; it opens
+// nothing and the page says nothing about who shared it.
+const REFERRAL_CODE = /^[A-Za-z0-9_-]{22}$/;
+
 export default async function PublicBookingPage({
   params,
+  searchParams,
 }: PageProps<"/b/[slug]">) {
   const page = await readPublicPage((await params).slug);
   if (!page) notFound();
+  const { parrainage } = await searchParams;
+  const referralCode =
+    typeof parrainage === "string" && REFERRAL_CODE.test(parrainage)
+      ? parrainage
+      : undefined;
 
   if (page.site)
     return (
@@ -69,10 +80,20 @@ export default async function PublicBookingPage({
         photoBase={publicPhotoBase(page.business.slug)}
         // The same booking as her booking page: her catalogue, options
         // included, priced and timed by the server.
-        booking={{ business: page.business, catalog: page.catalog }}
+        booking={{
+          business: page.business,
+          catalog: page.catalog,
+          referralCode,
+        }}
         fontClasses={siteFontClasses}
       />
     );
 
-  return <PublicBooking business={page.business} catalog={page.catalog} />;
+  return (
+    <PublicBooking
+      business={page.business}
+      catalog={page.catalog}
+      referralCode={referralCode}
+    />
+  );
 }

@@ -23,7 +23,12 @@ export function SiteBooking({
   onClose,
 }: {
   /** null: a design preview, where no booking is ever taken. */
-  booking: { business: PublicBusiness; catalog: PublicCatalog } | null;
+  booking: {
+    business: PublicBusiness;
+    catalog: PublicCatalog;
+    /** From her referral link (`?parrainage=`). */
+    referralCode?: string;
+  } | null;
   initialServiceId?: string;
   onClose: () => void;
 }) {
@@ -88,6 +93,7 @@ export function SiteBooking({
                 catalog={booking.catalog}
                 embedded
                 initialServiceId={initialServiceId}
+                referralCode={booking.referralCode}
               />
             ) : (
               <p className="text-[15px] text-ink-soft">

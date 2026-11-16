@@ -164,10 +164,13 @@ export const choiceIdsOf = (
 export function useBookingFlow({
   business,
   catalog: initialCatalog,
+  referralCode,
 }: {
   business: PublicBusiness;
   /** As get_public_catalog projects it: the only source of what is offered. */
   catalog: PublicCatalog;
+  /** From her referral link (`?parrainage=`), sent with the booking. */
+  referralCode?: string;
 }) {
   const slug = business.slug;
   const [catalog, setCatalog] = useState(initialCatalog);
@@ -255,6 +258,7 @@ export function useBookingFlow({
           // pending from before is resent as it was (resendPending).
           expectedPriceCents: slotQuote.priceCents,
           expectedDurationMinutes: slotQuote.durationMinutes,
+          ...(referralCode ? { referralCode } : {}),
         }
       : null;
   const fingerprint = command ? fingerprintOf(command) : null;

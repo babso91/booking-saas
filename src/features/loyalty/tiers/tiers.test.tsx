@@ -13,8 +13,8 @@ import { standingOf } from "./progress";
 import { ReferralCard } from "./referral-card";
 import { TierProgress } from "./tier-progress";
 
-// VIP progression and referral against the PROPOSED contract
-// (docs/LOYALTY_TIERS_PROPOSAL.md). Placement only: counting is the
+// VIP progression and referral against the contract
+// (docs/LOYALTY_TIERS_CONTRACT.md). Placement only: counting is the
 // server's.
 
 afterEach(cleanup);
@@ -43,6 +43,36 @@ describe("where she stands", () => {
 });
 
 describe("the progression card", () => {
+  it("to the professional: when the oldest counted visit leaves the window", () => {
+    render(
+      <TierProgress
+        progress={sampleProgress()}
+        timezone="Europe/Paris"
+        reader="pro"
+      />,
+    );
+    expect(
+      screen.getByText(
+        /Visites des 12 derniers mois ; la plus ancienne en sortira le 1er juillet/,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("says no date without any counted visit", () => {
+    render(
+      <TierProgress
+        progress={sampleProgress({
+          currentValue: 0,
+          tierId: null,
+          windowEnd: null,
+        })}
+        timezone="Europe/Paris"
+        reader="pro"
+      />,
+    );
+    expect(screen.getByText(/Visites des 12 derniers mois\./)).toBeTruthy();
+  });
+
   it("to the client: her tier, the visits still needed and the next perk", () => {
     render(
       <TierProgress
@@ -58,7 +88,7 @@ describe("the progression card", () => {
       ),
     ).toBeTruthy();
     expect(
-      screen.getByText(/Visites comptées jusqu’au 1er juillet 2027/),
+      screen.getByText(/Ce sont vos visites des 12 derniers mois/),
     ).toBeTruthy();
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe(
       "33",

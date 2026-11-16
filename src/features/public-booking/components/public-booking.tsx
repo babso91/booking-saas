@@ -26,6 +26,7 @@ export function PublicBooking({
   catalog,
   embedded = false,
   initialServiceId,
+  referralCode,
 }: {
   business: PublicBusiness;
   /** As get_public_catalog projects it: services, categories, options. */
@@ -40,8 +41,10 @@ export function PublicBooking({
    * options when it has some, else on its slots.
    */
   initialServiceId?: string;
+  /** From her referral link (`?parrainage=`): sent with the booking. */
+  referralCode?: string;
 }) {
-  const flow = useBookingFlow({ business, catalog });
+  const flow = useBookingFlow({ business, catalog, referralCode });
   const heading = useRef<HTMLHeadingElement>(null);
   const opened = useRef(false);
   const asked = useRef(initialServiceId);

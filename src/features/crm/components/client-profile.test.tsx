@@ -39,6 +39,11 @@ const actions = {
   listClientRedemptionsAction: vi.fn(),
   adjustPointsAction: vi.fn(),
 };
+// Its own tests cover it; here this screen alone.
+vi.mock("@/features/loyalty/tiers/client-tier", () => ({
+  ClientTier: () => null,
+}));
+
 vi.mock("@/features/crm/actions/crm", () => ({
   listClientsAction: vi.fn(),
   getClientProfileAction: (...args: unknown[]) =>

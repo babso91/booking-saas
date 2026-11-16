@@ -17,27 +17,34 @@ export function TierProgress({
   reader: "pro" | "client";
 }) {
   const { current, next, missing, ratio } = standingOf(progress);
-  const until = new Intl.DateTimeFormat("fr-FR", {
-    timeZone: timezone,
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  })
-    .format(new Date(progress.windowEnd))
-    // French writes the first of the month "1er".
-    .replace(/^1 /, "1er ");
+  // When the oldest counted visit leaves the sliding window (the count may
+  // go down then); null without any counted visit.
+  const leaves = progress.windowEnd
+    ? new Intl.DateTimeFormat("fr-FR", {
+        timeZone: timezone,
+        day: "numeric",
+        month: "long",
+      })
+        .format(new Date(progress.windowEnd))
+        // French writes the first of the month "1er".
+        .replace(/^1 /, "1er ")
+    : null;
+  const span =
+    progress.windowDays % 365 === 0
+      ? `${(progress.windowDays / 365) * 12} derniers mois`
+      : progress.windowDays % 30 === 0
+        ? `${progress.windowDays / 30} derniers mois`
+        : `${progress.windowDays} derniers jours`;
   const visits = (count: number) => `${count} visite${count > 1 ? "s" : ""}`;
 
   return (
     <section
       aria-label="Niveau de fidélité"
-      className="flex flex-col gap-4 rounded-3xl border border-line bg-paper-raised px-5 py-5"
+      className="flex flex-col gap-4 border-t border-line pt-5"
     >
       <div className="flex items-baseline justify-between gap-3">
         <div className="flex flex-col gap-0.5">
-          <p className="text-[12.5px] font-semibold tracking-[0.14em] text-ink-muted uppercase">
-            Niveau
-          </p>
+          <p className="text-[13px] font-medium text-ink-muted">Niveau</p>
           <p className="font-display text-[28px] leading-none text-ink">
             {current?.name ??
               (reader === "client" ? "Bienvenue" : "Aucun niveau")}
@@ -71,8 +78,8 @@ export function TierProgress({
             ? "Vous êtes au niveau le plus haut."
             : "Au niveau le plus haut."}{" "}
         {reader === "client"
-          ? `Visites comptées jusqu’au ${until}.`
-          : `Fenêtre de comptage jusqu’au ${until}.`}
+          ? `Ce sont vos visites des ${span}.`
+          : `Visites des ${span}${leaves ? ` ; la plus ancienne en sortira le ${leaves}` : ""}.`}
       </p>
       {current?.perk ? (
         <p className="rounded-2xl bg-sand/60 px-4 py-3 text-[14px] text-ink">

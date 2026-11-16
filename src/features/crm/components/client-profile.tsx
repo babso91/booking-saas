@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ClientTier } from "@/features/loyalty/tiers/client-tier";
 import {
   useEffect,
   useId,
@@ -903,6 +904,7 @@ function Dossier({
       </DossierSection>
 
       {loyalty}
+      <ClientTier clientId={client.id} timezone={profile.timezone} />
 
       <DossierNotes
         list={notes}

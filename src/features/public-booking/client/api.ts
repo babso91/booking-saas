@@ -55,6 +55,12 @@ export type BookingCommand = {
   /** What she was shown: if the server comes to another, nothing is booked. */
   expectedPriceCents?: number;
   expectedDurationMinutes?: number;
+  /**
+   * The code of the referral link she arrived by (docs/LOYALTY_TIERS_
+   * CONTRACT.md): an attribution only; the booking never fails for it and
+   * the answer says nothing of who referred her.
+   */
+  referralCode?: string;
 };
 
 /** Longest wait for a read, then for a booking, before saying so. */

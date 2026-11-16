@@ -1,8 +1,7 @@
-// VIP progression and referral (R4-02). PROPOSED contract
-// (docs/LOYALTY_TIERS_PROPOSAL.md): no server serves it yet. The screens
-// take their actions as a whole; only the design preview and the tests
-// give them an in-memory server. No real page shows tiers or referral
-// until Cloud provides them.
+// VIP progression and referral (R4-02), as served
+// (docs/LOYALTY_TIERS_CONTRACT.md). The screens take their actions as a
+// whole: the professional's area gives them the real ones, the design
+// preview and the tests an in-memory server.
 //
 // A tier is earned by completed visits in a window, independently of the
 // points balance: spending points never lowers it.
@@ -23,15 +22,23 @@ export type TierProgressDto = {
   tierId: string | null;
   /** Completed visits counted in the current window. */
   currentValue: number;
-  /** When the window counted now ends (then visits are counted again). */
-  windowEnd: string;
+  /** Visits needed for the next tier; null at the top or without tiers. */
+  nextThreshold: number | null;
+  /** The sliding window, in days. */
+  windowDays: number;
+  /**
+   * When the oldest counted visit leaves the window (the count may go
+   * down then); null without any counted visit.
+   */
+  windowEnd: string | null;
   ruleVersion: number;
 };
 
 export type ReferralLinkDto = {
   url: string;
   expiresAt: string;
-  state: "active" | "expired" | "revoked";
+  /** unavailable: the business stopped offering referral (not shared). */
+  state: "active" | "expired" | "revoked" | "unavailable";
 };
 
 export type TierResult<T> =
