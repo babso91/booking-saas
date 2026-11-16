@@ -1022,6 +1022,9 @@ isOneToOne: false
 "client_hub_appointments":
 { Args: { "p_after_id"?: string,"p_after_starts_at"?: string,"p_business_id": string,"p_limit"?: number,"p_scope": string,"p_session_token": string }; Returns: Json
                            },
+"client_hub_create_referral_link":
+{ Args: { "p_business_id": string,"p_code": string,"p_request_id": string,"p_session_token": string }; Returns: Json
+                           },
 "client_hub_end_session":
 { Args: { "p_all"?: boolean,"p_session_token": string }; Returns: undefined
                            },
@@ -1034,6 +1037,9 @@ isOneToOne: false
 "client_hub_profile":
 { Args: { "p_session_token": string }; Returns: Json
                            },
+"client_hub_referral_link":
+{ Args: { "p_business_id": string,"p_session_token": string }; Returns: Json
+                           },
 "client_hub_request_code":
 { Args: { "p_client_ip": unknown,"p_email": string }; Returns: {
               "challenge_id": string,"code": string,"email": string,"expires_at": string
@@ -1043,6 +1049,9 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_client_id": string,"p_expected_email"?: string,"p_granted": boolean }; Returns: {
               "email": string,"granted": boolean,"granted_at": string
             }[]
+                           },
+"client_hub_tier_progress":
+{ Args: { "p_business_id": string,"p_session_token": string }; Returns: Json
                            },
 "client_hub_verify_code":
 { Args: { "p_challenge_id": string,"p_client_ip": unknown,"p_code": string,"p_email": string }; Returns: {
@@ -1216,6 +1225,9 @@ isOneToOne: false
 "loyalty_client_summary":
 { Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
                            },
+"loyalty_client_tier_progress":
+{ Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
+                           },
 "loyalty_configure_program":
 { Args: { "p_accrual_mode": Database["public"]['Enums']["loyalty_accrual_mode"],"p_active": boolean,"p_business_id": string,"p_expected_version": number,"p_points_per_completed_appointment": number,"p_points_per_euro"?: number }; Returns: number
                            },
@@ -1225,11 +1237,17 @@ isOneToOne: false
 "loyalty_fulfil_redemption":
 { Args: { "p_appointment_id"?: string,"p_business_id": string,"p_redemption_id": string }; Returns: undefined
                            },
+"loyalty_get_growth_rules":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
 "loyalty_redeem_reward":
 { Args: { "p_business_id": string,"p_client_id": string,"p_request_id": string,"p_reward_id": string }; Returns: string
                            },
 "loyalty_reverse_adjustment":
 { Args: { "p_business_id": string,"p_entry_id": string,"p_reason"?: string }; Returns: string
+                           },
+"loyalty_set_growth_rules":
+{ Args: { "p_business_id": string,"p_expected_version": number,"p_referral_points": number,"p_tiers": Json,"p_window_days": number }; Returns: Json
                            },
 "loyalty_set_service_rule":
 { Args: { "p_business_id": string,"p_points": number,"p_service_id": string }; Returns: undefined
@@ -1271,6 +1289,9 @@ isOneToOne: false
                            },
 "record_site_photo_orphan_deletions":
 { Args: { "p_deleted": (string)[],"p_failed": (string)[],"p_run": string }; Returns: undefined
+                           },
+"referral_claim":
+{ Args: { "p_appointment_id": string,"p_code": string }; Returns: string
                            },
 "release_site_photo_reconciliation":
 { Args: { "p_run": string }; Returns: undefined
@@ -1344,7 +1365,7 @@ isOneToOne: false
                            }
           }
           Enums: {
-            "appointment_status": "confirmed"|"completed"|"cancelled"|"no_show","availability_exception_kind": "closed"|"blocked"|"open_override","business_member_role": "owner"|"admin","email_event_status": "pending"|"processing"|"sent"|"failed"|"cancelled","email_event_type": "booking_confirmation"|"appointment_reminder"|"appointment_changed"|"appointment_cancelled"|"points_earned"|"reward_unlocked"|"reactivation","loyalty_accrual_mode": "appointment"|"spend","loyalty_event_type": "appointment_completed"|"manual_adjustment"|"reward_redeemed"|"correction","reward_redemption_status": "issued"|"fulfilled"|"cancelled","reward_type": "percentage_discount"|"fixed_discount"|"free_service"
+            "appointment_status": "confirmed"|"completed"|"cancelled"|"no_show","availability_exception_kind": "closed"|"blocked"|"open_override","business_member_role": "owner"|"admin","email_event_status": "pending"|"processing"|"sent"|"failed"|"cancelled","email_event_type": "booking_confirmation"|"appointment_reminder"|"appointment_changed"|"appointment_cancelled"|"points_earned"|"reward_unlocked"|"reactivation","loyalty_accrual_mode": "appointment"|"spend","loyalty_event_type": "appointment_completed"|"manual_adjustment"|"reward_redeemed"|"correction"|"referral_reward","reward_redemption_status": "issued"|"fulfilled"|"cancelled","reward_type": "percentage_discount"|"fixed_discount"|"free_service"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -1460,7 +1481,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "appointment_status": ["confirmed", "completed", "cancelled", "no_show"],"availability_exception_kind": ["closed", "blocked", "open_override"],"business_member_role": ["owner", "admin"],"email_event_status": ["pending", "processing", "sent", "failed", "cancelled"],"email_event_type": ["booking_confirmation", "appointment_reminder", "appointment_changed", "appointment_cancelled", "points_earned", "reward_unlocked", "reactivation"],"loyalty_accrual_mode": ["appointment", "spend"],"loyalty_event_type": ["appointment_completed", "manual_adjustment", "reward_redeemed", "correction"],"reward_redemption_status": ["issued", "fulfilled", "cancelled"],"reward_type": ["percentage_discount", "fixed_discount", "free_service"]
+            "appointment_status": ["confirmed", "completed", "cancelled", "no_show"],"availability_exception_kind": ["closed", "blocked", "open_override"],"business_member_role": ["owner", "admin"],"email_event_status": ["pending", "processing", "sent", "failed", "cancelled"],"email_event_type": ["booking_confirmation", "appointment_reminder", "appointment_changed", "appointment_cancelled", "points_earned", "reward_unlocked", "reactivation"],"loyalty_accrual_mode": ["appointment", "spend"],"loyalty_event_type": ["appointment_completed", "manual_adjustment", "reward_redeemed", "correction", "referral_reward"],"reward_redemption_status": ["issued", "fulfilled", "cancelled"],"reward_type": ["percentage_discount", "fixed_discount", "free_service"]
           }
         }
 } as const

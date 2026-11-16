@@ -1,6 +1,7 @@
 import { createPublicBooking } from "@/features/appointments/data/public-booking";
 import { createPublicBookingSchema } from "@/features/appointments/schemas/public-booking";
 import { kickCalendarOutbound } from "@/features/calendar/data/outbound-kick";
+import { claimReferral } from "@/features/loyalty/growth/data";
 import { kickEmailOutbox } from "@/features/notifications/data/kick";
 import { validationException } from "@/lib/errors";
 import { trustedClientIp } from "@/lib/client-identity";
@@ -10,7 +11,7 @@ import type { AppSupabaseClient } from "@/lib/supabase/types";
 
 // POST /api/bookings — public booking, no client account required.
 // Body: { slug, serviceId, startsAt, firstName, lastName?, email, phone?,
-//         requestId }
+//         requestId, referralCode? }
 // 201 → booking summary (200 with `replayed: true` for a retried request);
 // 409 slot_unavailable when the slot was taken meanwhile; 429 rate_limited;
 // 503 booking_unavailable when the trusted ingress gave no client address.
@@ -29,11 +30,23 @@ export async function POST(request: Request) {
     // The booking function is executable by the service role only: this
     // route is the one entry, and the address it passes (established by the
     // trusted ingress) cannot be skipped with the publishable key.
-    const booking = await createPublicBooking(
-      createAdminSupabaseClient() as AppSupabaseClient,
-      parsed.data,
-      clientIp,
-    );
+    const service = createAdminSupabaseClient() as AppSupabaseClient;
+    const booking = await createPublicBooking(service, parsed.data, clientIp);
+
+    // A referral link's code: claimed once for this booking (a retry says
+    // the same). It never fails nor changes the booking; nothing about the
+    // referrer is answered.
+    if (parsed.data.referralCode) {
+      try {
+        await claimReferral(
+          service,
+          parsed.data.referralCode,
+          booking.appointmentId,
+        );
+      } catch {
+        console.error("Referral claim failed.");
+      }
+    }
 
     // The Google mirror and the confirmation email never delay nor fail the
     // booking: they run after the response, from the committed state.

@@ -38,6 +38,16 @@ export const createPublicBookingSchema = z.object({
    */
   expectedPriceCents: z.number().int().min(0).max(2_147_483_647).optional(),
   expectedDurationMinutes: z.number().int().min(5).max(720).optional(),
+  /**
+   * The code of the referral link she came from (docs/LOYALTY_TIERS_CONTRACT.md).
+   * Never fails the booking: an unknown or expired code books without
+   * attribution.
+   */
+  referralCode: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{22}$/)
+    .optional()
+    .catch(undefined),
   phone: optionalText(
     z
       .string()
