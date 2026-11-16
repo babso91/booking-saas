@@ -57,6 +57,7 @@ export async function createPublicBooking(
     p_option_choice_ids: input.optionChoiceIds ?? [],
     p_expected_price_cents: input.expectedPriceCents,
     p_expected_duration_minutes: input.expectedDurationMinutes,
+    p_quote_ref: input.quoteRef,
   });
 
   if (error) {

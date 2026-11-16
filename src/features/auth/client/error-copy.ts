@@ -514,6 +514,7 @@ export const errorCopy: Record<
     title: "Campagne terminée",
     message: "Cette campagne ne peut plus changer d’état.",
   referral_unavailable: {
+  coupon_refused: {
   },
   version_conflict: {
     title: "Modifié entre-temps",
