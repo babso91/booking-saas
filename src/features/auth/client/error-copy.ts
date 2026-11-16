@@ -443,6 +443,7 @@ export const errorCopy: Record<
   stale_offer: {
     title: "Offre modifiée",
     message: "Cette offre a changé. Relis-la.",
+  version_conflict: {
   },
 };
 
