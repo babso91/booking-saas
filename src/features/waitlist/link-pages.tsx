@@ -18,12 +18,17 @@ import { WaitlistOffer } from "./waitlist-offer";
 // sent to the API only. Before it is read (server render, first paint),
 // nothing is asked and nothing is said about it.
 
-const noSubscription = () => () => {};
+// The fragment can change without a reload (another link opened in the
+// same tab): read it again then.
+const onHashChange = (callback: () => void) => {
+  window.addEventListener("hashchange", callback);
+  return () => window.removeEventListener("hashchange", callback);
+};
 
 /** The fragment's token once in the browser; undefined on the server. */
 function useFragmentToken(): string | null | undefined {
   return useSyncExternalStore(
-    noSubscription,
+    onHashChange,
     () => tokenFromFragment(window.location.hash),
     () => undefined,
   );
