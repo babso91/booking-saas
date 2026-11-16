@@ -93,6 +93,17 @@ describe("exploring", () => {
     expect(screen.getByRole("status").textContent).toContain("Crée ton compte");
   });
 
+  it("Écrin's dial: an arc (no link, no button) stays here too", async () => {
+    const user = await explore();
+    await user.click(screen.getByRole("radio", { name: /Écrin/ }));
+    const arc = document.querySelector("path.ecrin-arc.cursor-pointer");
+    expect(arc).not.toBeNull();
+    // jsdom draws nothing: the class says it is clickable, as the CSS does.
+    (arc as HTMLElement).style.cursor = "pointer";
+    await user.click(arc!);
+    expect(screen.getByRole("status").textContent).toContain("Crée ton compte");
+  });
+
   it("nothing is kept for an account while she only explores", async () => {
     await explore();
     expect(cookie()).not.toContain("dash_appearance");

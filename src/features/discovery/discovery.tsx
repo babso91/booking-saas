@@ -158,8 +158,11 @@ function Experience({
    */
   function catchIntents(event: MouseEvent<HTMLDivElement>) {
     const target = event.target as Element;
-    const control = target.closest("a, button, [role='button']");
-    if (!control || control.hasAttribute("aria-expanded")) return;
+    // Only the control that unfolds works, not what it reveals (a menu's
+    // links still lead to her area).
+    const control = target.closest("a, button, [role='button'], [role='link']");
+    if (control?.hasAttribute("aria-expanded")) return;
+    if (!leadsSomewhere(target, event.currentTarget)) return;
     event.preventDefault();
     event.stopPropagation();
     say(
@@ -241,6 +244,23 @@ function Experience({
       </p>
     </>
   );
+}
+
+/**
+ * Whether a click on this element would do something: a link, a button,
+ * or anything drawn as clickable (the arcs of Écrin's dial are SVG paths
+ * with a click handler, no role). What looks clickable is caught.
+ */
+function leadsSomewhere(target: Element, stage: Element) {
+  if (target.closest("a, button, [role='button'], [role='link']")) return true;
+  for (
+    let node: Element | null = target;
+    node && node !== stage;
+    node = node.parentElement
+  ) {
+    if (window.getComputedStyle(node).cursor === "pointer") return true;
+  }
+  return false;
 }
 
 function prefersReducedMotion() {
