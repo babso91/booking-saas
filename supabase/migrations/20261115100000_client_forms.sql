@@ -883,6 +883,8 @@ set search_path = ''
 as $$
   select pg_catalog.jsonb_build_object(
     'assignmentId', p_assignment.id,
+    -- Her visit in the Hub (client_hub_appointments): the form belongs to it.
+    'appointmentId', p_assignment.appointment_id,
     'templateVersionId', v.id,
     'title', v.content ->> 'title',
     'businessName', b.name,

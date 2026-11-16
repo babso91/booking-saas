@@ -26,6 +26,8 @@ export type FormStatus =
   | "revoked";
 
 export type ClientFormDto = {
+  /** Her visit (the Hub's appointment id): the form belongs to it. */
+  appointmentId: string;
   assignmentId: string;
   templateVersionId: string;
   title: string;

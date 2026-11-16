@@ -496,6 +496,7 @@ describe("her answers", () => {
       });
     const form = await ok<ClientFormDto>(read(sent.token));
     expect(form).toMatchObject({
+      appointmentId: sent.appointmentId,
       status: "assigned",
       canSubmit: true,
       receipt: null,

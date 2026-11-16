@@ -111,3 +111,6 @@ toutes les écritures du Hub. Réponses `no-store`.
    ancien. Après une écriture, l'écran relit la visite (`read_visit_forms`).
    Si cette relecture échoue, rejouer l'écriture avec le même `requestId`
    est sans effet de bord.
+9. **`ClientFormDto.appointmentId`** est ajouté : c'est l'id du rendez-vous
+   dans le Hub (`client_hub_appointments`). Il sert à relier un formulaire à
+   sa visite, sans passer par `expiresAt`.
