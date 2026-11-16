@@ -38,6 +38,24 @@ export const createPublicBookingSchema = z.object({
    */
   expectedPriceCents: z.number().int().min(0).max(2_147_483_647).optional(),
   expectedDurationMinutes: z.number().int().min(5).max(720).optional(),
+  /**
+   * Her own marketing choices, ticked with this booking (two independent
+   * boxes, never pre-ticked; docs/MARKETING_CONSENT_CONTRACT.md): the
+   * versions of the texts she was shown. Never a condition of the booking.
+   */
+  marketingConsent: z
+    .object({
+      email: z.boolean().optional(),
+      sms: z.boolean().optional(),
+      versions: z.object({
+        email: z.string().max(64).optional(),
+        sms: z.string().max(64).optional(),
+        information: z.string().max(64),
+        notice: z.string().max(64),
+      }),
+    })
+    .optional()
+    .catch(undefined),
   phone: optionalText(
     z
       .string()
