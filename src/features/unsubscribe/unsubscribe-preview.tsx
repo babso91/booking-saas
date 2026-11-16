@@ -7,7 +7,7 @@ import { UnsubscribePage } from "./unsubscribe-page";
 
 /**
  * The unsubscribe page on fictional links, kept in this page's memory
- * only: to review it before the backend exists. Never part of a real page.
+ * only: every state without a link. Never part of a real page.
  */
 export function UnsubscribePreview({ token }: { token: string }) {
   const [server] = useState(() => memoryUnsubscribe({ delayMs: 400 }));

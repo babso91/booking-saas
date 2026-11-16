@@ -1,7 +1,7 @@
-// Stopping marketing messages from a link (R4-01, unsubscribe). PROPOSED
-// contract (docs/UNSUBSCRIBE_PROPOSAL.md): no server serves it yet. The
-// page takes its actions as a whole; only the design preview and the tests
-// give it an in-memory server.
+// Stopping marketing messages from a link (R4-01, unsubscribe), as served
+// (docs/MARKETING_CONSENT_CONTRACT.md). The page takes its actions as a
+// whole: /desinscription gives it the real ones (real-actions.ts), the
+// design preview and the tests an in-memory server.
 //
 // No login: the link's token alone proves which business and channel it
 // is for, and nothing else. Opening the page changes nothing (link
@@ -15,6 +15,8 @@ export type UnsubscribeView = {
   channel: UnsubscribeChannel;
   /** Already withdrawn for this business and channel. */
   alreadyWithdrawn: boolean;
+  /** Her withdrawal by this link can still be undone (30 minutes). */
+  canUndo: boolean;
 };
 
 export type UnsubscribeResult<T> =
@@ -32,4 +34,6 @@ export type UnsubscribeActions = {
 export const unsubscribeErrors = {
   /** Unknown, forged or expired token: one opaque answer. */
   invalid: "unsubscribe_link_invalid",
+  /** No withdrawal by this link, or more than 30 minutes ago. */
+  undoUnavailable: "unsubscribe_undo_unavailable",
 } as const;

@@ -33,7 +33,7 @@ export function UnsubscribePage({
   const [run, setRun] = useState(0);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [justWithdrew, setJustWithdrew] = useState(false);
+  const [undoGone, setUndoGone] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -97,10 +97,13 @@ export function UnsubscribePage({
     if (!result.ok) {
       if (result.error.code === unsubscribeErrors.invalid)
         return setView("invalid");
+      if (result.error.code === unsubscribeErrors.undoUnavailable) {
+        setUndoGone(true);
+        return setView({ ...current, canUndo: false });
+      }
       return setFailed(true);
     }
     setView(result.data);
-    setJustWithdrew(withdraw);
   }
 
   return (
@@ -118,7 +121,13 @@ export function UnsubscribePage({
             Les rappels de vos rendez-vous continuent : ce ne sont pas des
             offres.
           </p>
-          {justWithdrew ? (
+          {undoGone ? (
+            <p className="text-[14px] text-ink-soft">
+              Il n’est plus possible d’annuler depuis ce lien. Pour recevoir à
+              nouveau les offres, contactez {current.businessName}.
+            </p>
+          ) : null}
+          {current.canUndo ? (
             <button
               type="button"
               className={linkAction + " w-fit"}

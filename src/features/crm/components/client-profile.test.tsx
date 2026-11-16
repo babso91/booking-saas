@@ -39,6 +39,11 @@ const actions = {
   listClientRedemptionsAction: vi.fn(),
   adjustPointsAction: vi.fn(),
 };
+// The consents have their own tests; here the profile alone.
+vi.mock("@/features/marketing-consent/components/client-consents", () => ({
+  ClientConsents: () => null,
+}));
+
 vi.mock("@/features/crm/actions/crm", () => ({
   listClientsAction: vi.fn(),
   getClientProfileAction: (...args: unknown[]) =>

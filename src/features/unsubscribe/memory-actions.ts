@@ -5,7 +5,7 @@ import {
   type UnsubscribeView,
 } from "./contract";
 
-// An in-memory server of the PROPOSED unsubscribe contract, for the preview
+// An in-memory server of the unsubscribe contract, for the preview
 // and the tests only. Two tokens, two businesses: withdrawing from one
 // never touches the other.
 
@@ -22,11 +22,17 @@ export function memoryUnsubscribe(options: { delayMs?: number } = {}) {
         businessName: "Atelier Maëlys",
         channel: "email",
         alreadyWithdrawn: false,
+        canUndo: false,
       },
     ],
     [
       "tok-b-sms",
-      { businessName: "Studio Nora", channel: "sms", alreadyWithdrawn: false },
+      {
+        businessName: "Studio Nora",
+        channel: "sms",
+        alreadyWithdrawn: false,
+        canUndo: false,
+      },
     ],
   ]);
   let writes = 0;
@@ -40,8 +46,12 @@ export function memoryUnsubscribe(options: { delayMs?: number } = {}) {
   ): UnsubscribeResult<UnsubscribeView> => {
     const subject = subjects.get(token);
     if (!subject) return fail(unsubscribeErrors.invalid);
+    if (!alreadyWithdrawn && !subject.canUndo)
+      return fail(unsubscribeErrors.undoUnavailable);
     if (subject.alreadyWithdrawn !== alreadyWithdrawn) writes += 1;
     subject.alreadyWithdrawn = alreadyWithdrawn;
+    // Undo is possible right after her own withdrawal by this link only.
+    subject.canUndo = alreadyWithdrawn;
     return { ok: true, data: { ...subject } };
   };
 

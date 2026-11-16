@@ -3,7 +3,7 @@ import { UnsubscribePreview } from "@/features/unsubscribe/unsubscribe-preview";
 export const metadata = { title: "Désinscription · Aperçu" };
 
 // The marketing unsubscribe page on fictional links, against an in-memory
-// server of the PROPOSED contract (docs/UNSUBSCRIBE_PROPOSAL.md).
+// server of the contract (docs/MARKETING_CONSENT_CONTRACT.md).
 // ?lien=tok-a-email|tok-b-sms|faux. Like every preview, a 404 in
 // production unless DASHBOARD_PREVIEW=1.
 export default async function UnsubscribePreviewPage({

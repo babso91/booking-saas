@@ -46,6 +46,11 @@ const { actions, call } = vi.hoisted(() => {
       actions[name](...args);
   return { actions, call };
 });
+// The consents have their own tests; here the profile alone.
+vi.mock("@/features/marketing-consent/components/client-consents", () => ({
+  ClientConsents: () => null,
+}));
+
 vi.mock("@/features/crm/actions/crm", () => ({
   listClientsAction: vi.fn(),
   getClientProfileAction: call("getClientProfileAction"),

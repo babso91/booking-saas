@@ -6,8 +6,8 @@ import type { UnsubscribeActions } from "./contract";
 import { memoryUnsubscribe } from "./memory-actions";
 import { UnsubscribePage } from "./unsubscribe-page";
 
-// The unsubscribe page against an in-memory server of the PROPOSED
-// contract (docs/UNSUBSCRIBE_PROPOSAL.md).
+// The unsubscribe page against an in-memory server of the contract
+// (docs/MARKETING_CONSENT_CONTRACT.md).
 
 afterEach(cleanup);
 
@@ -66,5 +66,36 @@ describe("unsubscribing", () => {
     press("Ne plus recevoir ces offres");
     await screen.findByText("Ça n’a pas abouti");
     expect(server.subject("tok-a-email")?.alreadyWithdrawn).toBe(false);
+  });
+
+  it("offers no undo the server would refuse, and says why when it expires", async () => {
+    const server = memoryUnsubscribe();
+    render(<UnsubscribePage token="tok-a-email" actions={server.actions} />);
+    await screen.findByRole("button", { name: "Ne plus recevoir ces offres" });
+    press("Ne plus recevoir ces offres");
+    await screen.findByRole("heading", { name: "C’est fait" });
+    // The 30 minutes pass.
+    server.subject("tok-a-email")!.canUndo = false;
+    press("Annuler : continuer à recevoir les offres");
+    expect(
+      await screen.findByText(
+        /Il n’est plus possible d’annuler depuis ce lien/,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", {
+        name: "Annuler : continuer à recevoir les offres",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("unsubscribeTokenFrom", () => {
+  it("takes only a well-formed token from `#t=`", async () => {
+    const { unsubscribeTokenFrom } = await import("./real-actions");
+    const token = `uns_${"a".repeat(43)}`;
+    expect(unsubscribeTokenFrom(`#t=${token}`)).toBe(token);
+    expect(unsubscribeTokenFrom("#t=uns_short")).toBeNull();
+    expect(unsubscribeTokenFrom("")).toBeNull();
   });
 });
