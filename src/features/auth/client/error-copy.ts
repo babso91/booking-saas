@@ -414,6 +414,23 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  atelier_access_expired: {
+    title: "Projet indisponible",
+    message: "Ce projet Atelier n’est pas accessible.",
+  },
+  atelier_quote_changed: {
+    title: "Devis modifié",
+    message: "Le devis de ce projet a changé : relis-le.",
+  },
+  atelier_out_of_scope: {
+    title: "Hors devis",
+    message:
+      "Cette demande sort du devis : un devis à part est nécessaire, rien n’est facturé sans ton accord.",
+  },
+  atelier_revision_limit_reached: {
+    title: "Corrections épuisées",
+    message: "Toutes les corrections incluses ont été utilisées.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {

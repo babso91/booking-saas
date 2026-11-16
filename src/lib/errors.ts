@@ -151,13 +151,23 @@ export const appErrorMessages = {
     "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
+  atelier_access_expired: "Ce projet Atelier n’est pas accessible.",
+  atelier_quote_changed: "Le devis de ce projet a changé : relisez-le.",
+  atelier_out_of_scope:
+    "Cette demande sort du devis : un devis à part est nécessaire, rien n’est facturé sans votre accord.",
+  atelier_revision_limit_reached:
+    "Toutes les corrections incluses ont été utilisées.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
 export type AppErrorCode = keyof typeof appErrorMessages;
 
 /** The existing record a write collided with (`client_email_conflict`). */
-export type AppErrorConflict = { clientId: string; displayName: string };
+// What a conflict points to: the client record that already has this email
+// (client_email_conflict), or her current site draft (stale_site_draft).
+export type AppErrorConflict =
+  | { clientId: string; displayName: string; currentRevision?: undefined }
+  | { currentRevision: number; clientId?: undefined; displayName?: undefined };
 
 export type AppError = {
   code: AppErrorCode;
@@ -295,6 +305,10 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_email_required: 409,
   context_changed: 409,
   auth_unavailable: 503,
+  atelier_access_expired: 404,
+  atelier_quote_changed: 409,
+  atelier_out_of_scope: 422,
+  atelier_revision_limit_reached: 409,
   internal: 500,
 };
 
