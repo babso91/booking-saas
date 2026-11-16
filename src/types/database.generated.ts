@@ -1202,7 +1202,7 @@ isOneToOne: false
                            },
 "get_public_business":
 { Args: { "p_slug": string }; Returns: {
-              "cancellation_policy": string,"currency": string,"description": string,"location": string,"logo_path": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"name": string,"slot_interval_minutes": number,"slug": string,"timezone": string,"today": string
+              "cancellation_policy": string,"currency": string,"description": string,"location": string,"logo_path": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"name": string,"slot_interval_minutes": number,"slug": string,"timezone": string,"today": string,"waitlist_enabled": boolean
             }[]
                            },
 "get_public_catalog":

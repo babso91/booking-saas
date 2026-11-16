@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
 import {
+  anonClient,
   bookingClient,
   createBusiness,
   createClientRecord,
@@ -83,12 +84,20 @@ beforeAll(async () => {
     durationMinutes: 60,
     priceCents: 5000,
   });
+  // The public page shows the button only once the list is open.
+  const publicOpen = async () =>
+    (
+      (await anonClient().rpc("get_public_business", { p_slug: business.slug }))
+        .data as { waitlist_enabled: boolean }[]
+    )[0]!.waitlist_enabled;
+  expect(await publicOpen()).toBe(false);
   await ok(
     call(owner.client, "set_waitlist_enabled", {
       p_business_id: business.id,
       p_enabled: true,
     }),
   );
+  expect(await publicOpen()).toBe(true);
 });
 
 /** A confirmed request for one window of `localDate`; its email. */

@@ -403,8 +403,9 @@ Actions existantes : `getClientHubAccessAction`, `setClientHubAccessAction`. Auc
 
 ## 12. Annuler ou déplacer un rendez-vous (M2-R04)
 
-Réponse de Cloud à `docs/CLIENT_HUB_ACTIONS_PROPOSAL.md` (PR #56). Les
-routes, les formes et les codes sont servis **tels que proposés**.
+Réponse de Cloud à la proposition de la PR #56 (son document est retiré :
+cette section le remplace). Les routes, les formes et les codes sont servis
+**tels que proposés**.
 Migration : `20261115120000_hub_appointment_actions.sql`.
 
 ### Politique
