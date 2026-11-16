@@ -414,6 +414,22 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  domain_taken: {
+    title: "Domaine déjà pris",
+    message: "Ce nom de domaine est déjà relié à un autre site.",
+  },
+  proof_expired: {
+    title: "Vérification expirée",
+    message: "Une nouvelle valeur est à publier dans ton DNS.",
+  },
+  domain_generation_changed: {
+    title: "Vérification relancée",
+    message: "Une nouvelle vérification a été lancée ailleurs. Recharge.",
+  },
+  domain_unavailable: {
+    title: "Domaine indisponible",
+    message: "Le domaine personnalisé n’est pas disponible pour le moment.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {
