@@ -151,6 +151,13 @@ export const appErrorMessages = {
     "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
+  coupon_refused: "Ce code ne peut pas être utilisé pour cette réservation.",
+  promotion_exhausted:
+    "Cette offre n’est plus disponible. Le nouveau total est à confirmer.",
+  coupon_code_taken: "Ce code existe déjà.",
+  promotion_not_found: "Cette promotion est introuvable.",
+  version_conflict:
+    "Ces informations ont changé entre-temps. Rechargez puis réessayez.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -295,6 +302,11 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_email_required: 409,
   context_changed: 409,
   auth_unavailable: 503,
+  coupon_refused: 422,
+  promotion_exhausted: 409,
+  coupon_code_taken: 409,
+  promotion_not_found: 404,
+  version_conflict: 409,
   internal: 500,
 };
 

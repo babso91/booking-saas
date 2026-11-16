@@ -414,6 +414,27 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  coupon_refused: {
+    title: "Code refusé",
+    message: "Ce code ne peut pas être utilisé pour cette réservation.",
+  },
+  promotion_exhausted: {
+    title: "Offre épuisée",
+    message:
+      "Cette offre n’est plus disponible. Le nouveau total est à confirmer.",
+  },
+  coupon_code_taken: {
+    title: "Code déjà pris",
+    message: "Ce code existe déjà dans ton établissement.",
+  },
+  promotion_not_found: {
+    title: "Promotion introuvable",
+    message: "Cette promotion n’existe pas ou plus.",
+  },
+  version_conflict: {
+    title: "Modifié entre-temps",
+    message: "Ces informations ont changé. Recharge puis réessaie.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {

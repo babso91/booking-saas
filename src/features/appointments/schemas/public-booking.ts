@@ -38,6 +38,14 @@ export const createPublicBookingSchema = z.object({
    */
   expectedPriceCents: z.number().int().min(0).max(2_147_483_647).optional(),
   expectedDurationMinutes: z.number().int().min(5).max(720).optional(),
+  /**
+   * Her quote for this slot (docs/OFFER_QUOTE_CONTRACT.md): the booking
+   * takes its total, checked again (`quote_changed`, `offer_unavailable`).
+   */
+  quoteRef: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{16}$/)
+    .optional(),
   phone: optionalText(
     z
       .string()

@@ -1064,7 +1064,7 @@ isOneToOne: false
 { Args: { "p_email": string,"p_expires_at": string,"p_note"?: string,"p_token_hash": string }; Returns: string
                            },
 "create_public_booking":
-{ Args: { "p_client_ip": unknown,"p_email": string,"p_expected_duration_minutes"?: number,"p_expected_price_cents"?: number,"p_first_name": string,"p_last_name"?: string,"p_option_choice_ids"?: (string)[],"p_phone"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
+{ Args: { "p_client_ip": unknown,"p_email": string,"p_expected_duration_minutes"?: number,"p_expected_price_cents"?: number,"p_first_name": string,"p_last_name"?: string,"p_option_choice_ids"?: (string)[],"p_phone"?: string,"p_quote_ref"?: string,"p_request_id": string,"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: {
               "appointment_id": string,"business_name": string,"currency": string,"duration_minutes": number,"ends_at": string,"options": Json,"price_cents": number,"replayed": boolean,"service_name": string,"starts_at": string,"status": string,"timezone": string
             }[]
                            },
@@ -1246,10 +1246,22 @@ isOneToOne: false
 "my_beta_access":
 { Args: Record<PropertyKey, never>; Returns: boolean
                            },
+"offer_quote":
+{ Args: { "p_client_ip": unknown,"p_coupon": string,"p_option_choice_ids": (string)[],"p_service_id": string,"p_slug": string,"p_starts_at": string }; Returns: Json
+                           },
 "pending_site_photo_purges":
 { Args: { "p_before": string,"p_limit": number }; Returns: {
               "asset_id": string,"attempts": number,"business_id": string,"scope": string
             }[]
+                           },
+"promotion_create":
+{ Args: { "p_business_id": string,"p_input": Json }; Returns: Json
+                           },
+"promotion_list":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"promotion_set_state":
+{ Args: { "p_business_id": string,"p_expected_version": number,"p_promotion_id": string,"p_state": string }; Returns: Json
                            },
 "public_site_photo":
 { Args: { "p_asset_id": string,"p_slug": string }; Returns: string

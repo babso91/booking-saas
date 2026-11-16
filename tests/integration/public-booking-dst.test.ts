@@ -467,8 +467,8 @@ describe("booking validates exactly what is listed (fixed now, production core)"
     // No client can choose its own "now".
     const { rows: grants } = await db.query<{ anon: boolean; auth: boolean }>(
       `select
-         has_function_privilege('anon', 'private.create_public_booking_at(timestamptz, text, uuid, timestamptz, text, text, text, text, uuid, inet, uuid[], integer, integer)', 'execute') as anon,
-         has_function_privilege('authenticated', 'private.create_public_booking_at(timestamptz, text, uuid, timestamptz, text, text, text, text, uuid, inet, uuid[], integer, integer)', 'execute') as auth`,
+         has_function_privilege('anon', 'private.create_public_booking_at(timestamptz, text, uuid, timestamptz, text, text, text, text, uuid, inet, uuid[], integer, integer, text)', 'execute') as anon,
+         has_function_privilege('authenticated', 'private.create_public_booking_at(timestamptz, text, uuid, timestamptz, text, text, text, text, uuid, inet, uuid[], integer, integer, text)', 'execute') as auth`,
     );
     expect(grants[0]).toEqual({ anon: false, auth: false });
   });
