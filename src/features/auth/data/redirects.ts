@@ -18,6 +18,7 @@ const ALLOWED_NEXT = new Set([
   "/onboarding",
   "/login",
   "/invitation",
+  "/equipe/invitation",
 ] as const);
 type AllowedNext = typeof ALLOWED_NEXT extends Set<infer T> ? T : never;
 

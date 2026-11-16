@@ -131,15 +131,3 @@ export async function revokeAccess(
   if (error) throw databaseException(error);
   return data as unknown as TeamMemberDto;
 }
-
-/** The signed-in person joins the business; returns its id. */
-export async function acceptInvite(
-  client: AppSupabaseClient,
-  token: string,
-): Promise<string> {
-  const { data, error } = await client.rpc("accept_team_invitation", {
-    p_token_hash: hashTeamInviteToken(token),
-  });
-  if (error) throw databaseException(error);
-  return data;
-}
