@@ -152,8 +152,13 @@ export const appErrorMessages = {
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
   unsubscribe_link_invalid: "Ce lien de désinscription n’est pas valide.",
-  consent_wording_not_validated:
-    "Le texte de consentement n’est pas encore validé : aucun accord ne peut être enregistré.",
+  consent_link_invalid: "Ce lien de confirmation n’est pas valide ou a expiré.",
+  consent_direct_only:
+    "Seule la cliente peut donner son accord, par exemple en réservant. Vous pouvez enregistrer un retrait.",
+  consent_text_conflict:
+    "Cette version de texte existe déjà avec un autre contenu.",
+  consent_text_not_draft: "Seul un texte en brouillon peut être activé.",
+  consent_text_changed: "Le texte a changé depuis sa relecture : relisez-le.",
   unsubscribe_undo_unavailable:
     "Ce changement ne peut plus être annulé depuis ce lien.",
   estimate_stale:
@@ -308,7 +313,11 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   context_changed: 409,
   auth_unavailable: 503,
   unsubscribe_link_invalid: 404,
-  consent_wording_not_validated: 409,
+  consent_link_invalid: 404,
+  consent_direct_only: 403,
+  consent_text_conflict: 409,
+  consent_text_not_draft: 409,
+  consent_text_changed: 409,
   unsubscribe_undo_unavailable: 409,
   estimate_stale: 409,
   quota_exceeded: 409,

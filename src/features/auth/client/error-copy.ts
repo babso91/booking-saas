@@ -414,10 +414,26 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
-  consent_wording_not_validated: {
-    title: "Texte non validé",
+  consent_text_conflict: {
+    title: "Version déjà prise",
+    message: "Cette version de texte existe déjà avec un autre contenu.",
+  },
+  consent_text_not_draft: {
+    title: "Texte non activable",
+    message: "Seul un texte en brouillon peut être activé.",
+  },
+  consent_text_changed: {
+    title: "Texte modifié",
+    message: "Le texte a changé depuis sa relecture : relis-le.",
+  },
+  consent_link_invalid: {
+    title: "Lien non valide",
+    message: "Ce lien de confirmation n’est pas valide ou a expiré.",
+  },
+  consent_direct_only: {
+    title: "Accord de la cliente requis",
     message:
-      "Le texte de consentement n’est pas encore validé : aucun accord ne peut être enregistré.",
+      "Seule la cliente peut donner son accord, par exemple en réservant. Tu peux enregistrer un retrait.",
   },
   unsubscribe_link_invalid: {
     title: "Lien non valide",

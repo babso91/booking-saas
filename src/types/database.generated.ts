@@ -847,6 +847,9 @@ isOneToOne: false
               "state": string,"user_id": string
             }[]
                            },
+"business_legal_profile":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
 "business_time":
 { Args: { "p_business_id": string,"p_dates"?: (string)[],"p_instants"?: (string)[],"p_locals"?: (string)[],"p_open_ranges"?: boolean }; Returns: Json
                            },
@@ -1059,6 +1062,33 @@ isOneToOne: false
                            },
 "confirm_site_asset":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string,"p_byte_size": number,"p_content_type": string,"p_height": number,"p_width": number }; Returns: undefined
+                           },
+"consent_confirm":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
+"consent_confirmation_read":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
+"consent_notice":
+{ Args: { "p_slug": string }; Returns: Json
+                           },
+"consent_request_from_booking":
+{ Args: { "p_appointment_id": string,"p_channels": Json,"p_information_version": string,"p_notice_version": string,"p_token_hash": string }; Returns: Json
+                           },
+"consent_text_activate":
+{ Args: { "p_expected_sha256": string,"p_note": string,"p_version": string }; Returns: Json
+                           },
+"consent_text_register":
+{ Args: { "p_body": string,"p_kind": string,"p_version": string }; Returns: Json
+                           },
+"consent_text_show":
+{ Args: { "p_version": string }; Returns: Json
+                           },
+"consent_texts_current":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"consent_texts_list":
+{ Args: Record<PropertyKey, never>; Returns: Json
                            },
 "create_beta_invitation":
 { Args: { "p_email": string,"p_expires_at": string,"p_note"?: string,"p_token_hash": string }; Returns: string
@@ -1291,6 +1321,9 @@ isOneToOne: false
               "asset_id": string,"attempts": number,"business_id": string,"scope": string
             }[]
                            },
+"platform_set_flag":
+{ Args: { "p_enabled": boolean,"p_key": string,"p_note": string }; Returns: Json
+                           },
 "public_site_photo":
 { Args: { "p_asset_id": string,"p_slug": string }; Returns: string
                            },
@@ -1361,6 +1394,9 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_limit"?: number,"p_query": string }; Returns: {
               "email": string,"first_name": string,"id": string,"last_name": string,"phone": string
             }[]
+                           },
+"set_business_legal_profile":
+{ Args: { "p_address": string,"p_business_id": string,"p_contact_email": string,"p_legal_name": string,"p_registration_number": string }; Returns: Json
                            },
 "set_service_options":
 { Args: { "p_business_id": string,"p_deleted_choice_ids"?: (string)[],"p_deleted_option_ids"?: (string)[],"p_expected_version": number,"p_options": Json,"p_service_id": string }; Returns: number

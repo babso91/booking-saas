@@ -20,35 +20,76 @@ listés en fin de document. Migration :
   avant sa dernière vérification. Un retrait validé avant cette vérification
   empêche donc l'envoi. Un message déjà remis au fournisseur peut partir.
 
+## Collecte V1 : l'accord vient de la cliente
+
+Les règles produit V1 (formulations retenues, qui **ne sont pas** une
+certification juridique) sont détaillées dans
+`docs/MARKETING_CONSENT_OPERATIONS.md`.
+
+- **Textes** : `getConsentTextsAction()` (sans connexion) renvoie
+  `{ collectionEnabled, texts: { email?, sms?, information?, notice? } }`,
+  chaque texte valant `{ version, body }`, les versions actives seulement.
+  - Si `collectionEnabled` est faux, ou si un texte manque, la page n'affiche
+    **aucune** case.
+  - Sinon, elle affiche deux cases indépendantes, jamais précochées, avec le
+    nom de l'établissement, le paragraphe `information` et un lien vers la
+    notice.
+- **Notice** (ces informations sont **publiques** : l'écran pro doit le
+  dire, l'adresse d'une micro-entreprise est souvent celle du domicile) :
+  `getConsentNoticeAction(slug)` renvoie
+  `{ businessName, controller, missing }`. Le modèle et les variables sont
+  dans `docs/consent/notice-template.md`. La propriétaire renseigne sa fiche
+  légale avec `getBusinessLegalProfileAction` et
+  `setBusinessLegalProfileAction` ; `missing` liste ce qui manque encore.
+- **Réservation** : `POST /api/bookings` accepte
+  `marketingConsent: { email?, sms?, versions: { email?, sms?, information, notice } }`.
+  - La réservation n'en dépend jamais.
+  - La réponse ajoute `marketingConsent: { status }`, qui vaut :
+    - `pending` : un lien de confirmation est parti à l'adresse de la fiche ;
+    - sinon la raison pour laquelle rien n'attend : `collection_off`,
+      `text_not_active`, `nothing_ticked`, `unreachable`, `email_unavailable`
+      (pas de transport d'e-mail), `already_requested` ou `failed`.
+- **Double opt-in.** Une réservation publique rattache la fiche par l'e-mail
+  saisi, sans prouver que la boîte est la sienne. Une case cochée ne prouve
+  donc rien seule.
+  - L'accord n'existe qu'**au clic sur le lien de confirmation**, envoyé à
+    l'adresse de la fiche et valable 7 jours.
+  - Sans ce clic, rien n'est enregistré : une désinscription antérieure
+    reste en place.
+  - Un accord SMS ne vaut que pour le numéro saisi avec cette réservation,
+    s'il est bien celui de la fiche.
+- **Page à créer côté UI : `/consentement/confirmer#t=cnf_…`.** Le jeton est
+  dans le fragment.
+  - `readConsentConfirmationAction(token)` renvoie
+    `{ businessName, channels, texts, confirmed }` et n'écrit rien.
+  - `confirmConsentAction(token)` renvoie
+    `{ status: "confirmed" | "already_confirmed" | "collection_off", businessName, channels? }`,
+    où `channels` vaut `{ email?: "granted" | "unreachable", sms?: … }`.
+  - Un lien inconnu ou expiré : `consent_link_invalid`.
+- **Preuve** de chaque accord : l'établissement, le canal, la date serveur,
+  l'origine (`booking`), le rendez-vous et sa demande, la confirmation
+  (`confirmedBy: "email_link"`), et les versions exactes de la case, de
+  l'information et de la notice, archivées en entier.
+- **Verrou de production** : la collecte est **éteinte**
+  (`marketing_consent_collection`). Seul l'administrateur de la plateforme
+  peut l'ouvrir, par la procédure, sur autorisation explicite.
+
 ## Côté pro (`src/features/marketing-consent/actions.ts`)
 
-| Action                                                                               | Réponse                     |
-| ------------------------------------------------------------------------------------ | --------------------------- |
-| `getClientConsentsAction({ clientId })`                                              | `ConsentDto[]` (email, sms) |
-| `setConsentAction({ clientId, purpose, channel, action, proofVersion?, requestId })` | `ConsentDto`                |
+| Action                                                                            | Réponse                     |
+| --------------------------------------------------------------------------------- | --------------------------- |
+| `getClientConsentsAction({ clientId })`                                           | `ConsentDto[]` (email, sms) |
+| `getClientConsentHistoryAction({ clientId })`                                     | `ConsentEventDto[]`         |
+| `setConsentAction({ clientId, purpose, channel, action: "withdraw", requestId })` | `ConsentDto`                |
 
-`ConsentDto = { purpose, channel, state: "unknown"|"granted"|"withdrawn", proofVersion, source, changedAt }`.
-
-**Texte validé obligatoire.** Un accord (`grant`) doit citer une version de
-texte enregistrée côté serveur comme validée
-(`private.consent_wording_versions`). Seul un opérateur l'enregistre, en SQL,
-après la validation juridique, jamais l'application. Sinon :
-`consent_wording_not_validated` (409), et rien n'est écrit. **Aucune version
-n'est enregistrée aujourd'hui : tout accord est refusé.** Un retrait reste
-toujours possible.
-
-**Historique** : `getClientConsentHistoryAction({ clientId })` renvoie
-`ConsentEventDto[]`, du plus récent au plus ancien. Chaque élément vaut
-`{ purpose, channel, state, proofVersion, source, businessName, occurredAt }`.
-`state` peut valoir `unknown` après une annulation qui ramène à l'état
-inconnu. Les `source` servies aujourd'hui sont `professional`,
-`unsubscribe_link` et `unsubscribe_undo`. `booking` et `client_hub` viendront
-avec leurs parcours.
-`action: "grant"` exige `proofVersion` (`[A-Za-z0-9._-]{1,64}`). Le rejeu par
-`requestId` : même commande, même réponse ; autre commande,
-`idempotency_conflict`. Tout membre de l'établissement peut agir (le rôle
-praticienne n'est pas encore ouvert). Une cliente d'un autre établissement
-donne `client_not_found`.
+- **Retrait seulement.** Une professionnelle enregistre le retrait que la
+  cliente lui a demandé. Un accord (`grant`) est refusé avec
+  `consent_direct_only` : elle ne peut pas déclarer qu'une cliente a accepté.
+- `ConsentEventDto` ajoute `informationVersion` et `noticeVersion`. Les
+  `source` possibles sont `booking`, `professional`, `unsubscribe_link` et
+  `unsubscribe_undo` (`client_hub` est prévu).
+- Tout membre de l'établissement peut agir. Une cliente d'un autre
+  établissement donne `client_not_found`.
 
 ## Page de désinscription (sans connexion)
 
