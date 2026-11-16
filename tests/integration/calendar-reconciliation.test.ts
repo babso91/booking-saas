@@ -963,7 +963,12 @@ describe("full scans", () => {
       page_token: expect.stringMatching(/^p\d+-4$/),
       claim_id: null,
     });
-    expect(paused.next_reconcile_at.getTime()).toBeLessThanOrEqual(Date.now());
+    // Due now, by the database's clock (the one that wrote it).
+    const { rows: due } = await db.query(
+      "select $1::timestamptz <= clock_timestamp() as due",
+      [paused.next_reconcile_at],
+    );
+    expect(due[0].due).toBe(true);
     expect(await reconcile({ maxPages: 4 })).toMatchObject({
       reconciled: 1,
       drifted: 0,
