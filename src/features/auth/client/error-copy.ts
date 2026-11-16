@@ -519,6 +519,7 @@ export const errorCopy: Record<
   version_conflict: {
     title: "Modifié entre-temps",
     message: "Ces informations ont changé. Recharge puis réessaie.",
+  quote_expired: {
   },
 };
 
