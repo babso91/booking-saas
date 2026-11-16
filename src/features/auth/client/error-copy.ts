@@ -521,6 +521,7 @@ export const errorCopy: Record<
     message: "Ces informations ont changé. Recharge puis réessaie.",
   quote_expired: {
   domain_taken: {
+  atelier_access_expired: {
   },
 };
 

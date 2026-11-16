@@ -839,6 +839,27 @@ isOneToOne: false
 "agenda_update_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_starts_at"?: string }; Returns: string
                            },
+"atelier_apply":
+{ Args: { "p_expected_draft_revision": number,"p_proposal_id": string,"p_request_id": string }; Returns: Json
+                           },
+"atelier_create_order":
+{ Args: { "p_amount_cents": number,"p_business_id": string,"p_included_corrections": number,"p_scopes": (string)[],"p_title": string }; Returns: string
+                           },
+"atelier_grant_operator":
+{ Args: { "p_days": number,"p_operator_label": string,"p_order_id": string }; Returns: string
+                           },
+"atelier_read":
+{ Args: { "p_order_id": string }; Returns: Json
+                           },
+"atelier_request_correction":
+{ Args: { "p_proposal_id": string,"p_request_id": string,"p_scope": string }; Returns: Json
+                           },
+"atelier_request_rebase":
+{ Args: { "p_proposal_id": string,"p_request_id": string }; Returns: Json
+                           },
+"atelier_submit_proposal":
+{ Args: { "p_base_draft_revision": number,"p_changes": (string)[],"p_config": Json,"p_grant_id": string,"p_schema_version": number }; Returns: string
+                           },
 "begin_site_photo_conversion":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: string
                            },

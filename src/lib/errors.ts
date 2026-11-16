@@ -169,7 +169,11 @@ export const appErrorMessages = {
 export type AppErrorCode = keyof typeof appErrorMessages;
 
 /** The existing record a write collided with (`client_email_conflict`). */
-export type AppErrorConflict = { clientId: string; displayName: string };
+// What a conflict points to: the client record that already has this email
+// (client_email_conflict), or her current site draft (stale_site_draft).
+export type AppErrorConflict =
+  | { clientId: string; displayName: string; currentRevision?: undefined }
+  | { currentRevision: number; clientId?: undefined; displayName?: undefined };
 
 export type AppError = {
   code: AppErrorCode;
