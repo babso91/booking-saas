@@ -70,7 +70,7 @@ describe("OnboardingSuccess (/app/welcome)", () => {
         .getByRole("link", { name: /Configurer mes horaires/ })
         .getAttribute("href"),
     ).toBe("/app/settings/hours");
-    expect(screen.getByText("1 étape sur 2 terminée")).toBeTruthy();
+    expect(screen.getByText("2 étapes sur 3 terminées")).toBeTruthy();
 
     rerender(
       <OnboardingSuccess
@@ -83,6 +83,19 @@ describe("OnboardingSuccess (/app/welcome)", () => {
         .getByRole("link", { name: /Accéder à mon agenda/ })
         .getAttribute("href"),
     ).toBe("/app");
-    expect(screen.getByText("2 étapes sur 2 terminées")).toBeTruthy();
+    expect(screen.getByText("3 étapes sur 3 terminées")).toBeTruthy();
+  });
+
+  it("never starts her at zero: her space already counts as done", () => {
+    render(
+      <OnboardingSuccess
+        businessName="Studio Mila"
+        progress={{ activeServices: 0, openingRanges: 0 }}
+      />,
+    );
+    expect(screen.getByText("1 étape sur 3 terminée")).toBeTruthy();
+    expect(
+      screen.getByText("Ton compte et ton lien de réservation sont prêts"),
+    ).toBeTruthy();
   });
 });
