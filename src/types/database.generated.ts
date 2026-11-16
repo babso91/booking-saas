@@ -132,13 +132,13 @@ isOneToOne: true
                   ]
                 },"business_settings": {
                   Row: {
-                    "automatic_reactivation_enabled": boolean,"buffer_minutes": number,"business_id": string,"cancellation_lead_minutes": number | null,"created_at": string,"currency": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"reactivation_after_days": number,"reschedule_lead_minutes": number | null,"slot_interval_minutes": number,"updated_at": string
+                    "automatic_reactivation_enabled": boolean,"buffer_minutes": number,"business_id": string,"cancellation_lead_minutes": number | null,"created_at": string,"currency": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"reactivation_after_days": number,"reschedule_lead_minutes": number | null,"slot_interval_minutes": number,"updated_at": string,"waitlist_enabled": boolean
                   }
                   Insert: {
-                    "automatic_reactivation_enabled"?: boolean,"buffer_minutes"?: number,"business_id": string,"cancellation_lead_minutes"?: number | null,"created_at"?: string,"currency"?: string,"maximum_booking_advance_days"?: number,"minimum_booking_notice_minutes"?: number,"reactivation_after_days"?: number,"reschedule_lead_minutes"?: number | null,"slot_interval_minutes"?: number,"updated_at"?: string
+                    "automatic_reactivation_enabled"?: boolean,"buffer_minutes"?: number,"business_id": string,"cancellation_lead_minutes"?: number | null,"created_at"?: string,"currency"?: string,"maximum_booking_advance_days"?: number,"minimum_booking_notice_minutes"?: number,"reactivation_after_days"?: number,"reschedule_lead_minutes"?: number | null,"slot_interval_minutes"?: number,"updated_at"?: string,"waitlist_enabled"?: boolean
                   }
                   Update: {
-                    "automatic_reactivation_enabled"?: boolean,"buffer_minutes"?: number,"business_id"?: string,"cancellation_lead_minutes"?: number | null,"created_at"?: string,"currency"?: string,"maximum_booking_advance_days"?: number,"minimum_booking_notice_minutes"?: number,"reactivation_after_days"?: number,"reschedule_lead_minutes"?: number | null,"slot_interval_minutes"?: number,"updated_at"?: string
+                    "automatic_reactivation_enabled"?: boolean,"buffer_minutes"?: number,"business_id"?: string,"cancellation_lead_minutes"?: number | null,"created_at"?: string,"currency"?: string,"maximum_booking_advance_days"?: number,"minimum_booking_notice_minutes"?: number,"reactivation_after_days"?: number,"reschedule_lead_minutes"?: number | null,"slot_interval_minutes"?: number,"updated_at"?: string,"waitlist_enabled"?: boolean
                   }
                   Relationships: [
                     {
@@ -1205,7 +1205,7 @@ isOneToOne: false
                            },
 "get_public_business":
 { Args: { "p_slug": string }; Returns: {
-              "cancellation_policy": string,"currency": string,"description": string,"location": string,"logo_path": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"name": string,"slot_interval_minutes": number,"slug": string,"timezone": string,"today": string
+              "cancellation_policy": string,"currency": string,"description": string,"location": string,"logo_path": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"name": string,"slot_interval_minutes": number,"slug": string,"timezone": string,"today": string,"waitlist_enabled": boolean
             }[]
                            },
 "get_public_catalog":
@@ -1356,6 +1356,9 @@ isOneToOne: false
 "set_site_plan":
 { Args: { "p_business_id": string,"p_plan": string }; Returns: undefined
                            },
+"set_waitlist_enabled":
+{ Args: { "p_business_id": string,"p_enabled": boolean }; Returns: boolean
+                           },
 "site_photo_conversion_writable":
 { Args: { "p_asset_id": string,"p_business_id": string }; Returns: boolean
                            },
@@ -1369,6 +1372,21 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_category_id": string,"p_expected_version": number,"p_name"?: string,"p_visible"?: boolean }; Returns: {
               "display_order": number,"id": string,"name": string,"version": number,"visible": boolean
             }[]
+                           },
+"waitlist_claim":
+{ Args: { "p_client_ip": unknown,"p_expected_quote_revision": string,"p_expected_version": number,"p_offer_id": string,"p_request_id": string,"p_token_hash": string }; Returns: Json
+                           },
+"waitlist_confirm_request":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
+"waitlist_create_request":
+{ Args: { "p_any_time": boolean,"p_client_ip": unknown,"p_confirm_token_hash": string,"p_email": string,"p_first_name": string,"p_option_choice_ids": (string)[],"p_request_id": string,"p_service_id": string,"p_slug": string,"p_windows": Json }; Returns: Json
+                           },
+"waitlist_match":
+{ Args: { "p_budget"?: number }; Returns: Json
+                           },
+"waitlist_offer":
+{ Args: { "p_offer_id": string,"p_token_hash": string }; Returns: Json
                            }
           }
           Enums: {

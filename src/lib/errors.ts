@@ -155,6 +155,14 @@ export const appErrorMessages = {
     "Le délai pour modifier ce rendez-vous depuis votre espace est passé. Contactez l’établissement.",
   policy_unavailable:
     "Ce rendez-vous ne peut pas être modifié depuis votre espace. Contactez l’établissement.",
+  waitlist_unavailable:
+    "La liste d’attente n’est pas ouverte pour cet établissement.",
+  waitlist_request_not_found:
+    "Ce lien n’est plus valable. Inscrivez-vous de nouveau si besoin.",
+  waitlist_offer_not_found: "Offre introuvable.",
+  offer_expired: "Cette offre a expiré.",
+  offer_unavailable: "Ce créneau vient d’être réservé.",
+  stale_offer: "Cette offre a changé. Relisez-la.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -301,6 +309,12 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   auth_unavailable: 503,
   policy_cutoff_passed: 409,
   policy_unavailable: 409,
+  waitlist_unavailable: 409,
+  waitlist_request_not_found: 404,
+  waitlist_offer_not_found: 404,
+  offer_expired: 409,
+  offer_unavailable: 409,
+  stale_offer: 409,
   internal: 500,
 };
 

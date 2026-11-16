@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 
 import { runBusinessAction } from "@/features/businesses/actions/run-business-action";
 import {
@@ -31,6 +32,32 @@ export async function setBookingPolicyAction(input: unknown) {
       });
       if (error) throw databaseException(error);
       return saved as BookingPolicy;
+    },
+  );
+  if (result.ok) revalidatePath("/app", "layout");
+  return result;
+}
+
+// Opens or closes her waiting list. Closing stops every open offer.
+export async function setWaitlistEnabledAction(input: unknown) {
+  const result = await runBusinessAction(
+    z.object({ enabled: z.boolean() }),
+    input,
+    async ({ client, businessId }, data) => {
+      const { data: saved, error } = await (
+        client.rpc as unknown as (
+          fn: string,
+          args: object,
+        ) => Promise<{
+          data: unknown;
+          error: Parameters<typeof databaseException>[0] | null;
+        }>
+      )("set_waitlist_enabled", {
+        p_business_id: businessId,
+        p_enabled: data.enabled,
+      });
+      if (error) throw databaseException(error);
+      return { enabled: saved === true };
     },
   );
   if (result.ok) revalidatePath("/app", "layout");
