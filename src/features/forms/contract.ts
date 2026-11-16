@@ -1,7 +1,7 @@
 // A form her client fills in before a visit (R3-02), as served
 // (docs/CLIENT_FORMS_CONTRACT.md, Hub routes). The screen takes its actions
-// as a whole; it is mounted in her space by the Hub's own PR (the Hub
-// screens are not on this branch); the preview and the tests give it an
+// as a whole: her space gives it the Hub routes under the Hub's account
+// rule (client-hub/components/hub-forms.tsx), the preview and the tests an
 // in-memory server.
 //
 // The server owns everything that matters: who may open the form (a Hub
