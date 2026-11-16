@@ -51,6 +51,7 @@ const loyaltyData = z.object({
     "manual_adjustment",
     "reward_redeemed",
     "correction",
+    "referral_reward",
   ]),
   pointsDelta: z.number().int(),
   reason: z.string(),

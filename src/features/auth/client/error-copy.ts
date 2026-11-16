@@ -513,6 +513,7 @@ export const errorCopy: Record<
   campaign_closed: {
     title: "Campagne terminée",
     message: "Cette campagne ne peut plus changer d’état.",
+  referral_unavailable: {
   },
   version_conflict: {
     title: "Modifié entre-temps",

@@ -64,6 +64,7 @@ const entryTitles: Record<LoyaltyLedgerEntryDto["type"], string> = {
   manual_adjustment: "Ajustement manuel",
   reward_redeemed: "Récompense attribuée",
   correction: "Correction",
+  referral_reward: "Parrainage",
 };
 
 export function entryTitle(entry: LoyaltyLedgerEntryDto) {
@@ -84,6 +85,7 @@ export type EntryGroup = "earned" | "spent" | "corrections";
 
 export function entryGroup(entry: LoyaltyLedgerEntryDto): EntryGroup {
   if (entry.type === "appointment_completed") return "earned";
+  if (entry.type === "referral_reward") return "earned";
   if (entry.type === "reward_redeemed") return "spent";
   if (entry.type === "manual_adjustment")
     return entry.pointsDelta > 0 ? "earned" : "spent";

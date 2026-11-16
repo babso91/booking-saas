@@ -10,7 +10,8 @@ export type LoyaltyEntryType =
   | "appointment_completed"
   | "manual_adjustment"
   | "reward_redeemed"
-  | "correction";
+  | "correction"
+  | "referral_reward";
 
 export type LoyaltyProgramDto = {
   active: boolean;

@@ -93,6 +93,7 @@ const domainMessages: Record<string, AppErrorCode> = {
   consent_text_not_draft: "consent_text_not_draft",
   consent_text_changed: "consent_text_changed",
   unsubscribe_undo_unavailable: "unsubscribe_undo_unavailable",
+  referral_unavailable: "referral_unavailable",
   rate_limited: "rate_limited",
   forbidden: "forbidden",
   unauthenticated: "unauthenticated",

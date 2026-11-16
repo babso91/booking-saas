@@ -52,6 +52,7 @@ export const loyaltyTitles: Record<LoyaltyEntryType, string> = {
   manual_adjustment: "Ajustement de points",
   reward_redeemed: "Récompense échangée",
   correction: "Correction de points",
+  referral_reward: "Points de parrainage",
 };
 
 /** "+10 points", "−100 points" (a real minus sign). */
