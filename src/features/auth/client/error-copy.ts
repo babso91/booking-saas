@@ -449,6 +449,38 @@ export const errorCopy: Record<
     message:
       "Ce compte appartient déjà à une activité. Utilise une autre adresse.",
   },
+  form_expired: {
+    title: "Formulaire expiré",
+    message: "La date pour remplir ce formulaire est passée.",
+  },
+  form_revoked: {
+    title: "Formulaire retiré",
+    message: "Ce formulaire n’est plus demandé.",
+  },
+  stale_form: {
+    title: "Formulaire modifié",
+    message: "Ce formulaire a changé. Relis-le avant de l’envoyer.",
+  },
+  field_required: {
+    title: "Réponse manquante",
+    message: "Cette réponse est obligatoire.",
+  },
+  invalid_template: {
+    title: "Modèle incomplet",
+    message: "Vérifie les questions, les choix et leurs conditions.",
+  },
+  form_already_submitted: {
+    title: "Déjà rempli",
+    message: "Ce formulaire vient d’être rempli.",
+  },
+  form_already_assigned: {
+    title: "Déjà demandé",
+    message: "Ce formulaire est déjà demandé pour ce rendez-vous.",
+  },
+  form_limit_reached: {
+    title: "Limite atteinte",
+    message: "Tu as atteint le nombre maximal de modèles de formulaire.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {

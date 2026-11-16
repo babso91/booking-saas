@@ -163,6 +163,16 @@ export const appErrorMessages = {
   access_exists: "Cette personne a déjà accès au logiciel.",
   team_limit_reached: "Votre équipe a atteint le nombre maximal de profils.",
   already_member: "Ce compte appartient déjà à une activité.",
+  form_expired: "Ce formulaire n’est plus à remplir : la date est passée.",
+  form_revoked: "Ce formulaire n’est plus demandé.",
+  stale_form: "Ce formulaire a changé. Relisez-le avant de l’envoyer.",
+  field_required: "Cette réponse est obligatoire.",
+  invalid_template:
+    "Ce modèle n’est pas valide : vérifiez les questions et leurs conditions.",
+  form_already_submitted: "Ce formulaire a déjà été rempli.",
+  form_already_assigned: "Ce formulaire est déjà demandé pour ce rendez-vous.",
+  form_limit_reached:
+    "Vous avez atteint le nombre maximal de modèles de formulaire.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -315,6 +325,14 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   access_exists: 409,
   team_limit_reached: 409,
   already_member: 409,
+  form_expired: 410,
+  form_revoked: 409,
+  stale_form: 409,
+  field_required: 422,
+  invalid_template: 422,
+  form_already_submitted: 409,
+  form_already_assigned: 409,
+  form_limit_reached: 409,
   internal: 500,
 };
 
