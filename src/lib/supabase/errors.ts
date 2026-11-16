@@ -57,6 +57,7 @@ const domainMessages: Record<string, AppErrorCode> = {
   campaign_closed: "campaign_closed",
   version_conflict: "version_conflict",
   unsubscribe_link_invalid: "unsubscribe_link_invalid",
+  consent_wording_not_validated: "consent_wording_not_validated",
   unsubscribe_undo_unavailable: "unsubscribe_undo_unavailable",
   rate_limited: "rate_limited",
   forbidden: "forbidden",

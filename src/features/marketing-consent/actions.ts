@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { runBusinessAction } from "@/features/businesses/actions/run-business-action";
 import {
+  getClientConsentHistory,
   getClientConsents,
   setConsent,
   unsubscribe,
@@ -32,10 +33,21 @@ export async function getClientConsentsAction(input: unknown) {
   );
 }
 
+/** Her register for this business, newest first (every change, never erased). */
+export async function getClientConsentHistoryAction(input: unknown) {
+  return runBusinessAction(
+    clientConsentsSchema,
+    input,
+    ({ client, businessId }, { clientId }) =>
+      getClientConsentHistory(client, businessId, clientId),
+  );
+}
+
 /**
  * She agreed (`grant`, with `proofVersion`: the wording she was shown) or
  * refused (`withdraw`), as told to the professional. Idempotent by
- * `requestId`.
+ * `requestId`. A grant needs a wording validated on the server
+ * (`consent_wording_not_validated` otherwise; none is yet).
  */
 export async function setConsentAction(input: unknown) {
   const result = await runBusinessAction(

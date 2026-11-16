@@ -54,6 +54,14 @@ beforeAll(async () => {
   stranger = await createProfessional("consent-stranger");
   business = await createBusiness(owner.userId);
   otherBusiness = await createBusiness(stranger.userId);
+  // The wordings these tests grant with, as an operator registers them after
+  // legal validation.
+  await db.query(
+    `insert into private.consent_wording_versions (version, purpose, text_sha256)
+     select v, 'marketing', repeat('a', 64) from unnest($1::text[]) v
+     on conflict do nothing`,
+    [["salon-2026-11", "v1", "web-v2"]],
+  );
 });
 
 const newClient = (b: TestBusiness = business, email?: string) =>
@@ -153,6 +161,48 @@ describe("consent, the professional's side", () => {
     });
     // SMS untouched.
     expect((await consents(clientId))[1]!.state).toBe("unknown");
+  });
+
+  it("refuses a wording not validated on the server, and keeps the whole register", async () => {
+    const clientId = await newClient();
+    const refused = await setConsent(clientId, {
+      action: "grant",
+      proofVersion: "brouillon-non-valide",
+    });
+    expect(refused.error?.message).toBe("consent_wording_not_validated");
+    expect(await eventCount(clientId)).toBe(0);
+
+    await setConsent(clientId, { action: "grant", proofVersion: "v1" });
+    await setConsent(clientId, { action: "withdraw" });
+    const { data, error } = await call(
+      owner.client,
+      "marketing_client_consent_history",
+      {
+        p_business_id: business.id,
+        p_client_id: clientId,
+      },
+    );
+    expect(error).toBeNull();
+    expect(data).toEqual([
+      expect.objectContaining({
+        state: "withdrawn",
+        source: "professional",
+        proofVersion: null,
+      }),
+      expect.objectContaining({
+        state: "granted",
+        proofVersion: "v1",
+        channel: "email",
+      }),
+    ]);
+    expect(
+      (
+        await call(stranger.client, "marketing_client_consent_history", {
+          p_business_id: business.id,
+          p_client_id: clientId,
+        })
+      ).error?.message,
+    ).toBe("forbidden");
   });
 
   it("is reached only by the business's members, for its own customers", async () => {

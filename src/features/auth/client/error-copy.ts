@@ -414,6 +414,11 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  consent_wording_not_validated: {
+    title: "Texte non validé",
+    message:
+      "Le texte de consentement n’est pas encore validé : aucun accord ne peut être enregistré.",
+  },
   unsubscribe_link_invalid: {
     title: "Lien non valide",
     message: "Ce lien de désinscription n’est pas valide.",

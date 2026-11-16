@@ -28,6 +28,22 @@ listés en fin de document. Migration :
 | `setConsentAction({ clientId, purpose, channel, action, proofVersion?, requestId })` | `ConsentDto`                |
 
 `ConsentDto = { purpose, channel, state: "unknown"|"granted"|"withdrawn", proofVersion, source, changedAt }`.
+
+**Texte validé obligatoire.** Un accord (`grant`) doit citer une version de
+texte enregistrée côté serveur comme validée
+(`private.consent_wording_versions`). Seul un opérateur l'enregistre, en SQL,
+après la validation juridique, jamais l'application. Sinon :
+`consent_wording_not_validated` (409), et rien n'est écrit. **Aucune version
+n'est enregistrée aujourd'hui : tout accord est refusé.** Un retrait reste
+toujours possible.
+
+**Historique** : `getClientConsentHistoryAction({ clientId })` renvoie
+`ConsentEventDto[]`, du plus récent au plus ancien. Chaque élément vaut
+`{ purpose, channel, state, proofVersion, source, businessName, occurredAt }`.
+`state` peut valoir `unknown` après une annulation qui ramène à l'état
+inconnu. Les `source` servies aujourd'hui sont `professional`,
+`unsubscribe_link` et `unsubscribe_undo`. `booking` et `client_hub` viendront
+avec leurs parcours.
 `action: "grant"` exige `proofVersion` (`[A-Za-z0-9._-]{1,64}`). Le rejeu par
 `requestId` : même commande, même réponse ; autre commande,
 `idempotency_conflict`. Tout membre de l'établissement peut agir (le rôle
