@@ -7,6 +7,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -133,6 +134,18 @@ export function AppearanceProvider({
 /** Forgets the old device's look: asked once, the answer is hers. */
 function forgetDeviceAppearance() {
   document.cookie = `${APPEARANCE_COOKIE}=; Path=/app; Max-Age=0; SameSite=Lax`;
+  document.cookie = `${DISCOVERY_MARKER_COOKIE}=; Path=/app; Max-Age=0; SameSite=Lax`;
+}
+
+/**
+ * The device's look was chosen in the discovery, just before her sign-up
+ * (features/discovery/keep.ts): she already said it is hers.
+ */
+const DISCOVERY_MARKER_COOKIE = "dash_appearance_origin";
+function chosenInDiscovery() {
+  return document.cookie
+    .split("; ")
+    .includes(`${DISCOVERY_MARKER_COOKIE}=discovery`);
 }
 
 /** The professional area, for her account. */
@@ -234,12 +247,29 @@ export function AccountAppearanceProvider({
       ? area.deviceAppearanceOffer
       : null;
 
+  // Chosen in the discovery: kept without asking again, once. Only an
+  // account that never saved a preference is offered it at all.
+  // If that fails, the question is asked as usual.
+  const autoKept = useRef(false);
+  const [autoKeeping, setAutoKeeping] = useState(false);
+  useEffect(() => {
+    if (!offer || autoKept.current || !chosenInDiscovery()) return;
+    autoKept.current = true;
+    setAutoKeeping(true);
+    void driver.importDevice(offer).then((kept) => {
+      setAutoKeeping(false);
+      if (!kept) return;
+      forgetDeviceAppearance();
+      setOfferSettled(true);
+    });
+  }, [driver, offer]);
+
   return (
     <AppearanceFrame value={value}>
       {children}
       <AccountNotice
         status={view.status}
-        offer={offer}
+        offer={autoKeeping ? null : offer}
         received={receivedWaits ? (received as StyleId) : null}
         onApply={() => driver.applyReceivedStyle()}
         importing={view.importing}

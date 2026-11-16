@@ -440,7 +440,7 @@ function Choice({
 }
 
 /** A thumbnail of each style: its ground, its big moment, its type. */
-function StyleSwatch({ id }: { id: StyleId }) {
+export function StyleSwatch({ id }: { id: StyleId }) {
   if (id === "carnet") {
     const palette = carnetPapers.atelier.light;
     return (

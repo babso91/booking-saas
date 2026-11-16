@@ -122,6 +122,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.history.pushState({}, "", "/app/settings/appearance");
   document.cookie = "dash_appearance=; Max-Age=0; Path=/app";
+  document.cookie = "dash_appearance_origin=; Max-Age=0; Path=/app";
 });
 afterEach(cleanup);
 
@@ -515,5 +516,40 @@ describe("an old device's look", () => {
     render(<Page of={area({}, 0, M1, look)} />);
     await user.click(radio(/^Sombre/));
     await vi.waitFor(() => expect(question()).toBeNull());
+  });
+
+  it("chosen in the discovery before her sign-up: kept without asking again", async () => {
+    document.cookie = "dash_appearance_origin=discovery; Path=/app";
+    actions.importDeviceAppearanceAction.mockResolvedValue(answer(look, 1));
+    render(<Page of={area({}, 0, M1, look)} />);
+    expect(question()).toBeNull();
+    await vi.waitFor(() =>
+      expect(actions.importDeviceAppearanceAction).toHaveBeenCalledTimes(1),
+    );
+    expect(actions.importDeviceAppearanceAction).toHaveBeenCalledWith({
+      context: onWire(),
+      appearance: look,
+    });
+    await vi.waitFor(() => expect(style()).toBe("ecrin"));
+    expect(question()).toBeNull();
+    expect(document.cookie).not.toContain("dash_appearance");
+  });
+
+  it("chosen in the discovery but not kept: asked as usual", async () => {
+    document.cookie = "dash_appearance_origin=discovery; Path=/app";
+    actions.importDeviceAppearanceAction.mockRejectedValue(new Error("x"));
+    render(<Page of={area({}, 0, M1, look)} />);
+    await vi.waitFor(() => expect(question()).not.toBeNull());
+    expect(actions.importDeviceAppearanceAction).toHaveBeenCalledTimes(1);
+    expect(style()).toBe("classique");
+  });
+
+  it("an account that has its preferences: the discovery changes nothing", async () => {
+    document.cookie = "dash_appearance_origin=discovery; Path=/app";
+    render(<Page of={area({ style: "studio" }, 3, M1, null)} />);
+    await act(async () => {});
+    expect(actions.importDeviceAppearanceAction).not.toHaveBeenCalled();
+    expect(actions.saveMyPreferencesAction).not.toHaveBeenCalled();
+    expect(style()).toBe("studio");
   });
 });
