@@ -1,9 +1,9 @@
-// Rebooking and reactivation campaigns (R4-01). PROPOSED contract
-// (docs/GROWTH_CAMPAIGNS_PROPOSAL.md): no server serves it yet, and no
-// real message can leave: the transport is simulated until consent proof,
-// unsubscribe, sender identity and budget are approved. The screens take
-// their actions as a whole; only the design preview and the tests give
-// them an in-memory server.
+// Rebooking and reactivation campaigns (R4-01), as served
+// (docs/GROWTH_CAMPAIGNS_CONTRACT.md). No real message can leave: the
+// transport is simulated until consent proof, sender identity and budget
+// are approved. The screens take their actions as a whole: the
+// professional's area gives them the real ones (real-actions.ts), the
+// design preview and the tests an in-memory server.
 
 export type Channel = "email" | "sms";
 
@@ -27,7 +27,11 @@ export type SuppressionReason =
   | "no_consent"
   | "unreachable"
   | "recent_contact"
-  | "last_visit_not_completed";
+  | "last_visit_not_completed"
+  /** At sending only: she no longer matches (she came back meanwhile). */
+  | "no_longer_matching"
+  /** At sending only: the campaign's ceiling was reached. */
+  | "budget_exhausted";
 
 export type AudienceEstimate = {
   estimateId: string;
@@ -108,6 +112,8 @@ export const reasonLabels: Record<SuppressionReason, string> = {
   unreachable: "n’ont pas de coordonnée pour ce canal",
   recent_contact: "ont été contactées récemment",
   last_visit_not_completed: "dernière visite annulée ou manquée",
+  no_longer_matching: "ne correspondaient plus au moment de l’envoi",
+  budget_exhausted: "n’ont pas été contactées : plafond atteint",
 };
 
 /** SMS units for a message (GSM 160 / 153 per part; others 70 / 67). */

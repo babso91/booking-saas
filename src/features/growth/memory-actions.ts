@@ -9,7 +9,7 @@ import {
   type SuppressionReason,
 } from "./contract";
 
-// An in-memory server of the PROPOSED campaign contract, for the preview
+// An in-memory server of the campaign contract, for the preview
 // and the tests only. A fixed clock and fictional clients; nothing is
 // sent anywhere, ever.
 

@@ -7,7 +7,7 @@ import { memoryCampaigns } from "./memory-actions";
 
 /**
  * Campaigns on fictional clients, kept in this page's memory only: to
- * review the screens before the backend exists. Nothing is sent, ever.
+ * show every state without an account. Nothing is sent, ever.
  * Never part of a real page.
  */
 export function CampaignPreview() {

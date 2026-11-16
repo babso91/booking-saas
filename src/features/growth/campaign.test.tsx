@@ -12,8 +12,8 @@ import { CampaignPlanner, CampaignStatus } from "./campaign-planner";
 import { smsUnits, type CampaignActions, type CampaignDto } from "./contract";
 import { memoryCampaigns, sampleClients } from "./memory-actions";
 
-// Campaigns against an in-memory server of the PROPOSED contract
-// (docs/GROWTH_CAMPAIGNS_PROPOSAL.md). Nothing is ever sent: the real
+// Campaigns against an in-memory server of the contract
+// (docs/GROWTH_CAMPAIGNS_CONTRACT.md). Nothing is ever sent: the real
 // guarantees (consent lock, budget, delivery keys) are the backend's.
 
 afterEach(cleanup);
