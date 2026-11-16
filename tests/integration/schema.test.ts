@@ -88,6 +88,10 @@ describe("migrated schema", () => {
     // The catalogue and the quote are read-only projections of what is
     // bookable online (service_catalog migration).
     expect(rows.map((row) => row.proname)).toEqual([
+      // What the booking page shows about marketing consent: the active
+      // texts and the business's notice details (marketing_consent).
+      "consent_notice",
+      "consent_texts_current",
       "get_available_slots",
       "get_public_availability",
       "get_public_business",

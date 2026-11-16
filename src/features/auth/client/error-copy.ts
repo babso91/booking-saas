@@ -496,6 +496,7 @@ export const errorCopy: Record<
   invitation_email_unavailable: {
     title: "Invitation non envoyée",
     message: "L’e-mail d’invitation n’a pas pu partir. Réessaie plus tard.",
+  consent_text_conflict: {
   },
 };
 
