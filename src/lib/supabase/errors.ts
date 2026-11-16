@@ -52,6 +52,7 @@ const domainMessages: Record<string, AppErrorCode> = {
   appointment_not_editable: "appointment_not_editable",
   idempotency_conflict: "idempotency_conflict",
   unsubscribe_link_invalid: "unsubscribe_link_invalid",
+  consent_wording_not_validated: "consent_wording_not_validated",
   unsubscribe_undo_unavailable: "unsubscribe_undo_unavailable",
   rate_limited: "rate_limited",
   forbidden: "forbidden",

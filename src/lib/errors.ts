@@ -152,6 +152,8 @@ export const appErrorMessages = {
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
   unsubscribe_link_invalid: "Ce lien de désinscription n’est pas valide.",
+  consent_wording_not_validated:
+    "Le texte de consentement n’est pas encore validé : aucun accord ne peut être enregistré.",
   unsubscribe_undo_unavailable:
     "Ce changement ne peut plus être annulé depuis ce lien.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
@@ -299,6 +301,7 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   context_changed: 409,
   auth_unavailable: 503,
   unsubscribe_link_invalid: 404,
+  consent_wording_not_validated: 409,
   unsubscribe_undo_unavailable: 409,
   internal: 500,
 };

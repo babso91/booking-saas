@@ -66,6 +66,19 @@ create table private.unsubscribe_links (
 
 create index unsubscribe_links_client_idx on private.unsubscribe_links (client_id);
 
+-- The wordings validated (legal review) for collecting consent: a grant
+-- must name one. Registered by an operator (SQL, after validation), never
+-- from the application. None yet: every grant is refused.
+create table private.consent_wording_versions (
+  version text primary key check (version ~ '^[A-Za-z0-9._-]{1,64}$'),
+  purpose text not null check (purpose in ('marketing')),
+  -- SHA-256 of the exact text shown, for the record.
+  text_sha256 text not null check (text_sha256 ~ '^[0-9a-f]{64}$'),
+  validated_at timestamptz not null default pg_catalog.now(),
+  note text check (note is null or pg_catalog.char_length(note) <= 200)
+);
+
+revoke all on table private.consent_wording_versions from public, anon, authenticated;
 revoke all on table private.consent_events from public, anon, authenticated;
 revoke all on table private.unsubscribe_links from public, anon, authenticated;
 
@@ -215,6 +228,13 @@ begin
   if p_request_id is null then
     raise exception using errcode = '22023', message = 'invalid_input', hint = 'requestId';
   end if;
+  -- Only a validated wording proves a consent (none validated yet: refused).
+  if p_action = 'grant' and not exists (
+    select 1 from private.consent_wording_versions w
+    where w.version = p_proof_version and w.purpose = p_purpose
+  ) then
+    raise exception using errcode = 'P0001', message = 'consent_wording_not_validated', hint = 'proofVersion';
+  end if;
   v_state := case p_action when 'grant' then 'granted' else 'withdrawn' end;
   v_fingerprint := pg_catalog.md5(pg_catalog.concat_ws('|',
     p_client_id, p_purpose, p_channel, v_state,
@@ -243,6 +263,35 @@ begin
 end;
 $$;
 
+-- Her register, newest first: every change, never a deletion.
+create function public.marketing_client_consent_history(p_business_id uuid, p_client_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.consent_client(p_business_id, p_client_id);
+  return coalesce((
+    select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'purpose', e.purpose,
+      'channel', e.channel,
+      'state', e.state,
+      'proofVersion', e.proof_version,
+      'source', e.source,
+      'businessName', b.name,
+      'occurredAt', e.created_at
+    ) order by e.id desc)
+    from private.consent_events e
+    join public.businesses b on b.id = e.business_id
+    where e.business_id = p_business_id and e.client_id = p_client_id
+  ), '[]'::jsonb);
+end;
+$$;
+
+revoke all on function public.marketing_client_consent_history(uuid, uuid) from public, anon;
+grant execute on function public.marketing_client_consent_history(uuid, uuid) to authenticated;
 revoke all on function public.marketing_client_consents(uuid, uuid) from public, anon;
 revoke all on function public.marketing_set_consent(uuid, uuid, text, text, text, text, uuid) from public, anon;
 grant execute on function public.marketing_client_consents(uuid, uuid) to authenticated;

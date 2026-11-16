@@ -46,6 +46,29 @@ export async function getClientConsents(
   return data as unknown as ConsentDto[];
 }
 
+export type ConsentEventDto = {
+  purpose: "marketing";
+  channel: ConsentChannel;
+  state: ConsentState;
+  proofVersion: string | null;
+  source: NonNullable<ConsentDto["source"]>;
+  businessName: string;
+  occurredAt: string;
+};
+
+export async function getClientConsentHistory(
+  client: AppSupabaseClient,
+  businessId: string,
+  clientId: string,
+): Promise<ConsentEventDto[]> {
+  const { data, error } = await client.rpc("marketing_client_consent_history", {
+    p_business_id: businessId,
+    p_client_id: clientId,
+  });
+  if (error) throw databaseException(error);
+  return data as unknown as ConsentEventDto[];
+}
+
 export async function setConsent(
   client: AppSupabaseClient,
   businessId: string,

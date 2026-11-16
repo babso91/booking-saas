@@ -1240,6 +1240,9 @@ isOneToOne: false
 "loyalty_update_reward":
 { Args: { "p_active": boolean,"p_business_id": string,"p_description": string,"p_expected_version": number,"p_name": string,"p_points_required": number,"p_reward_id": string,"p_reward_value": number,"p_service_id": string }; Returns: number
                            },
+"marketing_client_consent_history":
+{ Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
+                           },
 "marketing_client_consents":
 { Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
                            },
