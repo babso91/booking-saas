@@ -946,6 +946,9 @@ isOneToOne: false
 "calendar_outbound_mark_creation_requested":
 { Args: { "p_business_id": string,"p_claim_id": string,"p_credential_generation": string,"p_generation": string }; Returns: boolean
                            },
+"calendar_outbound_now":
+{ Args: Record<PropertyKey, never>; Returns: string
+                           },
 "calendar_outbound_reconciliation_failed":
 { Args: { "p_business_id": string,"p_claim_id": string,"p_error"?: string,"p_outcome": string }; Returns: string
                            },

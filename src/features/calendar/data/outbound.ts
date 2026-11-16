@@ -980,6 +980,23 @@ async function applyDueMirrors(
   return false;
 }
 
+/**
+ * A pass's start, by the database's clock: due times are the database's
+ * (next_attempt_at), and the application server's clock may differ by a few
+ * milliseconds.
+ */
+async function databaseNow(
+  deps: CalendarDeps,
+  signal?: AbortSignal,
+): Promise<string> {
+  const { data, error } = await abortable(
+    deps.admin.rpc("calendar_outbound_now"),
+    signal,
+  );
+  if (error) throw databaseException(error);
+  return data;
+}
+
 /** A database call aborted with `signal`; never started once it is aborted. */
 function abortable<T extends { abortSignal(signal: AbortSignal): T }>(
   query: T,
@@ -1118,7 +1135,7 @@ export async function processOutbound(
     return applyDueMirrors(deps, result, writes, {
       limit,
       deadline: priorityDeadline,
-      dueBefore: new Date().toISOString(),
+      dueBefore: await databaseNow(deps, signal),
       signal,
     });
   });
@@ -1135,11 +1152,11 @@ export async function processOutbound(
   // Writes cut short by their share, or repairs just recorded: the time
   // reconciliation left is theirs.
   if ((cut || reconciliation.drifted > 0) && !aborted()) {
-    await phase(deadline, (signal) =>
+    await phase(deadline, async (signal) =>
       applyDueMirrors(deps, result, writes, {
         limit,
         deadline,
-        dueBefore: new Date().toISOString(),
+        dueBefore: await databaseNow(deps, signal),
         signal,
       }),
     );
