@@ -329,7 +329,8 @@ $$;
 
 revoke all on function private.referral_link_dto(private.referral_links) from public;
 
--- Her current link (active or expired), or null.
+-- Whether the business offers referral now, and her current link (active
+-- or expired; `state: unavailable` when the offer stopped), or null.
 create function public.client_hub_referral_link(p_session_token text, p_business_id uuid)
 returns jsonb
 language plpgsql
@@ -341,19 +342,22 @@ declare
   v_account private.client_hub_accounts := private.client_hub_session_account(p_session_token, pg_catalog.now());
   v_client uuid := private.client_hub_require_client(v_account, p_business_id);
   v_link private.referral_links;
+  v_offered boolean;
+  v_dto jsonb;
 begin
+  v_offered := exists (
+    select 1 from private.loyalty_tier_rules r
+    where r.business_id = p_business_id and r.referral_points is not null
+  ) and exists (
+    select 1 from public.loyalty_programs p where p.business_id = p_business_id and p.active
+  );
   select * into v_link from private.referral_links l
   where l.client_id = v_client and l.revoked_at is null;
-  -- The business stopped its referral offer: the link would attribute
-  -- nothing, so it is not offered as active.
-  if v_link.id is not null and not (
-    exists (select 1 from private.loyalty_tier_rules r
-            where r.business_id = p_business_id and r.referral_points is not null)
-    and exists (select 1 from public.loyalty_programs p where p.business_id = p_business_id and p.active)
-  ) then
-    return private.referral_link_dto(v_link) || '{"state": "unavailable"}'::jsonb;
+  v_dto := private.referral_link_dto(v_link);
+  if v_dto is not null and not v_offered then
+    v_dto := v_dto || '{"state": "unavailable"}'::jsonb;
   end if;
-  return private.referral_link_dto(v_link);
+  return pg_catalog.jsonb_build_object('offered', v_offered, 'link', v_dto);
 end;
 $$;
 

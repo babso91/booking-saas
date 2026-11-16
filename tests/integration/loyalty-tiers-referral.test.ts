@@ -339,7 +339,10 @@ describe("referral", () => {
         params({ businessId: business.id }),
       ),
     );
-    expect(read.body.data).toMatchObject({ state: "active" });
+    expect(read.body.data).toMatchObject({
+      offered: true,
+      link: { state: "active", url: created.body.data.url },
+    });
 
     const nina = email("filleule");
     const bookingRequestId = randomUUID();

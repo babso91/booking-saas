@@ -15,7 +15,8 @@ import { readJsonBody } from "@/lib/http";
 
 // Her referral link (docs/LOYALTY_TIERS_CONTRACT.md). She shares it
 // herself: nothing is ever sent to anyone from here.
-//   GET  → ReferralLinkDto | null (her current link, active or expired)
+//   GET  → { offered, link: ReferralLinkDto | null } (whether the business
+//        offers referral now; her current link, active or expired)
 //   POST { requestId } → ReferralLinkDto (a new link; the previous one
 //        stops working); 409 referral_unavailable without a referral offer.
 

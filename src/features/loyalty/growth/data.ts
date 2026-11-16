@@ -117,17 +117,24 @@ function toLink(row: LinkRow | null): ReferralLinkDto | null {
   return { url: url.toString(), expiresAt: row.expiresAt, state: row.state };
 }
 
+/** Whether referral is offered now, and her current link. */
+export type ReferralStateDto = {
+  offered: boolean;
+  link: ReferralLinkDto | null;
+};
+
 export async function getReferralLink(
   admin: AppSupabaseClient,
   token: string,
   businessId: string,
-): Promise<ReferralLinkDto | null> {
+): Promise<ReferralStateDto> {
   const { data, error } = await admin.rpc("client_hub_referral_link", {
     p_session_token: token,
     p_business_id: businessId,
   });
   if (error) throw databaseException(error);
-  return toLink(data as unknown as LinkRow | null);
+  const state = data as unknown as { offered: boolean; link: LinkRow | null };
+  return { offered: state.offered, link: toLink(state.link) };
 }
 
 export async function createReferralLink(

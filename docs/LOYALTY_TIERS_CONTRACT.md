@@ -42,8 +42,10 @@ chaque crédit est une écriture du registre.
 ## Parrainage
 
 - **Son lien** (Hub, relation attestée) :
-  - `GET  /api/client-hub/businesses/:id/referral` : `ReferralLinkDto | null`
-    (lien actif ou expiré) ;
+  - `GET  /api/client-hub/businesses/:id/referral` :
+    `{ offered: boolean, link: ReferralLinkDto | null }`. `offered` dit si
+    l'établissement propose le parrainage maintenant ; `link` est son lien
+    actif ou expiré ;
   - `POST /api/client-hub/businesses/:id/referral` avec `{ requestId }` :
     `ReferralLinkDto`. Le lien est valable 90 jours, et le précédent cesse de
     marcher. Rejeu par `requestId`. `referral_unavailable` (409) si
