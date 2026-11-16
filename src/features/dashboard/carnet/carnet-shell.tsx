@@ -28,6 +28,7 @@ const tabs: { section: DashboardSection; label: string }[] = [
 const ribbon = tabs.slice(0, 3);
 
 const settings: { section: DashboardSection; label: string }[] = [
+  { section: "forms", label: "Formulaires" },
   { section: "hours", label: "Horaires" },
   { section: "calendar", label: "Google Calendar" },
   { section: "site", label: "Mon site" },

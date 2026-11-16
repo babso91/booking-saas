@@ -116,6 +116,7 @@ describe("every room is reachable, on a phone as on a computer", () => {
       [
         "/app",
         "/app/clients",
+        "/app/forms",
         "/app/loyalty",
         "/app/services",
         "/app/site",
