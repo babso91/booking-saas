@@ -402,6 +402,93 @@ describe("her own agreement, with her booking", () => {
     expect(await eventCount(clientId)).toBe(0);
   });
 
+  it("an agreement is for the address it was confirmed from, never moved to a new one", async () => {
+    const clientId = await newClient(
+      business,
+      `avant-${randomUUID().slice(0, 6)}@client.test`,
+    );
+    const state = async () =>
+      (
+        await db.query(
+          "select private.consent_state($1, 'marketing', 'email') as s",
+          [clientId],
+        )
+      ).rows[0].s as string;
+
+    // The address changes between her request and the click: nothing counts.
+    const { token } = await requested(clientId);
+    await db.query("update public.clients set email = $2 where id = $1", [
+      clientId,
+      `apres-${randomUUID().slice(0, 6)}@client.test`,
+    ]);
+    expect(
+      await ok(
+        call(admin, "consent_confirm", {
+          p_token_hash: hashUnsubscribeToken(token),
+        }),
+      ),
+    ).toMatchObject({ channels: { email: "unreachable" } });
+    expect(await eventCount(clientId)).toBe(0);
+    expect(await state()).toBe("unknown");
+
+    // Confirmed for this address, then the record's changes: no longer valid.
+    await granted(clientId);
+    expect(await state()).toBe("granted");
+    await db.query("update public.clients set email = $2 where id = $1", [
+      clientId,
+      `nouvelle-${randomUUID().slice(0, 6)}@client.test`,
+    ]);
+    expect(await state()).toBe("unknown");
+    expect(
+      (await consents(clientId)).find((c) => c.channel === "email"),
+    ).toMatchObject({
+      state: "unknown",
+      destinationChanged: true,
+    });
+  });
+
+  it("a link that never left can be sent again for the same booking, only until one leaves", async () => {
+    const clientId = await newClient();
+    const appointmentId = await bookingOf(clientId);
+    const ask = (token: string) =>
+      ok<{ status: string }>(
+        call(admin, "consent_request_from_booking", {
+          p_appointment_id: appointmentId,
+          p_channels: { email: "email-v1" },
+          p_information_version: "information-v1",
+          p_notice_version: "notice-test",
+          p_token_hash: hashUnsubscribeToken(token),
+        }),
+      );
+    const first = `cnf_${"a".repeat(43)}`;
+    const second = `cnf_${"b".repeat(43)}`;
+    expect(await ask(first)).toMatchObject({ status: "pending" });
+    // The transport failed (never marked sent): the retry gets a new link.
+    expect(await ask(second)).toMatchObject({ status: "pending" });
+    expect(
+      (
+        await call(admin, "consent_confirm", {
+          p_token_hash: hashUnsubscribeToken(first),
+        })
+      ).error?.message,
+    ).toBe("consent_link_invalid");
+    await ok(
+      call(admin, "consent_confirmation_sent", {
+        p_token_hash: hashUnsubscribeToken(second),
+      }),
+    );
+    expect(await ask(`cnf_${"c".repeat(43)}`)).toMatchObject({
+      status: "already_requested",
+    });
+    expect(
+      await ok(
+        call(admin, "consent_confirm", {
+          p_token_hash: hashUnsubscribeToken(second),
+        }),
+      ),
+    ).toMatchObject({ status: "confirmed" });
+  });
+
   it("asks nothing while collection is off or with a text not active", async () => {
     const clientId = await newClient();
     await collection(false);
