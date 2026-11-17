@@ -119,9 +119,10 @@ async function customer(options: {
     // own tests cover how one is given): arranged directly.
     await db.query(
       `insert into private.consent_events (business_id, client_id, purpose, channel, state,
-         proof_version, information_version, notice_version, source, evidence)
+         proof_version, information_version, notice_version, source, evidence, destination)
        values ($1, $2, 'marketing', 'email', 'granted', 'email-v1', 'information-v1',
-         'notice-growth-test', 'booking', '{"confirmedBy": "email_link"}')`,
+         'notice-growth-test', 'booking', '{"confirmedBy": "email_link"}',
+         private.consent_destination($2, 'email'))`,
       [business.id, clientId],
     );
   } else if (options.consent === "withdrawn") {
@@ -254,6 +255,20 @@ describe("estimate and schedule", () => {
         })
       ).error?.message,
     ).toBe("invalid_input");
+  });
+
+  it("never writes to an address she did not agree for: a changed email needs a new agreement", async () => {
+    await freshBusiness();
+    const moved = await customer({ completedDaysAgo: 100, consent: "granted" });
+    expect(await ok<Estimate>(estimate())).toMatchObject({ eligible: 1 });
+    await db.query("update public.clients set email = $2 where id = $1", [
+      moved,
+      `nouvelle-${randomUUID().slice(0, 6)}@client.test`,
+    ]);
+    expect(await ok<Estimate>(estimate())).toMatchObject({
+      eligible: 0,
+      suppressedByReason: { no_consent: 1 },
+    });
   });
 
   it("refuses a stale or reused estimate and a cap over the month's budget; replays by requestId", async () => {
