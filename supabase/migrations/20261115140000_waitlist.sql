@@ -418,15 +418,33 @@ begin
   update private.waitlist_requests r set state = 'expired', version = r.version + 1
   where r.state in ('active', 'pending_confirmation') and r.active_until <= v_now;
 
+  -- Signals that can produce nothing (the business's list is closed, or the
+  -- freed interval is past) are settled apart, in a bounded batch: they
+  -- never use the matching budget nor delay an eligible signal.
+  update private.capacity_releases c set processed_at = v_now, lease_until = null
+  where c.id in (
+    select c2.id
+    from private.capacity_releases c2
+    left join public.business_settings st on st.business_id = c2.business_id
+    where c2.processed_at is null and (c2.lease_until is null or c2.lease_until < v_now)
+      and (not coalesce(st.waitlist_enabled, false) or c2.occupied_until <= v_now)
+    order by c2.occurred_at, c2.id
+    limit 500
+    for update of c2 skip locked
+  );
+
   loop
     exit when v_done >= coalesce(p_budget, 20);
-    -- One signal at a time, leased: two workers never take the same one.
-    select * into v_release
+    -- One eligible signal at a time, leased: two workers never take the
+    -- same one.
+    select c.* into v_release
     from private.capacity_releases c
+    join public.business_settings st on st.business_id = c.business_id
     where c.processed_at is null and (c.lease_until is null or c.lease_until < v_now)
+      and st.waitlist_enabled and c.occupied_until > v_now
     order by c.occurred_at, c.id
     limit 1
-    for update skip locked;
+    for update of c skip locked;
     exit when not found;
     update private.capacity_releases c set lease_until = v_now + interval '2 minutes' where c.id = v_release.id;
     v_done := v_done + 1;
