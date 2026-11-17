@@ -67,6 +67,25 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"business_date_hours": {
+                  Row: {
+                    "business_id": string,"date": string,"ends_at": string,"starts_at": string
+                  }
+                  Insert: {
+                    "business_id": string,"date": string,"ends_at": string,"starts_at": string
+                  }
+                  Update: {
+                    "business_id"?: string,"date"?: string,"ends_at"?: string,"starts_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "business_date_hours_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"business_hours": {
                   Row: {
                     "business_id": string,"created_at": string,"ends_at": string,"id": string,"starts_at": string,"updated_at": string,"weekday": number
@@ -1637,6 +1656,9 @@ isOneToOne: false
                            },
 "set_booking_policy":
 { Args: { "p_business_id": string,"p_cancellation_lead_minutes": number,"p_reschedule_lead_minutes": number }; Returns: Json
+                           },
+"set_business_date_hours":
+{ Args: { "p_business_id": string,"p_date": string,"p_ends_at"?: string,"p_expected_ends_at"?: string,"p_expected_starts_at"?: string,"p_starts_at"?: string }; Returns: undefined
                            },
 "set_business_legal_profile":
 { Args: { "p_address": string,"p_business_id": string,"p_contact_email": string,"p_legal_name": string,"p_registration_number": string }; Returns: Json

@@ -4,6 +4,7 @@ import { requireReadyBusiness } from "@/features/auth/data/guards";
 import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { BusinessHoursEditor } from "@/features/availability/components/business-hours-editor";
+import { DateHoursEditor } from "@/features/availability/components/date-hours-editor";
 import { CancellationPolicyEditor } from "@/features/booking-policy/components/cancellation-policy-editor";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { databaseException } from "@/lib/supabase/errors";
@@ -38,6 +39,9 @@ export default async function BusinessHoursPage() {
       <BusinessHoursEditor
         timezone={business.timezone}
         scope={{ userId: user.id, businessId: business.id }}
+        dateHours={
+          canSetPolicy ? <DateHoursEditor businessId={business.id} /> : null
+        }
       />
       {canSetPolicy && settings?.data ? (
         <CancellationPolicyEditor
