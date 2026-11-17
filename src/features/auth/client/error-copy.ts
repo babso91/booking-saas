@@ -414,6 +414,35 @@ export const errorCopy: Record<
     message:
       "Tu t’es connectée avec un autre compte ou une autre activité. Recharge la page.",
   },
+  consent_text_conflict: {
+    title: "Version déjà prise",
+    message: "Cette version de texte existe déjà avec un autre contenu.",
+  },
+  consent_text_not_draft: {
+    title: "Texte non activable",
+    message: "Seul un texte en brouillon peut être activé.",
+  },
+  consent_text_changed: {
+    title: "Texte modifié",
+    message: "Le texte a changé depuis sa relecture : relis-le.",
+  },
+  consent_link_invalid: {
+    title: "Lien non valide",
+    message: "Ce lien de confirmation n’est pas valide ou a expiré.",
+  },
+  consent_direct_only: {
+    title: "Accord de la cliente requis",
+    message:
+      "Seule la cliente peut donner son accord, par exemple en réservant. Tu peux enregistrer un retrait.",
+  },
+  unsubscribe_link_invalid: {
+    title: "Lien non valide",
+    message: "Ce lien de désinscription n’est pas valide.",
+  },
+  unsubscribe_undo_unavailable: {
+    title: "Annulation impossible",
+    message: "Ce changement ne peut plus être annulé depuis ce lien.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {

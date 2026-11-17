@@ -151,6 +151,16 @@ export const appErrorMessages = {
     "Votre session a changé (autre compte ou autre activité). Rechargez la page.",
   auth_unavailable:
     "La connexion ne peut pas être vérifiée pour le moment. Vous êtes toujours connectée : réessayez dans un instant.",
+  unsubscribe_link_invalid: "Ce lien de désinscription n’est pas valide.",
+  consent_link_invalid: "Ce lien de confirmation n’est pas valide ou a expiré.",
+  consent_direct_only:
+    "Seule la cliente peut donner son accord, par exemple en réservant. Vous pouvez enregistrer un retrait.",
+  consent_text_conflict:
+    "Cette version de texte existe déjà avec un autre contenu.",
+  consent_text_not_draft: "Seul un texte en brouillon peut être activé.",
+  consent_text_changed: "Le texte a changé depuis sa relecture : relisez-le.",
+  unsubscribe_undo_unavailable:
+    "Ce changement ne peut plus être annulé depuis ce lien.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -295,6 +305,13 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_hub_email_required: 409,
   context_changed: 409,
   auth_unavailable: 503,
+  unsubscribe_link_invalid: 404,
+  consent_link_invalid: 404,
+  consent_direct_only: 403,
+  consent_text_conflict: 409,
+  consent_text_not_draft: 409,
+  consent_text_changed: 409,
+  unsubscribe_undo_unavailable: 409,
   internal: 500,
 };
 
