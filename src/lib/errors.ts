@@ -161,6 +161,13 @@ export const appErrorMessages = {
   consent_text_changed: "Le texte a changé depuis sa relecture : relisez-le.",
   unsubscribe_undo_unavailable:
     "Ce changement ne peut plus être annulé depuis ce lien.",
+  estimate_stale:
+    "L’estimation n’est plus à jour : rien n’a été planifié. Relancez l’estimation.",
+  quota_exceeded: "Ce plafond dépasse le budget restant du mois.",
+  campaign_not_found: "Cette campagne est introuvable.",
+  campaign_closed: "Cette campagne ne peut plus changer d’état.",
+  version_conflict:
+    "Ces informations ont changé entre-temps. Rechargez puis réessayez.",
   internal: "Une erreur inattendue est survenue. Merci de réessayer.",
 } as const;
 
@@ -312,6 +319,11 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   consent_text_not_draft: 409,
   consent_text_changed: 409,
   unsubscribe_undo_unavailable: 409,
+  estimate_stale: 409,
+  quota_exceeded: 409,
+  campaign_not_found: 404,
+  campaign_closed: 409,
+  version_conflict: 409,
   internal: 500,
 };
 
