@@ -70,12 +70,12 @@ const linkAction =
 export function BusinessHoursEditor({
   timezone,
   scope,
-  dateHours,
+  scheduleOptions,
 }: {
   timezone: string;
   /** Whose week this is (signed-in user and business, from the session). */
   scope: DraftScope;
-  dateHours?: ReactNode;
+  scheduleOptions?: ReactNode;
 }) {
   // One editor per identity. The page can be rendered again for another
   // identity without being unmounted: the key replaces the editor during
@@ -87,7 +87,7 @@ export function BusinessHoursEditor({
       key={scopeId(scope)}
       timezone={timezone}
       draftKey={draftKeyFor(scope, "hours")}
-      dateHours={dateHours}
+      scheduleOptions={scheduleOptions}
     />
   );
 }
@@ -95,12 +95,12 @@ export function BusinessHoursEditor({
 function HoursEditor({
   timezone,
   draftKey,
-  dateHours,
+  scheduleOptions,
 }: {
   timezone: string;
   /** Session storage key of the unsaved week (this identity only). */
   draftKey: string;
-  dateHours?: ReactNode;
+  scheduleOptions?: ReactNode;
 }) {
   const router = useRouter();
   const [load, setLoad] = useState<Load>({ status: "loading" });
@@ -340,7 +340,7 @@ function HoursEditor({
 
   if (load.status === "loading") {
     return (
-      <Frame timezone={timezone} dateHours={dateHours}>
+      <Frame timezone={timezone} scheduleOptions={scheduleOptions}>
         <div className="flex flex-col gap-3" aria-busy="true">
           <span className="sr-only" role="status">
             Chargement des horaires…
@@ -358,7 +358,7 @@ function HoursEditor({
 
   if (load.status === "error") {
     return (
-      <Frame timezone={timezone} dateHours={dateHours}>
+      <Frame timezone={timezone} scheduleOptions={scheduleOptions}>
         <Notice
           tone={load.error.code === "network" ? "offline" : "error"}
           title={describeError(load.error).title}
@@ -388,7 +388,7 @@ function HoursEditor({
   }
 
   return (
-    <Frame timezone={timezone} dateHours={dateHours}>
+    <Frame timezone={timezone} scheduleOptions={scheduleOptions}>
       <form
         noValidate
         aria-busy={state === "loading"}
@@ -564,11 +564,11 @@ function HoursEditor({
 
 function Frame({
   timezone,
-  dateHours,
+  scheduleOptions,
   children,
 }: {
   timezone: string;
-  dateHours?: ReactNode;
+  scheduleOptions?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -583,7 +583,7 @@ function Frame({
             ).
           </p>
         </header>
-        {dateHours}
+        {scheduleOptions}
         <h2 className="font-display text-[26px] leading-tight text-ink">
           Horaires habituels
         </h2>
