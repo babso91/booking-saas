@@ -558,3 +558,88 @@ $$;
 
 revoke all on function public.practitioner_agenda(uuid, timestamptz, timestamptz) from public, anon;
 grant execute on function public.practitioner_agenda(uuid, timestamptz, timestamptz) to authenticated;
+
+-- Her agenda by local days, with the business's clock (business_time stays
+-- closed to her): `p_days` civil dates from `p_from_date` (her business's
+-- today when null), each with its bounds from the calendar authority
+-- (private.local_day_start, DST included), her visits over them, and the
+-- database's `now`, `today` and `todayEndsAt` from one instant.
+create function public.practitioner_agenda_days(
+  p_business_id uuid,
+  p_from_date date default null,
+  p_days integer default 7
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_staff uuid := private.practitioner_staff(p_business_id);
+  v_now timestamptz := pg_catalog.now();
+  v_timezone text;
+  v_today date;
+  v_from date;
+  v_lo timestamptz;
+  v_hi timestamptz;
+begin
+  if (select auth.uid()) is null then
+    raise exception using errcode = '42501', message = 'unauthenticated';
+  end if;
+  if v_staff is null then
+    raise exception using errcode = '42501', message = 'forbidden';
+  end if;
+  if p_days is null or p_days < 1 or p_days > 62 then
+    raise exception using errcode = '22023', message = 'invalid_input', hint = 'days';
+  end if;
+  select b.timezone into v_timezone from public.businesses b where b.id = p_business_id;
+  v_today := private.local_date_of(v_now, v_timezone);
+  v_from := coalesce(p_from_date, v_today);
+  if v_from < v_today - 366 or v_from > v_today + 366 then
+    raise exception using errcode = '22023', message = 'invalid_input', hint = 'fromDate';
+  end if;
+  v_lo := private.local_day_start(v_from, v_timezone);
+  v_hi := private.local_day_start(v_from + p_days, v_timezone);
+
+  return pg_catalog.jsonb_build_object(
+    'timezone', v_timezone,
+    'now', v_now,
+    'today', v_today,
+    'todayEndsAt', private.local_day_start(v_today + 1, v_timezone),
+    'days', (
+      select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'date', d,
+        'startsAt', private.local_day_start(d, v_timezone),
+        'endsAt', private.local_day_start(d + 1, v_timezone)
+      ) order by d)
+      from pg_catalog.generate_series(v_from, v_from + p_days - 1, interval '1 day') g(day),
+        lateral (select g.day::date as d) x
+    ),
+    'visits', coalesce((
+      select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'id', a.id,
+        'version', a.version,
+        'status', a.status,
+        'startsAt', a.starts_at,
+        'endsAt', a.ends_at,
+        'durationMinutes', a.duration_minutes_snapshot,
+        'serviceName', a.service_name_snapshot,
+        'options', a.options_snapshot,
+        'internalNotes', a.internal_notes,
+        'client', pg_catalog.jsonb_build_object(
+          'id', c.id, 'firstName', c.first_name, 'lastName', c.last_name,
+          'email', c.email, 'phone', c.phone
+        )
+      ) order by a.starts_at, a.id)
+      from public.appointments a
+      join public.clients c on c.id = a.client_id and c.business_id = a.business_id
+      where a.business_id = p_business_id and a.staff_id = v_staff
+        and a.starts_at < v_hi and a.ends_at > v_lo
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+revoke all on function public.practitioner_agenda_days(uuid, date, integer) from public, anon;
+grant execute on function public.practitioner_agenda_days(uuid, date, integer) to authenticated;
