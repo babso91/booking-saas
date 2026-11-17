@@ -228,14 +228,8 @@ describe("team", () => {
     );
     const invited = await createProfessional("team-invited");
 
-    expect(
-      await refusal(
-        invite(owner.client, business, member, invited.email, {
-          role: "practitioner",
-        }),
-      ),
-    ).toBe("role_unavailable");
-
+    // The practitioner role is given since the capabilities lot
+    // (team-capabilities.test.ts).
     const firstToken = generateTeamInviteToken();
     member = await ok<TeamMemberDto>(
       invite(owner.client, business, member, invited.email, {
