@@ -5,6 +5,8 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 
 import Link from "next/link";
 
+import { siteLimits } from "@/features/sites/config";
+
 import { startingAt, type ShowcaseGroup } from "../catalog/model";
 import type {
   GradeId,
@@ -196,6 +198,8 @@ export function Studio({
   const photo = useStudioPhoto();
   const [tab, setTab] = useState<Tab>("universe");
   const config = draft.value;
+  const workInPhotoEditor =
+    typeof photoSlot === "number" ? config.content.works[photoSlot] : undefined;
   const creative = plan === "signature";
   const set = (patch: Partial<SiteConfig>, key?: string) =>
     draft.set({ ...config, ...patch }, key);
@@ -313,6 +317,21 @@ export function Studio({
   // copy seen when the upload started (Codex review of #50).
   function replacePhoto(slot: PhotoSlot, id: string) {
     draft.update((current) => withPhoto(current, slot, id));
+  }
+
+  function setWorkTitle(id: string, title: string) {
+    draft.update(
+      (current) => ({
+        ...current,
+        content: {
+          ...current.content,
+          works: current.content.works.map((work) =>
+            work.id === id ? { ...work, title } : work,
+          ),
+        },
+      }),
+      `works.${id}.title`,
+    );
   }
 
   return (
@@ -552,7 +571,18 @@ export function Studio({
                   }
                   onReplace={(id) => replacePhoto(photoSlot, id)}
                   onBack={() => onPhotoSlot(null)}
-                />
+                >
+                  {workInPhotoEditor?.photo ? (
+                    <Text
+                      label="Titre sous la photo"
+                      value={workInPhotoEditor.title}
+                      maxLength={siteLimits.workTitle}
+                      onChange={(title) =>
+                        setWorkTitle(workInPhotoEditor.id, title)
+                      }
+                    />
+                  ) : null}
+                </PhotoEditor>
               ) : current === "history" ? (
                 history
               ) : current === "catalog" ? (
@@ -673,8 +703,9 @@ export function Studio({
                       <p className="text-[13.5px] text-black/60">
                         Touche une photo, ici ou{" "}
                         <strong>directement dans l’aperçu</strong>, pour ajouter
-                        la tienne, la remplacer ou la recadrer. Les photos
-                        d’exemple de ton univers ne sont jamais publiées.
+                        la tienne, la recadrer ou modifier son titre dans les
+                        réalisations. Les photos d’exemple de ton univers ne
+                        sont jamais publiées.
                       </p>
                       <div className="grid grid-cols-3 gap-2">
                         {(
@@ -807,6 +838,26 @@ export function Studio({
                           }
                         />
                       ))}
+                      {config.content.works.some((work) => work.photo) ? (
+                        <fieldset className="mt-2 flex min-w-0 flex-col gap-3 border-t border-black/10 pt-3">
+                          <legend className="pr-2 text-[13px] font-semibold">
+                            Titres des réalisations
+                          </legend>
+                          {config.content.works.map((work, index) =>
+                            work.photo ? (
+                              <Text
+                                key={work.id}
+                                label={`Titre de la réalisation ${index + 1}`}
+                                value={work.title}
+                                maxLength={siteLimits.workTitle}
+                                onChange={(title) =>
+                                  setWorkTitle(work.id, title)
+                                }
+                              />
+                            ) : null,
+                          )}
+                        </fieldset>
+                      ) : null}
                     </>
                   ) : current === "colors" ? (
                     <>
@@ -1280,11 +1331,13 @@ function Text({
   value,
   onChange,
   multiline,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   multiline?: boolean;
+  maxLength?: number;
 }) {
   const className =
     "w-full rounded-xl border border-black/10 bg-white px-3 text-[16px] outline-none focus:border-black/40";
@@ -1294,6 +1347,7 @@ function Text({
       {multiline ? (
         <textarea
           value={value}
+          maxLength={maxLength}
           onChange={(event) => onChange(event.target.value)}
           rows={3}
           className={`${className} resize-none py-2.5`}
@@ -1301,6 +1355,7 @@ function Text({
       ) : (
         <input
           value={value}
+          maxLength={maxLength}
           onChange={(event) => onChange(event.target.value)}
           className={`${className} h-12`}
         />
