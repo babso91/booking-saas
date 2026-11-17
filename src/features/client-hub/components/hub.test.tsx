@@ -10,7 +10,10 @@ import {
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ClientHubProfileDto } from "@/features/client-hub/types";
+import type {
+  ClientHubAppointmentDetailDto,
+  ClientHubProfileDto,
+} from "@/features/client-hub/types";
 
 import { useClientHub } from "../client/session";
 import {
@@ -336,6 +339,129 @@ describe("appointments", () => {
     expect(
       screen.queryByRole("button", { name: /annuler|modifier|déplacer/i }),
     ).toBeNull();
+  });
+});
+
+describe("customer cancellation", () => {
+  function detail(): ClientHubAppointmentDetailDto {
+    return {
+      ...appointment("a1", inDays(3), "Soin test"),
+      business: {
+        name: "Studio Mila",
+        slug: "studio-mila",
+        timezone: "Europe/Paris",
+        location: null,
+        cancellationPolicy: null,
+      },
+      actions: {
+        version: 1,
+        cancel: { allowed: true, deadlineAt: inDays(2), reason: null },
+        reschedule: {
+          allowed: false,
+          deadlineAt: null,
+          reason: "policy_unavailable",
+        },
+      },
+    };
+  }
+  async function confirm() {
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Annuler ce rendez-vous" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirmer l’annulation" }),
+    );
+  }
+
+  it("asks before posting, then reads the cancelled appointment again", async () => {
+    let current = detail();
+    api.on("GET", new RegExp(`${B1}/appointments/a1$`), () => ok(current));
+    api.on("POST", /appointments\/a1\/cancel$/, () => {
+      current = { ...current, status: "cancelled", actions: null };
+      return ok(current);
+    });
+    inHub(<HubAppointmentDetail businessId={B1} appointmentId="a1" />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Annuler ce rendez-vous" }),
+    );
+    expect(api.to(/\/cancel$/, "POST")).toHaveLength(0);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirmer l’annulation" }),
+    );
+    expect(await screen.findByText("Annulé")).toBeTruthy();
+    expect(api.to(/\/cancel$/, "POST")[0]!.body).toMatchObject({
+      expectedVersion: 1,
+      requestId: expect.any(String),
+    });
+    expect(
+      screen.queryByRole("button", { name: "Annuler ce rendez-vous" }),
+    ).toBeNull();
+  });
+
+  it.each(["policy_cutoff_passed", "policy_unavailable"] as const)(
+    "keeps a refused policy closed: %s",
+    async (reason) => {
+      const current = detail();
+      current.actions!.cancel = { allowed: false, reason, deadlineAt: null };
+      api.on("GET", new RegExp(`${B1}/appointments/a1$`), ok(current));
+      inHub(<HubAppointmentDetail businessId={B1} appointmentId="a1" />);
+      await screen.findByRole("heading", { name: "Soin test" });
+      expect(
+        screen.queryByRole("button", { name: "Annuler ce rendez-vous" }),
+      ).toBeNull();
+      expect(api.to(/\/cancel$/, "POST")).toHaveLength(0);
+    },
+  );
+
+  it("reuses the request id when an answer is lost", async () => {
+    let current = detail();
+    let calls = 0;
+    api.on("GET", new RegExp(`${B1}/appointments/a1$`), () => ok(current));
+    api.on("POST", /appointments\/a1\/cancel$/, () => {
+      if (++calls === 1) return "network";
+      current = { ...current, status: "cancelled", actions: null };
+      return ok(current);
+    });
+    inHub(<HubAppointmentDetail businessId={B1} appointmentId="a1" />);
+    await confirm();
+    fireEvent.click(await screen.findByRole("button", { name: "Réessayer" }));
+    await screen.findByText("Annulé");
+    const writes = api.to(/\/cancel$/, "POST");
+    expect(writes).toHaveLength(2);
+    expect(writes[1]!.body).toEqual(writes[0]!.body);
+  });
+
+  it("does not accept a cancellation answer served for another account", async () => {
+    api.on("GET", new RegExp(`${B1}/appointments/a1$`), ok(detail()));
+    api.on("POST", /appointments\/a1\/cancel$/, {
+      ...ok({
+        ...detail(),
+        status: "cancelled",
+        serviceName: "OTHER_ACCOUNT_SECRET",
+      }),
+      account: "account:someone-else",
+    });
+    inHub(<HubAppointmentDetail businessId={B1} appointmentId="a1" />);
+    await confirm();
+    await waitFor(() =>
+      expect(api.to(/\/me$/).length).toBeGreaterThanOrEqual(2),
+    );
+    expect(screen.queryByText("Annulé")).toBeNull();
+    expect(screen.queryByText("OTHER_ACCOUNT_SECRET")).toBeNull();
+  });
+
+  it("rechecks the identity after an expired session, without a success message", async () => {
+    api.on("GET", new RegExp(`${B1}/appointments/a1$`), ok(detail()));
+    api.on("POST", /appointments\/a1\/cancel$/, () => {
+      me = null;
+      return fail("client_hub_unauthenticated", 401);
+    });
+    inHub(<HubAppointmentDetail businessId={B1} appointmentId="a1" />);
+    await confirm();
+    await waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/espace/connexion"),
+    );
+    expect(screen.queryByText("Annulé")).toBeNull();
   });
 });
 

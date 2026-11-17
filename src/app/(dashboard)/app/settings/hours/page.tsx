@@ -4,6 +4,9 @@ import { requireReadyBusiness } from "@/features/auth/data/guards";
 import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { BusinessHoursEditor } from "@/features/availability/components/business-hours-editor";
+import { CancellationPolicyEditor } from "@/features/booking-policy/components/cancellation-policy-editor";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { databaseException } from "@/lib/supabase/errors";
 
 export const metadata: Metadata = {
   title: "Horaires",
@@ -13,6 +16,17 @@ export default async function BusinessHoursPage() {
   // Also checked here: the layout guard does not stop the page from being
   // rendered into the payload of its redirect response.
   const { user, business } = await requireReadyBusiness();
+  const canSetPolicy = business.role === "owner" || business.role === "admin";
+  const settings = canSetPolicy
+    ? await (
+        await createServerSupabaseClient()
+      )
+        .from("business_settings")
+        .select("cancellation_lead_minutes")
+        .eq("business_id", business.id)
+        .single()
+    : null;
+  if (settings?.error) throw databaseException(settings.error);
 
   return (
     <AppShell
@@ -25,6 +39,13 @@ export default async function BusinessHoursPage() {
         timezone={business.timezone}
         scope={{ userId: user.id, businessId: business.id }}
       />
+      {canSetPolicy && settings?.data ? (
+        <CancellationPolicyEditor
+          key={`${user.id}:${business.id}:${settings.data.cancellation_lead_minutes}`}
+          businessId={business.id}
+          leadMinutes={settings.data.cancellation_lead_minutes}
+        />
+      ) : null}
     </AppShell>
   );
 }

@@ -334,7 +334,8 @@ function EmailForm({
       <p className="flex items-start gap-2 text-[13px] leading-relaxed text-ink-muted">
         <LockIcon size={15} className="mt-0.5 shrink-0" />
         Vous ne voyez que ce que votre établissement a choisi de partager avec
-        vous. Rien ne peut être modifié depuis cet espace.
+        vous. L’annulation est disponible selon les règles de votre
+        établissement.
       </p>
     </form>
   );

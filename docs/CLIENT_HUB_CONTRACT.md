@@ -428,6 +428,17 @@ Migration : `20261115120000_hub_appointment_actions.sql`.
 
 ### Détail d'un rendez-vous
 
+L’interface de staging propose l’annulation depuis le détail du rendez-vous
+quand `actions.cancel.allowed` l’autorise. La cliente confirme avant l’envoi ;
+une réponse réseau perdue est réessayée avec le même `requestId`. L’identité
+du compte porté par la réponse est contrôlée comme pour les lectures du Hub.
+
+La professionnelle propriétaire ou administratrice règle le délai dans
+**Horaires → Annulation en ligne**. Le réglage reste désactivé par défaut et
+ne modifie jamais les conditions des rendez-vous déjà créés. L’accès du CRM
+à l’espace cliente reste une autorisation manuelle distincte. Le déplacement
+dispose de ses routes serveur, mais n’est pas proposé par cette interface.
+
 `GET …/appointments/:appointmentId` ajoute `actions` (forme de la
 proposition) : `null` si le rendez-vous n'est plus `confirmed` à venir,
 sinon `{ version, cancel, reschedule }` avec `allowed`, `deadlineAt` et

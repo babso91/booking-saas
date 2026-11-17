@@ -1,6 +1,8 @@
 // Contracts of the Client Hub (docs/CLIENT_HUB_CONTRACT.md). Instants are
 // ISO 8601 strings; amounts are integers in minor units; points integers.
 
+import type { ClientHubAppointmentActions } from "./data/appointment-actions";
+
 export type ClientHubBusinessDto = {
   businessId: string;
   name: string;
@@ -29,6 +31,7 @@ export type ClientHubAppointmentDto = {
 };
 
 export type ClientHubAppointmentDetailDto = ClientHubAppointmentDto & {
+  actions?: ClientHubAppointmentActions;
   business: {
     name: string;
     slug: string;
