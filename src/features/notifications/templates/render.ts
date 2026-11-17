@@ -1,4 +1,5 @@
 import { formatPrice } from "@/features/agenda/client/money";
+import { hubAppointmentPath, hubSignInHref } from "@/features/client-hub/links";
 import { weekdayOfLocalDate } from "@/lib/time/local-date";
 
 import type { ClaimedEmail, EmailType } from "../schemas/claimed-email";
@@ -7,9 +8,8 @@ import type { ClaimedEmail, EmailType } from "../schemas/claimed-email";
 // Every value comes from the claimed email (the business's own data and
 // this appointment's snapshots): no CRM field (notes, other appointments,
 // loyalty) is ever read. Plain text is the reference; the HTML version
-// escapes every interpolated value. No link lets the customer cancel or
-// change the appointment (none exists yet): the email says to contact the
-// business, and replies go to its contact address.
+// escapes every interpolated value. The management link resumes this exact
+// appointment after email-code verification. It never grants access by itself.
 
 export type RenderedEmail = { subject: string; text: string; html: string };
 
@@ -91,7 +91,7 @@ const HEADLINES: Record<EmailType, { subject: string; lead: string }> = {
   },
   appointment_cancelled: {
     subject: "Rendez-vous annulé",
-    lead: "Votre rendez-vous a été annulé par l’établissement.",
+    lead: "Votre rendez-vous a été annulé.",
   },
 };
 
@@ -111,6 +111,10 @@ export function renderEmail(
     options.appUrl,
   ).toString();
   const cancelled = email.type === "appointment_cancelled";
+  const managementUrl = new URL(
+    hubSignInHref(hubAppointmentPath(email.businessId, email.appointment.id)),
+    options.appUrl,
+  ).toString();
 
   const details: [string, string][] = [
     ["Établissement", business],
@@ -138,7 +142,7 @@ export function renderEmail(
     .join(" ou ");
   const closing = cancelled
     ? `Pour reprendre rendez-vous : ${publicUrl}`
-    : `Pour modifier ou annuler, contactez ${business} ${contact}.`;
+    : `Pour toute autre demande, contactez ${business} ${contact}.`;
   const timezoneNote = `Heures indiquées à l’heure de l’établissement (${email.business.timezone}).`;
 
   const subject = singleLine(`${headline.subject} – ${business}`);
@@ -153,6 +157,13 @@ export function renderEmail(
     "",
     timezoneNote,
     "",
+    ...(cancelled
+      ? []
+      : [
+          `Gérer ou annuler mon rendez-vous : ${managementUrl}`,
+          "Utilisez l’adresse e-mail de votre réservation. Un code pourra vous être demandé. L’annulation dépend des conditions du rendez-vous.",
+          "",
+        ]),
     closing,
     ...(cancelled ? [] : ["", `Page de l’établissement : ${publicUrl}`]),
     "",
@@ -173,6 +184,7 @@ ${details
   .join("\n")}
 </table>
 <p style="color:#666;font-size:13px">${escapeHtml(timezoneNote)}</p>
+${cancelled ? "" : `<p><a href="${escapeHtml(managementUrl)}" style="display:inline-block;padding:12px 18px;background:#97493a;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:bold">Gérer ou annuler mon rendez-vous</a></p><p style="color:#666;font-size:13px">Utilisez l’adresse e-mail de votre réservation. Un code pourra vous être demandé. L’annulation dépend des conditions du rendez-vous.</p>`}
 <p>${escapeHtml(cancelled ? "Pour reprendre rendez-vous :" : closing)}${
     cancelled
       ? ` <a href="${escapeHtml(publicUrl)}">${escapeHtml(publicUrl)}</a>`

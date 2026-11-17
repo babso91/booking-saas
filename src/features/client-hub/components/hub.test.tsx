@@ -16,6 +16,7 @@ import type {
 } from "@/features/client-hub/types";
 
 import { useClientHub } from "../client/session";
+import { hubAppointmentPath, hubSignInHref } from "../links";
 import {
   B1,
   B2,
@@ -201,6 +202,29 @@ describe("navigation", () => {
 });
 
 describe("appointments", () => {
+  it("an unauthenticated appointment link keeps its destination through sign-in", async () => {
+    const original = window.location.href;
+    const target = hubAppointmentPath(
+      B1,
+      "22222222-2222-4222-8222-222222222222",
+    );
+    window.history.replaceState({}, "", target);
+    me = null;
+    try {
+      inHub(
+        <HubAppointmentDetail
+          businessId={B1}
+          appointmentId="22222222-2222-4222-8222-222222222222"
+        />,
+      );
+      await waitFor(() =>
+        expect(router.replace).toHaveBeenCalledWith(hubSignInHref(target)),
+      );
+      expect(api.to(/\/appointments/)).toHaveLength(0);
+    } finally {
+      window.history.replaceState({}, "", original);
+    }
+  });
   it("upcoming then past: one list each, the period sent to the API, nothing of one shown in the other", async () => {
     inHub(<HubAppointments businessId={B1} />);
     expect(await screen.findByText("Pose cil à cil")).toBeTruthy();

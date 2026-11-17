@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
@@ -34,7 +35,7 @@ import {
 import { useClientHub, type SignedOutReason } from "../client/session";
 import { CODE_LENGTH, CodeInput } from "./code-input";
 import { hubErrorCopy, linkButton } from "./hub-parts";
-import { hubHref } from "./hub-shell";
+import { safeHubReturnPath } from "../links";
 
 // Passwordless sign-in (docs/CLIENT_HUB_CONTRACT.md §2): an email, then the
 // 8-digit code sent to it. The code lives in this component's memory only
@@ -97,9 +98,10 @@ const reasons: Record<Exclude<SignedOutReason, null>, string> = {
   elsewhere: "Vous avez été déconnectée depuis un autre onglet.",
 };
 
-export function SignIn() {
+export function SignIn({ returnTo }: { returnTo?: string }) {
   const { session, signedIn, recheck } = useClientHub();
   const router = useRouter();
+  const destination = safeHubReturnPath(returnTo) as Route;
   const [email, setEmail] = useState("");
   const [step, setStep] = useState<CodeStep | null>(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -113,8 +115,8 @@ export function SignIn() {
   const signedInNow = session.status === "signed-in";
 
   useEffect(() => {
-    if (signedInNow) router.replace(hubHref.home);
-  }, [router, signedInNow]);
+    if (signedInNow) router.replace(destination);
+  }, [destination, router, signedInNow]);
 
   const reason = session.status === "signed-out" ? session.reason : null;
 

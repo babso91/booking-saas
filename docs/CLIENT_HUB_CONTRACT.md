@@ -439,6 +439,14 @@ ne modifie jamais les conditions des rendez-vous déjà créés. L’accès du C
 à l’espace cliente reste une autorisation manuelle distincte. Le déplacement
 dispose de ses routes serveur, mais n’est pas proposé par cette interface.
 
+Les e-mails transactionnels de rendez-vous conduisent à
+`/espace/connexion?next=<chemin du détail>` ; après le code, la même fiche est
+ouverte. Seul le chemin exact d’un rendez-vous avec deux UUID est accepté
+comme destination, sinon le retour est `/espace`. Une expiration de session
+sur un lien de détail conserve aussi cette destination. Une déconnexion
+volontaire repart de la connexion normale. Aucun code, jeton ou e-mail n’est
+transporté dans ces URL, et les droits d’accès ne changent pas.
+
 `GET …/appointments/:appointmentId` ajoute `actions` (forme de la
 proposition) : `null` si le rendez-vous n'est plus `confirmed` à venir,
 sinon `{ version, cancel, reschedule }` avec `allowed`, `deadlineAt` et
