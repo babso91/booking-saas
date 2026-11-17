@@ -1201,6 +1201,9 @@ isOneToOne: false
 "consent_confirmation_read":
 { Args: { "p_token_hash": string }; Returns: Json
                            },
+"consent_confirmation_sent":
+{ Args: { "p_token_hash": string }; Returns: undefined
+                           },
 "consent_notice":
 { Args: { "p_slug": string }; Returns: Json
                            },

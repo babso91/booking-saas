@@ -109,6 +109,10 @@ create table private.consent_events (
   )),
   -- What proves it (the booking it came with).
   evidence jsonb,
+  -- Where she agreed to receive them (a grant): her address or number,
+  -- normalised (private.consent_destination). An agreement is for that
+  -- destination only: once the record's changes, it no longer counts.
+  destination text,
   actor_user_id uuid references auth.users (id) on delete set null,
   request_id uuid,
   fingerprint text,
@@ -118,7 +122,8 @@ create table private.consent_events (
     references public.clients (id, business_id) on delete cascade,
   check (state <> 'granted' or (proof_version is not null and information_version is not null
                                 and notice_version is not null)),
-  check (state <> 'granted' or source in ('booking', 'client_hub', 'unsubscribe_undo'))
+  check (state <> 'granted' or source in ('booking', 'client_hub', 'unsubscribe_undo')),
+  check (state <> 'granted' or destination is not null)
 );
 
 create index consent_events_subject_idx
@@ -186,6 +191,39 @@ as $$
   limit 1;
 $$;
 
+-- The record's destination for a channel, normalised as an agreement
+-- stores it: her email in lower case, her number with digits and + only.
+create function private.consent_destination(p_client_id uuid, p_channel text)
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+  select case p_channel
+    when 'email' then pg_catalog.lower(pg_catalog.btrim(c.email::text))
+    when 'sms' then nullif(pg_catalog.regexp_replace(c.phone, '[^0-9+]', '', 'g'), '')
+  end
+  from public.clients c where c.id = p_client_id;
+$$;
+
+-- The subject's state: a grant counts only for the destination she agreed
+-- for. If the record's address or number has changed since, it is
+-- 'unknown' again (a new agreement is needed); the history keeps it.
+create function private.consent_effective(p_client_id uuid, p_purpose text, p_channel text)
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+  select case
+    when l.state = 'granted'
+      and l.destination is distinct from private.consent_destination(p_client_id, p_channel)
+      then 'unknown'
+    else coalesce(l.state, 'unknown')
+  end
+  from (select (private.consent_latest(p_client_id, p_purpose, p_channel)).*) l;
+$$;
+
 -- What a marketing delivery reads, under the subject's lock.
 create function private.consent_state(p_client_id uuid, p_purpose text, p_channel text)
 returns text
@@ -193,7 +231,7 @@ language sql
 stable
 set search_path = ''
 as $$
-  select coalesce((private.consent_latest(p_client_id, p_purpose, p_channel)).state, 'unknown');
+  select private.consent_effective(p_client_id, p_purpose, p_channel);
 $$;
 
 create function private.consent_view(p_client_id uuid, p_purpose text, p_channel text)
@@ -205,7 +243,10 @@ as $$
   select pg_catalog.jsonb_build_object(
     'purpose', p_purpose,
     'channel', p_channel,
-    'state', coalesce(l.state, 'unknown'),
+    'state', private.consent_effective(p_client_id, p_purpose, p_channel),
+    -- A grant given for another address or number than the record's now.
+    'destinationChanged', l.state = 'granted'
+      and l.destination is distinct from private.consent_destination(p_client_id, p_channel),
     'proofVersion', case when l.state = 'granted' then l.proof_version end,
     'source', l.source,
     'changedAt', l.created_at
@@ -217,6 +258,8 @@ revoke all on function private.consent_events_append_only() from public;
 revoke all on function private.lock_consent_subject(uuid) from public;
 revoke all on function private.consent_latest(uuid, text, text) from public;
 revoke all on function private.consent_state(uuid, text, text) from public;
+revoke all on function private.consent_destination(uuid, text) from public;
+revoke all on function private.consent_effective(uuid, text, text) from public;
 revoke all on function private.consent_view(uuid, text, text) from public;
 
 -- ---------------------------------------------------------------------------
@@ -514,7 +557,7 @@ begin
 
   insert into private.consent_events (
     business_id, client_id, purpose, channel, state, proof_version, information_version,
-    notice_version, evidence, source, link_id
+    notice_version, evidence, destination, source, link_id
   ) values (
     v_link.business_id, v_link.client_id, v_link.purpose, v_link.channel,
     coalesce(v_before.state, 'unknown'),
@@ -522,6 +565,7 @@ begin
     case when v_before.state = 'granted' then v_before.information_version end,
     case when v_before.state = 'granted' then v_before.notice_version end,
     case when v_before.state = 'granted' then v_before.evidence end,
+    case when v_before.state = 'granted' then v_before.destination end,
     'unsubscribe_undo', v_link.id
   );
   return private.unsubscribe_view(v_link);
@@ -586,8 +630,13 @@ create table private.consent_confirmations (
   channels jsonb not null,
   information_version text not null references private.consent_texts (version),
   notice_version text not null references private.consent_texts (version),
-  -- The number she typed with this booking (an SMS agreement is for it).
+  -- The address the link goes to (the record's then): an email agreement
+  -- is for it. The number she typed with this booking: an SMS one is.
+  email text not null,
   phone text,
+  -- When the link was handed to the transport: until then, the same
+  -- booking may ask again (a new link; the former one stops working).
+  sent_at timestamptz,
   created_at timestamptz not null default pg_catalog.now(),
   expires_at timestamptz not null,
   confirmed_at timestamptz,
@@ -655,13 +704,22 @@ begin
   end if;
   insert into private.consent_confirmations (
     token_hash, business_id, client_id, appointment_id, channels, information_version,
-    notice_version, phone, expires_at
+    notice_version, email, phone, expires_at
   ) values (
     p_token_hash, v_appointment.business_id, v_client.id, v_appointment.id, p_channels,
-    p_information_version, p_notice_version, v_appointment.client_phone_snapshot,
+    p_information_version, p_notice_version,
+    private.consent_destination(v_client.id, 'email'),
+    nullif(pg_catalog.regexp_replace(v_appointment.client_phone_snapshot, '[^0-9+]', '', 'g'), ''),
     pg_catalog.now() + interval '7 days'
   )
-  on conflict (appointment_id) do nothing;
+  -- Her link never left (the transport failed): this retry sends a new one.
+  on conflict (appointment_id) do update
+    set token_hash = excluded.token_hash,
+        email = excluded.email,
+        expires_at = excluded.expires_at,
+        created_at = pg_catalog.now()
+    where private.consent_confirmations.sent_at is null
+      and private.consent_confirmations.confirmed_at is null;
   if not found then
     return pg_catalog.jsonb_build_object('status', 'already_requested');
   end if;
@@ -692,6 +750,7 @@ declare
   v_channel text;
   v_outcomes jsonb := '{}'::jsonb;
   v_name text;
+  v_destination text;
 begin
   select * into v_confirmation from private.consent_confirmations c
   where c.token_hash = p_token_hash for update;
@@ -711,19 +770,21 @@ begin
   perform private.lock_consent_subject(v_confirmation.client_id);
   select * into v_client from public.clients c where c.id = v_confirmation.client_id;
   for v_channel in select pg_catalog.jsonb_object_keys(v_confirmation.channels) loop
-    if v_channel = 'sms' and (
-      v_confirmation.phone is null or v_client.phone is distinct from v_confirmation.phone
-    ) then
+    -- Her agreement is for the address the link went to (an email) or the
+    -- number typed with the booking (an SMS), if it is still the record's.
+    v_destination := case v_channel when 'email' then v_confirmation.email else v_confirmation.phone end;
+    if v_destination is null
+       or v_destination is distinct from private.consent_destination(v_client.id, v_channel) then
       v_outcomes := v_outcomes || pg_catalog.jsonb_build_object(v_channel, 'unreachable');
       continue;
     end if;
     insert into private.consent_events (
       business_id, client_id, purpose, channel, state, proof_version, information_version,
-      notice_version, source, evidence
+      notice_version, source, destination, evidence
     ) values (
       v_confirmation.business_id, v_confirmation.client_id, 'marketing', v_channel, 'granted',
       v_confirmation.channels ->> v_channel, v_confirmation.information_version,
-      v_confirmation.notice_version, 'booking',
+      v_confirmation.notice_version, 'booking', v_destination,
       pg_catalog.jsonb_build_object(
         'appointmentId', v_confirmation.appointment_id,
         'bookingRequestId', (select a.creation_request_id from public.appointments a
@@ -739,6 +800,19 @@ begin
   where c.id = v_confirmation.id;
   return pg_catalog.jsonb_build_object('status', 'confirmed', 'businessName', v_name, 'channels', v_outcomes);
 end;
+$$;
+
+-- The link was handed to the transport (the service, after sending): a
+-- retry of the same booking asks nothing more.
+create function public.consent_confirmation_sent(p_token_hash text)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  update private.consent_confirmations c
+  set sent_at = coalesce(c.sent_at, pg_catalog.now())
+  where c.token_hash = p_token_hash;
 $$;
 
 -- What the confirmation page shows before her click (changes nothing).
@@ -1004,6 +1078,7 @@ begin
   foreach v_signature in array array[
     'public.consent_request_from_booking(uuid, jsonb, text, text, text)',
     'public.consent_confirm(text)',
+    'public.consent_confirmation_sent(text)',
     'public.consent_confirmation_read(text)',
     'public.consent_text_show(text)',
     'public.consent_text_register(text, text, text)',
