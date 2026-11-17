@@ -66,6 +66,18 @@ certification juridique) sont détaillées dans
     `{ status: "confirmed" | "already_confirmed" | "collection_off", businessName, channels? }`,
     où `channels` vaut `{ email?: "granted" | "unreachable", sms?: … }`.
   - Un lien inconnu ou expiré : `consent_link_invalid`.
+- **Un accord vaut pour une destination.** Il mémorise l'adresse e-mail ou
+  le numéro pour lequel il a été confirmé (normalisés).
+  - Au clic, l'adresse du lien doit encore être celle de la fiche, et le
+    numéro saisi à la réservation celui de la fiche. Sinon le canal répond
+    `unreachable` et rien n'est enregistré.
+  - Si l'adresse ou le numéro de la fiche change ensuite, l'accord ne compte
+    plus : l'état redevient `unknown` (aucun envoi), et le DTO ajoute
+    `destinationChanged: true`. Il faut un nouvel accord de la cliente.
+    L'historique le garde.
+- **Envoi échoué** : tant que le lien n'est pas parti, un rejeu de la même
+  réservation en renvoie un nouveau (l'ancien cesse de marcher). Une fois
+  parti, plus rien n'est renvoyé.
 - **Preuve** de chaque accord : l'établissement, le canal, la date serveur,
   l'origine (`booking`), le rendez-vous et sa demande, la confirmation
   (`confirmedBy: "email_link"`), et les versions exactes de la case, de

@@ -23,8 +23,19 @@ export type ConsentDto = {
   purpose: "marketing";
   channel: ConsentChannel;
   state: ConsentState;
+  /**
+   * Her agreement was for another address or number than the record's now:
+   * it no longer counts (state "unknown") until she agrees again.
+   */
+  destinationChanged: boolean;
   proofVersion: string | null;
-  source: "professional" | "unsubscribe_link" | "unsubscribe_undo" | null;
+  source:
+    | "booking"
+    | "client_hub"
+    | "professional"
+    | "unsubscribe_link"
+    | "unsubscribe_undo"
+    | null;
   changedAt: string | null;
 };
 
@@ -241,10 +252,15 @@ export async function requestBookingConsent(
       channels: Object.keys(channels) as ConsentChannel[],
     });
   } catch {
-    // Never logs the address or the link: she may tick again with a new booking.
+    // Never logs the address or the link. Not marked sent: a retry of the
+    // same booking sends a new link (the former one stops working).
     console.error("Consent confirmation email could not be sent.");
     return { status: "email_unavailable" };
   }
+  const { error: markError } = await service.rpc("consent_confirmation_sent", {
+    p_token_hash: hashUnsubscribeToken(token),
+  });
+  if (markError) console.error("Consent confirmation not marked sent.");
   return { status: "pending" };
 }
 
