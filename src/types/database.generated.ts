@@ -1516,6 +1516,9 @@ isOneToOne: false
 "practitioner_agenda":
 { Args: { "p_business_id": string,"p_from": string,"p_to": string }; Returns: Json
                            },
+"practitioner_agenda_days":
+{ Args: { "p_business_id": string,"p_days"?: number,"p_from_date"?: string }; Returns: Json
+                           },
 "preview_appointment_series":
 { Args: { "p_business_id": string,"p_client_id": string,"p_count": number,"p_first_local_start": string,"p_option_choice_ids": (string)[],"p_repeat_every_weeks": number,"p_service_id": string,"p_until_local_date": string }; Returns: Json
                            },
