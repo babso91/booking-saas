@@ -128,13 +128,14 @@ L'owner invite avec `role: "practitioner"`. **Refus par défaut** :
 portes, ne reconnaît que owner et admin. La praticienne n'obtient que ces
 droits explicites :
 
-| Elle peut                                                                                   | Comment                                                       |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| lire son établissement, ses réglages, horaires, exceptions et catalogue                     | lecture directe (RLS)                                         |
-| lire son appartenance, les profils de l'équipe (noms) et ses préférences                    | lecture directe (RLS)                                         |
-| lire **ses** rendez-vous (`staff_id` = son profil), notes internes du rendez-vous comprises | lecture directe                                               |
-| son agenda : ses rendez-vous avec nom, e-mail et téléphone de chaque cliente                | `practitioner_agenda(businessId, from, to)`, 62 jours au plus |
-| marquer ses visites réalisées ou manquées, et les rouvrir                                   | `agenda_set_appointment_status` sur ses propres rendez-vous   |
+| Elle peut                                                                                        | Comment                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| lire son établissement, ses réglages, horaires, exceptions et catalogue                          | lecture directe (RLS)                                                                                                                                                                                                                                                          |
+| lire son appartenance, les profils de l'équipe (noms) et ses préférences                         | lecture directe (RLS)                                                                                                                                                                                                                                                          |
+| lire **ses** rendez-vous (`staff_id` = son profil), notes internes du rendez-vous comprises      | lecture directe                                                                                                                                                                                                                                                                |
+| son agenda : ses rendez-vous avec nom, e-mail et téléphone de chaque cliente                     | `practitioner_agenda(businessId, from, to)`, 62 jours au plus                                                                                                                                                                                                                  |
+| son agenda par jours locaux, avec l'horloge de l'établissement (`business_time` lui reste fermé) | `practitioner_agenda_days(businessId, fromDate?, days ≤ 62)` → `{ timezone, now, today, todayEndsAt, days: [{ date, startsAt, endsAt }], visits }` ; `fromDate` absent = aujourd'hui de l'établissement ; bornes des jours calculées par la base (changements d'heure compris) |
+| marquer ses visites réalisées ou manquées, et les rouvrir                                        | `agenda_set_appointment_status` sur ses propres rendez-vous                                                                                                                                                                                                                    |
 
 **Fermé pour elle** :
 

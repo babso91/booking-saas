@@ -196,6 +196,55 @@ describe("a practitioner reads", () => {
         })
       ).error?.message,
     ).toBe("forbidden");
+
+    // By local days, with the business's clock (business_time stays closed).
+    type Days = {
+      now: string;
+      today: string;
+      todayEndsAt: string;
+      days: { date: string; startsAt: string; endsAt: string }[];
+      visits: { id: string }[];
+    };
+    const week = await ok<Days>(
+      call(alice.client, "practitioner_agenda_days", {
+        p_business_id: business.id,
+        p_from_date: null,
+        p_days: 7,
+      }),
+    );
+    expect(week.days).toHaveLength(7);
+    expect(week.days[0]!.date).toBe(week.today);
+    expect(new Date(week.now) < new Date(week.todayEndsAt)).toBe(true);
+    expect(week.days[1]!.startsAt).toBe(week.days[0]!.endsAt);
+    expect(week.visits.map((v) => v.id)).toEqual([visits.future]);
+    const { rows: dayBounds } = await db.query(
+      `select private.local_day_start($1::date, b.timezone) as lo
+       from public.businesses b where b.id = $2`,
+      [week.today, business.id],
+    );
+    expect(new Date(week.days[0]!.startsAt).getTime()).toBe(
+      new Date(dayBounds[0].lo).getTime(),
+    );
+    for (const p_days of [0, 63]) {
+      expect(
+        (
+          await call(alice.client, "practitioner_agenda_days", {
+            p_business_id: business.id,
+            p_from_date: null,
+            p_days,
+          })
+        ).error?.message,
+      ).toBe("invalid_input");
+    }
+    expect(
+      (
+        await call(owner.client, "practitioner_agenda_days", {
+          p_business_id: business.id,
+          p_from_date: null,
+          p_days: 7,
+        })
+      ).error?.message,
+    ).toBe("forbidden");
     expect((await rows(alice.client, "businesses")).length).toBe(1);
     expect((await rows(alice.client, "business_settings")).length).toBe(1);
     expect((await rows(alice.client, "services")).length).toBeGreaterThan(0);

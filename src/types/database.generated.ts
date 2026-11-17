@@ -1322,6 +1322,9 @@ isOneToOne: false
 "practitioner_agenda":
 { Args: { "p_business_id": string,"p_from": string,"p_to": string }; Returns: Json
                            },
+"practitioner_agenda_days":
+{ Args: { "p_business_id": string,"p_days"?: number,"p_from_date"?: string }; Returns: Json
+                           },
 "public_site_photo":
 { Args: { "p_asset_id": string,"p_slug": string }; Returns: string
                            },
