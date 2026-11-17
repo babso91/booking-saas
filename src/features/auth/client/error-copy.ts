@@ -423,6 +423,27 @@ export const errorCopy: Record<
     title: "Modification impossible ici",
     message: "Ce rendez-vous se modifie avec l’établissement directement.",
   },
+  waitlist_unavailable: {
+    title: "Liste d’attente fermée",
+    message: "Cet établissement n’a pas ouvert de liste d’attente.",
+  },
+  waitlist_request_not_found: {
+    title: "Lien expiré",
+    message: "Ce lien n’est plus valable.",
+  },
+  waitlist_offer_not_found: {
+    title: "Offre introuvable",
+    message: "Cette offre n’existe pas ou plus.",
+  },
+  offer_expired: { title: "Offre expirée", message: "Cette offre a expiré." },
+  offer_unavailable: {
+    title: "Créneau pris",
+    message: "Ce créneau vient d’être réservé.",
+  },
+  stale_offer: {
+    title: "Offre modifiée",
+    message: "Cette offre a changé. Relis-la.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {

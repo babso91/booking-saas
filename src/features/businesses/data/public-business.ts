@@ -17,6 +17,8 @@ export type PublicBusinessDto = {
   maximumBookingAdvanceDays: number;
   /** Today in the business time zone (YYYY-MM-DD), by the database's clock. */
   today: string;
+  /** Her waitlist is open (docs/WAITLIST_CONTRACT.md): show its button. */
+  waitlistEnabled: boolean;
 };
 
 export type PublicServiceDto = {
@@ -59,6 +61,7 @@ export async function getPublicBusiness(
     minimumBookingNoticeMinutes: row.minimum_booking_notice_minutes,
     maximumBookingAdvanceDays: row.maximum_booking_advance_days,
     today: row.today,
+    waitlistEnabled: row.waitlist_enabled,
   };
 }
 
