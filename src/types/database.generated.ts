@@ -1319,6 +1319,12 @@ isOneToOne: false
               "asset_id": string,"attempts": number,"business_id": string,"scope": string
             }[]
                            },
+"practitioner_agenda":
+{ Args: { "p_business_id": string,"p_from": string,"p_to": string }; Returns: Json
+                           },
+"practitioner_agenda_days":
+{ Args: { "p_business_id": string,"p_days"?: number,"p_from_date"?: string }; Returns: Json
+                           },
 "public_site_photo":
 { Args: { "p_asset_id": string,"p_slug": string }; Returns: string
                            },
@@ -1437,7 +1443,7 @@ isOneToOne: false
                            }
           }
           Enums: {
-            "appointment_status": "confirmed"|"completed"|"cancelled"|"no_show","availability_exception_kind": "closed"|"blocked"|"open_override","business_member_role": "owner"|"admin","email_event_status": "pending"|"processing"|"sent"|"failed"|"cancelled","email_event_type": "booking_confirmation"|"appointment_reminder"|"appointment_changed"|"appointment_cancelled"|"points_earned"|"reward_unlocked"|"reactivation","loyalty_accrual_mode": "appointment"|"spend","loyalty_event_type": "appointment_completed"|"manual_adjustment"|"reward_redeemed"|"correction","reward_redemption_status": "issued"|"fulfilled"|"cancelled","reward_type": "percentage_discount"|"fixed_discount"|"free_service"
+            "appointment_status": "confirmed"|"completed"|"cancelled"|"no_show","availability_exception_kind": "closed"|"blocked"|"open_override","business_member_role": "owner"|"admin"|"practitioner","email_event_status": "pending"|"processing"|"sent"|"failed"|"cancelled","email_event_type": "booking_confirmation"|"appointment_reminder"|"appointment_changed"|"appointment_cancelled"|"points_earned"|"reward_unlocked"|"reactivation","loyalty_accrual_mode": "appointment"|"spend","loyalty_event_type": "appointment_completed"|"manual_adjustment"|"reward_redeemed"|"correction","reward_redemption_status": "issued"|"fulfilled"|"cancelled","reward_type": "percentage_discount"|"fixed_discount"|"free_service"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -1553,7 +1559,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "appointment_status": ["confirmed", "completed", "cancelled", "no_show"],"availability_exception_kind": ["closed", "blocked", "open_override"],"business_member_role": ["owner", "admin"],"email_event_status": ["pending", "processing", "sent", "failed", "cancelled"],"email_event_type": ["booking_confirmation", "appointment_reminder", "appointment_changed", "appointment_cancelled", "points_earned", "reward_unlocked", "reactivation"],"loyalty_accrual_mode": ["appointment", "spend"],"loyalty_event_type": ["appointment_completed", "manual_adjustment", "reward_redeemed", "correction"],"reward_redemption_status": ["issued", "fulfilled", "cancelled"],"reward_type": ["percentage_discount", "fixed_discount", "free_service"]
+            "appointment_status": ["confirmed", "completed", "cancelled", "no_show"],"availability_exception_kind": ["closed", "blocked", "open_override"],"business_member_role": ["owner", "admin", "practitioner"],"email_event_status": ["pending", "processing", "sent", "failed", "cancelled"],"email_event_type": ["booking_confirmation", "appointment_reminder", "appointment_changed", "appointment_cancelled", "points_earned", "reward_unlocked", "reactivation"],"loyalty_accrual_mode": ["appointment", "spend"],"loyalty_event_type": ["appointment_completed", "manual_adjustment", "reward_redeemed", "correction"],"reward_redemption_status": ["issued", "fulfilled", "cancelled"],"reward_type": ["percentage_discount", "fixed_discount", "free_service"]
           }
         }
 } as const

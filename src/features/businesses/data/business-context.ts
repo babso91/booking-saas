@@ -9,6 +9,8 @@ export type BusinessContext = {
   userId: string;
   businessId: string;
   timezone: string;
+  /** Her role; a practitioner's rights are narrow (docs/TEAM_CONTRACT.md). */
+  role: "owner" | "admin" | "practitioner";
 };
 
 /**
@@ -36,7 +38,7 @@ export async function getBusinessContext(
 
   const { data, error } = await client
     .from("business_members")
-    .select("business_id, businesses!inner(timezone)")
+    .select("business_id, role, businesses!inner(timezone)")
     .eq("user_id", userData.user.id)
     .order("created_at", { ascending: true })
     .limit(1)
@@ -54,5 +56,6 @@ export async function getBusinessContext(
     userId: userData.user.id,
     businessId: data.business_id,
     timezone: data.businesses.timezone,
+    role: data.role,
   };
 }
