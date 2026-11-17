@@ -329,6 +329,34 @@ describe("offers", () => {
     );
   });
 
+  it("signals of a business whose list is closed never delay an eligible one", async () => {
+    // The afternoon of the day just used (the tests share a short horizon).
+    const date = dateInDays(day);
+    const appointment = await occupy(`${date}T14:00:00.000Z`);
+    const email = await joined(date, 840, 900);
+    await match(); // settles every earlier signal
+    // 60 older signals of another business, whose list is closed.
+    const closedOwner = await createProfessional("waitlist-closed-signals");
+    const closed = await createBusiness(closedOwner.userId);
+    await db.query(
+      `insert into private.capacity_releases
+         (business_id, appointment_id, appointment_version, occupied_from, occupied_until, reason, occurred_at)
+       select $1, gen_random_uuid(), 1, now() + interval '1 day', now() + interval '1 day 1 hour',
+              'cancelled', now() - interval '1 hour'
+       from generate_series(1, 60)`,
+      [closed.id],
+    );
+    await db.query(
+      "update public.appointments set status = 'cancelled' where id = $1",
+      [appointment],
+    );
+    const result = await ok<{ signals: number; offers: Matched[] }>(
+      call(bookingClient(), "waitlist_match", { p_budget: 50 }),
+    );
+    expect(mine(result.offers, email)).toHaveLength(1);
+    expect(result.signals).toBe(1);
+  });
+
   it("marks the offer unavailable when someone books the time first, and keeps her request", async () => {
     day += 1;
     const date = dateInDays(day);
