@@ -26,6 +26,23 @@ describe("destinationFor", () => {
       }),
     ).toBe("/app");
   });
+
+  it("a practitioner goes to her own agenda, never to /app", () => {
+    expect(
+      destinationFor({
+        status: "ready",
+        user,
+        business: {
+          id: "b",
+          membershipId: "m",
+          role: "practitioner",
+          slug: "s",
+          name: "n",
+          timezone: "Europe/Paris",
+        },
+      }),
+    ).toBe("/mon-agenda");
+  });
 });
 
 describe("safeNextPath", () => {

@@ -41,7 +41,8 @@ export type SessionState =
   | { status: "onboarding_required"; user: SessionUser }
   | { status: "ready"; user: SessionUser; business: OnboardedBusiness };
 
-export type SessionDestination = "/login" | "/onboarding" | "/app";
+export type SessionDestination =
+  "/login" | "/onboarding" | "/app" | "/mon-agenda";
 
 export function destinationFor(state: SessionState): SessionDestination {
   switch (state.status) {
@@ -50,7 +51,9 @@ export function destinationFor(state: SessionState): SessionDestination {
     case "onboarding_required":
       return "/onboarding";
     case "ready":
-      return "/app";
+      // A practitioner has her own screen: the area's pages read what the
+      // server refuses her (docs/TEAM_CONTRACT.md, « Rôle praticienne »).
+      return state.business.role === "practitioner" ? "/mon-agenda" : "/app";
   }
 }
 
