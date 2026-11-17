@@ -21,7 +21,8 @@ export const currentSessionState = cache(async (): Promise<SessionState> => {
 // no state can bounce between two routes:
 //   unauthenticated     → /login       (accepts unauthenticated)
 //   onboarding_required → /onboarding  (accepts onboarding_required)
-//   ready               → /app         (accepts ready)
+//   ready               → /app         (accepts ready, owner or admin)
+//   ready, practitioner → /mon-agenda  (accepts ready, practitioner)
 // Auth unreachable is none of them: it is a temporary error, shown on
 // /indisponible (no guard, no session needed). Nothing is let through, and
 // nothing signs her out.
@@ -39,11 +40,26 @@ async function guardedSessionState() {
   }
 }
 
-/** For /app: signed in with a business, otherwise redirected. */
+/**
+ * For /app: signed in with a business as owner or admin, otherwise
+ * redirected. Every page of the area calls it, so a practitioner never runs
+ * one (they read what the server refuses her) and lands on her agenda.
+ */
 export async function requireReadyBusiness() {
   const state = await guardedSessionState();
 
-  if (state.status !== "ready") {
+  if (state.status !== "ready" || state.business.role === "practitioner") {
+    redirect(destinationFor(state));
+  }
+
+  return state;
+}
+
+/** For /mon-agenda: a practitioner of a business, otherwise redirected. */
+export async function requirePractitioner() {
+  const state = await guardedSessionState();
+
+  if (state.status !== "ready" || state.business.role !== "practitioner") {
     redirect(destinationFor(state));
   }
 
