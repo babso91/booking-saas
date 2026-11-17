@@ -3,10 +3,10 @@ import { expect, it } from "vitest";
 import { noSideScroll, signedInPage } from "./support/ecrin";
 import { APP, db, professionalWithVisit } from "./support/studio";
 
-it("applies each Sunday's hours independently and can restore the usual hours", async () => {
+it("adds, revisits and restores two different Thursdays independently", async () => {
   const pro = await professionalWithVisit("Lina", "Camille");
   await db.query(
-    "insert into public.business_hours (business_id, weekday, starts_at, ends_at) values ($1, 0, '09:00', '20:00')",
+    "insert into public.business_hours (business_id, weekday, starts_at, ends_at) values ($1, 4, '09:00', '20:00')",
     [pro.businessId],
   );
   const { rows: fixtures } = await db.query<{
@@ -14,7 +14,7 @@ it("applies each Sunday's hours independently and can restore the usual hours", 
     service_id: string;
     date: string;
   }>(
-    `select b.slug, s.id service_id, (d.today + (7 - extract(dow from d.today)::int) + week * 7)::text date
+    `select b.slug, s.id service_id, (d.today + (11 - extract(dow from d.today)::int) % 7 + 7 + week * 7)::text date
        from public.businesses b
        join public.services s on s.business_id = b.id
        cross join lateral (select (now() at time zone b.timezone)::date today) d
@@ -37,7 +37,7 @@ it("applies each Sunday's hours independently and can restore the usual hours", 
   const url = `${APP}/app/settings/hours`;
   await page.goto(url);
   const chooseDate = async (date: string) => {
-    await page.getByRole("switch", { name: "Dimanche ouvert" }).waitFor();
+    await page.getByRole("switch", { name: "Jeudi ouvert" }).waitFor();
     await page.getByLabel("Date à modifier").fill(date);
   };
   const opening = page.getByLabel("Ouverture", { exact: true });
@@ -51,6 +51,7 @@ it("applies each Sunday's hours independently and can restore the usual hours", 
     await closing.selectOption(end);
     await page.getByRole("button", { name: "Enregistrer cette date" }).click();
     await page.getByText("Horaires enregistrés pour cette date.").waitFor();
+    await page.getByRole("button", { name: "Choisir une autre date" }).click();
   }
   expect(await noSideScroll(page)).toBe(true);
 
@@ -70,7 +71,9 @@ it("applies each Sunday's hours independently and can restore the usual hours", 
   );
 
   await page.reload();
-  await chooseDate(first);
+  await page.getByText("Prochaines dates personnalisées (2)").click();
+  await page.getByRole("button", { name: /jeudi.*09:00 – 18:00/ }).click();
+  expect(await page.getByLabel("Date à modifier").inputValue()).toBe(first);
   await page
     .getByRole("button", { name: "Rétablir les horaires habituels" })
     .waitFor();

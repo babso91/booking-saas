@@ -8,6 +8,7 @@ import { callAction, type UiError } from "@/features/auth/client/call-action";
 import { describeError } from "@/features/auth/client/error-copy";
 
 import {
+  listDateHoursAction,
   readDateHoursAction,
   saveDateHoursAction,
 } from "../actions/date-hours";
@@ -15,12 +16,40 @@ import { TIME_OPTIONS, timeOptions } from "../client/hours-draft";
 import { localDateSchema } from "../schemas/availability";
 
 type Range = { startsAt: string; endsAt: string };
+type SavedDate = Range & { date: string };
 const emptyRange: Range = { startsAt: "", endsAt: "" };
+const dateLabel = new Intl.DateTimeFormat("fr-FR", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+  timeZone: "UTC",
+});
 const fieldClass =
   "min-h-11 w-full min-w-0 rounded-xl border border-line bg-paper px-3 text-base text-ink";
 
 export function DateHoursEditor({ businessId }: { businessId: string }) {
   const [date, setDate] = useState("");
+  const [savedDates, setSavedDates] = useState<SavedDate[]>([]);
+  const [listFailed, setListFailed] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const dateInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let current = true;
+    void callAction(() => listDateHoursAction({ businessId })).then(
+      (result) => {
+        if (!current) return;
+        setListFailed(!result.ok);
+        if (result.ok) setSavedDates(result.data);
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [businessId, revision]);
+
+  const reloadDates = () => setRevision((value) => value + 1);
 
   return (
     <section className="flex flex-col gap-3 rounded-3xl border border-line bg-paper-raised p-4 sm:p-5">
@@ -28,12 +57,13 @@ export function DateHoursEditor({ businessId }: { businessId: string }) {
         Horaires par date
       </h2>
       <p className="text-[14px] text-ink-muted">
-        Choisis une date pour fixer ses heures d’ouverture. Les autres jours
-        suivent leurs horaires habituels.
+        Choisis n’importe quel jour du calendrier. Chaque date a ses propres
+        horaires d’ouverture.
       </p>
       <label className="flex max-w-sm flex-col gap-1.5 text-sm font-medium text-ink">
         Date à modifier
         <input
+          ref={dateInput}
           type="date"
           max="9999-12-31"
           value={date}
@@ -42,7 +72,53 @@ export function DateHoursEditor({ businessId }: { businessId: string }) {
         />
       </label>
       {localDateSchema.safeParse(date).success ? (
-        <DateHoursForm key={date} date={date} businessId={businessId} />
+        <DateHoursForm
+          key={date}
+          date={date}
+          businessId={businessId}
+          onSaved={reloadDates}
+          onChooseAnother={() => {
+            setDate("");
+            dateInput.current?.focus();
+          }}
+        />
+      ) : null}
+      {savedDates.length ? (
+        <details className="border-t border-line pt-3">
+          <summary className="cursor-pointer text-sm font-semibold text-ink">
+            Prochaines dates personnalisées ({savedDates.length})
+          </summary>
+          <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+            {savedDates.map((entry) => (
+              <li key={entry.date}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDate(entry.date);
+                    dateInput.current?.focus();
+                  }}
+                  className="flex min-h-11 w-full cursor-pointer flex-col rounded-xl border border-line bg-paper px-3 py-2 text-left text-sm text-ink"
+                >
+                  <time dateTime={entry.date} className="font-medium">
+                    {dateLabel.format(new Date(`${entry.date}T00:00:00Z`))}
+                  </time>
+                  <span className="text-ink-muted">
+                    {entry.startsAt} – {entry.endsAt}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {listFailed ? (
+        <button
+          type="button"
+          onClick={reloadDates}
+          className="self-start text-sm font-semibold underline"
+        >
+          Recharger la liste des dates
+        </button>
       ) : null}
     </section>
   );
@@ -51,9 +127,13 @@ export function DateHoursEditor({ businessId }: { businessId: string }) {
 function DateHoursForm({
   date,
   businessId,
+  onSaved,
+  onChooseAnother,
 }: {
   date: string;
   businessId: string;
+  onSaved: () => void;
+  onChooseAnother: () => void;
 }) {
   const [saved, setSaved] = useState<Range | null | undefined>(undefined);
   const [hours, setHours] = useState<Range>(emptyRange);
@@ -103,6 +183,7 @@ function DateHoursForm({
       }
       setSaved(result.data);
       setHours(result.data ?? emptyRange);
+      onSaved();
       setNotice(
         result.data
           ? "Horaires enregistrés pour cette date."
@@ -224,7 +305,22 @@ function DateHoursForm({
           Chargement des horaires…
         </p>
       ) : null}
-      {notice ? <Notice tone="success">{notice}</Notice> : null}
+      {notice ? (
+        <Notice
+          tone="success"
+          action={
+            <button
+              type="button"
+              onClick={onChooseAnother}
+              className="font-semibold underline"
+            >
+              Choisir une autre date
+            </button>
+          }
+        >
+          {notice}
+        </Notice>
+      ) : null}
       {error ? (
         <Notice
           tone="error"

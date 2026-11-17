@@ -6,6 +6,7 @@ import { z } from "zod";
 import { runBusinessAction } from "@/features/businesses/actions/run-business-action";
 import { AppException } from "@/lib/errors";
 import { databaseException } from "@/lib/supabase/errors";
+import { readBusinessTime } from "@/lib/time/business-time";
 
 import { localDateSchema, localTimeSchema } from "../schemas/availability";
 
@@ -32,6 +33,31 @@ function requireScheduleAccess(
   ) {
     throw new AppException("forbidden");
   }
+}
+
+export async function listDateHoursAction(input: unknown) {
+  return runBusinessAction(
+    z.object({ businessId: z.uuid() }),
+    input,
+    async (context, data) => {
+      requireScheduleAccess(context, data.businessId);
+      const { client, businessId } = context;
+      const { today } = await readBusinessTime(client, businessId);
+      const { data: rows, error } = await client
+        .from("business_date_hours")
+        .select("date, starts_at, ends_at")
+        .eq("business_id", businessId)
+        .gte("date", today)
+        .order("date")
+        .limit(30);
+      if (error) throw databaseException(error);
+      return rows.map((row) => ({
+        date: row.date,
+        startsAt: row.starts_at.slice(0, 5),
+        endsAt: row.ends_at.slice(0, 5),
+      }));
+    },
+  );
 }
 
 export async function readDateHoursAction(input: unknown) {
