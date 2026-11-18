@@ -90,6 +90,12 @@ export function LoyaltySettings() {
             </Link>
             .
           </p>
+          <Link
+            href="/app/loyalty/relances"
+            className="mt-1 w-fit text-[14.5px] font-semibold text-ink underline decoration-line-strong underline-offset-4"
+          >
+            Relancer les clientes qui ne sont pas revenues
+          </Link>
         </header>
 
         {load.status === "loading" ? (
