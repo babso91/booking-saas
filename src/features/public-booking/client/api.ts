@@ -142,6 +142,29 @@ export function fetchAvailability(
   );
 }
 
+export type CalendarAvailabilityDay = {
+  date: string;
+  slots: Pick<Slot, "startsAt" | "localStartsAt">[];
+};
+
+export function fetchAvailabilityCalendar(
+  slug: string,
+  serviceId: string,
+  from: string,
+  through: string,
+  optionChoiceIds: string[],
+  signal: AbortSignal,
+) {
+  const query = new URLSearchParams({ serviceId, date: from, through });
+  if (optionChoiceIds.length)
+    query.set("optionChoiceIds", optionChoiceIds.join(","));
+  return request<{ days: CalendarAvailabilityDay[] }>(
+    `${businessUrl(slug)}/availability?${query}`,
+    { method: "GET", signal },
+    READ_TIMEOUT_MS,
+  );
+}
+
 /** One booking: idempotent by `requestId` (same id + same body = replay). */
 export function postBooking(command: BookingCommand, requestId: string) {
   return request<{ booking: Booking }>(

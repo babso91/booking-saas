@@ -4,6 +4,7 @@ import { useId, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
+import { Sheet } from "@/components/ui/sheet";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
 import { CrmError } from "@/features/crm/components/crm-error";
 import { setCancellationPolicyAction } from "../actions";
@@ -23,6 +24,7 @@ export function CancellationPolicyEditor({
   leadMinutes: number | null;
 }) {
   const id = useId();
+  const [open, setOpen] = useState(false);
   const [value, setValue] = useState(String(leadMinutes ?? "none"));
   const [saved, setSaved] = useState(value);
   const [pending, setPending] = useState(false);
@@ -58,62 +60,77 @@ export function CancellationPolicyEditor({
   }
 
   return (
-    <section className="mt-8 flex flex-col gap-4 rounded-2xl border border-line bg-paper-raised p-5">
-      <h2 className="font-display text-[26px] text-ink">Annulation en ligne</h2>
-      <p className="text-[14px] leading-relaxed text-ink-soft">
-        Les clientes auxquelles tu as ouvert l’espace client peuvent annuler
-        elles-mêmes selon le délai que tu choisis.
-      </p>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save();
+    <div className="flex justify-start">
+      <Button size="md" variant="secondary" onClick={() => setOpen(true)}>
+        Règle d’annulation
+      </Button>
+      <Sheet
+        open={open}
+        onClose={() => {
+          if (!busy.current) setOpen(false);
         }}
-        className="flex flex-col items-start gap-3"
+        title="Annulation en ligne"
+        placement="center"
       >
-        <label htmlFor={id} className="text-[14px] font-medium text-ink">
-          Autoriser l’annulation
-        </label>
-        <select
-          id={id}
-          value={value}
-          disabled={pending}
-          onChange={(event) => {
-            setValue(event.target.value);
-            setDone(false);
-          }}
-          className="min-h-11 w-full rounded-xl border border-line bg-paper px-3 text-[14px] text-ink"
-        >
-          {custom ? <option value={saved}>{saved} minutes avant</option> : null}
-          {choices.map(([option, label]) => (
-            <option key={option} value={option}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <p className="text-[13px] leading-relaxed text-ink-muted">
-          Ce réglage s’applique aux nouveaux rendez-vous. Ceux déjà réservés
-          conservent leurs conditions d’annulation.
-        </p>
-        <Button
-          type="submit"
-          state={pending ? "loading" : "idle"}
-          disabled={value === saved}
-        >
-          Enregistrer la règle d’annulation
-        </Button>
-      </form>
-      {error ? (
-        <CrmError error={error}>
-          La règle n’a pas pu être enregistrée. Vérifie la connexion puis
-          réessaie.
-        </CrmError>
-      ) : null}
-      {done ? (
-        <Notice tone="success">
-          Règle enregistrée pour les nouveaux rendez-vous.
-        </Notice>
-      ) : null}
-    </section>
+        <div className="flex flex-col gap-4">
+          <p className="text-[14px] leading-relaxed text-ink-soft">
+            Les clientes auxquelles tu as ouvert l’espace client peuvent annuler
+            elles-mêmes selon le délai que tu choisis.
+          </p>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void save();
+            }}
+            className="flex flex-col items-start gap-3"
+          >
+            <label htmlFor={id} className="text-[14px] font-medium text-ink">
+              Autoriser l’annulation
+            </label>
+            <select
+              id={id}
+              value={value}
+              disabled={pending}
+              onChange={(event) => {
+                setValue(event.target.value);
+                setDone(false);
+              }}
+              className="min-h-11 w-full rounded-xl border border-line bg-paper px-3 text-[14px] text-ink"
+            >
+              {custom ? (
+                <option value={saved}>{saved} minutes avant</option>
+              ) : null}
+              {choices.map(([option, label]) => (
+                <option key={option} value={option}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[13px] leading-relaxed text-ink-muted">
+              Ce réglage s’applique aux nouveaux rendez-vous. Ceux déjà réservés
+              conservent leurs conditions d’annulation.
+            </p>
+            <Button
+              type="submit"
+              state={pending ? "loading" : "idle"}
+              disabled={value === saved}
+            >
+              Enregistrer la règle d’annulation
+            </Button>
+          </form>
+          {error ? (
+            <CrmError error={error}>
+              La règle n’a pas pu être enregistrée. Vérifie la connexion puis
+              réessaie.
+            </CrmError>
+          ) : null}
+          {done ? (
+            <Notice tone="success">
+              Règle enregistrée pour les nouveaux rendez-vous.
+            </Notice>
+          ) : null}
+        </div>
+      </Sheet>
+    </div>
   );
 }

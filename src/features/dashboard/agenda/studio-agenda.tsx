@@ -48,6 +48,7 @@ export type StudioAgendaProps = {
   /** Computer (≥ 768 px): both views; phone: the day. */
   wide: boolean;
   onView: (view: StudioView) => void;
+  hideViewSwitch?: boolean;
   days: string[];
   anchor: string;
   today: string | null;
@@ -171,7 +172,9 @@ export function StudioAgenda(props: StudioAgendaProps) {
 
           {wide ? (
             <div className="flex flex-wrap items-center gap-2">
-              <ViewSwitch view={view} onView={props.onView} />
+              {props.hideViewSwitch ? null : (
+                <ViewSwitch view={view} onView={props.onView} />
+              )}
               <Navigation
                 {...props}
                 onToday={props.onToday}

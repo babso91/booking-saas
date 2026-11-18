@@ -45,6 +45,10 @@ export default async function BusinessHoursPage() {
         scheduleOptions={
           settings?.data ? (
             <>
+              <CancellationPolicyEditor
+                businessId={business.id}
+                leadMinutes={settings.data.cancellation_lead_minutes}
+              />
               <DateHoursEditor businessId={business.id} />
               <ClosuresEditor businessId={business.id} />
               <BookingHorizonEditor
@@ -55,13 +59,6 @@ export default async function BusinessHoursPage() {
           ) : null
         }
       />
-      {settings?.data ? (
-        <CancellationPolicyEditor
-          key={`${user.id}:${business.id}:${settings.data.cancellation_lead_minutes}`}
-          businessId={business.id}
-          leadMinutes={settings.data.cancellation_lead_minutes}
-        />
-      ) : null}
     </AppShell>
   );
 }

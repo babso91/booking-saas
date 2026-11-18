@@ -423,6 +423,26 @@ export function useBookingFlow({
     setStep("contact");
   }
 
+  function chooseCalendarSlot(day: string, startsAt: string) {
+    if (sending.current || !service || !days.includes(day)) return;
+    const instant = Date.parse(startsAt);
+    if (!Number.isFinite(instant)) return;
+    setDate(day);
+    setSlot(null);
+    setSlotQuote(null);
+    setNotice(null);
+    loadSlots(service.id, day, choiceIds, (fresh, quote) => {
+      const match = fresh.find((item) => Date.parse(item.startsAt) === instant);
+      if (!match) {
+        setNotice("slot_unavailable");
+        return;
+      }
+      setSlot(match);
+      setSlotQuote(quote);
+      setStep("contact");
+    });
+  }
+
   function changeContact(field: ContactField, value: string) {
     // Locked while sending: what is sent is what was reviewed.
     if (sending.current) return;
@@ -447,6 +467,10 @@ export function useBookingFlow({
     if ((target === "slot" || target === "options") && !service) return;
     if (target === "options" && !hasOptions) return;
     if ((target === "contact" || target === "review") && !slot) return;
+    if (target === "service") {
+      reads.current += 1;
+      readAbort.current?.abort();
+    }
     setStep(target);
     if (target === "slot" || target === "options") refreshSlots();
   }
@@ -689,6 +713,7 @@ export function useBookingFlow({
       chooseDate,
       refreshSlots,
       chooseSlot,
+      chooseCalendarSlot,
       changeContact,
       submitContact,
       goTo,

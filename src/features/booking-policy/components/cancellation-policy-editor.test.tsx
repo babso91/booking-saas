@@ -18,14 +18,24 @@ it("requires an explicit choice to open cancellation for new appointments", asyn
   render(
     <CancellationPolicyEditor businessId={businessId} leadMinutes={null} />,
   );
-  expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Règle d’annulation" }));
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "Enregistrer la règle d’annulation",
+    }).disabled,
+  ).toBe(true);
   fireEvent.change(screen.getByRole("combobox"), { target: { value: "0" } });
   fireEvent.click(
     screen.getByRole("button", { name: "Enregistrer la règle d’annulation" }),
   );
   await screen.findByText("Règle enregistrée pour les nouveaux rendez-vous.");
   expect(save).toHaveBeenCalledWith({ businessId, cancellationLeadMinutes: 0 });
-  expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "Enregistrer la règle d’annulation",
+    }).disabled,
+  ).toBe(true);
 });
 
 it("keeps a failed setting editable and never claims it was saved", async () => {
@@ -36,6 +46,7 @@ it("keeps a failed setting editable and never claims it was saved", async () => 
   render(
     <CancellationPolicyEditor businessId={businessId} leadMinutes={1440} />,
   );
+  fireEvent.click(screen.getByRole("button", { name: "Règle d’annulation" }));
   fireEvent.change(screen.getByRole("combobox"), { target: { value: "none" } });
   fireEvent.click(
     screen.getByRole("button", { name: "Enregistrer la règle d’annulation" }),

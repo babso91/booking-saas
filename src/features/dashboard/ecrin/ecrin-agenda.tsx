@@ -116,28 +116,30 @@ export function EcrinAgenda(props: StudioAgendaProps) {
 
         {wide ? (
           <div className="flex flex-wrap items-center gap-2">
-            <div
-              role="group"
-              aria-label="Affichage"
-              className="ecrin-object flex rounded-full p-1"
-            >
-              {(["week", "day"] as const).map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  aria-pressed={view === option}
-                  onClick={() => props.onView(option)}
-                  className={cn(
-                    "h-9 cursor-pointer rounded-full px-4 text-[14px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
-                    view === option
-                      ? "bg-accent-soft font-medium text-accent-strong"
-                      : "text-ink-soft hover:text-ink",
-                  )}
-                >
-                  {option === "week" ? "Semaine" : "Jour"}
-                </button>
-              ))}
-            </div>
+            {props.hideViewSwitch ? null : (
+              <div
+                role="group"
+                aria-label="Affichage"
+                className="ecrin-object flex rounded-full p-1"
+              >
+                {(["week", "day"] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={view === option}
+                    onClick={() => props.onView(option)}
+                    className={cn(
+                      "h-9 cursor-pointer rounded-full px-4 text-[14px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
+                      view === option
+                        ? "bg-accent-soft font-medium text-accent-strong"
+                        : "text-ink-soft hover:text-ink",
+                    )}
+                  >
+                    {option === "week" ? "Semaine" : "Jour"}
+                  </button>
+                ))}
+              </div>
+            )}
             <Round
               label={view === "week" ? "Semaine précédente" : "Jour précédent"}
               onClick={() => props.onShift(-1)}
