@@ -481,6 +481,18 @@ export const errorCopy: Record<
     title: "Limite atteinte",
     message: "Tu as atteint le nombre maximal de modèles de formulaire.",
   },
+  too_many_occurrences: {
+    title: "Série trop longue",
+    message: "Une série compte au plus 12 rendez-vous.",
+  },
+  calendar_conflict: {
+    title: "Dates prises",
+    message: "Une ou plusieurs dates ne sont plus libres. Rien n’a été créé.",
+  },
+  series_stale: {
+    title: "Aperçu périmé",
+    message: "Recalcule l’aperçu avant de confirmer. Rien n’a été créé.",
+  },
 };
 
 export function describeError(error: Pick<UiError, "code">) {
