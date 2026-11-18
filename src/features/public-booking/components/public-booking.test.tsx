@@ -310,6 +310,35 @@ describe("days and slots", () => {
     ).toBe("true");
   });
 
+  it("offers her waitlist only where the business opened it", async () => {
+    const first = renderPage();
+    await chooseService();
+    await slotButton("09:30");
+    expect(
+      screen.queryByRole("button", {
+        name: "Me prévenir si une place se libère",
+      }),
+    ).toBeNull();
+    first.unmount();
+
+    render(
+      <PublicBooking
+        business={{ ...business, waitlistEnabled: true }}
+        catalog={catalogOf(services)}
+      />,
+    );
+    await chooseService();
+    await slotButton("09:30");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Me prévenir si une place se libère",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Revenir aux créneaux" }),
+    ).toBeTruthy();
+  });
+
   it("a day without slots says so and offers the next day", async () => {
     api.availability.mockImplementation((_, date) =>
       ok({

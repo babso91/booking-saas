@@ -9,7 +9,9 @@ import { showcaseOf } from "@/features/experience/catalog/model";
 import { siteFontClasses } from "@/features/experience/fonts";
 import { MiniSite } from "@/features/experience/mini-site";
 import { publicPhotoBase, publicView } from "@/features/experience/published";
+import { getEmailTransport } from "@/features/notifications/transport";
 import { PublicBooking } from "@/features/public-booking/components/public-booking";
+import type { PublicBusiness } from "@/features/public-booking/client/api";
 import { getPublishedSite } from "@/features/sites/data/sites";
 import { AppException } from "@/lib/errors";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
@@ -60,6 +62,13 @@ export default async function PublicBookingPage({
 }: PageProps<"/b/[slug]">) {
   const page = await readPublicPage((await params).slug);
   if (!page) notFound();
+  // Her waitlist is offered only if she opened it AND its emails can leave
+  // (without them a request is never confirmed nor answered: a dead end).
+  const business: PublicBusiness = {
+    ...page.business,
+    waitlistEnabled:
+      page.business.waitlistEnabled && getEmailTransport() !== null,
+  };
 
   if (page.site)
     return (
@@ -69,10 +78,10 @@ export default async function PublicBookingPage({
         photoBase={publicPhotoBase(page.business.slug)}
         // The same booking as her booking page: her catalogue, options
         // included, priced and timed by the server.
-        booking={{ business: page.business, catalog: page.catalog }}
+        booking={{ business, catalog: page.catalog }}
         fontClasses={siteFontClasses}
       />
     );
 
-  return <PublicBooking business={page.business} catalog={page.catalog} />;
+  return <PublicBooking business={business} catalog={page.catalog} />;
 }

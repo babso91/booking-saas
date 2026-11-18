@@ -6,8 +6,11 @@ import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
 import { cn } from "@/lib/cn";
 
+import { httpWaitlistActions } from "@/features/waitlist/http-actions";
+import { JoinWaitlist } from "@/features/waitlist/join-waitlist";
+
 import { dayLabel, dayParts, wallTime } from "../client/business-time";
-import type { BookingFlow } from "../client/use-booking-flow";
+import { choiceIdsOf, type BookingFlow } from "../client/use-booking-flow";
 import {
   linkAction,
   QuoteLine,
@@ -41,8 +44,24 @@ export function SlotStep({
   const pages = Math.ceil(days.length / WEEK);
   const week = days.slice(page * WEEK, page * WEEK + WEEK);
   const nextDay = days[index + 1];
+  // Her waitlist, only where the business opened it (no dead end).
+  const [waiting, setWaiting] = useState(false);
+  const [waitlist] = useState(() => httpWaitlistActions());
 
   if (!service) return null;
+  if (waiting && business.waitlistEnabled)
+    return (
+      <JoinWaitlist
+        actions={waitlist}
+        businessSlug={business.slug}
+        serviceId={service.id}
+        serviceName={service.name}
+        optionChoiceIds={choiceIdsOf(service, flow.answers)}
+        today={business.today}
+        horizonDays={business.maximumBookingAdvanceDays}
+        onDone={() => setWaiting(false)}
+      />
+    );
   return (
     <section aria-labelledby="booking-slot" className="flex flex-col gap-5">
       <div id="booking-slot">
@@ -259,6 +278,21 @@ export function SlotStep({
           </ul>
         ) : null}
       </div>
+
+      {business.waitlistEnabled && slots.status === "ready" ? (
+        <div className="flex flex-col items-start gap-1 border-t border-line pt-4">
+          <p className="text-[14.5px] text-ink-soft">
+            Aucun créneau ne vous convient ?
+          </p>
+          <button
+            type="button"
+            className={linkAction}
+            onClick={() => setWaiting(true)}
+          >
+            Me prévenir si une place se libère
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
