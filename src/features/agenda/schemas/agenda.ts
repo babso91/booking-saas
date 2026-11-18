@@ -174,7 +174,7 @@ const blockPeriodSchema = z.object({
   reason: optionalText(500),
 });
 
-const blockDaysSchema = z
+export const blockDaysSchema = z
   .object({
     allDay: z.literal(true),
     startDate: localDateSchema,

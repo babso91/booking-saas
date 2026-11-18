@@ -5,6 +5,7 @@ import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { BookingHorizonEditor } from "@/features/availability/components/booking-horizon-editor";
 import { BusinessHoursEditor } from "@/features/availability/components/business-hours-editor";
+import { ClosuresEditor } from "@/features/availability/components/closures-editor";
 import { DateHoursEditor } from "@/features/availability/components/date-hours-editor";
 import { CancellationPolicyEditor } from "@/features/booking-policy/components/cancellation-policy-editor";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -45,6 +46,7 @@ export default async function BusinessHoursPage() {
           settings?.data ? (
             <>
               <DateHoursEditor businessId={business.id} />
+              <ClosuresEditor businessId={business.id} />
               <BookingHorizonEditor
                 businessId={business.id}
                 initialDays={settings.data.maximum_booking_advance_days}
