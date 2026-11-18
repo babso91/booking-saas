@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ClientConsents } from "@/features/marketing-consent/components/client-consents";
 import {
   useEffect,
   useId,
@@ -903,6 +904,7 @@ function Dossier({
       </DossierSection>
 
       {loyalty}
+      <ClientConsents clientId={client.id} />
 
       <DossierNotes
         list={notes}
