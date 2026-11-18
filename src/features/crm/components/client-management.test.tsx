@@ -46,6 +46,11 @@ const { actions, call } = vi.hoisted(() => {
       actions[name](...args);
   return { actions, call };
 });
+// Its own tests cover it; here this screen alone.
+vi.mock("@/features/loyalty/tiers/client-tier", () => ({
+  ClientTier: () => null,
+}));
+
 vi.mock("@/features/crm/actions/crm", () => ({
   listClientsAction: vi.fn(),
   getClientProfileAction: call("getClientProfileAction"),

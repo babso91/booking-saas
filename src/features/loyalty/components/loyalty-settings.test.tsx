@@ -28,6 +28,11 @@ const { actions } = vi.hoisted(() => ({
     getBookingSettingsAction: vi.fn(),
   },
 }));
+// Its own tests cover it; here this screen alone.
+vi.mock("@/features/loyalty/tiers/growth-rules", () => ({
+  GrowthRules: () => null,
+}));
+
 vi.mock("@/features/loyalty/actions/loyalty", () => ({
   getLoyaltyProgramAction: (...args: unknown[]) =>
     actions.getLoyaltyProgramAction(...args),

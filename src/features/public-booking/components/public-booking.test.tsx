@@ -416,6 +416,25 @@ describe("contact details", () => {
 });
 
 describe("booking", () => {
+  it("sends the code of her referral link with the booking, and only then", async () => {
+    api.booking.mockImplementationOnce(() =>
+      ok({ booking: bookingFor() }, 201),
+    );
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        referralCode="AbCdEfGhIjKlMnOpQrStUv"
+      />,
+    );
+    await toReview();
+    fireEvent.click(confirmButton());
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    expect(bookingBodies()[0]).toMatchObject({
+      referralCode: "AbCdEfGhIjKlMnOpQrStUv",
+    });
+  });
+
   it("sends exactly the reviewed booking once, then shows the backend's confirmation (no email promised)", async () => {
     api.booking.mockImplementationOnce(() =>
       ok({ booking: bookingFor() }, 201),

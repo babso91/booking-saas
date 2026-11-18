@@ -24,7 +24,10 @@ vi.mock("next/navigation", () => ({
 
 import PublicBookingPage, { generateMetadata } from "./page";
 
-const params = (slug: string) => ({ params: Promise.resolve({ slug }) });
+const params = (slug: string, query: Record<string, string> = {}) => ({
+  params: Promise.resolve({ slug }),
+  searchParams: Promise.resolve(query),
+});
 const notPublished = () =>
   Promise.reject(new AppException("site_not_published"));
 const emptyCatalog = { currency: "EUR", groups: [] };
@@ -67,6 +70,18 @@ describe("/b/[slug]", () => {
       catalog: emptyCatalog,
     });
     expect(page.props).not.toHaveProperty("config");
+  });
+
+  it("passes her referral code to the booking, and ignores a malformed one", async () => {
+    const code = "AbCdEfGhIjKlMnOpQrStUv";
+    const page = await PublicBookingPage(
+      params("studio-mila", { parrainage: code }) as never,
+    );
+    expect(page.props).toMatchObject({ referralCode: code });
+    const forged = await PublicBookingPage(
+      params("studio-mila", { parrainage: "<script>" }) as never,
+    );
+    expect(forged.props.referralCode).toBeUndefined();
   });
 
   it("with one: her published site, through her current plan, booking on the same catalogue", async () => {

@@ -17,6 +17,7 @@ import type { LoyaltyProgramDto, RewardDto } from "../types";
 import { ProgramSection } from "./program-section";
 import { RewardsSection } from "./rewards-section";
 import { ServiceRules } from "./service-rules";
+import { GrowthRules } from "../tiers/growth-rules";
 
 type Load =
   | { status: "loading" }
@@ -154,6 +155,7 @@ export function LoyaltySettings() {
                   )
                 }
               />
+              <GrowthRules />
               <Rules />
             </div>
           </div>
