@@ -24,6 +24,11 @@ import {
 } from "../../../../tests/support/agenda-fixtures";
 import { CarnetToday } from "./carnet-today";
 
+// The visit's forms have their own tests; here the agenda alone.
+vi.mock("@/features/forms/appointment-forms", () => ({
+  AppointmentForms: () => null,
+}));
+
 vi.mock(
   "next/navigation",
   async () =>

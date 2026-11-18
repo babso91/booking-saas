@@ -61,6 +61,7 @@ import { AppointmentDetails } from "./appointment-details";
 import { AppointmentForm, type ServicesState } from "./appointment-form";
 import { BlockForm } from "./block-form";
 import { TimeGrid } from "./time-grid";
+import { AppointmentForms } from "@/features/forms/appointment-forms";
 
 type Panel =
   | { kind: "appointment"; appointment: AgendaAppointmentDto }
@@ -462,6 +463,9 @@ export function AgendaView({
           onUpdated={showAppointment}
           onRefresh={() => refreshAppointment(shown.appointment, false)}
         />
+      ) : null}
+      {shown?.kind === "appointment" ? (
+        <AppointmentForms appointmentId={shown.appointment.id} />
       ) : null}
       {shown?.kind === "createAppointment" ||
       shown?.kind === "editAppointment" ? (

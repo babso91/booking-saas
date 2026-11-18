@@ -23,6 +23,11 @@ const actions = {
   listAgendaServicesAction: vi.fn(),
 };
 
+// The visit's forms have their own tests; here the agenda alone.
+vi.mock("@/features/forms/appointment-forms", () => ({
+  AppointmentForms: () => null,
+}));
+
 vi.mock("@/features/agenda/actions/agenda", () =>
   Object.fromEntries(
     [

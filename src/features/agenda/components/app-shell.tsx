@@ -11,6 +11,7 @@ import {
   ChevronRightIcon,
   ClockIcon,
   GiftIcon,
+  NoteIcon,
   GlobeIcon,
   PaletteIcon,
   SparkIcon,
@@ -39,6 +40,7 @@ const SERVICES = "/app/services";
 const HOURS = "/app/settings/hours";
 const LOYALTY = "/app/loyalty";
 const SITE = "/app/site";
+const FORMS = "/app/forms";
 const APPEARANCE = "/app/settings/appearance";
 
 type ShellProps = {
@@ -138,6 +140,13 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
             <SparkIcon size={18} /> Prestations
           </Link>
           <Link
+            href={FORMS}
+            aria-current={current === "forms" ? "page" : undefined}
+            className={item("forms")}
+          >
+            <NoteIcon size={18} /> Formulaires
+          </Link>
+          <Link
             href={LOYALTY}
             aria-current={current === "loyalty" ? "page" : undefined}
             className={item("loyalty")}
@@ -231,6 +240,7 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
           className={cn(
             "flex h-16 cursor-pointer flex-col items-center justify-center gap-1 text-[11.5px]",
             current === "calendar" ||
+              current === "forms" ||
               current === "hours" ||
               current === "loyalty" ||
               current === "site" ||
@@ -250,6 +260,16 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
         description="Ton espace professionnel"
       >
         <div className="flex flex-col gap-4">
+          <Link
+            href={FORMS}
+            onClick={() => setAccountOpen(false)}
+            aria-current={current === "forms" ? "page" : undefined}
+            className="flex min-h-14 items-center gap-3 rounded-2xl border border-line bg-paper px-4 text-[15px] font-medium text-ink transition-colors hover:border-line-strong"
+          >
+            <NoteIcon size={20} className="text-ink-soft" />
+            <span className="flex-1">Formulaires</span>
+            <ChevronRightIcon size={18} className="text-ink-muted" />
+          </Link>
           <Link
             href={LOYALTY}
             onClick={() => setAccountOpen(false)}
