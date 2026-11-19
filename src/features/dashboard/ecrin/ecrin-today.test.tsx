@@ -53,7 +53,24 @@ describe("EcrinToday", () => {
     );
   });
 
-  it("shows no amount of money, ever", () => {
+  it("opens the visit in place, keeps its management link and returns focus", async () => {
+    const user = userEvent.setup();
+    renderAt("14:05");
+    const next = visits().getByRole("link", { name: /Léa Fontaine/ });
+    await user.click(next);
+    const card = within(screen.getByRole("dialog", { name: "Léa Fontaine" }));
+    expect(card.getByText(/Colle sensible/)).toBeTruthy();
+    expect(
+      card
+        .getByRole("link", { name: "Ouvrir dans l’agenda" })
+        .getAttribute("href"),
+    ).toBe(next.getAttribute("href"));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(next);
+  });
+
+  it("keeps prices out of the day overview", () => {
     renderAt("14:05");
     expect(document.body.textContent).not.toMatch(/€|\beur\b/i);
   });

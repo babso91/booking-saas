@@ -531,6 +531,78 @@ input[type="search"]::-webkit-search-cancel-button {
   transform: none;
 }
 
+/* Écrin · the next capsule and the same appointment held open. */
+.ecrin-next-visit {
+  background:
+    radial-gradient(
+      ellipse at top left,
+      color-mix(in srgb, var(--accent-soft) 65%, transparent),
+      transparent 72%
+    ),
+    var(--paper-raised);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 0 0 1px var(--line),
+    0 10px 24px -18px rgb(var(--shadow-rgb) / 0.45);
+}
+.ecrin-visit-sheet {
+  inset: auto max(0.65rem, env(safe-area-inset-right))
+    max(0.65rem, env(safe-area-inset-bottom))
+    max(0.65rem, env(safe-area-inset-left));
+  max-height: 90dvh;
+  border: 1px solid var(--line-strong);
+  border-radius: 1.8rem;
+  overflow: hidden;
+  background: linear-gradient(155deg, var(--paper-raised) 30%, var(--paper));
+  box-shadow: 0 24px 72px -22px rgb(var(--shadow-rgb) / 0.42);
+  animation: none;
+}
+.ecrin-visit-sheet h2 {
+  overflow-wrap: anywhere;
+}
+.ecrin-visit-sheet footer {
+  flex-shrink: 0;
+  padding-bottom: 0.9rem;
+}
+.ecrin-visit-time {
+  padding: 1rem 1.15rem;
+  border-radius: 1.15rem;
+  border-inline-start: 2px solid var(--accent);
+  background: linear-gradient(110deg, var(--accent-soft), var(--paper));
+}
+@media (min-width: 640px) {
+  .ecrin-visit-sheet {
+    inset: 0;
+    margin: auto;
+    width: min(28rem, 90vw);
+    height: fit-content;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  [data-motion="discrete"] .ecrin-visit-sheet {
+    animation: ecrin-appear 120ms ease-out;
+  }
+  :root[data-ecrin-travel] {
+    view-transition-name: none;
+  }
+  :root[data-ecrin-travel]:not(:has(.ecrin-visit-sheet)) [data-ecrin-origin],
+  :root[data-ecrin-travel] .ecrin-visit-sheet {
+    view-transition-name: ecrin-visit;
+  }
+  ::view-transition-group(ecrin-visit) {
+    animation-duration: 300ms;
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+    border-radius: 1.65rem;
+    overflow: clip;
+  }
+  ::view-transition-old(ecrin-visit),
+  ::view-transition-new(ecrin-visit) {
+    height: 100%;
+    object-fit: cover;
+    object-position: top left;
+  }
+}
+
 /*
  * Carnet style (professional area). A printed book: the shared screens are set
  * in its book face, titles in light italic, every corner almost square. Its

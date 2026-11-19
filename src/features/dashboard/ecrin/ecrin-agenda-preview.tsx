@@ -26,17 +26,22 @@ export function EcrinAgendaPreview({
   date,
   now,
   initialView,
+  initialVisitId,
 }: {
   week: AgendaDto;
   date: string;
   now: number;
   initialView: StudioView;
+  initialVisitId?: string;
 }) {
   const wide = useMediaQuery("(min-width: 768px)") ?? true;
   const [view, setView] = useState<StudioView>(initialView);
   const [anchor, setAnchor] = useState(date);
   const [includeCancelled, setIncludeCancelled] = useState(false);
-  const [open, setOpen] = useState<AgendaAppointmentDto | null>(null);
+  const [open, setOpen] = useState<AgendaAppointmentDto | null>(
+    () =>
+      week.appointments.find((visit) => visit.id === initialVisitId) ?? null,
+  );
   const [said, setSaid] = useState<string | null>(null);
   const shown: StudioView = wide ? view : "day";
   const { days } = visibleRange(shown, anchor);

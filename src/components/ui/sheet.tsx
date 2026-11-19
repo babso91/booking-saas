@@ -62,6 +62,7 @@ export function Sheet({
   initialFocus,
   closeLabel = "Fermer",
   returnFocus,
+  panelClassName,
 }: {
   open: boolean;
   onClose: () => void;
@@ -74,6 +75,7 @@ export function Sheet({
   closeLabel?: string;
   /** Where focus goes back when the element that opened it is gone. */
   returnFocus?: RefObject<HTMLElement | null>;
+  panelClassName?: string;
 }) {
   const titleId = useId();
   const descriptionId = useId();
@@ -202,6 +204,7 @@ export function Sheet({
           placement === "side"
             ? "inset-x-0 bottom-0 animate-sheet-up rounded-t-[28px] lg:inset-y-0 lg:right-0 lg:left-auto lg:max-h-none lg:w-[460px] lg:animate-sheet-left lg:rounded-none lg:rounded-l-[28px]"
             : "inset-x-0 bottom-0 animate-sheet-up rounded-t-[28px] sm:inset-0 sm:m-auto sm:h-fit sm:w-[440px] sm:animate-pop sm:rounded-[28px]",
+          panelClassName,
         )}
       >
         <div

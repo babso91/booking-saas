@@ -85,7 +85,18 @@ describe("Écrin in a browser", () => {
     });
     expect(outline).not.toBe("none");
 
+    await link.focus();
+    await page.keyboard.press("Enter");
+    const visitCard = page.getByRole("dialog", { name: "Lou Visite" });
+    await visitCard.waitFor();
+    expect(new URL(page.url()).pathname).toBe("/app/today");
+    await page.keyboard.press("Escape");
+    await visitCard.waitFor({ state: "detached" });
+    expect(
+      await link.evaluate((element) => document.activeElement === element),
+    ).toBe(true);
     await link.click();
+    await visitCard.getByRole("link", { name: "Ouvrir dans l’agenda" }).click();
     await page.waitForURL(/\/app\?date=.*&rdv=/);
     await page.getByRole("dialog").waitFor();
     expect(await page.getByRole("dialog").innerText()).toContain("Lou Visite");

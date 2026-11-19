@@ -55,7 +55,17 @@ export default async function EcrinTodayPreview({
         business={{ name: "Atelier Maëlys", slug: "atelier-maelys" }}
         current="today"
       >
-        <EcrinToday agenda={week} date={date} serverNow={now} frozenNow={now} />
+        <EcrinToday
+          agenda={week}
+          date={date}
+          serverNow={now}
+          frozenNow={now}
+          previewQuery={new URLSearchParams({
+            heure: time,
+            ...(typeof jeu === "string" && { jeu }),
+            ...(typeof apparence === "string" && { apparence }),
+          }).toString()}
+        />
       </AppShell>
     </AppearanceProvider>
   );
