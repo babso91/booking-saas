@@ -477,8 +477,15 @@ function DayStrip({
     <div
       role="group"
       aria-label="Jours de la semaine"
-      className="grid min-w-0 flex-1 grid-cols-7"
+      className="relative isolate grid min-w-0 flex-1 grid-cols-7"
     >
+      <span
+        aria-hidden="true"
+        className="ecrin-day-cursor pointer-events-none absolute inset-y-0 left-0 grid w-[calc(100%/7)] place-items-center"
+        style={{ transform: `translateX(${days.indexOf(anchor) * 100}%)` }}
+      >
+        <span className="size-9 rounded-full bg-signature" />
+      </span>
       {days.map((date) => {
         const selected = date === anchor;
         return (
@@ -487,13 +494,13 @@ function DayStrip({
             type="button"
             onClick={() => onSelect(date)}
             aria-pressed={selected}
-            className="group flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+            className="group relative flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
           >
             <span
               className={cn(
                 "grid size-9 place-items-center rounded-full leading-none transition-colors",
                 selected
-                  ? "bg-signature text-on-signature"
+                  ? "text-on-signature"
                   : date === today
                     ? "text-accent"
                     : "text-ink-soft group-hover:text-ink",

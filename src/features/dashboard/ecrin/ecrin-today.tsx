@@ -34,7 +34,7 @@ import {
   type TodayModel,
   type TodayVisit,
 } from "../client/today-model";
-import { EcrinVisitCard, visitHref, transitionVisit } from "./ecrin-visit-card";
+import { EcrinVisitCard, visitHref } from "./ecrin-visit-card";
 import { EcrinDial } from "./ecrin-dial";
 import { ecrinLookClass, ecrinLookLabel } from "./looks";
 
@@ -95,7 +95,7 @@ export function EcrinToday({
   const openVisit: OpenVisit = (appointment, trigger) => {
     source.current = trigger ?? null;
     (trigger ?? dialSection.current)?.focus({ preventScroll: true });
-    transitionVisit(source.current, () => setSelectedId(appointment.id));
+    setSelectedId(appointment.id);
   };
 
   const rolledOver = model.nowTime === null && now > model.span.start;
@@ -153,9 +153,8 @@ export function EcrinToday({
           zone={zoneOf(agenda)}
           previewQuery={previewQuery}
           returnFocus={scrollArea}
-          onClose={() =>
-            transitionVisit(source.current, () => setSelectedId(null))
-          }
+          source={source}
+          onClose={() => setSelectedId(null)}
         />
       ) : null}
     </div>
@@ -303,7 +302,7 @@ function Visits({
   return (
     <section
       aria-label="Rendez-vous du jour"
-      className="mx-auto flex w-full max-w-[520px] flex-col gap-3 xl:col-start-1 xl:row-start-1 xl:max-w-none"
+      className="ecrin-visits mx-auto flex w-full max-w-[520px] flex-col gap-3 xl:col-start-1 xl:row-start-1 xl:max-w-none"
     >
       {model.closures.length ? <ClosureLine model={model} /> : null}
 

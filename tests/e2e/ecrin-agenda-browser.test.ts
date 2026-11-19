@@ -103,6 +103,48 @@ describe("Écrin in a browser", () => {
     await page.context().close();
   });
 
+  it("animates and dismisses a mobile visit with the motion preference in effect", async () => {
+    const { browser } = await professionalWithVisit("Alix", "Noa");
+    const { page } = await signedInPage(browser, { phone: true, width: 390 });
+    await page.addInitScript(() => {
+      Object.defineProperty(document, "startViewTransition", {
+        value: undefined,
+      });
+      const animate = Element.prototype.animate;
+      Element.prototype.animate = function (...args) {
+        if (this.matches(".ecrin-visit-sheet"))
+          this.setAttribute("data-test-animated", "");
+        return animate.apply(this, args);
+      };
+    });
+    await page.goto(`${APP}/app/today`);
+    const visit = await hydrated(
+      page.getByRole("link", { name: /Noa Visite/ }),
+    );
+    const dialog = page.getByRole("dialog", { name: "Noa Visite" });
+    for (const reduced of [false, true]) {
+      await page.emulateMedia({
+        reducedMotion: reduced ? "reduce" : "no-preference",
+      });
+      expect(
+        await page
+          .locator(".ecrin-engraving-reveal")
+          .evaluate((el) => getComputedStyle(el).animationName),
+      ).toBe(reduced ? "none" : "ecrin-engrave");
+      await visit.click();
+      await dialog.waitFor();
+      expect(await dialog.getAttribute("data-test-animated")).toBe(
+        reduced ? null : "",
+      );
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "detached" });
+      expect(await visit.evaluate((el) => document.activeElement === el)).toBe(
+        true,
+      );
+    }
+    await page.context().close();
+  });
+
   it("another business's visit: nothing on screen, nothing on the network; her own opens", async () => {
     const mine = await professionalWithVisit("Rana", "Rose");
     const theirs = await professionalWithVisit("Jade", "Zélie");
@@ -532,7 +574,7 @@ describe("Écrin in a phone", () => {
         .getByRole("link", { name: /Horaires/ })
         .click();
       await page.waitForURL("**/app/settings/hours");
-      await page.getByRole("heading", { name: "Horaires" }).waitFor();
+      await page.getByRole("heading", { name: "Horaires", level: 1 }).waitFor();
       await nav.getByRole("link", { name: "Clientes" }).click();
       await page.waitForURL("**/app/clients");
       expect(

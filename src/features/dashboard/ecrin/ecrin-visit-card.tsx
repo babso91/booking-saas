@@ -1,6 +1,5 @@
 import Link from "next/link";
-import type { RefObject } from "react";
-import { flushSync } from "react-dom";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 
 import { ArrowRightIcon, NoteIcon } from "@/components/ui/icons";
 import { Sheet } from "@/components/ui/sheet";
@@ -35,44 +34,93 @@ export function visitHref(
   } as const;
 }
 
-/** Snapshot just the pressed capsule and its expanded surface, in either direction. */
-export function transitionVisit(
-  source: HTMLElement | null,
-  change: () => void,
-) {
-  const root = document.documentElement;
-  if (
-    !source?.isConnected ||
-    !document.startViewTransition ||
-    root.dataset.motion !== "standard" ||
-    root.hasAttribute("data-ecrin-travel") ||
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  ) {
-    change();
-    return;
-  }
-  root.setAttribute("data-ecrin-travel", "");
-  source.setAttribute("data-ecrin-origin", "");
-  const transition = document.startViewTransition(() => flushSync(change));
-  void transition.finished.finally(() => {
-    root.removeAttribute("data-ecrin-travel");
-    source.removeAttribute("data-ecrin-origin");
-  });
-}
-
 export function EcrinVisitCard({
   appointment,
   zone,
   onClose,
+  source,
   returnFocus,
   previewQuery,
 }: {
   appointment: AgendaAppointmentDto;
   zone: Zone | null;
   onClose: () => void;
+  source: RefObject<HTMLElement | null>;
   returnFocus: RefObject<HTMLElement | null>;
   previewQuery?: string;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const travel = useRef<Animation | null>(null);
+
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (
+      !panel?.animate ||
+      document.documentElement.dataset.motion !== "standard" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
+    const box = panel.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const tile = source.current?.getBoundingClientRect();
+    const fromTile =
+      tile &&
+      tile.height > 0 &&
+      tile.bottom > 0 &&
+      tile.top < window.innerHeight;
+    const scale = fromTile
+      ? Math.min(1, Math.max(0.58, tile.width / box.width))
+      : 0.94;
+    const x = fromTile
+      ? tile.left + tile.width / 2 - (box.left + box.width / 2)
+      : 0;
+    const y = fromTile ? tile.top - box.top : Math.min(100, box.height * 0.25);
+    const cut = fromTile
+      ? Math.max(0, 100 * (1 - tile.height / (box.height * scale)))
+      : 20;
+    const animation = panel.animate(
+      [
+        {
+          transform: `translate(${x}px, ${y}px) scale(${scale})`,
+          clipPath: `inset(0 0 ${cut}% round 26px)`,
+          opacity: 0.55,
+        },
+        {
+          transform: "translate(0, 0) scale(1)",
+          clipPath: "inset(0 0 0% round 28px)",
+          opacity: 1,
+        },
+      ],
+      {
+        duration: 520,
+        easing: "cubic-bezier(.22,.74,.18,1)",
+        fill: "backwards",
+      },
+    );
+    travel.current = animation;
+    return () => {
+      animation.cancel();
+      travel.current = null;
+    };
+  }, [source]);
+
+  const close = () => {
+    const animation = travel.current;
+    if (
+      !animation ||
+      document.documentElement.dataset.motion !== "standard" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      onClose();
+      return;
+    }
+    if (animation.playbackRate < 0) return;
+    panelRef.current?.setAttribute("data-closing", "");
+    animation.onfinish = onClose;
+    animation.updatePlaybackRate(-1.65);
+    animation.play();
+  };
+
   const { localStartsAt, localEndsAt, client, service, options } = appointment;
   const date = dateOf(localStartsAt);
   const finishDate = dateOf(localEndsAt);
@@ -85,7 +133,8 @@ export function EcrinVisitCard({
   return (
     <Sheet
       open
-      onClose={onClose}
+      onClose={close}
+      panelRef={panelRef}
       placement="center"
       panelClassName="ecrin-visit-sheet"
       returnFocus={returnFocus}

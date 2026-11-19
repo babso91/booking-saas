@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, type ReactNode } from "react";
+import { useId, type CSSProperties, type ReactNode } from "react";
 
 import type { AgendaAppointmentDto } from "@/features/agenda/data/agenda";
 import { cn } from "@/lib/cn";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import type { TodayModel } from "../client/today-model";
 import type { VisitLookId } from "../agenda/visit-look";
 import {
+  arcPath,
   dialArcs,
   dialCentre,
   dialTicks,
@@ -50,6 +51,7 @@ export function EcrinDial({
   children?: ReactNode;
 }) {
   const faceId = useId();
+  const engravingId = useId();
   const { span } = model;
   const arcs = dialArcs(model.visits, span, now);
   const hand = model.nowTime === null ? null : handAngle(span, now);
@@ -57,7 +59,13 @@ export function EcrinDial({
   const handTo = pointAt(0, 246);
 
   return (
-    <div className={cn("relative aspect-square", className)}>
+    <div
+      className={cn(
+        "relative aspect-square",
+        !compact && "ecrin-instrument",
+        className,
+      )}
+    >
       <svg
         viewBox={`${compact ? 0 : -8} ${compact ? 0 : -8} ${compact ? SIZE : SIZE + 16} ${compact ? SIZE : SIZE + 16}`}
         aria-hidden="true"
@@ -68,6 +76,19 @@ export function EcrinDial({
             <stop offset="0%" stopColor="var(--paper-raised)" />
             <stop offset="100%" stopColor="var(--paper)" />
           </radialGradient>
+          {!compact && (
+            <mask id={engravingId}>
+              <path
+                className="ecrin-engraving-reveal"
+                d={arcPath(-150, 150, 240)}
+                pathLength="1"
+                strokeDasharray="1"
+                fill="none"
+                stroke="white"
+                strokeWidth="14"
+              />
+            </mask>
+          )}
         </defs>
         <circle
           cx={dialCentre}
@@ -96,6 +117,15 @@ export function EcrinDial({
               r={176}
               fill="none"
               stroke="var(--line)"
+            />
+            <path
+              d={arcPath(-150, 150, 240)}
+              pathLength="90"
+              strokeDasharray="0.12 0.88"
+              strokeWidth="6"
+              fill="none"
+              stroke="var(--ink-muted)"
+              mask={`url(#${engravingId})`}
             />
             {dialTicks(model.ticks, span).map((tick) => (
               <g key={tick.at}>
@@ -143,12 +173,13 @@ export function EcrinDial({
             stroke={strokes[arc.look]}
             strokeWidth={compact ? arc.stroke * 1.5 : arc.stroke}
             strokeLinecap="round"
+            pathLength={1}
             className={cn(
               "ecrin-arc",
               onOpen &&
                 "cursor-pointer transition-[stroke-width] hover:brightness-110",
             )}
-            style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}
+            style={{ animationDelay: `${90 + Math.min(index, 7) * 68}ms` }}
             onClick={onOpen ? () => onOpen(arc.visit.appointment) : undefined}
           />
         ))}
@@ -161,28 +192,33 @@ export function EcrinDial({
               transformOrigin: `${dialCentre}px ${dialCentre}px`,
             }}
           >
-            <line
-              x1={handFrom[0]}
-              y1={handFrom[1]}
-              x2={handTo[0]}
-              y2={handTo[1]}
-              stroke="var(--accent)"
-              strokeWidth={compact ? 8 : 2.5}
-              strokeLinecap="round"
-            />
-            <circle
-              cx={handTo[0]}
-              cy={handTo[1]}
-              r={compact ? 16 : 7}
-              fill="var(--accent)"
-              stroke="var(--paper-raised)"
-              strokeWidth={3}
-            />
+            <g
+              className="ecrin-winding"
+              style={{ "--ecrin-wind": `${-150 - hand}deg` } as CSSProperties}
+            >
+              <line
+                x1={handFrom[0]}
+                y1={handFrom[1]}
+                x2={handTo[0]}
+                y2={handTo[1]}
+                stroke="var(--accent)"
+                strokeWidth={compact ? 8 : 2.5}
+                strokeLinecap="round"
+              />
+              <circle
+                cx={handTo[0]}
+                cy={handTo[1]}
+                r={compact ? 16 : 7}
+                fill="var(--accent)"
+                stroke="var(--paper-raised)"
+                strokeWidth={3}
+              />
+            </g>
           </g>
         ) : null}
       </svg>
       {children ? (
-        <div className="absolute inset-[21%] flex flex-col items-center justify-center gap-1 text-center">
+        <div className="ecrin-reading absolute inset-[21%] flex flex-col items-center justify-center gap-1 text-center">
           {children}
         </div>
       ) : null}

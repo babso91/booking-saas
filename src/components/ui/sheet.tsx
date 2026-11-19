@@ -63,6 +63,7 @@ export function Sheet({
   closeLabel = "Fermer",
   returnFocus,
   panelClassName,
+  panelRef: providedPanelRef,
 }: {
   open: boolean;
   onClose: () => void;
@@ -76,10 +77,12 @@ export function Sheet({
   /** Where focus goes back when the element that opened it is gone. */
   returnFocus?: RefObject<HTMLElement | null>;
   panelClassName?: string;
+  panelRef?: RefObject<HTMLDivElement | null>;
 }) {
   const titleId = useId();
   const descriptionId = useId();
-  const panelRef = useRef<HTMLDivElement>(null);
+  const ownPanelRef = useRef<HTMLDivElement>(null);
+  const panelRef = providedPanelRef ?? ownPanelRef;
   const rootRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
 
@@ -180,7 +183,7 @@ export function Sheet({
           : fallback?.current;
       back?.focus?.({ preventScroll: true });
     };
-  }, [open, initialFocus, returnFocus]);
+  }, [open, initialFocus, returnFocus, panelRef]);
 
   if (!open || typeof document === "undefined") return null;
 
