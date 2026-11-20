@@ -70,7 +70,7 @@ export function StudioShell({
   );
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-paper">
+    <div className="glass-ground flex h-dvh flex-col overflow-hidden bg-paper">
       <header className="flex shrink-0 items-center justify-between gap-4 px-4 pt-[calc(env(safe-area-inset-top)+12px)] pb-3 lg:px-10 lg:pt-5">
         <Link
           href={sectionHref.today}
@@ -96,7 +96,7 @@ export function StudioShell({
 
       <nav
         aria-label="Navigation principale"
-        className="fixed bottom-[calc(env(safe-area-inset-bottom)+12px)] left-1/2 z-30 flex max-w-[calc(100vw-20px)] -translate-x-1/2 items-center gap-0.5 rounded-full bg-ink p-1.5 shadow-[0_18px_40px_-12px_rgb(var(--shadow-rgb)/0.55)]"
+        className="glass-studio-dock fixed bottom-[calc(env(safe-area-inset-bottom)+12px)] left-1/2 z-30 flex max-w-[calc(100vw-20px)] -translate-x-1/2 items-center gap-0.5 rounded-full bg-ink p-1.5 shadow-[0_18px_40px_-12px_rgb(var(--shadow-rgb)/0.55)]"
       >
         {dock.map((item) => (
           <Link

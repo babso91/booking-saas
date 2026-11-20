@@ -637,7 +637,7 @@ export function AgendaView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {viewPicker}
-      <header className="flex flex-col gap-3 border-b border-line bg-paper px-4 pt-3 pb-3 sm:px-6 lg:px-8 lg:pt-6">
+      <header className="flex flex-col gap-3 border-b border-line bg-paper glass-surface px-4 pt-3 pb-3 sm:px-6 lg:px-8 lg:pt-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <h1

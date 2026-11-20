@@ -95,7 +95,7 @@ export function EcrinShell({
   );
 
   return (
-    <div className="ecrin-ground flex h-dvh flex-col overflow-hidden text-ink">
+    <div className="glass-ground ecrin-ground flex h-dvh flex-col overflow-hidden text-ink">
       <header className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 pt-[calc(env(safe-area-inset-top)+10px)] pb-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:px-8 md:pt-5 md:pb-3">
         <div className="flex min-w-0 items-center gap-3">
           <button
@@ -117,7 +117,7 @@ export function EcrinShell({
 
         <nav
           aria-label="Navigation principale"
-          className="ecrin-object fixed bottom-[calc(env(safe-area-inset-bottom)+10px)] left-1/2 z-30 flex w-[calc(100vw-20px)] max-w-[420px] -translate-x-1/2 items-stretch gap-0.5 rounded-[26px] p-1.5 md:static md:w-auto md:max-w-none md:translate-x-0 md:rounded-full"
+          className="glass-dock ecrin-object fixed bottom-[calc(env(safe-area-inset-bottom)+10px)] left-1/2 z-30 flex w-[calc(100vw-20px)] max-w-[420px] -translate-x-1/2 items-stretch gap-0.5 rounded-[26px] p-1.5 md:static md:w-auto md:max-w-none md:translate-x-0 md:rounded-full"
         >
           {rooms.map((room) => (
             <Link

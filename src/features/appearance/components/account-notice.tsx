@@ -20,6 +20,7 @@ const card =
 const modeNames = {
   light: "clair",
   dark: "sombre",
+  glass: "Glass",
   system: "comme l’appareil",
 };
 

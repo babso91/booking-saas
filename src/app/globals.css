@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../features/appearance/glass.css";
 
 /*
  * Visual identity — "atelier" palette.

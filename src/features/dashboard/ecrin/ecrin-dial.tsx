@@ -72,7 +72,13 @@ export function EcrinDial({
         className="absolute inset-0 size-full overflow-visible"
       >
         <defs>
-          <radialGradient id={faceId} cx="38%" cy="28%" r="85%">
+          <radialGradient
+            className="ecrin-dial-face"
+            id={faceId}
+            cx="38%"
+            cy="28%"
+            r="85%"
+          >
             <stop offset="0%" stopColor="var(--paper-raised)" />
             <stop offset="100%" stopColor="var(--paper)" />
           </radialGradient>
@@ -91,6 +97,7 @@ export function EcrinDial({
           )}
         </defs>
         <circle
+          className="ecrin-dial-lens"
           cx={dialCentre}
           cy={dialCentre}
           r={compact ? 262 : 244}

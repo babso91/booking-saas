@@ -30,7 +30,7 @@ Les préférences d'une professionnelle ne changent jamais ce que voient les aut
 | `incarnation`              | uuid                                     | identité de la ligne, tirée au hasard à sa création, fixe ensuite (trigger)                      | —           |
 | `style`                    | domaine `member_preference_style`        | `classique`, `studio`, `ecrin`, `carnet`                                                         | `classique` |
 | `ambiance`                 | domaine `member_preference_ambiance`     | `atelier`, `lin`, `sauge`                                                                        | `atelier`   |
-| `color_mode`               | domaine `member_preference_color_mode`   | `light`, `dark`, `system`                                                                        | `light`     |
+| `color_mode`               | domaine `member_preference_color_mode`   | `light`, `dark`, `system`, `glass`                                                                        | `light`     |
 | `accent`                   | domaine `member_preference_accent`, null | `#RRGGBB` en majuscules, ou `null` (couleur du style)                                            | `null`      |
 | `motion`                   | domaine `member_preference_motion`       | `standard`, `discrete`, `none`                                                                   | `standard`  |
 | `version`                  | bigint ≥ 1                               | tenue par la base, + 1 par changement réel                                                       | 1           |

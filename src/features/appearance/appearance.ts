@@ -22,7 +22,7 @@ import {
 // paint is already hers on every device. `dash_appearance` is what a device
 // kept before that: read once, to offer it, and no longer written.
 
-export type ModePreference = Mode | "system";
+export type ModePreference = Mode | "system" | "glass";
 export type MotionPreference = "standard" | "discrete" | "none";
 
 export type Appearance = {
@@ -55,7 +55,7 @@ export const defaultAppearance: Appearance = {
 const styleIds: StyleId[] = ["classique", "studio", "ecrin", "carnet"];
 /** The styles this build can draw; another one is shown as Classique. */
 export const DELIVERED_STYLES = styleIds;
-const modes: ModePreference[] = ["light", "dark", "system"];
+const modes: ModePreference[] = ["light", "dark", "system", "glass"];
 const motions: MotionPreference[] = ["standard", "discrete", "none"];
 
 /** "atelier.system.standard.97493a.studio" ("-" for no accent). */
@@ -129,14 +129,22 @@ export const defaultAccent = (
 export function paletteFor(
   style: StyleId,
   ambiance: AmbianceId,
-  mode: Mode,
+  mode: Mode | "glass",
   accent: string | null,
 ): AppliedPalette {
-  const base = basePalette(style, ambiance, mode);
-  const chosen = accent ?? (style === "studio" ? STUDIO_SIGNATURE : null);
+  const glass = mode === "glass";
+  const base = glass ? glassBase : basePalette(style, ambiance, mode);
+  const chosen =
+    accent ??
+    (glass
+      ? defaultAccent(style, ambiance)
+      : style === "studio"
+        ? STUDIO_SIGNATURE
+        : null);
   const field = signatureOf(chosen ?? base.accent, base);
   if (!chosen) return { ...base, ...field };
   const surfaces = [base.paper, base.paperRaised, base.sand];
+  if (glass) surfaces.push(base.line); // Brightest substrate under a reflection.
   const tone = readableTone(chosen, surfaces, base.ink);
   const soft = mix(chosen, base.paper, mode === "light" ? 0.86 : 0.78);
   const strong = readableTone(
@@ -197,6 +205,20 @@ const names: [keyof AppliedPalette, string][] = [
   ["shadowRgb", "--shadow-rgb"],
 ];
 
+// A neutral smoked substrate lets even a red or green stone colour the entire surface.
+const glassBase: Palette = {
+  ...ecrinPalettes.dark,
+  paper: "#11151C",
+  paperRaised: "#242A32",
+  sand: "#333A43",
+  sandDeep: "#3D454F",
+  line: "#49515E",
+  lineStrong: "#79818C",
+  ink: "#F7F8FA",
+  inkSoft: "#DBDFE5",
+  inkMuted: "#C1C7D0",
+};
+
 function declarations(palette: AppliedPalette, mode: Mode) {
   return [
     ...names.map(([key, name]) => `${name}:${palette[key]};`),
@@ -218,6 +240,17 @@ export function appearanceCss(value: Appearance) {
       paletteFor(value.style, value.ambiance, mode, value.accent),
       mode,
     );
+  if (value.mode === "glass") {
+    const palette = paletteFor(
+      value.style,
+      value.ambiance,
+      "glass",
+      value.accent,
+    );
+    const tint = value.accent ?? defaultAccent(value.style, value.ambiance);
+    const dye = readableTone(tint, ["#FFFFFF"], glassBase.paper, 3.2);
+    return `${scope}{${declarations(palette, "dark")}--glass-tint:${tint};--glass-dye:${dye};}`;
+  }
   if (value.mode === "light") return `${scope}{${of("light")}}`;
   if (value.mode === "dark") return `${scope}{${of("dark")}}`;
   return `${scope}{${of("light")}}@media (prefers-color-scheme: dark){${scope}{${of("dark")}}}`;
@@ -227,11 +260,12 @@ export function appearanceCss(value: Appearance) {
 export function accentKeptAsIs(
   style: StyleId,
   ambiance: AmbianceId,
-  mode: Mode,
+  mode: Mode | "glass",
   accent: string,
 ) {
-  const base = basePalette(style, ambiance, mode);
-  return [base.paper, base.paperRaised, base.sand].every(
-    (surface) => contrast(accent, surface) >= 4.5,
-  );
+  const base =
+    mode === "glass" ? glassBase : basePalette(style, ambiance, mode);
+  const surfaces = [base.paper, base.paperRaised, base.sand];
+  if (mode === "glass") surfaces.push(base.line);
+  return surfaces.every((surface) => contrast(accent, surface) >= 4.5);
 }

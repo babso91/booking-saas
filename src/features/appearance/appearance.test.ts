@@ -68,6 +68,25 @@ const unreadable = (palette: Palette) =>
     }))
     .filter((item) => item.ratio < 4.5);
 
+describe("tinted glass", () => {
+  it.each(["#6B4F96", "#C9384B", "#148E72", "#000000", "#FFFFFF"])(
+    "keeps %s as the tint and uses legible inks",
+    (accent) => {
+      const value = { ...defaultAppearance, mode: "glass" as const, accent };
+      expect(parseAppearance(serializeAppearance(value))).toEqual(value);
+      expect(appearanceCss(value)).toContain(`--glass-tint:${accent};`);
+      const palette = paletteFor("ecrin", "atelier", "glass", accent);
+      expect(unreadable(palette)).toEqual([]);
+      expect(contrast(palette.accent, palette.line)).toBeGreaterThanOrEqual(
+        4.5,
+      );
+      expect(
+        contrast(palette.signature, palette.onSignature),
+      ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+});
+
 describe("the professional area's ambiances", () => {
   it.each(all)(
     "$ambiance · $mode: every text the screens use reads on its surface (4.5:1)",

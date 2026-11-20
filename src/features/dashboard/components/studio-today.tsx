@@ -141,7 +141,7 @@ function Hero({ model, now }: { model: TodayModel; now: number }) {
   return (
     <section
       aria-label="Maintenant"
-      className="mx-2 grid gap-5 rounded-[28px] bg-signature px-5 pt-6 pb-5 text-on-signature lg:mx-6 lg:grid-cols-[auto_minmax(0,1fr)_minmax(240px,320px)] lg:items-end lg:gap-12 lg:px-10 lg:pt-9 lg:pb-8"
+      className="glass-signature mx-2 grid gap-5 rounded-[28px] bg-signature px-5 pt-6 pb-5 text-on-signature lg:mx-6 lg:grid-cols-[auto_minmax(0,1fr)_minmax(240px,320px)] lg:items-end lg:gap-12 lg:px-10 lg:pt-9 lg:pb-8"
     >
       <Clock time={model.nowTime} date={model.date} />
 

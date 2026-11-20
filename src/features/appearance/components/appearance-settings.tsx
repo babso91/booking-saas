@@ -63,9 +63,11 @@ export function AppearanceSettings() {
   }, []);
   const adjusted =
     appearance.accent !== null &&
-    (["light", "dark"] as const)
+    (["light", "dark", "glass"] as const)
       .filter(
-        (mode) => appearance.mode === "system" || appearance.mode === mode,
+        (mode) =>
+          (appearance.mode === "system" && mode !== "glass") ||
+          appearance.mode === mode,
       )
       .some(
         (mode) =>
@@ -183,28 +185,45 @@ export function AppearanceSettings() {
             </Group>
           )}
 
-          <Group legend="Clair ou sombre">
-            <div className="grid grid-cols-3 gap-2">
+          <Group legend="Mode d’affichage">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {(
                 [
                   ["light", "Clair"],
                   ["dark", "Sombre"],
+                  ["glass", "Glass"],
                   ["system", "Comme l’appareil"],
                 ] as [ModePreference, string][]
               ).map(([mode, label]) => (
                 <Choice
                   key={mode}
                   name="mode"
+                  value={mode}
                   compact
                   checked={appearance.mode === mode}
                   onSelect={() => set({ mode })}
                 >
-                  <span className="text-[14px] font-medium text-ink">
+                  <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
+                    <span
+                      aria-hidden="true"
+                      data-mode-swatch={mode}
+                      className="mode-swatch"
+                      style={
+                        mode === "glass"
+                          ? { color: appearance.accent ?? own }
+                          : undefined
+                      }
+                    />
                     {label}
                   </span>
                 </Choice>
               ))}
             </div>
+            {appearance.mode === "glass" && (
+              <p className="text-[13.5px] text-ink-soft">
+                Le verre fumé prend la teinte que tu choisis ci-dessous.
+              </p>
+            )}
           </Group>
 
           <Group
@@ -288,9 +307,11 @@ export function AppearanceSettings() {
             </label>
             {adjusted ? (
               <p className="mt-2 text-[13px] text-ink-soft">
-                {studio
-                  ? "Tes grands aplats gardent ta couleur ; dans le texte, elle est un peu plus soutenue pour rester lisible."
-                  : "Ajustée pour rester lisible sur ton fond : la teinte est gardée, un peu plus soutenue."}
+                {appearance.mode === "glass"
+                  ? "Le verre garde ta teinte. Les textes utilisent une nuance plus claire quand leur contraste le demande."
+                  : studio
+                    ? "Tes grands aplats gardent ta couleur ; dans le texte, elle est un peu plus soutenue pour rester lisible."
+                    : "Ajustée pour rester lisible sur ton fond : la teinte est gardée, un peu plus soutenue."}
               </p>
             ) : null}
           </Group>
@@ -401,7 +422,7 @@ function Choice({
   return (
     <label
       className={cn(
-        "relative flex cursor-pointer flex-col rounded-2xl border bg-paper-raised transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent",
+        "glass-surface relative flex cursor-pointer flex-col rounded-2xl border bg-paper-raised transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent",
         compact ? "min-h-12 justify-center px-3.5 py-2" : "p-3.5",
         checked
           ? "border-ink ring-1 ring-ink"
@@ -587,7 +608,7 @@ function AmbianceSwatch({ id, paper }: { id: AmbianceId; paper?: boolean }) {
 /** A day of her agenda, drawn with the area's own components. */
 function Preview() {
   return (
-    <div className="flex flex-col gap-3 rounded-[28px] border border-line bg-paper p-4 sm:p-5">
+    <div className="glass-surface flex flex-col gap-3 rounded-[28px] border border-line bg-paper p-4 sm:p-5">
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-2 text-[14px] text-ink-soft">
           <CalendarIcon size={18} /> Aujourd’hui
@@ -609,7 +630,7 @@ function Preview() {
         ).map(([time, service, client, status]) => (
           <li
             key={time}
-            className="flex items-center gap-3 rounded-2xl border border-line bg-paper-raised px-4 py-3"
+            className="glass-surface flex items-center gap-3 rounded-2xl border border-line bg-paper-raised px-4 py-3"
           >
             <span className="w-12 shrink-0 text-[14px] font-semibold text-ink tabular-nums">
               {time}
