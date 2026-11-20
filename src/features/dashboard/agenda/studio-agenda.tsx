@@ -612,6 +612,7 @@ function SwipeDays({
   return (
     <div
       className={className}
+      data-studio-day-scroll=""
       onTouchStart={enabled ? onTouchStart : undefined}
       onTouchEnd={enabled ? onTouchEnd : undefined}
     >

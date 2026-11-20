@@ -70,9 +70,16 @@ export function StudioDayFlow({
   useEffect(() => {
     if (!flow || focusedDate.current === date) return;
     const target = list.current?.querySelector("[data-focus]");
-    if (!target) return;
+    const pane = list.current?.closest<HTMLElement>("[data-studio-day-scroll]");
+    if (!target || !pane) return;
     focusedDate.current = date;
-    target.scrollIntoView?.({ block: "center" });
+    // Center the visit inside the day. Scrolling ancestor containers also
+    // moves the business header and the view picker off screen on mobile.
+    const row = target.getBoundingClientRect();
+    pane.scrollTop +=
+      row.top -
+      pane.getBoundingClientRect().top +
+      (row.height - pane.clientHeight) / 2;
   }, [flow, date]);
 
   if (!flow) return null;
