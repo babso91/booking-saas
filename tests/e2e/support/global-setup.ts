@@ -25,7 +25,8 @@ import { E2E_PROXY_SECRET } from "./ingress";
 // with codes delivered to Mailpit (support/hub-ingress.ts).
 
 export const APP_URL = "http://localhost:3000";
-const MAILPIT_URL = "http://127.0.0.1:54324";
+// The local stack's Mailpit; MAILPIT_URL for a stack on other ports.
+const MAILPIT_URL = process.env.MAILPIT_URL ?? "http://127.0.0.1:54324";
 
 declare module "vitest" {
   export interface ProvidedContext {

@@ -87,7 +87,7 @@ La création et l'édition manuelles d'une fiche par une professionnelle (`crm_c
 - **Réécriture refusée.** Tant que le rendez-vous reste lié à la même cliente, toute tentative de réécrire l'instantané échoue avec `contact_snapshot_immutable`.
 - **Changement de cliente.** Si un professionnel déplace le rendez-vous vers une autre cliente (`agenda_update_appointment`), le rendez-vous prend le contact actuel de cette cliente.
 - **Instantané par défaut.** Un chemin qui ne soumet pas de contact (cliente choisie par identifiant, insertion technique) reçoit le contact de la fiche liée (trigger `appointments_snapshot_contact`).
-- **Email jamais identité.** L'email de l'instantané est canonique, mais il ne sert jamais d'identité.
+- **Email jamais identité.** L'email de l'instantané est canonique, mais il ne sert jamais d'identité. Il désigne seulement la destinataire des e-mails du rendez-vous ; l'espace cliente ouvre ce rendez-vous à l'adresse qui les a effectivement reçus, jamais la fiche (`CLIENT_HUB_CONTRACT.md` § 4).
 
 Les autres instantanés (prestation, durée, prix, tampon) sont inchangés.
 

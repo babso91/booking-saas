@@ -71,15 +71,20 @@ type Section = "home" | "appointments" | "loyalty";
  * A signed-in page of the hub. Before the session is known nothing private
  * is rendered; signed out, it goes to the sign-in page. `businessId` pages
  * show a business only if the profile lists it (the API refuses the rest
- * anyway: this only avoids a useless request).
+ * anyway: this only avoids a useless request), except `standalone` ones:
+ * one appointment reached from its email, whose business her space may not
+ * list (docs/CLIENT_HUB_CONTRACT.md § 4). Those let the API decide and get
+ * `business: null` when it is not listed.
  */
 export function HubPage({
   section,
   businessId,
+  standalone = false,
   children,
 }: {
   section: Section;
   businessId?: string;
+  standalone?: boolean;
   children: (context: {
     profile: ClientHubProfileDto;
     business: ClientHubBusinessDto | null;
@@ -108,7 +113,11 @@ export function HubPage({
       ? (profile.businesses.find((item) => item.businessId === businessId) ??
         null)
       : null;
-    const navBusiness = business ?? profile.businesses[0] ?? null;
+    // A standalone page of a business her space does not list: no other
+    // business stands in for it in the navigation.
+    const navBusiness =
+      business ??
+      (standalone && businessId ? null : (profile.businesses[0] ?? null));
     const switcher =
       business && profile.businesses.length > 1 && section !== "home" ? (
         <BusinessSwitcher
@@ -139,7 +148,7 @@ export function HubPage({
             navBusiness={navBusiness}
             suspended={veiled}
           >
-            {businessId && !business ? (
+            {businessId && !business && !standalone ? (
               <UnknownBusiness />
             ) : (
               children({ profile, business, switcher })

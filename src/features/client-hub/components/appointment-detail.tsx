@@ -11,7 +11,6 @@ import {
   PinIcon,
 } from "@/components/ui/icons";
 import { formatPrice } from "@/features/agenda/client/money";
-import type { ClientHubBusinessDto } from "@/features/client-hub/types";
 
 import { fetchAppointment } from "../client/api";
 import {
@@ -34,31 +33,39 @@ export function HubAppointmentDetail({
   appointmentId: string;
 }) {
   return (
-    <HubPage section="appointments" businessId={businessId}>
+    // Standalone: reached from its email, the appointment may belong to a
+    // business her space does not list; the API decides.
+    <HubPage section="appointments" businessId={businessId} standalone>
       {({ business }) => (
-        <Detail business={business!} appointmentId={appointmentId} />
+        <Detail
+          businessId={businessId}
+          listed={business !== null}
+          appointmentId={appointmentId}
+        />
       )}
     </HubPage>
   );
 }
 
 function Detail({
-  business,
+  businessId: id,
+  listed,
   appointmentId,
 }: {
-  business: ClientHubBusinessDto;
+  businessId: string;
+  /** Her space lists the business (else: reached from the email only). */
+  listed: boolean;
   appointmentId: string;
 }) {
-  const id = business.businessId;
   const read = useHubRead(`${id}:${appointmentId}`, (signal) =>
     fetchAppointment(id, appointmentId, signal),
   );
   const back = (
     <Link
-      href={hubHref.appointments(id)}
+      href={listed ? hubHref.appointments(id) : hubHref.home}
       className="-ml-1 flex w-fit items-center gap-1 rounded-lg px-1 py-1 text-[14px] text-ink-soft hover:text-ink"
     >
-      <ChevronLeftIcon size={16} /> Mes rendez-vous
+      <ChevronLeftIcon size={16} /> {listed ? "Mes rendez-vous" : "Mon espace"}
     </Link>
   );
 
