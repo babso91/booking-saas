@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { bookingFormats } from "@/features/public-booking/formats";
+
 // A mini-site's configuration (schema_version 1): the Experience Engine's
 // SiteConfig (proto/experience-engine, engine/config.ts), validated by the
 // server before it is stored (docs/SITE_PUBLISHING_CONTRACT.md § 4).
@@ -192,6 +194,7 @@ export const siteConfigSchema = z
       )
       .optional(),
     booking: z.enum(["page", "sheet"]),
+    bookingFormat: z.enum(bookingFormats).optional(),
     quickBook: z.enum(["bar", "pill"]),
   })
   .strict();

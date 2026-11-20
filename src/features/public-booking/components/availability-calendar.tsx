@@ -23,12 +23,14 @@ export function AvailabilityCalendar({
   anchor,
   onAnchor,
   flow,
+  chronological = false,
   onSelectDate,
 }: {
   view: "week" | "month";
   anchor: string;
   onAnchor: (date: string) => void;
   flow: BookingFlow;
+  chronological?: boolean;
   onSelectDate: (date: string) => void;
 }) {
   const range = visibleRange(view, anchor);
@@ -67,6 +69,9 @@ export function AvailabilityCalendar({
   }, [key, slug, serviceId, from, through, choices]);
   const result = loaded?.key === key ? loaded : null;
   const byDate = new Map(result?.days?.map((day) => [day.date, day.slots]));
+  const listedDays = chronological
+    ? result?.days?.filter((day) => day.slots.length > 0)
+    : result?.days;
   const navClass =
     "min-h-11 min-w-11 rounded-xl border border-line bg-paper-raised text-ink disabled:opacity-40";
   return (
@@ -125,7 +130,6 @@ export function AvailabilityCalendar({
                 <button
                   type="button"
                   aria-pressed={date === flow.date}
-                  aria-label={`${dayLabel(date)}, ${slots.length} créneaux`}
                   disabled={!slots.length}
                   onClick={() => onSelectDate(date)}
                   className={cn(
@@ -144,6 +148,7 @@ export function AvailabilityCalendar({
                     </span>
                   ))}
                   {slots.length > 2 ? <span>+{slots.length - 2}</span> : null}
+                  <span className="sr-only">{` · ${dayLabel(date)}, ${slots.length} créneaux`}</span>
                 </button>
               );
             }}
@@ -152,8 +157,12 @@ export function AvailabilityCalendar({
             Touchez un jour pour voir toutes ses heures.
           </p>
         </>
+      ) : chronological && listedDays?.length === 0 ? (
+        <p role="status" className="text-sm text-ink-muted">
+          Aucun créneau disponible sur cette période.
+        </p>
       ) : (
-        result?.days?.map(({ date, slots }) => (
+        listedDays?.map(({ date, slots }) => (
           <section
             key={date}
             className="rounded-xl border border-line bg-paper-raised p-3"
@@ -162,22 +171,25 @@ export function AvailabilityCalendar({
               {dayLabel(date)}
             </h3>
             {slots.length ? (
-              <ul className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
-                {slots.map((slot) => (
-                  <li key={slot.startsAt}>
-                    <button
-                      type="button"
-                      aria-label={`${dayLabel(date)} à ${wallTime(slot.localStartsAt)}`}
-                      onClick={() =>
-                        flow.actions.chooseCalendarSlot(date, slot.startsAt)
-                      }
-                      className="min-h-11 w-full rounded-lg border border-line text-sm font-medium text-ink"
-                    >
-                      {wallTime(slot.localStartsAt)}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <div>
+                <SlotTimes
+                  date={date}
+                  slots={chronological ? slots.slice(0, 6) : slots}
+                  onChoose={flow.actions.chooseCalendarSlot}
+                />
+                {chronological && slots.length > 6 ? (
+                  <details>
+                    <summary className="my-1 min-h-11 cursor-pointer py-3 text-sm font-medium text-ink-soft">
+                      Voir les {slots.length - 6} autres horaires
+                    </summary>
+                    <SlotTimes
+                      date={date}
+                      slots={slots.slice(6)}
+                      onChoose={flow.actions.chooseCalendarSlot}
+                    />
+                  </details>
+                ) : null}
+              </div>
             ) : (
               <p className="text-sm text-ink-muted">
                 Aucun créneau disponible.
@@ -187,5 +199,32 @@ export function AvailabilityCalendar({
         ))
       )}
     </div>
+  );
+}
+
+function SlotTimes({
+  date,
+  slots,
+  onChoose,
+}: {
+  date: string;
+  slots: CalendarAvailabilityDay["slots"];
+  onChoose: (date: string, startsAt: string) => void;
+}) {
+  return (
+    <ul className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
+      {slots.map((slot) => (
+        <li key={slot.startsAt}>
+          <button
+            type="button"
+            aria-label={`${dayLabel(date)} à ${wallTime(slot.localStartsAt)}`}
+            onClick={() => onChoose(date, slot.startsAt)}
+            className="min-h-11 w-full rounded-lg border border-line text-sm font-medium text-ink"
+          >
+            {wallTime(slot.localStartsAt)}
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

@@ -24,15 +24,17 @@ const WEEK = 7;
 export function SlotStep({
   flow,
   headingRef,
+  initialView = "day",
 }: {
   flow: BookingFlow;
+  initialView?: "day" | "week" | "month";
   headingRef: Ref<HTMLHeadingElement>;
 }) {
   const { service, days, date, slots, slot, notice, business } = flow;
   const index = Math.max(0, days.indexOf(date));
   const [page, setPage] = useState(Math.floor(index / WEEK));
   const [shownDate, setShownDate] = useState(date);
-  const [view, setView] = useState<"day" | "week" | "month">("day");
+  const [view, setView] = useState<"day" | "week" | "month">(initialView);
   const [anchor, setAnchor] = useState(date);
   const daySlots = useRef<HTMLDivElement>(null);
   // The day can change from the flow (a slot refused): show its week.
@@ -142,6 +144,7 @@ export function SlotStep({
           anchor={anchor}
           onAnchor={setAnchor}
           flow={flow}
+          chronological={initialView === "week"}
           onSelectDate={(day) => {
             flow.actions.chooseDate(day);
             requestAnimationFrame(() => {

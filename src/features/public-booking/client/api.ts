@@ -116,12 +116,12 @@ const businessUrl = (slug: string) =>
   `/api/public/businesses/${encodeURIComponent(slug)}`;
 
 /** The public profile, its active services and its catalogue. */
-export function fetchPublicBusiness(slug: string) {
+export function fetchPublicBusiness(slug: string, signal?: AbortSignal) {
   return request<{
     business: PublicBusiness;
     services: PublicService[];
     catalog: PublicCatalog;
-  }>(businessUrl(slug), { method: "GET" }, READ_TIMEOUT_MS);
+  }>(businessUrl(slug), { method: "GET", signal }, READ_TIMEOUT_MS);
 }
 
 /** Real slots of one civil day, in the business time zone. */

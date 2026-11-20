@@ -1,5 +1,10 @@
 import "server-only";
 
+import {
+  agendaPreferenceKey,
+  readAgendaFormat,
+  type AgendaFormat,
+} from "@/features/agenda/formats";
 import { AppException } from "@/lib/errors";
 import { authFailureOf } from "@/lib/supabase/auth-errors";
 import { databaseException } from "@/lib/supabase/errors";
@@ -19,6 +24,7 @@ export type OnboardedBusiness = {
    * preferences are synchronised for (PreferenceContext).
    */
   membershipId: string;
+  preferredAgendaFormat?: AgendaFormat;
   /**
    * Her role. A practitioner reaches only her own agenda and the customers
    * she receives (docs/TEAM_CONTRACT.md, « Rôle praticienne »).
@@ -88,12 +94,16 @@ export async function getSessionState(
     return { status: "onboarding_required", user };
   }
 
+  const preferred = readAgendaFormat(
+    data.user.user_metadata?.[agendaPreferenceKey(membership.id)],
+  );
   return {
     status: "ready",
     user,
     business: {
       id: membership.business_id,
       membershipId: membership.id,
+      ...(preferred === "classic" ? {} : { preferredAgendaFormat: preferred }),
       role: membership.role,
       slug: membership.businesses.slug,
       name: membership.businesses.name,

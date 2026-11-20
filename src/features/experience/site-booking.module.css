@@ -1,0 +1,19 @@
+.universe {
+  --paper: var(--u-paper);
+  --paper-raised: var(--u-paper);
+  --ink: var(--u-ink-on-paper);
+  --ink-soft: var(--u-soft-paper);
+  --ink-muted: var(--u-soft-paper);
+  --line: color-mix(in srgb, var(--ink) 20%, var(--paper));
+  --line-strong: color-mix(in srgb, var(--ink) 48%, var(--paper));
+  --sand: color-mix(in srgb, var(--ink) 7%, var(--paper));
+  --font-serif: var(--t-display);
+  font-family: var(--t-body);
+}
+.universe :global(button.bg-ink:not(:disabled)) {
+  background: var(--booking-cta);
+  color: var(--booking-on-cta);
+}
+.universe :global(button[data-state]) {
+  border-radius: var(--s-control);
+}

@@ -164,8 +164,10 @@ export const choiceIdsOf = (
 export function useBookingFlow({
   business,
   catalog: initialCatalog,
+  preview = false,
 }: {
   business: PublicBusiness;
+  preview?: boolean;
   /** As get_public_catalog projects it: the only source of what is offered. */
   catalog: PublicCatalog;
 }) {
@@ -202,7 +204,7 @@ export function useBookingFlow({
 
   const raw = useSyncExternalStore(
     subscribePendingBooking,
-    () => pendingBookingSnapshot(slug),
+    () => (preview ? null : pendingBookingSnapshot(slug)),
     () => null,
   );
   const pending = useMemo(() => parsePendingBooking(slug, raw), [slug, raw]);
@@ -528,7 +530,7 @@ export function useBookingFlow({
   }
 
   async function send(request: PendingBooking) {
-    if (sending.current) return;
+    if (preview || sending.current) return;
     const { command: sent, key } = request;
     sending.current = true;
     lastKey.current = key;

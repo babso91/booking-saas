@@ -5,6 +5,10 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 
 import Link from "next/link";
 
+import {
+  bookingFormats,
+  bookingFormatCopy,
+} from "@/features/public-booking/formats";
 import { siteLimits } from "@/features/sites/config";
 
 import { startingAt, type ShowcaseGroup } from "../catalog/model";
@@ -122,6 +126,7 @@ const universeMoods: Record<UniverseId, string> = {
 type Tab =
   | "history"
   | "catalog"
+  | "reservation"
   | "sections"
   | "universe"
   | "photos"
@@ -148,6 +153,7 @@ export function Studio({
   photoSlot,
   onPhotoSlot,
   onReplay,
+  onPreviewBooking,
   library,
   onUpload,
   onDeletePhoto,
@@ -176,6 +182,7 @@ export function Studio({
   photoSlot: PhotoSlot | null;
   onPhotoSlot: (slot: PhotoSlot | null) => void;
   onReplay: () => void;
+  onPreviewBooking?: () => void;
   /** Her photos already sent and ready (asset ids, latest first). */
   library: string[];
   onUpload: (file: File) => Promise<UploadOutcome>;
@@ -215,6 +222,7 @@ export function Studio({
     published === null || canonical(config) !== canonical(published.config);
   const tabs: { id: Tab; label: string }[] = [
     { id: "catalog", label: "Prestations" },
+    { id: "reservation", label: "Réservation" },
     { id: "universe", label: "Univers" },
     { id: "sections", label: "Sections" },
     { id: "photos", label: "Photos" },
@@ -606,7 +614,46 @@ export function Studio({
                     />
                   ) : null}
 
-                  {current === "universe" ? (
+                  {current === "reservation" ? (
+                    <fieldset className="flex min-w-0 flex-col gap-2">
+                      <legend className="mb-3 text-lg font-semibold">
+                        Parcours de réservation
+                      </legend>
+                      {onPreviewBooking ? (
+                        <button
+                          type="button"
+                          onClick={onPreviewBooking}
+                          className="min-h-11 self-start rounded-full border border-black/25 px-4 text-sm font-semibold"
+                        >
+                          Essayer ce parcours
+                        </button>
+                      ) : null}
+                      {bookingFormats.map((format) => (
+                        <label
+                          key={format}
+                          className="flex cursor-pointer items-start gap-3 rounded-2xl border border-black/15 p-4 has-checked:border-black has-checked:bg-black/5"
+                        >
+                          <input
+                            type="radio"
+                            name="booking-format"
+                            className="mt-1 accent-black"
+                            checked={
+                              (config.bookingFormat ?? "classic") === format
+                            }
+                            onChange={() => set({ bookingFormat: format })}
+                          />
+                          <span>
+                            <strong className="block text-sm">
+                              {bookingFormatCopy[format].name}
+                            </strong>
+                            <span className="mt-1 block text-sm leading-snug text-black/65">
+                              {bookingFormatCopy[format].description}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  ) : current === "universe" ? (
                     <>
                       <p className="text-[13.5px] text-black/60">
                         Change d’univers : ton nom, tes textes et tes photos te
@@ -1128,6 +1175,7 @@ export function Studio({
                           brand: config.brand,
                           content: config.content,
                           hidden: config.hidden,
+                          bookingFormat: config.bookingFormat,
                         })
                       }
                     >

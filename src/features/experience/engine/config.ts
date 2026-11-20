@@ -6,6 +6,8 @@
 // the engine composes them and feeds them tokens and content, so a new
 // universe is configuration while each scene keeps its own art.
 
+import type { BookingFormat } from "@/features/public-booking/formats";
+
 export type Work = { id: string; photo: string; title: string; note: string };
 
 /**
@@ -99,6 +101,7 @@ export type SiteConfig = {
   hidden?: SceneKind[];
   /** How booking enters: a full page or a sheet from the bottom. */
   booking: "page" | "sheet";
+  bookingFormat?: BookingFormat;
   /** The always-present quick booking (mobile first): a bar or a pill. */
   quickBook: "bar" | "pill";
 };

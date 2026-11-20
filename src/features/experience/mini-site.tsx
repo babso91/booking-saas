@@ -3,10 +3,12 @@
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import {
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
+  type Ref,
   type RefObject,
 } from "react";
 
@@ -51,6 +53,8 @@ export function MiniSite({
   photoBase,
   photoSource,
   booking: bookable,
+  previewSlug,
+  openBookingPreviewRef,
   fontClasses,
   edit,
 }: {
@@ -70,10 +74,13 @@ export function MiniSite({
    * where no booking is ever taken.
    */
   booking: { business: PublicBusiness; catalog: PublicCatalog } | null;
+  previewSlug?: string;
+  openBookingPreviewRef?: Ref<() => void>;
   /** The faces of the universes (fonts.ts), declared on the site's root. */
   fontClasses: string;
 }) {
   const [booking, setBooking] = useState<{ serviceId?: string } | null>(null);
+  useImperativeHandle(openBookingPreviewRef, () => () => setBooking({}), []);
   const siteRoot = useRef<HTMLDivElement>(null);
   const armed = useRevealArming(siteRoot);
   // Her choice of scenes (the opening and her services always show).
@@ -159,6 +166,7 @@ export function MiniSite({
               <SiteBooking
                 key="booking"
                 booking={bookable}
+                previewSlug={previewSlug}
                 initialServiceId={booking.serviceId}
                 onClose={() => setBooking(null)}
               />
