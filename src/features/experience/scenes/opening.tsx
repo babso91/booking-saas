@@ -77,6 +77,15 @@ function useCoverEntrance(): { frame: Entrance; image: Entrance } {
 }
 
 /** Lookbook cover: the photo cut in, an enormous name over it. */
+function longestWord(text: string): string {
+  return text
+    .split(/\s+/)
+    .reduce(
+      (longest, word) => (word.length > longest.length ? word : longest),
+      "",
+    );
+}
+
 function DidoneCutOpening() {
   const { config, motion: language } = useEngine();
   const entrance = useCoverEntrance();
@@ -94,7 +103,10 @@ function DidoneCutOpening() {
     "0%",
   );
   const wait = language.entrance === "bloom" ? 1.2 : 0.7;
-  const name = config.brand.name.split(" ").at(-1) ?? config.brand.name;
+  const name = config.brand.name;
+  const uppercase = typePairs[config.tokens.type].displayCase === "uppercase";
+  const fitOf = (text: string) =>
+    `calc((100vw - 2rem) / ${displayWidthEm(text, uppercase).toFixed(2)})`;
   const kindLine = enter("reveal", {
     duration: 0.9,
     delay: wait,
@@ -142,16 +154,14 @@ function DidoneCutOpening() {
               className={`block ${nameLine.className}`}
               style={nameLine.style}
             >
-              {/* Enormous, but whole: a longer name than "Mila" gets
-                  smaller rather than cut off mid-letter. */}
+              {/* Enormous, but whole: her full name, one word per line if
+                  need be, its longest word never cut mid-letter; a long
+                  name gets smaller rather than taking over the cover. */}
               <Display
-                className="block text-[length:min(34vw,var(--fit))] leading-[0.8] whitespace-nowrap md:text-[length:min(24vw,var(--fit))]"
+                className="block text-[length:min(34vw,var(--fit))] leading-[0.8] text-balance md:text-[length:min(24vw,var(--fit))]"
                 style={
                   {
-                    "--fit": `calc((100vw - 2rem) / ${displayWidthEm(
-                      name,
-                      typePairs[config.tokens.type].displayCase === "uppercase",
-                    ).toFixed(2)})`,
+                    "--fit": `min(${fitOf(longestWord(name))}, ${fitOf(name)} * 2.6)`,
                   } as CSSProperties
                 }
               >
@@ -319,76 +329,79 @@ function KineticOpening() {
           </motion.div>
         ))}
       </div>
-      <motion.div
-        className={`relative mx-auto aspect-[3/4] w-[64vw] max-w-[360px] overflow-hidden shadow-[0_40px_80px_-30px_rgba(0,0,0,.6)] ${entrance.frame.className}`}
-        style={{
-          ...entrance.frame.style,
-          // The tilt, also held by the entrance while it plays.
-          ["--tilt" as string]: "-4deg",
-          borderRadius: "var(--s-radius)",
-          rotate: -4,
-        }}
-        whileHover={{ rotate: 0, scale: 1.02 }}
-      >
-        <div
-          className={`absolute inset-0 ${entrance.image.className}`}
-          style={entrance.image.style}
+      <div className="relative mx-auto w-[64vw] max-w-[360px]">
+        <motion.div
+          className={`relative aspect-[3/4] w-full overflow-hidden shadow-[0_40px_80px_-30px_rgba(0,0,0,.6)] ${entrance.frame.className}`}
+          style={{
+            ...entrance.frame.style,
+            // The tilt, also held by the entrance while it plays.
+            ["--tilt" as string]: "-4deg",
+            borderRadius: "var(--s-radius)",
+            rotate: -4,
+          }}
+          whileHover={{ rotate: 0, scale: 1.02 }}
         >
-          <GradedPhoto id={config.content.cover} alt="" eager sizes="64vw" />
-        </div>
-        <EditTarget slot="cover" />
-      </motion.div>
+          <div
+            className={`absolute inset-0 ${entrance.image.className}`}
+            style={entrance.image.style}
+          >
+            <GradedPhoto id={config.content.cover} alt="" eager sizes="64vw" />
+          </div>
+          <EditTarget slot="cover" />
+        </motion.div>
+        {/* The seal, stuck on the photo's corner (never over her location
+            line): a round button (its name says what it does) under a
+            rotating ring of text, which is decoration only (outside the
+            button, so its repeated words are not read as its label). */}
+        <motion.div
+          className={`absolute -right-10 -bottom-12 size-28 md:-right-16 md:-bottom-14 md:size-36 ${seal.className}`}
+          style={seal.style}
+          whileTap={{ scale: 0.92 }}
+        >
+          <button
+            type="button"
+            onClick={() => book(null)}
+            aria-label={`Réserver chez ${name}`}
+            className="absolute inset-0 cursor-pointer rounded-full bg-[var(--u-bg)] text-[var(--u-ink)]"
+          >
+            <span className="text-[26px]" aria-hidden="true">
+              →
+            </span>
+          </button>
+          <motion.svg
+            viewBox="0 0 100 100"
+            className="pointer-events-none absolute inset-0 text-[var(--u-ink)]"
+            animate={{ rotate: 360 }}
+            transition={{ duration: 14, repeat: Infinity, ease: "linear" }}
+            aria-hidden="true"
+          >
+            <defs>
+              <path
+                id="seal"
+                d="M50 50 m-36 0 a36 36 0 1 1 72 0 a36 36 0 1 1 -72 0"
+              />
+            </defs>
+            <text
+              fontSize="10.5"
+
+              fill="currentColor"
+              style={{ fontFamily: "var(--t-detail)" }}
+            >
+              <textPath href="#seal" textLength="224" lengthAdjust="spacing">
+                RÉSERVER ✶ RÉSERVER ✶
+              </textPath>
+            </text>
+          </motion.svg>
+        </motion.div>
+      </div>
       <p
-        className={`relative mt-8 px-6 text-center ${line.className}`}
+        className={`relative mt-16 px-6 text-center md:mt-20 ${line.className}`}
         style={line.style}
       >
         <Detail>
           {config.brand.location} — réservation en ligne, sans compte
         </Detail>
       </p>
-      {/* The seal: a round button (its name says what it does) under a
-          rotating ring of text, which is decoration only (outside the
-          button, so its repeated words are not read as its label). */}
-      <motion.div
-        className={`absolute right-[6vw] bottom-[18svh] size-28 md:size-36 ${seal.className}`}
-        style={seal.style}
-        whileTap={{ scale: 0.92 }}
-      >
-        <button
-          type="button"
-          onClick={() => book(null)}
-          aria-label={`Réserver chez ${name}`}
-          className="absolute inset-0 cursor-pointer rounded-full bg-[var(--u-bg)] text-[var(--u-ink)]"
-        >
-          <span className="text-[26px]" aria-hidden="true">
-            →
-          </span>
-        </button>
-        <motion.svg
-          viewBox="0 0 100 100"
-          className="pointer-events-none absolute inset-0 text-[var(--u-ink)]"
-          animate={{ rotate: 360 }}
-          transition={{ duration: 14, repeat: Infinity, ease: "linear" }}
-          aria-hidden="true"
-        >
-          <defs>
-            <path
-              id="seal"
-              d="M50 50 m-36 0 a36 36 0 1 1 72 0 a36 36 0 1 1 -72 0"
-            />
-          </defs>
-          <text
-            fontSize="10.5"
-
-            fill="currentColor"
-            style={{ fontFamily: "var(--t-detail)" }}
-          >
-            <textPath href="#seal" textLength="224" lengthAdjust="spacing">
-              RÉSERVER ✶ RÉSERVER ✶
-            </textPath>
-          </text>
-        </motion.svg>
-      </motion.div>
     </section>
   );
 }

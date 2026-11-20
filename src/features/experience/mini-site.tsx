@@ -191,8 +191,12 @@ function Header() {
   return (
     <header>
       <div className="pointer-events-none fixed inset-x-0 top-0 z-40 text-white mix-blend-difference">
-        <div className="mx-auto flex max-w-[1100px] items-center px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3">
-          <Display className="py-2 text-[18px] leading-none">
+        {/* One line, clear of the "Réserver" chip: a long name ends in an
+            ellipsis here (it is set whole on the opening, just below). */}
+        <div
+          className={`mx-auto flex max-w-[1100px] items-center pt-[max(env(safe-area-inset-top),14px)] pb-3 pl-5 ${catalog.length ? "pr-32" : "pr-5"}`}
+        >
+          <Display className="min-w-0 truncate py-2 text-[18px] leading-none">
             {config.brand.name}
           </Display>
         </div>
