@@ -144,9 +144,9 @@ export function paletteFor(
   const field = signatureOf(chosen ?? base.accent, base);
   if (!chosen) return { ...base, ...field };
   const surfaces = [base.paper, base.paperRaised, base.sand];
-  if (glass) surfaces.push(base.line); // Brightest substrate under a reflection.
+  if (glass) surfaces.push(base.line); // Darkest part of the frosted work surface.
   const tone = readableTone(chosen, surfaces, base.ink);
-  const soft = mix(chosen, base.paper, mode === "light" ? 0.86 : 0.78);
+  const soft = mix(chosen, base.paper, mode === "dark" ? 0.78 : 0.86);
   const strong = readableTone(
     mix(tone, base.ink, 0.25),
     [...surfaces, soft],
@@ -205,18 +205,19 @@ const names: [keyof AppliedPalette, string][] = [
   ["shadowRgb", "--shadow-rgb"],
 ];
 
-// A neutral smoked substrate lets even a red or green stone colour the entire surface.
+// The room casts a warm light; the professional's tint belongs to the glass.
 const glassBase: Palette = {
-  ...ecrinPalettes.dark,
-  paper: "#11151C",
-  paperRaised: "#242A32",
-  sand: "#333A43",
-  sandDeep: "#3D454F",
-  line: "#49515E",
-  lineStrong: "#79818C",
-  ink: "#F7F8FA",
-  inkSoft: "#DBDFE5",
-  inkMuted: "#C1C7D0",
+  ...ecrinPalettes.light,
+  paper: "#EFE6DC",
+  paperRaised: "#FFF9F2",
+  sand: "#E5D9CC",
+  sandDeep: "#D8C9BC",
+  line: "#C5B4A7",
+  lineStrong: "#948275",
+  ink: "#241E1C",
+  inkSoft: "#453B37",
+  inkMuted: "#51453F",
+  shadowRgb: "66 40 29",
 };
 
 function declarations(palette: AppliedPalette, mode: Mode) {
@@ -248,8 +249,18 @@ export function appearanceCss(value: Appearance) {
       value.accent,
     );
     const tint = value.accent ?? defaultAccent(value.style, value.ambiance);
-    const dye = readableTone(tint, ["#FFFFFF"], glassBase.paper, 3.2);
-    return `${scope}{${declarations(palette, "dark")}--glass-tint:${tint};--glass-dye:${dye};}`;
+    // Keep both ends of the coloured reflection legible with the same ink.
+    const awayFromInk =
+      palette.onSignature === glassBase.ink
+        ? glassBase.paperRaised
+        : glassBase.ink;
+    const fieldShade = mix(palette.signature, awayFromInk, 0.38);
+    const fieldLight = readableTone(
+      mix(palette.signature, palette.onSignature, 0.24),
+      [palette.onSignature],
+      awayFromInk,
+    );
+    return `${scope}{${declarations(palette, "light")}--glass-tint:${tint};--glass-field-shade:${fieldShade};--glass-field-light:${fieldLight};}`;
   }
   if (value.mode === "light") return `${scope}{${of("light")}}`;
   if (value.mode === "dark") return `${scope}{${of("dark")}}`;

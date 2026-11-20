@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { contrast } from "@/lib/color/contrast";
+import { contrast, mix } from "@/lib/color/contrast";
 
 import {
   appearanceCss,
@@ -74,15 +74,31 @@ describe("tinted glass", () => {
     (accent) => {
       const value = { ...defaultAppearance, mode: "glass" as const, accent };
       expect(parseAppearance(serializeAppearance(value))).toEqual(value);
-      expect(appearanceCss(value)).toContain(`--glass-tint:${accent};`);
-      const palette = paletteFor("ecrin", "atelier", "glass", accent);
+      const css = appearanceCss(value);
+      expect(css).toContain(`--glass-tint:${accent};`);
+      expect(css).toContain("color-scheme:light");
+      const palette = paletteFor(value.style, value.ambiance, "glass", accent);
       expect(unreadable(palette)).toEqual([]);
+      expect(contrast(palette.inkMuted, palette.line)).toBeGreaterThanOrEqual(
+        4.5,
+      );
       expect(contrast(palette.accent, palette.line)).toBeGreaterThanOrEqual(
         4.5,
       );
       expect(
         contrast(palette.signature, palette.onSignature),
       ).toBeGreaterThanOrEqual(4.5);
+      const light = css.match(/--glass-field-light:(#[A-F0-9]{6});/)![1]!;
+      const shade = css.match(/--glass-field-shade:(#[A-F0-9]{6});/)![1]!;
+      for (const surface of [
+        light,
+        mix(shade, "#FFFFFF", 0.15),
+        mix(shade, "#000000", 0.15),
+      ]) {
+        expect(contrast(palette.onSignature, surface)).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
     },
   );
 });

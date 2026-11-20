@@ -221,7 +221,8 @@ export function AppearanceSettings() {
             </div>
             {appearance.mode === "glass" && (
               <p className="text-[13.5px] text-ink-soft">
-                Le verre fumé prend la teinte que tu choisis ci-dessous.
+                La lumière de l’atelier traverse le verre dépoli. Choisis sa
+                teinte ci-dessous.
               </p>
             )}
           </Group>
@@ -308,7 +309,7 @@ export function AppearanceSettings() {
             {adjusted ? (
               <p className="mt-2 text-[13px] text-ink-soft">
                 {appearance.mode === "glass"
-                  ? "Le verre garde ta teinte. Les textes utilisent une nuance plus claire quand leur contraste le demande."
+                  ? "Le verre prend ta teinte. Les textes utilisent une nuance plus soutenue pour rester lisibles."
                   : studio
                     ? "Tes grands aplats gardent ta couleur ; dans le texte, elle est un peu plus soutenue pour rester lisible."
                     : "Ajustée pour rester lisible sur ton fond : la teinte est gardée, un peu plus soutenue."}
