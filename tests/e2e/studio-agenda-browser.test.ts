@@ -103,6 +103,45 @@ describe("Studio 2 in a browser", () => {
     await page.context().close();
   });
 
+  it("keeps the business name and view picker on screen after returning from Clientes", async () => {
+    const { browser } = await professionalWithVisit("Lina", "Nour");
+    const page = await studioPage(browser, 390, 600);
+    try {
+      await page.goto(`${APP}/app`);
+      const dock = page.getByRole("navigation", {
+        name: "Navigation principale",
+      });
+      await page
+        .getByRole("button", { name: /Nour Visite/ })
+        .first()
+        .waitFor();
+      await dock.getByRole("link", { name: "Clientes" }).click();
+      await page
+        .getByRole("heading", { name: "Clientes", exact: true })
+        .waitFor();
+      await dock.getByRole("link", { name: "Agenda" }).click();
+      const pane = page.locator("[data-studio-day-scroll]");
+      await pane.locator("[data-focus]").first().waitFor({ state: "attached" });
+      await page.waitForLoadState("networkidle");
+      for (const control of [
+        page.getByRole("link", { name: /Atelier Lina/ }).first(),
+        page.getByRole("button", { name: "Mois", exact: true }),
+      ]) {
+        // Clicking with Playwright would silently scroll a hidden header back.
+        expect(
+          await control.evaluate((el) => {
+            const r = el.getBoundingClientRect();
+            return el.contains(
+              document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2),
+            );
+          }),
+        ).toBe(true);
+      }
+    } finally {
+      await page.context().close();
+    }
+  });
+
   it.each([320, 375, 390])(
     "at %i px the « ⋯ » menu opens entirely on screen, whatever the date",
     async (width) => {
