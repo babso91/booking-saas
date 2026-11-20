@@ -111,6 +111,19 @@ describe("Studio 2 in a browser", () => {
       // Long and short weekday names, today and away from it.
       for (const date of [parisDate(), "2027-09-29", "2027-09-27"]) {
         await page.goto(`${APP}/app?date=${date}`);
+        if (date === parisDate()) {
+          await page
+            .getByRole("button", { name: /Nour Visite/ })
+            .first()
+            .waitFor();
+          for (const control of [
+            page.getByRole("link", { name: /Atelier Lina/ }).first(),
+            page.getByRole("button", { name: "Mois", exact: true }),
+          ]) {
+            const bounds = await control.boundingBox();
+            expect(bounds?.y).toBeGreaterThanOrEqual(0);
+          }
+        }
         await page.getByRole("button", { name: "Options de l’agenda" }).click();
         const menu = page.locator("#agenda-options");
         await menu.waitFor();

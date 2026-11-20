@@ -70,7 +70,7 @@ export function StudioShell({
   );
 
   return (
-    <div className="glass-ground flex h-dvh flex-col overflow-hidden bg-paper">
+    <div className="glass-ground flex h-dvh flex-col overflow-clip bg-paper">
       <header className="flex shrink-0 items-center justify-between gap-4 px-4 pt-[calc(env(safe-area-inset-top)+12px)] pb-3 lg:px-10 lg:pt-5">
         <Link
           href={sectionHref.today}
