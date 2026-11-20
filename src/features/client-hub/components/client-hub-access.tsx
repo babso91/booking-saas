@@ -272,7 +272,8 @@ export function ClientHubAccess({
           </ul>
           <p>
             Jamais tes notes, les motifs d’annulation ou d’ajustement, ni les
-            autres fiches. Elle ne peut rien modifier.
+            autres fiches. Les annulations restent soumises aux règles du
+            rendez-vous.
           </p>
           {typeof write === "object" ? (
             <WriteError error={write}>Rien n’a été autorisé.</WriteError>

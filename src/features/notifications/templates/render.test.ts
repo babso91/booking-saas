@@ -105,6 +105,31 @@ describe("formatting", () => {
 });
 
 describe("renderEmail", () => {
+  it.each([
+    "booking_confirmation",
+    "appointment_reminder",
+    "appointment_changed",
+  ] as const)(
+    "%s links to the exact appointment after code verification, separately from rebooking",
+    (type) => {
+      const message = email({ type });
+      const { text, html } = renderEmail(message, { appUrl: APP_URL });
+      const match = html.match(
+        /href="([^"]+)"[^>]*>Gérer ou annuler mon rendez-vous<\/a>/,
+      );
+      expect(match).not.toBeNull();
+      const url = new URL(match![1]!);
+      expect(url.origin).toBe(APP_URL);
+      expect(url.pathname).toBe("/espace/connexion");
+      expect(url.searchParams.get("next")).toBe(
+        `/espace/${message.businessId}/rendez-vous/${message.appointment.id}`,
+      );
+      expect(url.href).not.toContain(message.recipient);
+      expect(text).toContain(url.href);
+      expect(html).toContain(`href="${APP_URL}/b/studio-mila"`);
+    },
+  );
+
   it("a confirmation gives every detail of the appointment", () => {
     const { subject, text, html } = renderEmail(email(), { appUrl: APP_URL });
     expect(subject).toBe("Rendez-vous confirmé – Studio Mila");
@@ -117,13 +142,13 @@ describe("renderEmail", () => {
     expect(text).toContain("Adresse : 12 rue des Lilas, Lyon");
     expect(text).toContain("(Europe/Paris)");
     expect(text).toContain(
-      "Pour modifier ou annuler, contactez Studio Mila par téléphone au 01 23 45 67 89 ou en répondant à cet email.",
+      "Pour toute autre demande, contactez Studio Mila par téléphone au 01 23 45 67 89 ou en répondant à cet email.",
     );
     expect(text).toContain(`${APP_URL}/b/studio-mila`);
     expect(html).toContain("Volume mixte");
     expect(html).toContain(`href="${APP_URL}/b/studio-mila"`);
-    // Never a promise the product cannot keep (no cancellation link exists).
-    expect(text).not.toMatch(/cliquez|lien d.annulation/iu);
+    expect(text).toContain("Gérer ou annuler mon rendez-vous");
+    expect(html).toContain("Gérer ou annuler mon rendez-vous</a>");
   });
 
   it("each type has its own subject and lead", () => {
@@ -148,6 +173,8 @@ describe("renderEmail", () => {
       appUrl: APP_URL,
     });
     expect(text).toContain("Votre rendez-vous a été annulé");
+    expect(text).not.toContain("par l’établissement");
+    expect(text).not.toContain("Gérer ou annuler mon rendez-vous");
     expect(text).not.toContain("Prix");
     expect(text).not.toContain("Adresse");
     expect(text).toContain(
@@ -168,7 +195,7 @@ describe("renderEmail", () => {
     expect(text.startsWith("Bonjour,\n")).toBe(true);
     expect(text).not.toContain("Adresse");
     expect(text).toContain(
-      "Pour modifier ou annuler, contactez Studio Mila en répondant à cet email.",
+      "Pour toute autre demande, contactez Studio Mila en répondant à cet email.",
     );
   });
 

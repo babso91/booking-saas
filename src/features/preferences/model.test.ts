@@ -46,7 +46,7 @@ describe("preferences model", () => {
   it("accepts every value of Studio 1's engine, and the styles to come", () => {
     for (const style of ["classique", "studio", "ecrin", "carnet"] as const) {
       for (const ambiance of ["atelier", "lin", "sauge"] as const) {
-        for (const mode of ["light", "dark", "system"] as const) {
+        for (const mode of ["light", "dark", "system", "glass"] as const) {
           for (const motion of ["standard", "discrete", "none"] as const) {
             const value = { style, ambiance, mode, motion, accent: "#97493A" };
             expect(appearancePreferencesSchema.parse(value)).toEqual(value);

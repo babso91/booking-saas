@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { contrast } from "@/lib/color/contrast";
+import { contrast, mix } from "@/lib/color/contrast";
 
 import {
   appearanceCss,
@@ -67,6 +67,41 @@ const unreadable = (palette: Palette) =>
       ratio: Number(contrast(palette[text], palette[on]).toFixed(2)),
     }))
     .filter((item) => item.ratio < 4.5);
+
+describe("tinted glass", () => {
+  it.each(["#6B4F96", "#C9384B", "#148E72", "#000000", "#FFFFFF"])(
+    "keeps %s as the tint and uses legible inks",
+    (accent) => {
+      const value = { ...defaultAppearance, mode: "glass" as const, accent };
+      expect(parseAppearance(serializeAppearance(value))).toEqual(value);
+      const css = appearanceCss(value);
+      expect(css).toContain(`--glass-tint:${accent};`);
+      expect(css).toContain("color-scheme:light");
+      const palette = paletteFor(value.style, value.ambiance, "glass", accent);
+      expect(unreadable(palette)).toEqual([]);
+      expect(contrast(palette.inkMuted, palette.line)).toBeGreaterThanOrEqual(
+        4.5,
+      );
+      expect(contrast(palette.accent, palette.line)).toBeGreaterThanOrEqual(
+        4.5,
+      );
+      expect(
+        contrast(palette.signature, palette.onSignature),
+      ).toBeGreaterThanOrEqual(4.5);
+      const light = css.match(/--glass-field-light:(#[A-F0-9]{6});/)![1]!;
+      const shade = css.match(/--glass-field-shade:(#[A-F0-9]{6});/)![1]!;
+      for (const surface of [
+        light,
+        mix(shade, "#FFFFFF", 0.15),
+        mix(shade, "#000000", 0.15),
+      ]) {
+        expect(contrast(palette.onSignature, surface)).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
+    },
+  );
+});
 
 describe("the professional area's ambiances", () => {
   it.each(all)(

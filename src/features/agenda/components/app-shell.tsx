@@ -109,9 +109,9 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
     );
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-paper lg:flex-row">
+    <div className="glass-ground flex h-dvh flex-col overflow-hidden bg-paper lg:flex-row">
       <aside
-        className="hidden w-60 shrink-0 flex-col gap-8 border-r border-line bg-paper-raised px-4 py-6 lg:flex"
+        className="glass-dock hidden w-60 shrink-0 flex-col gap-8 border-r border-line bg-paper-raised px-4 py-6 lg:flex"
         aria-label="Navigation principale"
       >
         <BrandMark className="px-2" />
@@ -182,7 +182,7 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
         </div>
       </aside>
 
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-line bg-paper-raised px-4 pt-[env(safe-area-inset-top)] lg:hidden">
+      <header className="glass-surface flex h-14 shrink-0 items-center justify-between border-b border-line bg-paper-raised px-4 pt-[env(safe-area-inset-top)] lg:hidden">
         <BrandMark />
         <span className="max-w-[45%] truncate text-[14px] text-ink-soft">
           {business.name}
@@ -193,7 +193,7 @@ function AreaFrame({ business, current = "agenda", children }: ShellProps) {
 
       <nav
         aria-label="Navigation principale"
-        className="grid shrink-0 grid-cols-4 border-t border-line bg-paper-raised pb-[env(safe-area-inset-bottom)] lg:hidden"
+        className="glass-dock grid shrink-0 grid-cols-4 border-t border-line bg-paper-raised pb-[env(safe-area-inset-bottom)] lg:hidden"
       >
         <Link
           href="/app"

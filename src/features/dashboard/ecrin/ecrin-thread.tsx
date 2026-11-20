@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 
 import { formatDuration, timeOf } from "@/features/agenda/client/dates";
 import { timeWithOccurrence } from "@/features/agenda/client/occurrence";
@@ -56,6 +62,28 @@ export function EcrinThread({
 
   // Today: open on what matters now, once per day shown.
   const list = useRef<HTMLOListElement>(null);
+  const shownDate = useRef(date);
+  const ready = flow !== null;
+  useLayoutEffect(() => {
+    if (!ready || shownDate.current === date) return;
+    const direction = date > shownDate.current ? 1 : -1;
+    shownDate.current = date;
+    const thread = list.current;
+    if (
+      !thread?.animate ||
+      document.documentElement.dataset.motion !== "standard" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
+    const turn = thread.animate(
+      [
+        { transform: `translateX(${direction * 42}px)`, opacity: 0.28 },
+        { transform: "translateX(0)", opacity: 1 },
+      ],
+      { duration: 370, easing: "cubic-bezier(.18,.72,.2,1)" },
+    );
+    return () => turn.cancel();
+  }, [date, ready]);
   const focused = useRef<string | null>(null);
   useEffect(() => {
     if (!flow || focused.current === date) return;

@@ -130,6 +130,7 @@ export async function createBlock(
   client: AppSupabaseClient,
   context: AgendaContext,
   input: BlockInput,
+  closure?: { id: string },
 ): Promise<AgendaBlockDto> {
   // Whole days: real local day bounds. Periods: midnight is where the day
   // begins; any other repeated time is its second occurrence (the engine's
@@ -141,19 +142,57 @@ export async function createBlock(
         startsAt: time.local(input.startsAt).bound,
         endsAt: time.local(input.endsAt).bound,
       };
+  const row = blockRow(startsAt, endsAt, input.reason);
   const { data, error } = await client
     .from("availability_exceptions")
     .insert({
       business_id: context.businessId,
-      kind: "blocked",
-      ...blockRow(startsAt, endsAt, input.reason),
+      kind: closure ? "closed" : "blocked",
+      ...(closure ? { id: closure.id } : {}),
+      ...row,
     })
     .select(BLOCK_COLUMNS)
     .single();
 
-  if (error) throw databaseException(error);
+  if (!error)
+    return toBlockDto(data, await wallClocksOf(client, context, [data]));
+  if (!closure || error.code !== "23505") throw databaseException(error);
 
-  return toBlockDto(data, await wallClocksOf(client, context, [data]));
+  // A repeated submission after a lost response reuses the same closure.
+  const { data: existing, error: readError } = await client
+    .from("availability_exceptions")
+    .select(BLOCK_COLUMNS)
+    .eq("business_id", context.businessId)
+    .eq("id", closure.id)
+    .eq("kind", "closed")
+    .maybeSingle();
+  if (readError) throw databaseException(readError);
+  if (
+    !existing ||
+    Date.parse(existing.starts_at) !== startsAt.getTime() ||
+    Date.parse(existing.ends_at) !== endsAt.getTime() ||
+    existing.reason !== row.reason
+  )
+    throw new AppException("idempotency_conflict");
+  return toBlockDto(existing, await wallClocksOf(client, context, [existing]));
+}
+
+export async function listUpcomingClosures(
+  client: AppSupabaseClient,
+  context: AgendaContext,
+): Promise<AgendaBlockDto[]> {
+  const { data, error } = await client
+    .from("availability_exceptions")
+    .select(BLOCK_COLUMNS)
+    .eq("business_id", context.businessId)
+    .eq("kind", "closed")
+    .gt("ends_at", new Date().toISOString())
+    .order("starts_at")
+    .limit(30);
+  if (error) throw databaseException(error);
+  if (!data.length) return [];
+  const time = await wallClocksOf(client, context, data);
+  return data.map((row) => toBlockDto(row, time));
 }
 
 export async function updateBlock(
@@ -210,6 +249,7 @@ export async function deleteBlock(
   context: AgendaContext,
   blockId: string,
   expectedVersion: number,
+  kind?: "closed",
 ): Promise<void> {
   const { data, error } = await client
     .from("availability_exceptions")
@@ -217,7 +257,7 @@ export async function deleteBlock(
     .eq("business_id", context.businessId)
     .eq("id", blockId)
     .eq("version", expectedVersion)
-    .in("kind", EDITABLE_KINDS)
+    .in("kind", kind ? [kind] : EDITABLE_KINDS)
     .select("id");
 
   if (error) throw databaseException(error);

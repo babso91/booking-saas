@@ -57,6 +57,13 @@ import {
 import { useCanonicalToday } from "../client/use-canonical-today";
 import { zoneOf } from "../client/zone";
 import { AgendaError, TextAction } from "./agenda-error";
+import { saveAgendaFormatAction } from "../actions/format";
+import {
+  agendaFormats,
+  agendaFormatNames,
+  type AgendaFormat,
+} from "../formats";
+import { AgendaOverview } from "./agenda-overview";
 import { AppointmentDetails } from "./appointment-details";
 import { AppointmentForm, type ServicesState } from "./appointment-form";
 import { BlockForm } from "./block-form";
@@ -110,7 +117,13 @@ export function AgendaView({
   initialDate,
   initialAppointmentId,
   initialCreate,
+  formatSettings,
 }: {
+  formatSettings?: {
+    membershipId: string;
+    preferred: AgendaFormat;
+    slug: string;
+  };
   /** Day to open on (a link from a customer profile); today otherwise. */
   initialDate?: string;
   /**
@@ -130,7 +143,49 @@ export function AgendaView({
   // computer can also show one day.
   const designed = style !== "classique";
   const [studioView, setStudioView] = useState<StudioView>("week");
-  const view: View = wide ? (designed ? studioView : "week") : "day";
+  const [preferred, setPreferred] = useState<AgendaFormat>(
+    formatSettings?.preferred ?? "classic",
+  );
+  const [savingFormat, setSavingFormat] = useState(false);
+  const savingFormatRef = useRef(false);
+  const [formatError, setFormatError] = useState(false);
+  const format = formatSettings ? preferred : "classic";
+
+  async function changeFormat(next: AgendaFormat) {
+    if (!formatSettings || savingFormatRef.current || next === format) return;
+    savingFormatRef.current = true;
+    setSavingFormat(true);
+    setFormatError(false);
+    const result = await callAction(() =>
+      saveAgendaFormatAction({
+        membershipId: formatSettings.membershipId,
+        format: next,
+      }),
+    );
+    savingFormatRef.current = false;
+    if (!alive.current) return;
+    setSavingFormat(false);
+    if (result.ok) {
+      supersede();
+      setPreferred(result.data);
+      setOverrideView(null);
+    } else setFormatError(true);
+  }
+
+  const [overrideView, setOverrideView] = useState<View | null>(null);
+  const view: View =
+    overrideView ??
+    (format === "visual"
+      ? "month"
+      : format === "availability"
+        ? "week"
+        : format === "salon"
+          ? "day"
+          : wide
+            ? designed
+              ? studioView
+              : "week"
+            : "day");
   const clock = useSyncExternalStore(subscribeClock, clockBucket, () => 0);
 
   const canonical = useCanonicalToday(initialToday, clock);
@@ -162,10 +217,14 @@ export function AgendaView({
   const key = `${range.startDate}:${range.endDate}:${includeCancelled}:${reloadToken}`;
   const rangeKey = `${range.startDate}:${range.endDate}:${includeCancelled}`;
 
-  // Studio and Écrin show free time, which a buffer from the day before can
-  // hold.
+  // A buffer from the day before can occupy part of a free interval.
+  const buffers =
+    format !== "classic" ||
+    designed ||
+    view === "month" ||
+    (view === "week" && !wide);
   const readRange = (days: string[]) =>
-    designed ? agendaRangeWithBuffers(days) : agendaRequestRange(days);
+    buffers ? agendaRangeWithBuffers(days) : agendaRequestRange(days);
 
   useEffect(() => {
     if (wide === null) return;
@@ -178,7 +237,7 @@ export function AgendaView({
       if (result.ok) {
         canonical.observe(observation, result.data);
         const data = restrictToDays(result.data, range.days, {
-          buffers: designed,
+          buffers,
         });
         setLoaded({ key, data });
         const wanted = pendingAppointment.current;
@@ -197,7 +256,7 @@ export function AgendaView({
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` covers the inputs
-  }, [key, wide]);
+  }, [key, wide, buffers]);
 
   const error = failed?.key === key ? failed.error : null;
   // Refused for want of a session or a membership: this session no longer
@@ -363,7 +422,7 @@ export function AgendaView({
     );
     if (!result.ok) return result.error;
     canonical.observe(observation, result.data);
-    const data = restrictToDays(result.data, range.days, { buffers: designed });
+    const data = restrictToDays(result.data, range.days, { buffers });
     setLoaded({ key, data });
     const fresh = data.blocks.find((item) => item.id === block.id);
     if (fresh) {
@@ -523,6 +582,107 @@ export function AgendaView({
     </Sheet>
   );
 
+  const viewPicker = (
+    <nav
+      aria-label="Vue de l’agenda"
+      className="flex flex-wrap items-center gap-1 border-b border-line px-4 py-2 sm:px-6"
+    >
+      {(
+        [
+          ["day", "Jour"],
+          ["week", "Semaine"],
+          ["month", "Mois"],
+        ] as const
+      ).map(([value, label]) => (
+        <Button
+          key={value}
+          size="md"
+          variant={value === view ? "primary" : "ghost"}
+          aria-pressed={value === view}
+          onClick={() => {
+            supersede();
+            setOverrideView(value);
+          }}
+        >
+          {label}
+        </Button>
+      ))}
+      {formatSettings ? (
+        <label className="ml-auto flex min-w-0 items-center gap-2 text-sm text-ink-soft">
+          <span className="sr-only lg:not-sr-only">Format d’agenda</span>
+          <select
+            aria-label="Format d’agenda"
+            value={format}
+            disabled={savingFormat}
+            onChange={(event) => {
+              const next = agendaFormats.find(
+                (value) => value === event.target.value,
+              );
+              if (next) void changeFormat(next);
+            }}
+            className="min-h-11 max-w-full rounded-xl border border-line bg-paper-raised px-2 text-sm font-medium text-ink"
+          >
+            {agendaFormats.map((value) => (
+              <option key={value} value={value}>
+                {agendaFormatNames[value]}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      {savingFormat ? (
+        <span role="status" className="sr-only">
+          Enregistrement du format…
+        </span>
+      ) : null}
+      {formatError ? (
+        <p role="alert" className="w-full text-sm text-danger">
+          Le format n’a pas pu être enregistré. Sélectionne-le à nouveau pour
+          réessayer.
+        </p>
+      ) : null}
+    </nav>
+  );
+
+  if (format !== "classic" || view === "month" || (view === "week" && !wide)) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {viewPicker}
+        {banners}
+        <AgendaOverview
+          format={format}
+          slug={formatSettings?.slug}
+          nowMs={clock ? clock * 30_000 : null}
+          today={today}
+          onOpenBlock={(block) => setPanel({ kind: "block", block })}
+          onNewBlock={() => openCreateBlock(anchor)}
+          onCreateAt={openCreateAppointment}
+          onDayView={(day) => {
+            navigate(day);
+            setOverrideView("day");
+          }}
+          view={view}
+          range={range}
+          selected={anchor}
+          data={data}
+          loading={loading || awaitingToday !== null}
+          includeCancelled={includeCancelled}
+          onIncludeCancelled={setIncludeCancelled}
+          onSelect={navigate}
+          onShift={(direction) =>
+            navigate(shiftAnchor(view, anchor, direction))
+          }
+          onOpen={(appointment) =>
+            setPanel({ kind: "appointment", appointment })
+          }
+          onToday={() => withToday(navigate)}
+          onNew={() => openCreateAppointment(anchor)}
+        />
+        {panels}
+      </div>
+    );
+  }
+
   if (designed) {
     const Presentation =
       style === "carnet"
@@ -531,48 +691,54 @@ export function AgendaView({
           ? EcrinAgenda
           : StudioAgenda;
     return (
-      <Presentation
-        view={view}
-        wide={wide}
-        onView={(next) => {
-          // Her intention changed: like any navigation.
-          supersede();
-          setStudioView(next);
-        }}
-        days={range.days}
-        anchor={anchor}
-        today={today}
-        data={data}
-        nowMs={clock ? clock * 30_000 : null}
-        loading={loading || awaitingToday !== null}
-        includeCancelled={includeCancelled}
-        onIncludeCancelled={setIncludeCancelled}
-        onShift={(direction) =>
-          navigate(
-            direction === 7 || direction === -7
-              ? addDaysToLocalDate(anchor, direction)
-              : shiftAnchor(view, anchor, direction),
-          )
-        }
-        onToday={() => withToday(navigate)}
-        onSelectDay={navigate}
-        onNewAppointment={() => openCreateAppointment()}
-        onNewBlock={() => openCreateBlock()}
-        onOpenAppointment={(appointment) =>
-          setPanel({ kind: "appointment", appointment })
-        }
-        onOpenBlock={(block) => setPanel({ kind: "block", block })}
-        onCreateAt={(date, time) => openCreateAppointment(date, time)}
-        banners={banners}
-        panels={panels}
-        onRefresh={reload}
-      />
+      <div className="flex min-h-0 flex-1 flex-col">
+        {viewPicker}
+        <Presentation
+          view={view}
+          hideViewSwitch
+          wide={wide}
+          onView={(next) => {
+            // Her intention changed: like any navigation.
+            supersede();
+            setStudioView(next);
+            setOverrideView(null);
+          }}
+          days={range.days}
+          anchor={anchor}
+          today={today}
+          data={data}
+          nowMs={clock ? clock * 30_000 : null}
+          loading={loading || awaitingToday !== null}
+          includeCancelled={includeCancelled}
+          onIncludeCancelled={setIncludeCancelled}
+          onShift={(direction) =>
+            navigate(
+              direction === 7 || direction === -7
+                ? addDaysToLocalDate(anchor, direction)
+                : shiftAnchor(view, anchor, direction),
+            )
+          }
+          onToday={() => withToday(navigate)}
+          onSelectDay={navigate}
+          onNewAppointment={() => openCreateAppointment()}
+          onNewBlock={() => openCreateBlock()}
+          onOpenAppointment={(appointment) =>
+            setPanel({ kind: "appointment", appointment })
+          }
+          onOpenBlock={(block) => setPanel({ kind: "block", block })}
+          onCreateAt={(date, time) => openCreateAppointment(date, time)}
+          banners={banners}
+          panels={panels}
+          onRefresh={reload}
+        />
+      </div>
     );
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex flex-col gap-3 border-b border-line bg-paper px-4 pt-3 pb-3 sm:px-6 lg:px-8 lg:pt-6">
+      {viewPicker}
+      <header className="flex flex-col gap-3 border-b border-line bg-paper glass-surface px-4 pt-3 pb-3 sm:px-6 lg:px-8 lg:pt-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <h1

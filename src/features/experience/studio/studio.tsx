@@ -5,6 +5,12 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 
 import Link from "next/link";
 
+import {
+  bookingFormats,
+  bookingFormatCopy,
+} from "@/features/public-booking/formats";
+import { siteLimits } from "@/features/sites/config";
+
 import { startingAt, type ShowcaseGroup } from "../catalog/model";
 import type {
   GradeId,
@@ -120,6 +126,7 @@ const universeMoods: Record<UniverseId, string> = {
 type Tab =
   | "history"
   | "catalog"
+  | "reservation"
   | "sections"
   | "universe"
   | "photos"
@@ -146,6 +153,7 @@ export function Studio({
   photoSlot,
   onPhotoSlot,
   onReplay,
+  onPreviewBooking,
   library,
   onUpload,
   onDeletePhoto,
@@ -174,6 +182,7 @@ export function Studio({
   photoSlot: PhotoSlot | null;
   onPhotoSlot: (slot: PhotoSlot | null) => void;
   onReplay: () => void;
+  onPreviewBooking?: () => void;
   /** Her photos already sent and ready (asset ids, latest first). */
   library: string[];
   onUpload: (file: File) => Promise<UploadOutcome>;
@@ -196,6 +205,8 @@ export function Studio({
   const photo = useStudioPhoto();
   const [tab, setTab] = useState<Tab>("universe");
   const config = draft.value;
+  const workInPhotoEditor =
+    typeof photoSlot === "number" ? config.content.works[photoSlot] : undefined;
   const creative = plan === "signature";
   const set = (patch: Partial<SiteConfig>, key?: string) =>
     draft.set({ ...config, ...patch }, key);
@@ -211,6 +222,7 @@ export function Studio({
     published === null || canonical(config) !== canonical(published.config);
   const tabs: { id: Tab; label: string }[] = [
     { id: "catalog", label: "Prestations" },
+    { id: "reservation", label: "Réservation" },
     { id: "universe", label: "Univers" },
     { id: "sections", label: "Sections" },
     { id: "photos", label: "Photos" },
@@ -313,6 +325,21 @@ export function Studio({
   // copy seen when the upload started (Codex review of #50).
   function replacePhoto(slot: PhotoSlot, id: string) {
     draft.update((current) => withPhoto(current, slot, id));
+  }
+
+  function setWorkTitle(id: string, title: string) {
+    draft.update(
+      (current) => ({
+        ...current,
+        content: {
+          ...current.content,
+          works: current.content.works.map((work) =>
+            work.id === id ? { ...work, title } : work,
+          ),
+        },
+      }),
+      `works.${id}.title`,
+    );
   }
 
   return (
@@ -552,7 +579,18 @@ export function Studio({
                   }
                   onReplace={(id) => replacePhoto(photoSlot, id)}
                   onBack={() => onPhotoSlot(null)}
-                />
+                >
+                  {workInPhotoEditor?.photo ? (
+                    <Text
+                      label="Titre sous la photo"
+                      value={workInPhotoEditor.title}
+                      maxLength={siteLimits.workTitle}
+                      onChange={(title) =>
+                        setWorkTitle(workInPhotoEditor.id, title)
+                      }
+                    />
+                  ) : null}
+                </PhotoEditor>
               ) : current === "history" ? (
                 history
               ) : current === "catalog" ? (
@@ -576,7 +614,46 @@ export function Studio({
                     />
                   ) : null}
 
-                  {current === "universe" ? (
+                  {current === "reservation" ? (
+                    <fieldset className="flex min-w-0 flex-col gap-2">
+                      <legend className="mb-3 text-lg font-semibold">
+                        Parcours de réservation
+                      </legend>
+                      {onPreviewBooking ? (
+                        <button
+                          type="button"
+                          onClick={onPreviewBooking}
+                          className="min-h-11 self-start rounded-full border border-black/25 px-4 text-sm font-semibold"
+                        >
+                          Essayer ce parcours
+                        </button>
+                      ) : null}
+                      {bookingFormats.map((format) => (
+                        <label
+                          key={format}
+                          className="flex cursor-pointer items-start gap-3 rounded-2xl border border-black/15 p-4 has-checked:border-black has-checked:bg-black/5"
+                        >
+                          <input
+                            type="radio"
+                            name="booking-format"
+                            className="mt-1 accent-black"
+                            checked={
+                              (config.bookingFormat ?? "classic") === format
+                            }
+                            onChange={() => set({ bookingFormat: format })}
+                          />
+                          <span>
+                            <strong className="block text-sm">
+                              {bookingFormatCopy[format].name}
+                            </strong>
+                            <span className="mt-1 block text-sm leading-snug text-black/65">
+                              {bookingFormatCopy[format].description}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  ) : current === "universe" ? (
                     <>
                       <p className="text-[13.5px] text-black/60">
                         Change d’univers : ton nom, tes textes et tes photos te
@@ -673,8 +750,9 @@ export function Studio({
                       <p className="text-[13.5px] text-black/60">
                         Touche une photo, ici ou{" "}
                         <strong>directement dans l’aperçu</strong>, pour ajouter
-                        la tienne, la remplacer ou la recadrer. Les photos
-                        d’exemple de ton univers ne sont jamais publiées.
+                        la tienne, la recadrer ou modifier son titre dans les
+                        réalisations. Les photos d’exemple de ton univers ne
+                        sont jamais publiées.
                       </p>
                       <div className="grid grid-cols-3 gap-2">
                         {(
@@ -807,6 +885,26 @@ export function Studio({
                           }
                         />
                       ))}
+                      {config.content.works.some((work) => work.photo) ? (
+                        <fieldset className="mt-2 flex min-w-0 flex-col gap-3 border-t border-black/10 pt-3">
+                          <legend className="pr-2 text-[13px] font-semibold">
+                            Titres des réalisations
+                          </legend>
+                          {config.content.works.map((work, index) =>
+                            work.photo ? (
+                              <Text
+                                key={work.id}
+                                label={`Titre de la réalisation ${index + 1}`}
+                                value={work.title}
+                                maxLength={siteLimits.workTitle}
+                                onChange={(title) =>
+                                  setWorkTitle(work.id, title)
+                                }
+                              />
+                            ) : null,
+                          )}
+                        </fieldset>
+                      ) : null}
                     </>
                   ) : current === "colors" ? (
                     <>
@@ -1077,6 +1175,7 @@ export function Studio({
                           brand: config.brand,
                           content: config.content,
                           hidden: config.hidden,
+                          bookingFormat: config.bookingFormat,
                         })
                       }
                     >
@@ -1280,11 +1379,13 @@ function Text({
   value,
   onChange,
   multiline,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   multiline?: boolean;
+  maxLength?: number;
 }) {
   const className =
     "w-full rounded-xl border border-black/10 bg-white px-3 text-[16px] outline-none focus:border-black/40";
@@ -1294,6 +1395,7 @@ function Text({
       {multiline ? (
         <textarea
           value={value}
+          maxLength={maxLength}
           onChange={(event) => onChange(event.target.value)}
           rows={3}
           className={`${className} resize-none py-2.5`}
@@ -1301,6 +1403,7 @@ function Text({
       ) : (
         <input
           value={value}
+          maxLength={maxLength}
           onChange={(event) => onChange(event.target.value)}
           className={`${className} h-12`}
         />

@@ -100,18 +100,20 @@ export function CarnetAgenda(props: StudioAgendaProps) {
 
         {wide ? (
           <div className={styles.toolbar}>
-            <div role="group" aria-label="Affichage" className={styles.views}>
-              {(["week", "day"] as const).map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  aria-pressed={view === option}
-                  onClick={() => props.onView(option)}
-                >
-                  {option === "week" ? "Semaine" : "Jour"}
-                </button>
-              ))}
-            </div>
+            {props.hideViewSwitch ? null : (
+              <div role="group" aria-label="Affichage" className={styles.views}>
+                {(["week", "day"] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={view === option}
+                    onClick={() => props.onView(option)}
+                  >
+                    {option === "week" ? "Semaine" : "Jour"}
+                  </button>
+                ))}
+              </div>
+            )}
             <nav
               aria-label={view === "week" ? "Semaines" : "Jours"}
               className={styles.pager}

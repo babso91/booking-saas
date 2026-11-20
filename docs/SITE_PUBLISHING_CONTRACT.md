@@ -54,6 +54,8 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
     - `services` : `index`, `shelf`, `tiles` ;
   - `booking` : `page` ou `sheet` ; `quickBook` : `bar` ou `pill`.
 
+  Le champ facultatif `bookingFormat` choisit le parcours dans la page ou le panneau. Les valeurs sont `classic`, `calendar`, `chronological`, `showcase` et `guided`. Les anciennes versions ouvrent le classique de leur univers. Les cinq formats sont accessibles en Core et Signature pendant les essais. Le Studio peut les prévisualiser avec le catalogue et les créneaux publics. La confirmation y est désactivée.
+
   Une valeur inconnue est refusée. Ajouter une variante, c'est l'ajouter au registre, avec une PR.
 
 - **Scènes :** une liste ordonnée sans doublon. `opening` et `services` sont toujours présentes et ne peuvent pas être masquées (`hidden`).

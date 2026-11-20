@@ -14,6 +14,7 @@ import {
   updateBookingSettings,
 } from "@/features/availability/data/schedule";
 import {
+  bookingHorizonDaysSchema,
   createAvailabilityExceptionSchema,
   deleteAvailabilityExceptionSchema,
   listAvailabilityExceptionsSchema,
@@ -22,6 +23,7 @@ import {
   updateBookingSettingsSchema,
 } from "@/features/availability/schemas/availability";
 import { runBusinessAction } from "@/features/businesses/actions/run-business-action";
+import { AppException } from "@/lib/errors";
 
 function revalidateSchedulePages() {
   revalidatePath("/app/settings");
@@ -59,6 +61,24 @@ export async function updateBookingSettingsAction(input: unknown) {
       updateBookingSettings(client, businessId, data),
   );
   if (result.ok) revalidateSchedulePages();
+  return result;
+}
+
+export async function setBookingHorizonAction(input: unknown) {
+  const result = await runBusinessAction(
+    z.object({ businessId: z.uuid(), days: bookingHorizonDaysSchema }),
+    input,
+    async ({ client, businessId, role }, data) => {
+      if (businessId !== data.businessId || role === "practitioner") {
+        throw new AppException("forbidden");
+      }
+      const settings = await updateBookingSettings(client, businessId, {
+        maximumBookingAdvanceDays: data.days,
+      });
+      return settings.maximumBookingAdvanceDays;
+    },
+  );
+  if (result.ok) revalidatePath("/b/[slug]", "page");
   return result;
 }
 

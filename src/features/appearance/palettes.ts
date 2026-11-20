@@ -357,6 +357,7 @@ export const ecrinPalettes: Record<Mode, Palette> = {
 
 /** Écrin's stones, in one tap (any colour is also possible). */
 export const stonePresets = [
+  { name: "Rubis", color: "#C9384B" },
   { name: "Lilas", color: "#A78BD4" },
   { name: "Poudre", color: "#B46A6C" },
   { name: "Jade", color: "#3F7A6A" },

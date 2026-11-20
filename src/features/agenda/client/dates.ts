@@ -1,11 +1,15 @@
-import { addDaysToLocalDate, weekdayOfLocalDate } from "@/lib/time/local-date";
+import {
+  addDaysToLocalDate,
+  daysBetweenLocalDates,
+  weekdayOfLocalDate,
+} from "@/lib/time/local-date";
 
 // Local calendar helpers for the agenda UI. Every value is a wall-clock
 // string in the business time zone, exactly as the server sends it
 // (`YYYY-MM-DD`, `YYYY-MM-DDTHH:MM`): the UI never converts instants itself
 // (today and placement come from PostgreSQL, see ./zone.ts).
 
-export type AgendaView = "week" | "day";
+export type AgendaView = "month" | "week" | "day";
 
 export type VisibleRange = {
   startDate: string;
@@ -19,10 +23,20 @@ export function startOfWeek(date: string) {
   return addDaysToLocalDate(date, -((weekday + 6) % 7));
 }
 
-/** The days one view shows around `anchor`: 7 for a week, 1 for a day. */
+/** The civil days in the month, week or day containing `anchor`. */
 export function visibleRange(view: AgendaView, anchor: string): VisibleRange {
-  const startDate = view === "week" ? startOfWeek(anchor) : anchor;
-  const count = view === "week" ? 7 : 1;
+  const startDate =
+    view === "month"
+      ? anchor.slice(0, 7) + "-01"
+      : view === "week"
+        ? startOfWeek(anchor)
+        : anchor;
+  const count =
+    view === "month"
+      ? daysBetweenLocalDates(startDate, shiftAnchor("month", startDate, 1))
+      : view === "week"
+        ? 7
+        : 1;
   const days = Array.from({ length: count }, (_, index) =>
     addDaysToLocalDate(startDate, index),
   );
@@ -34,6 +48,12 @@ export function shiftAnchor(
   anchor: string,
   direction: -1 | 1,
 ) {
+  if (view === "month") {
+    const [year, month] = anchor.split("-").map(Number);
+    return new Date(Date.UTC(year!, month! - 1 + direction, 1))
+      .toISOString()
+      .slice(0, 10);
+  }
   return addDaysToLocalDate(anchor, direction * (view === "week" ? 7 : 1));
 }
 
@@ -66,6 +86,7 @@ const weekdayShort = formatter({ weekday: "short" });
 const weekdayLong = formatter({ weekday: "long" });
 const dayMonthShort = formatter({ day: "numeric", month: "short" });
 const dayMonthLong = formatter({ day: "numeric", month: "long" });
+const monthYear = formatter({ month: "long", year: "numeric" });
 const fullDate = formatter({
   weekday: "long",
   day: "numeric",
@@ -85,6 +106,7 @@ export const dayNumber = (date: string) => Number(date.slice(8, 10));
 
 /** Header label of the visible period. */
 export function periodLabel(view: AgendaView, range: VisibleRange) {
+  if (view === "month") return monthYear.format(calendarDate(range.startDate));
   if (view === "day") {
     const label = `${weekdayLong.format(calendarDate(range.startDate))} ${dayMonthLong.format(calendarDate(range.startDate))}`;
     return label.charAt(0).toUpperCase() + label.slice(1);

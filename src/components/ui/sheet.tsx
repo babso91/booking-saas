@@ -62,6 +62,8 @@ export function Sheet({
   initialFocus,
   closeLabel = "Fermer",
   returnFocus,
+  panelClassName,
+  panelRef: providedPanelRef,
 }: {
   open: boolean;
   onClose: () => void;
@@ -74,10 +76,13 @@ export function Sheet({
   closeLabel?: string;
   /** Where focus goes back when the element that opened it is gone. */
   returnFocus?: RefObject<HTMLElement | null>;
+  panelClassName?: string;
+  panelRef?: RefObject<HTMLDivElement | null>;
 }) {
   const titleId = useId();
   const descriptionId = useId();
-  const panelRef = useRef<HTMLDivElement>(null);
+  const ownPanelRef = useRef<HTMLDivElement>(null);
+  const panelRef = providedPanelRef ?? ownPanelRef;
   const rootRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
 
@@ -178,7 +183,7 @@ export function Sheet({
           : fallback?.current;
       back?.focus?.({ preventScroll: true });
     };
-  }, [open, initialFocus, returnFocus]);
+  }, [open, initialFocus, returnFocus, panelRef]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -202,6 +207,7 @@ export function Sheet({
           placement === "side"
             ? "inset-x-0 bottom-0 animate-sheet-up rounded-t-[28px] lg:inset-y-0 lg:right-0 lg:left-auto lg:max-h-none lg:w-[460px] lg:animate-sheet-left lg:rounded-none lg:rounded-l-[28px]"
             : "inset-x-0 bottom-0 animate-sheet-up rounded-t-[28px] sm:inset-0 sm:m-auto sm:h-fit sm:w-[440px] sm:animate-pop sm:rounded-[28px]",
+          panelClassName,
         )}
       >
         <div

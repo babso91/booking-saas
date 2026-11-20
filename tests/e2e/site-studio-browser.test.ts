@@ -214,7 +214,7 @@ describe.each(VARIANTS)(
 );
 
 describe("her studio — her photos and her plan", () => {
-  it("a real photo, sent, verified, saved by id and published", async () => {
+  it("a real photo, sent, labelled independently for each work and published", async () => {
     const pro = await professionalWithVisit("Alma", "Zoé");
     const { page, errors, consoleErrors } = await studioPage(
       pro,
@@ -260,6 +260,48 @@ describe("her studio — her photos and her plan", () => {
     expect(JSON.stringify(draft.config)).not.toMatch(/demo:|unsplash/);
     await expectAccessible(page, "studio photo");
 
+    // Reusing an image in two gallery entries must keep their titles separate.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "← Réglages", exact: true }).click();
+    for (const title of ["Cil à cil", "Volume mixte"]) {
+      await page
+        .getByRole("button", { name: "Ajouter une réalisation" })
+        .click();
+      await page
+        .getByRole("button", { name: "Mes photos", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "Utiliser la photo 1", exact: true })
+        .click();
+      await page.getByLabel("Titre sous la photo").fill(title);
+      await page
+        .getByRole("button", { name: "← Réglages", exact: true })
+        .click();
+    }
+    await page.getByRole("button", { name: "Textes", exact: true }).click();
+    expect(
+      await page.getByLabel("Titre de la réalisation 2").inputValue(),
+    ).toBe("Volume mixte");
+    await page
+      .getByLabel("Titre de la réalisation 1")
+      .fill("Rehaussement de cils");
+    await saved(page);
+    expect(await noSideScroll(page)).toBe(true);
+    expect((await draftOf(pro.businessId)).config).toMatchObject({
+      content: {
+        works: [
+          { photo: { asset: assets[0]!.id }, title: "Rehaussement de cils" },
+          { photo: { asset: assets[0]!.id }, title: "Volume mixte" },
+        ],
+      },
+    });
+    await page.reload();
+    await saved(page);
+    await page.getByRole("button", { name: "Textes", exact: true }).click();
+    expect(
+      await page.getByLabel("Titre de la réalisation 1").inputValue(),
+    ).toBe("Rehaussement de cils");
+
     await page.getByRole("button", { name: "Publier" }).click();
     await page.getByText("En ligne · version 1").waitFor();
     const visitor = await page.context().newPage();
@@ -267,6 +309,10 @@ describe("her studio — her photos and her plan", () => {
     await visitor
       .locator(`img[src*="/site/photos/${assets[0]!.id}/"]`)
       .first()
+      .waitFor();
+    await visitor
+      .getByRole("button", { name: /Volume mixte/ })
+      .getByText("Volume mixte", { exact: true })
       .waitFor();
     await visitor.close();
 

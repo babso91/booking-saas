@@ -16,7 +16,7 @@ export const preferenceStyles = [
   "carnet",
 ] as const;
 export const preferenceAmbiances = ["atelier", "lin", "sauge"] as const;
-export const preferenceModes = ["light", "dark", "system"] as const;
+export const preferenceModes = ["light", "dark", "system", "glass"] as const;
 export const preferenceMotions = ["standard", "discrete", "none"] as const;
 
 export type PreferenceStyle = (typeof preferenceStyles)[number];

@@ -5,13 +5,13 @@ import { useRouter } from "next/navigation";
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
 
 import {
-  dateOf,
   dayNumber,
   formatDuration,
   formatFullDate,
@@ -23,6 +23,8 @@ import type {
   AgendaAppointmentDto,
   AgendaDto,
 } from "@/features/agenda/data/agenda";
+import { ChevronRightIcon } from "@/components/ui/icons";
+import { zoneOf } from "@/features/agenda/client/zone";
 import { cn } from "@/lib/cn";
 
 import { visitLookOf } from "../agenda/visit-look";
@@ -32,6 +34,7 @@ import {
   type TodayModel,
   type TodayVisit,
 } from "../client/today-model";
+import { EcrinVisitCard, visitHref } from "./ecrin-visit-card";
 import { EcrinDial } from "./ecrin-dial";
 import { ecrinLookClass, ecrinLookLabel } from "./looks";
 
@@ -49,14 +52,10 @@ function subscribeClock(callback: () => void) {
 const clockNow = () => Math.floor(Date.now() / 30_000) * 30_000;
 const REFRESH_MS = 5 * 60_000;
 
-const visitHref = (appointment: AgendaAppointmentDto) =>
-  ({
-    pathname: "/app",
-    query: {
-      date: dateOf(appointment.localStartsAt),
-      rdv: appointment.id,
-    },
-  }) as const;
+type OpenVisit = (
+  appointment: AgendaAppointmentDto,
+  source?: HTMLElement,
+) => void;
 
 const caps =
   "font-engraved text-[11.5px] tracking-[0.2em] text-ink-soft uppercase";
@@ -66,12 +65,14 @@ export function EcrinToday({
   date,
   serverNow,
   frozenNow,
+  previewQuery,
 }: {
   agenda: AgendaDto;
   date: string;
   serverNow: number;
   /** A fixed instant, for previews: the clock is not consulted. */
   frozenNow?: number;
+  previewQuery?: string;
 }) {
   const router = useRouter();
   const ticking = useSyncExternalStore(
@@ -84,6 +85,18 @@ export function EcrinToday({
     () => todayModel(agenda, date, now),
     [agenda, date, now],
   );
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const source = useRef<HTMLElement | null>(null);
+  const scrollArea = useRef<HTMLDivElement>(null);
+  const dialSection = useRef<HTMLElement>(null);
+  const selected = agenda.appointments.find((visit) => visit.id === selectedId);
+
+  const openVisit: OpenVisit = (appointment, trigger) => {
+    source.current = trigger ?? null;
+    (trigger ?? dialSection.current)?.focus({ preventScroll: true });
+    setSelectedId(appointment.id);
+  };
 
   const rolledOver = model.nowTime === null && now > model.span.start;
   useEffect(() => {
@@ -105,35 +118,58 @@ export function EcrinToday({
 
   return (
     <div
+      ref={scrollArea}
       tabIndex={0}
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
     >
       <div className="mx-auto grid w-full max-w-[1400px] gap-8 px-4 pt-2 pb-10 md:px-8 xl:grid-cols-[minmax(0,1fr)_minmax(0,520px)_minmax(0,1fr)] xl:items-start">
         <h1 className="sr-only">Aujourd’hui, {formatFullDate(date)}</h1>
         <section
+          ref={dialSection}
+          tabIndex={-1}
           aria-label="Maintenant"
           className="mx-auto w-full max-w-[520px] xl:sticky xl:top-2 xl:col-start-2 xl:row-start-1"
         >
           <EcrinDial
             model={model}
             now={now}
-            onOpen={(appointment) => router.push(hrefString(appointment))}
+            onOpen={(appointment) => openVisit(appointment)}
           >
-            <DialSays model={model} now={now} />
+            <DialSays model={model} now={now} onOpen={openVisit} />
           </EcrinDial>
         </section>
 
-        <Visits model={model} now={now} />
+        <Visits
+          model={model}
+          now={now}
+          onOpen={openVisit}
+          previewQuery={previewQuery}
+        />
         <Holdings model={model} />
       </div>
+      {selected ? (
+        <EcrinVisitCard
+          appointment={selected}
+          zone={zoneOf(agenda)}
+          previewQuery={previewQuery}
+          returnFocus={scrollArea}
+          source={source}
+          onClose={() => setSelectedId(null)}
+        />
+      ) : null}
     </div>
   );
 }
 
-const hrefString = (appointment: AgendaAppointmentDto) =>
-  `/app?date=${dateOf(appointment.localStartsAt)}&rdv=${appointment.id}` as never;
-
-function DialSays({ model, now }: { model: TodayModel; now: number }) {
+function DialSays({
+  model,
+  now,
+  onOpen,
+}: {
+  model: TodayModel;
+  now: number;
+  onOpen: OpenVisit;
+}) {
   const { phase, current, currents, next, visits } = model;
   const clock = (
     <p className="text-[clamp(44px,14.5vw,84px)] leading-[0.95] font-extralight tracking-[-0.02em] text-ink tabular-nums">
@@ -154,6 +190,19 @@ function DialSays({ model, now }: { model: TodayModel; now: number }) {
     <p className="font-engraved line-clamp-2 text-[clamp(15px,4.4vw,22px)] leading-tight tracking-[0.02em] text-ink [overflow-wrap:anywhere]">
       {text}
     </p>
+  );
+  const visitName = (appointment: AgendaAppointmentDto) => (
+    <button
+      type="button"
+      aria-haspopup="dialog"
+      onClick={(event) => onOpen(appointment, event.currentTarget)}
+      className="group relative flex max-w-full cursor-pointer items-center justify-center gap-1 rounded-md font-engraved text-[clamp(15px,4.4vw,22px)] leading-tight text-ink after:absolute after:inset-x-0 after:top-1/2 after:min-h-11 after:-translate-y-1/2 hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+    >
+      <span className="line-clamp-2 [overflow-wrap:anywhere]">
+        {appointment.client.displayName}
+      </span>
+      <ChevronRightIcon size={14} className="shrink-0 text-accent" />
+    </button>
   );
   const hint = (text: string) => (
     <p className="text-[clamp(12.5px,3.4vw,15px)] leading-snug text-accent">
@@ -179,7 +228,7 @@ function DialSays({ model, now }: { model: TodayModel; now: number }) {
       <>
         <p className={caps}>Créneau en cours</p>
         {clock}
-        {name(current.appointment.client.displayName)}
+        {visitName(current.appointment)}
         {hint(
           current.endsAfter
             ? `fin prévue demain à ${timeOf(current.appointment.localEndsAt)}`
@@ -194,7 +243,7 @@ function DialSays({ model, now }: { model: TodayModel; now: number }) {
           Prochain · {timeOf(next.appointment.localStartsAt)}
         </p>
         {clock}
-        {name(next.appointment.client.displayName)}
+        {visitName(next.appointment)}
         {hint(`dans ${formatDuration(minutesUntil(next.start, now))}`)}
       </>
     );
@@ -230,7 +279,17 @@ function DialSays({ model, now }: { model: TodayModel; now: number }) {
 }
 
 /** The visits: going on and next first, then what follows; past on demand. */
-function Visits({ model, now }: { model: TodayModel; now: number }) {
+function Visits({
+  model,
+  now,
+  onOpen,
+  previewQuery,
+}: {
+  model: TodayModel;
+  now: number;
+  onOpen: OpenVisit;
+  previewQuery?: string;
+}) {
   const [pastShown, setPastShown] = useState(false);
   const { currents, next, visits } = model;
   const past = visits.filter((visit) => visit.state === "done");
@@ -243,7 +302,7 @@ function Visits({ model, now }: { model: TodayModel; now: number }) {
   return (
     <section
       aria-label="Rendez-vous du jour"
-      className="mx-auto flex w-full max-w-[520px] flex-col gap-3 xl:col-start-1 xl:row-start-1 xl:max-w-none"
+      className="ecrin-visits mx-auto flex w-full max-w-[520px] flex-col gap-3 xl:col-start-1 xl:row-start-1 xl:max-w-none"
     >
       {model.closures.length ? <ClosureLine model={model} /> : null}
 
@@ -258,10 +317,19 @@ function Visits({ model, now }: { model: TodayModel; now: number }) {
       ) : null}
 
       {currents.map((visit) => (
-        <Capsule key={visit.appointment.id} visit={visit} now={now} big />
+        <Capsule
+          onOpen={onOpen}
+          previewQuery={previewQuery}
+          key={visit.appointment.id}
+          visit={visit}
+          now={now}
+          big
+        />
       ))}
       {next ? (
         <Capsule
+          onOpen={onOpen}
+          previewQuery={previewQuery}
           visit={next}
           now={now}
           big
@@ -276,7 +344,12 @@ function Visits({ model, now }: { model: TodayModel; now: number }) {
           <ol className="flex flex-col gap-2">
             {later.map((visit) => (
               <li key={visit.appointment.id}>
-                <Capsule visit={visit} now={now} />
+                <Capsule
+                  onOpen={onOpen}
+                  previewQuery={previewQuery}
+                  visit={visit}
+                  now={now}
+                />
               </li>
             ))}
           </ol>
@@ -298,7 +371,12 @@ function Visits({ model, now }: { model: TodayModel; now: number }) {
             <ol className="flex flex-col gap-2">
               {past.map((visit) => (
                 <li key={visit.appointment.id}>
-                  <Capsule visit={visit} now={now} />
+                  <Capsule
+                    onOpen={onOpen}
+                    previewQuery={previewQuery}
+                    visit={visit}
+                    now={now}
+                  />
                 </li>
               ))}
             </ol>
@@ -315,27 +393,51 @@ function Capsule({
   big,
   label,
   ringed,
+  onOpen,
+  previewQuery,
 }: {
   visit: TodayVisit;
   now: number;
   big?: boolean;
   label?: string;
   ringed?: boolean;
+  onOpen: OpenVisit;
+  previewQuery?: string;
 }) {
   const { appointment } = visit;
   const look = visitLookOf(appointment, now);
   const note = appointment.internalNotes?.trim();
   return (
     <Link
-      href={visitHref(appointment)}
+      href={visitHref(appointment, previewQuery)}
+      prefetch={false}
+      aria-haspopup="dialog"
+      onClick={(event) => {
+        if (
+          event.defaultPrevented ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey ||
+          event.button !== 0
+        )
+          return;
+        event.preventDefault();
+        onOpen(appointment, event.currentTarget);
+      }}
       className={cn(
-        "ecrin-press grid grid-cols-[52px_minmax(0,1fr)] items-center gap-x-3 rounded-[26px] px-5 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "ecrin-press grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 rounded-[26px] px-4 py-3 md:px-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         ecrinLookClass[look],
         big && "py-4",
-        ringed && "outline-2 outline-offset-2 outline-accent",
+        ringed && "ecrin-next-visit",
       )}
     >
-      <span className="text-[17px] tabular-nums">
+      <span
+        className={cn(
+          "border-r border-current/20 pr-3 font-light tabular-nums",
+          big ? "text-[25px]" : "text-[17px]",
+        )}
+      >
         {timeOf(appointment.localStartsAt)}
       </span>
       <span className="min-w-0">
@@ -369,6 +471,7 @@ function Capsule({
           </span>
         ) : null}
       </span>
+      <ChevronRightIcon size={16} className="opacity-75" />
     </Link>
   );
 }

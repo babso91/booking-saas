@@ -1,9 +1,10 @@
 "use client";
 
-import type { Ref } from "react";
+import { useState, type ReactNode, type Ref } from "react";
 
 import { Notice } from "@/components/ui/notice";
 
+import type { BookingFormat } from "../formats";
 import type { BookingFlow } from "../client/use-booking-flow";
 import { serviceFromLine, StepHeading } from "./booking-parts";
 
@@ -15,11 +16,22 @@ import { serviceFromLine, StepHeading } from "./booking-parts";
 export function ServiceStep({
   flow,
   headingRef,
+  format = "classic",
+  gallery,
 }: {
+  format?: BookingFormat;
+  gallery?: ReactNode;
   flow: BookingFlow;
   headingRef: Ref<HTMLHeadingElement>;
 }) {
   const { services, notice, service, catalog } = flow;
+  const [category, setCategory] = useState<string | undefined>();
+  const grouped = format === "guided" && catalog.groups.length > 1;
+  const groups = grouped
+    ? catalog.groups.filter(
+        (group) => (group.category?.id ?? "none") === category,
+      )
+    : catalog.groups;
   return (
     <section aria-labelledby="booking-service" className="flex flex-col gap-4">
       <div id="booking-service">
@@ -28,7 +40,9 @@ export function ServiceStep({
           total={flow.stepCount}
           headingRef={headingRef}
         >
-          Choisissez une prestation
+          {grouped && !groups.length
+            ? "Quelle catégorie vous intéresse ?"
+            : "Choisissez une prestation"}
         </StepHeading>
       </div>
 
@@ -39,13 +53,41 @@ export function ServiceStep({
         </Notice>
       ) : null}
 
+      {format === "showcase" ? gallery : null}
+      {grouped && groups.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => setCategory(undefined)}
+          className="min-h-11 self-start text-sm underline underline-offset-4"
+        >
+          Toutes les catégories
+        </button>
+      ) : null}
+      {grouped && !groups.length ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {catalog.groups.map((group) => (
+            <button
+              key={group.category?.id ?? "none"}
+              type="button"
+              onClick={() => setCategory(group.category?.id ?? "none")}
+              className="rounded-xl border border-line bg-paper-raised p-4 text-left font-semibold text-ink hover:border-ink"
+            >
+              {group.category?.name ?? "Autres prestations"}
+              <span className="block text-sm font-normal text-ink-soft">
+                {group.services.length} prestation
+                {group.services.length > 1 ? "s" : ""}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
       {services.length === 0 ? (
         <Notice tone="info" title="Aucune prestation en ligne">
           Cet établissement ne propose pas encore de prestation à réserver en
           ligne.
         </Notice>
       ) : (
-        catalog.groups.map((group) => (
+        groups.map((group) => (
           <div
             key={group.category?.id ?? "none"}
             className="flex flex-col gap-3"
@@ -56,7 +98,11 @@ export function ServiceStep({
               </h3>
             ) : null}
             <ul
-              className="flex flex-col gap-3"
+              className={
+                format === "showcase"
+                  ? "grid gap-3 sm:grid-cols-2"
+                  : "flex flex-col gap-3"
+              }
               aria-label={group.category?.name ?? "Prestations"}
             >
               {group.services.map(({ id }) => {

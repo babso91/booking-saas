@@ -169,6 +169,36 @@ describe("her choice follows her", () => {
     await page.context().close();
   });
 
+  it("keeps Glass and her stone across devices and display-mode changes", async () => {
+    const { browser } = await professionalWithVisit("Alix", "Rose");
+    const { page } = await open(browser);
+    await choose(page, /^Écrin/);
+    await drawn(page, "ecrin");
+    await choose(page, /^Rubis$/);
+    await choose(page, /^Glass$/);
+    const accent = "#C9384B";
+    await inDatabase(browser, { style: "ecrin", color_mode: "glass", accent });
+    const other = await signedInPage(browser, {
+      appearance: null,
+      width: 390,
+      phone: true,
+    });
+    await other.page.goto(`${APP}/app/today`);
+    await other.page.waitForSelector("html[data-glass]");
+    expect(
+      await other.page
+        .locator(".glass-ground")
+        .evaluate((el) =>
+          getComputedStyle(el).getPropertyValue("--glass-tint").trim(),
+        ),
+    ).toBe(accent);
+    await choose(page, /^Clair$/);
+    await inDatabase(browser, { color_mode: "light", accent });
+    expect(await page.locator("html[data-glass]").count()).toBe(0);
+    await other.page.context().close();
+    await page.context().close();
+  });
+
   it("an accent reaches her account, and a style starts from its own", async () => {
     const { browser } = await professionalWithVisit("Ambre", "Rose");
     const { page } = await open(browser);

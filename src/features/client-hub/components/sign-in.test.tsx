@@ -56,11 +56,11 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function renderSignIn() {
+function renderSignIn(returnTo?: string) {
   // The real root of /espace: session and screens remounted per identity.
   return render(
     <HubRoot>
-      <SignIn />
+      <SignIn returnTo={returnTo} />
     </HubRoot>,
   );
 }
@@ -75,6 +75,30 @@ async function askCode(
 }
 
 describe("asking for a code", () => {
+  it("returns to the appointment from the email after verifying the code", async () => {
+    const target = `/espace/${B1}/rendez-vous/22222222-2222-4222-8222-222222222222`;
+    const user = userEvent.setup();
+    renderSignIn(target);
+    const input = await askCode(user);
+    await user.type(input, "12345678");
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith(target));
+    expect(api.to(/\/session\/verify$/, "POST")).toHaveLength(1);
+  });
+
+  it("a valid session resumes the same appointment without issuing another code", async () => {
+    signedIn = true;
+    const target = `/espace/${B1}/rendez-vous/22222222-2222-4222-8222-222222222222`;
+    renderSignIn(target);
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith(target));
+    expect(api.to(/\/session\/code$/, "POST")).toHaveLength(0);
+  });
+
+  it("never redirects to a destination supplied by another site", async () => {
+    signedIn = true;
+    renderSignIn("https://evil.test");
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/espace"));
+  });
+
   it("sends the address as JSON and moves to the code, naming the address", async () => {
     const user = userEvent.setup();
     renderSignIn();

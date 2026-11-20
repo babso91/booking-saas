@@ -1,7 +1,35 @@
 import { describe, expect, it } from "vitest";
 
+import { bookingFormats } from "@/features/public-booking/formats";
+import { renderConfigOf } from "@/features/experience/engine/from-site";
+import { siteConfigSchema } from "./config";
 import { sampleSiteConfig } from "./site-fixture";
 import { coreLens, renderedFor, universeDesigns } from "./universes";
+
+describe("booking-format compatibility", () => {
+  it.each(bookingFormats)(
+    "round-trips %s in every published universe and both trial plans",
+    (format) => {
+      for (const universe of ["mila", "alma", "nail-lab"] as const) {
+        const config = siteConfigSchema.parse(
+          sampleSiteConfig({ universe, bookingFormat: format }),
+        );
+        for (const plan of ["core", "signature"] as const) {
+          expect(renderConfigOf(renderedFor(config, plan)).bookingFormat).toBe(
+            format,
+          );
+        }
+      }
+    },
+  );
+  it("reads old versions without a format and rejects unknown formats", () => {
+    const old = siteConfigSchema.parse(sampleSiteConfig());
+    expect(renderConfigOf(old).bookingFormat).toBeUndefined();
+    expect(
+      siteConfigSchema.safeParse({ ...old, bookingFormat: "custom" }).success,
+    ).toBe(false);
+  });
+});
 
 describe("coreLens (the lab's effective, Core)", () => {
   it("keeps her content, her accent and her button; renders the universe's composition", () => {

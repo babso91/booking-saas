@@ -116,28 +116,30 @@ export function EcrinAgenda(props: StudioAgendaProps) {
 
         {wide ? (
           <div className="flex flex-wrap items-center gap-2">
-            <div
-              role="group"
-              aria-label="Affichage"
-              className="ecrin-object flex rounded-full p-1"
-            >
-              {(["week", "day"] as const).map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  aria-pressed={view === option}
-                  onClick={() => props.onView(option)}
-                  className={cn(
-                    "h-9 cursor-pointer rounded-full px-4 text-[14px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
-                    view === option
-                      ? "bg-accent-soft font-medium text-accent-strong"
-                      : "text-ink-soft hover:text-ink",
-                  )}
-                >
-                  {option === "week" ? "Semaine" : "Jour"}
-                </button>
-              ))}
-            </div>
+            {props.hideViewSwitch ? null : (
+              <div
+                role="group"
+                aria-label="Affichage"
+                className="ecrin-object flex rounded-full p-1"
+              >
+                {(["week", "day"] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={view === option}
+                    onClick={() => props.onView(option)}
+                    className={cn(
+                      "h-9 cursor-pointer rounded-full px-4 text-[14px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
+                      view === option
+                        ? "bg-accent-soft font-medium text-accent-strong"
+                        : "text-ink-soft hover:text-ink",
+                    )}
+                  >
+                    {option === "week" ? "Semaine" : "Jour"}
+                  </button>
+                ))}
+              </div>
+            )}
             <Round
               label={view === "week" ? "Semaine précédente" : "Jour précédent"}
               onClick={() => props.onShift(-1)}
@@ -475,8 +477,15 @@ function DayStrip({
     <div
       role="group"
       aria-label="Jours de la semaine"
-      className="grid min-w-0 flex-1 grid-cols-7"
+      className="relative isolate grid min-w-0 flex-1 grid-cols-7"
     >
+      <span
+        aria-hidden="true"
+        className="ecrin-day-cursor pointer-events-none absolute inset-y-0 left-0 grid w-[calc(100%/7)] place-items-center"
+        style={{ transform: `translateX(${days.indexOf(anchor) * 100}%)` }}
+      >
+        <span className="size-9 rounded-full bg-signature" />
+      </span>
       {days.map((date) => {
         const selected = date === anchor;
         return (
@@ -485,13 +494,13 @@ function DayStrip({
             type="button"
             onClick={() => onSelect(date)}
             aria-pressed={selected}
-            className="group flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+            className="group relative flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
           >
             <span
               className={cn(
                 "grid size-9 place-items-center rounded-full leading-none transition-colors",
                 selected
-                  ? "bg-signature text-on-signature"
+                  ? "text-on-signature"
                   : date === today
                     ? "text-accent"
                     : "text-ink-soft group-hover:text-ink",

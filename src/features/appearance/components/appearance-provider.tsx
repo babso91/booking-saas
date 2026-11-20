@@ -74,20 +74,23 @@ function AppearanceFrame({
   useEffect(() => {
     const root = document.documentElement;
     root.setAttribute("data-appearance", "");
+    root.toggleAttribute("data-glass", appearance.mode === "glass");
     root.setAttribute("data-motion", appearance.motion);
     root.setAttribute("data-style", appearance.style);
     return () => {
       root.removeAttribute("data-appearance");
+      root.removeAttribute("data-glass");
       root.removeAttribute("data-motion");
       root.removeAttribute("data-style");
     };
-  }, [appearance.motion, appearance.style]);
+  }, [appearance.mode, appearance.motion, appearance.style]);
 
   return (
     <Context.Provider value={value}>
       <style>{css}</style>
       <div
         data-appearance=""
+        data-glass={appearance.mode === "glass" ? "" : undefined}
         data-motion={appearance.motion}
         data-style={appearance.style}
         className="contents"

@@ -1,0 +1,341 @@
+/* A warm room behind a frosted work surface. Only the professional area opts in. */
+@property --glass-hue {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
+[data-glass] {
+  --glass-hue: var(--glass-tint);
+  --glass-rail: color-mix(in srgb, var(--glass-hue) 37%, #2a201f);
+  --glass-rim: color-mix(in srgb, var(--glass-hue) 18%, #fff9ef);
+  --glass-skin: linear-gradient(137deg, #fffaf47a, #fffaf418 44%, #fffaf436);
+  --glass-shadow:
+    inset 0 1px 0 #fffbf2cf, inset 1px 0 0 #fff8eb52, inset 0 -1px 0 #68463329,
+    0 0 0 1px #67473821, 0 7px 17px -11px #3d251c64;
+}
+
+[data-glass] .glass-ground {
+  --glass-edge: 0px;
+  position: relative;
+  isolation: isolate;
+  color: var(--ink);
+  background-color: var(--paper);
+}
+
+[data-glass] .glass-ground::before,
+[data-glass] .glass-ground::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+/* One stationary photograph for the room. Its window light stays warm across tint changes. */
+[data-glass] .glass-ground::before {
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(
+      ellipse at 10% 65%,
+      color-mix(in srgb, var(--glass-hue) 19%, transparent),
+      transparent 56%
+    ),
+    url("./studio-window.webp") center 55% / cover no-repeat,
+    #b79c84;
+}
+
+[data-glass] .glass-ground::after {
+  inset: var(--glass-edge);
+  z-index: -1;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      ellipse at 0% 70%,
+      color-mix(in srgb, var(--glass-hue) 9%, transparent),
+      transparent 63%
+    ),
+    linear-gradient(
+      113deg,
+      #fff4eac9,
+      #fff4eab3 37%,
+      #fffbf1cd 55%,
+      #f8eadbc2 86%
+    );
+  box-shadow: var(--glass-shadow);
+}
+
+@media (min-width: 768px) {
+  [data-glass] .glass-ground {
+    --glass-edge: clamp(8px, 1vw, 18px);
+  }
+  [data-glass] .glass-ground:not([data-carnet-frame]) {
+    padding: var(--glass-edge);
+  }
+  [data-glass] .glass-ground::after {
+    border-radius: 20px;
+  }
+}
+
+[data-glass]
+  :is(.glass-paper, .glass-surface, .ecrin-object, .glass-dock, [data-sheet]) {
+  background: var(--glass-skin), var(--paper-raised);
+  box-shadow: var(--glass-shadow);
+}
+[data-glass] .glass-studio-dock,
+[data-glass] aside.glass-dock {
+  background: var(--glass-rail);
+  box-shadow: var(--glass-shadow);
+}
+[data-glass] aside.glass-dock {
+  border-radius: 17px;
+}
+[data-glass] aside.glass-dock > a:first-child {
+  --ink: #fffaf4;
+  --paper-raised: var(--glass-rail);
+  color: var(--ink);
+}
+[data-glass] aside.glass-dock nav a {
+  color: #fffaf5;
+}
+[data-glass] aside.glass-dock nav a:hover {
+  background-color: #fff8f124;
+}
+[data-glass] aside.glass-dock nav a[aria-current="page"] {
+  background: #fff8ee;
+  color: var(--ink);
+}
+
+@supports (
+  (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))
+) {
+  /* Frost the room once. Scrolling rows and calendar cells don't each own a live filter. */
+  [data-glass] .glass-ground::after {
+    -webkit-backdrop-filter: blur(13px);
+    backdrop-filter: blur(13px);
+  }
+  [data-glass] .glass-paper {
+    background: var(--glass-skin), rgb(255 245 230 / 0.3);
+  }
+  [data-glass] :is(.glass-surface, .ecrin-object) {
+    background: var(--glass-skin), rgb(255 249 240 / 0.51);
+  }
+  [data-glass] :is(.glass-dock, [data-sheet]) {
+    background:
+      var(--glass-skin),
+      color-mix(in srgb, var(--glass-hue) 10%, rgb(255 247 236 / 0.75));
+    -webkit-backdrop-filter: blur(21px) saturate(1.15);
+    backdrop-filter: blur(21px) saturate(1.15);
+  }
+  [data-glass] [data-sheet] {
+    background: var(--glass-skin), rgb(255 247 237 / 0.88);
+  }
+  [data-glass] aside.glass-dock,
+  [data-glass] .glass-studio-dock {
+    background:
+      linear-gradient(140deg, #fff3e512, transparent 40%, #22121129),
+      color-mix(in srgb, var(--glass-rail) 96%, transparent);
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+  }
+}
+[data-glass] .glass-paper::before,
+[data-glass] .glass-paper::after {
+  background: rgb(255 247 236 / 0.34);
+}
+[data-glass] .glass-surface:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    var(--glass-shadow);
+}
+[data-glass] .ecrin-next-visit {
+  box-shadow:
+    inset 3px 0 var(--accent),
+    var(--glass-shadow);
+}
+
+/* The hero is coloured glass: the bright facet and its shadow both take her tint. */
+[data-glass] :is(.glass-signature, .ecrin-visits .bg-signature) {
+  background-color: color-mix(
+    in srgb,
+    var(--glass-field-shade) 85%,
+    transparent
+  );
+  background-image: linear-gradient(
+    109deg,
+    var(--signature) 10%,
+    transparent 33%,
+    color-mix(in srgb, var(--glass-field-light) 42%, transparent) 42%,
+    var(--glass-field-light) 46%,
+    transparent 51% 60%,
+    var(--signature) 89%
+  );
+  background-size: 165% 100%;
+  background-position: 50% 50%;
+  box-shadow: var(--glass-shadow);
+}
+[data-glass] .ecrin-visit-sheet footer {
+  background: transparent;
+}
+
+/* Light gathers in the bevel of the lens, with clear space behind its engraved figures. */
+[data-glass] .ecrin-instrument::before {
+  content: "";
+  position: absolute;
+  inset: 6.1%;
+  border-radius: 50%;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse at 49% 43%,
+      #fff7efda 9%,
+      #fff7ef8f 43%,
+      transparent 71%
+    ),
+    linear-gradient(
+      114deg,
+      transparent 18%,
+      #fffdf398 30%,
+      transparent 38% 57%,
+      #fffaea86 65%,
+      transparent 73%
+    ),
+    linear-gradient(
+      157deg,
+      color-mix(in srgb, var(--glass-hue) 19%, #fffbf0) 5%,
+      color-mix(in srgb, var(--glass-hue) 9%, transparent) 42%,
+      color-mix(in srgb, var(--glass-hue) 46%, #e4c9aa) 96%
+    );
+  box-shadow:
+    inset 2px 3px 4px #fff9e9ed,
+    inset -1px -3px 4px #6d4b4142,
+    0 0 0 1px var(--glass-rim),
+    0 21px 30px -21px #3c201daa;
+}
+[data-glass] .ecrin-dial-face stop:where(:first-child) {
+  stop-color: var(--paper-raised);
+  stop-opacity: 0.13;
+}
+[data-glass] .ecrin-dial-face stop:where(:last-child) {
+  stop-color: var(--glass-hue);
+  stop-opacity: 0.07;
+}
+[data-glass] .ecrin-dial-lens {
+  stroke: var(--glass-rim);
+  stroke-width: 2;
+}
+
+/* Light arrives once; nothing loops while a professional reads the schedule. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-glass][data-motion="standard"] {
+    transition: --glass-hue 320ms ease-out;
+  }
+  [data-glass][data-motion="standard"] .glass-ground::before {
+    animation: glass-room-light 860ms ease-out both;
+  }
+  [data-glass][data-motion="standard"] .glass-signature {
+    animation: glass-catch-light 900ms cubic-bezier(0.2, 0.65, 0.25, 1) both;
+  }
+  [data-glass][data-motion="standard"] .ecrin-instrument::before {
+    background-size:
+      100% 100%,
+      140% 100%,
+      100% 100%;
+    animation: glass-lens-light 1120ms cubic-bezier(0.2, 0.65, 0.25, 1) both;
+  }
+  @keyframes glass-room-light {
+    from {
+      opacity: 0.32;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes glass-catch-light {
+    from {
+      background-position-x: 0%;
+    }
+    to {
+      background-position-x: 50%;
+    }
+  }
+  @keyframes glass-lens-light {
+    from {
+      background-position:
+        center,
+        0% 50%,
+        center;
+    }
+    to {
+      background-position:
+        center,
+        65% 50%,
+        center;
+    }
+  }
+}
+
+.mode-swatch {
+  pointer-events: none;
+  display: inline-block;
+  box-sizing: border-box;
+  flex: 0 0 1rem;
+  height: 1rem;
+  border: 1px solid #82838c;
+  border-radius: 50%;
+  background: #eeeef1;
+}
+.mode-swatch[data-mode-swatch="dark"] {
+  background: #20232a;
+}
+.mode-swatch[data-mode-swatch="system"] {
+  background: linear-gradient(90deg, #eeeef1 50%, #20232a 50%);
+}
+.mode-swatch[data-mode-swatch="glass"] {
+  border-color: color-mix(in srgb, currentColor 45%, #a08c7a);
+  background: linear-gradient(
+    120deg,
+    #cbad92 5%,
+    #fff8e9 32%,
+    currentColor 58%,
+    #e7ccaf 89%
+  );
+  box-shadow: inset 0 1px 1px #fffcf1ce;
+}
+
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  [data-glass] .glass-ground::before,
+  [data-glass] .glass-ground::after,
+  [data-glass] .ecrin-instrument::before {
+    display: none;
+  }
+  [data-glass] .glass-ground {
+    background: var(--paper);
+  }
+  [data-glass]
+    :is(
+      .glass-paper,
+      .glass-surface,
+      .ecrin-object,
+      .glass-dock,
+      [data-sheet]
+    ) {
+    background: var(--paper-raised);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  [data-glass] aside.glass-dock,
+  [data-glass] .glass-studio-dock {
+    background: var(--glass-rail);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  [data-glass] :is(.glass-signature, .ecrin-visits .bg-signature) {
+    animation: none;
+    background: var(--signature);
+  }
+  [data-glass] .ecrin-dial-face stop {
+    stop-color: var(--paper-raised);
+    stop-opacity: 1;
+  }
+}

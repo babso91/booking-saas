@@ -94,6 +94,9 @@ describe("migrated schema", () => {
       "consent_texts_current",
       "get_available_slots",
       "get_public_availability",
+      // Range read used by the week and month views. Its payload is limited
+      // to dates and public slot starts.
+      "get_public_availability_calendar",
       "get_public_business",
       "get_public_catalog",
       "get_public_services",

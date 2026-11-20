@@ -24,6 +24,7 @@ import {
 import { useHubRead } from "../client/session";
 import { DateTile, HubErrorNotice, Loading, Pill, Skeleton } from "./hub-parts";
 import { HubPage, bookingHref, hubHref } from "./hub-shell";
+import { AppointmentCancellation } from "./appointment-cancel";
 
 export function HubAppointmentDetail({
   businessId,
@@ -174,10 +175,15 @@ function Detail({
               </p>
             ) : null}
           </div>
+          <AppointmentCancellation
+            key={`${appointment.id}:${appointment.actions?.version ?? "none"}`}
+            businessId={id}
+            appointment={appointment}
+            onChanged={read.reload}
+          />
           <p className="flex items-start gap-2 rounded-2xl bg-sand/60 px-4 py-3 text-[14px] leading-relaxed text-ink-soft">
             <InfoIcon size={17} className="mt-0.5 shrink-0" />
-            Pour déplacer ou annuler ce rendez-vous, contactez directement{" "}
-            {place.name}. Rien ne peut être modifié depuis votre espace.
+            Pour toute autre demande, contactez directement {place.name}.
           </p>
           {place.cancellationPolicy ? (
             <div className="flex flex-col gap-1.5">

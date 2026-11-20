@@ -554,7 +554,9 @@ describe("Carnet in a phone", () => {
         .getByRole("link", { name: /Horaires/ })
         .click();
       await page.waitForURL("**/app/settings/hours");
-      await page.getByRole("heading", { name: "Horaires" }).waitFor();
+      await page
+        .getByRole("heading", { name: "Horaires", level: 1, exact: true })
+        .waitFor();
       await nav.getByRole("link", { name: "Clientes" }).click();
       await page.waitForURL("**/app/clients");
       expect(

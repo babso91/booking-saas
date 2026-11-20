@@ -21,7 +21,9 @@ import { answerRows, Facts, linkAction, StepHeading } from "./booking-parts";
 export function ReviewStep({
   flow,
   headingRef,
+  preview = false,
 }: {
+  preview?: boolean;
   flow: BookingFlow;
   headingRef: Ref<HTMLHeadingElement>;
 }) {
@@ -135,10 +137,12 @@ export function ReviewStep({
         fullWidth
         state={isSending ? "loading" : "idle"}
         loadingLabel="Réservation en cours…"
-        disabled={flow.blockedByPending}
+        disabled={preview || flow.blockedByPending}
         onClick={flow.actions.confirm}
       >
-        Confirmer la réservation
+        {preview
+          ? "Confirmation désactivée dans l’aperçu"
+          : "Confirmer la réservation"}
       </Button>
     </section>
   );

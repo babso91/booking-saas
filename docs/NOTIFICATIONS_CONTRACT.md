@@ -165,8 +165,8 @@ Un trigger sur `appointments` (`private.queue_appointment_notifications`) s'appl
   - adresse de l'établissement si elle est renseignée ;
   - mention du fuseau ;
   - lien vers la page publique `/b/<slug>`.
-- **Réponses :** `Reply-To` est l'adresse de contact de l'établissement. Pour modifier ou annuler, l'email invite à contacter l'établissement, par téléphone s'il est renseigné ou en répondant.
-- **Aucun lien d'annulation :** il n'en existe pas encore (§ 9). Aucun lien de ce type n'est écrit ni promis.
+- **Gestion du rendez-vous :** confirmation, rappel et modification comportent un bouton « Gérer ou annuler mon rendez-vous ». Il mène à la connexion du Client Hub puis au détail exact du rendez-vous après vérification par code e-mail. Une session déjà valide reprend directement le détail. Le lien ne contient ni code ni adresse e-mail et ne donne aucun droit par lui-même : autorisation de la fiche et conditions du rendez-vous restent vérifiées par le serveur. La page publique pour réserver reste un lien distinct.
+- **Réponses :** `Reply-To` reste l'adresse de contact de l'établissement, pour les demandes qui ne sont pas disponibles en ligne. L'e-mail d'annulation utilise une formulation neutre, que l'annulation provienne de la cliente ou de la professionnelle.
 - **Données exclues :** les notes internes, les notes CRM, les autres rendez-vous et les données des autres clientes ne sont jamais lues par le claim (testé).
 
 ## 6. Sécurité
@@ -229,7 +229,7 @@ Aucune interface n'est livrée dans cette PR.
 
 ## 9. Limites et suites
 
-- **Pas de lien d'annulation ni de modification pour la cliente.** S'il en existe un plus tard, il faudra :
+- **Pas de lien anonyme conférant un droit d'annulation.** Le bouton actuel passe par l'authentification du Client Hub et conserve ses autorisations. Un éventuel lien dispensant de cette connexion devra prévoir :
   - un jeton aléatoire à usage unique, stocké seulement sous forme d'empreinte ;
   - lié au rendez-vous et à son adresse ;
   - expirant au début du rendez-vous ;

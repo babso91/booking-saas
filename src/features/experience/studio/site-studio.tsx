@@ -2,7 +2,7 @@
 
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import type { SiteConfig as SavedConfig } from "@/features/sites/config";
 import type {
@@ -121,6 +121,7 @@ export function SiteStudio({
   );
   const [photos, setPhotos] = useState(initialPhotos);
   const [open, setOpen] = useState(true);
+  const bookingPreview = useRef<() => void>(null);
   const [view, setView] = useState<"draft" | "live">("draft");
   const [photoSlot, setPhotoSlot] = useState<PhotoSlot | null>(null);
   const [replay, setReplay] = useState(0);
@@ -297,6 +298,8 @@ export function SiteStudio({
           photoSource={photoSource}
           // Her studio's preview never takes a booking.
           booking={null}
+          previewSlug={given ? undefined : slug}
+          openBookingPreviewRef={bookingPreview}
           fontClasses={fontClasses}
           edit={
             view === "draft"
@@ -335,6 +338,7 @@ export function SiteStudio({
             const base = universes[next].config;
             history.set({
               ...base,
+              bookingFormat: draft.bookingFormat,
               brand: draft.brand,
               content: draft.content,
               hidden: draft.hidden,
@@ -349,6 +353,9 @@ export function SiteStudio({
           photoSlot={photoSlot}
           onPhotoSlot={setPhotoSlot}
           onReplay={() => setReplay((value) => value + 1)}
+          onPreviewBooking={
+            given ? undefined : () => bookingPreview.current?.()
+          }
           library={library}
           onUpload={upload}
           onDeletePhoto={removeFromLibrary}

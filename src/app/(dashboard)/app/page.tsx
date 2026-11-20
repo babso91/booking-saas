@@ -6,6 +6,7 @@ import {
   requestedAppointment,
   requestedDay,
 } from "@/features/agenda/client/requested-day";
+import { hasSignatureAgenda } from "@/features/agenda/data/format-access";
 import { AgendaView } from "@/features/agenda/components/agenda-view";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import {
@@ -27,10 +28,11 @@ export default async function AgendaPage({ searchParams }: PageProps<"/app">) {
   const { date, rdv, noter } = await searchParams;
   // The business's date today, from the calendar authority (PostgreSQL).
   const client = await createServerSupabaseClient();
-  const [{ today }, progress] = await Promise.all([
+  const [{ today }, progress, signature] = await Promise.all([
     readBusinessTime(client, business.id),
     // What is still to configure (services, hours), from real data.
     getSetupProgress(client, business.id),
+    hasSignatureAgenda(client, business.id),
   ]);
 
   return (
@@ -44,6 +46,16 @@ export default async function AgendaPage({ searchParams }: PageProps<"/app">) {
         </div>
       )}
       <AgendaView
+        key={business.membershipId}
+        formatSettings={
+          signature
+            ? {
+                membershipId: business.membershipId,
+                preferred: business.preferredAgendaFormat ?? "classic",
+                slug: business.slug,
+              }
+            : undefined
+        }
         today={today}
         initialDate={requestedDay(date)}
         initialAppointmentId={requestedAppointment(rdv)}

@@ -22,7 +22,7 @@ import {
 // paint is already hers on every device. `dash_appearance` is what a device
 // kept before that: read once, to offer it, and no longer written.
 
-export type ModePreference = Mode | "system";
+export type ModePreference = Mode | "system" | "glass";
 export type MotionPreference = "standard" | "discrete" | "none";
 
 export type Appearance = {
@@ -55,7 +55,7 @@ export const defaultAppearance: Appearance = {
 const styleIds: StyleId[] = ["classique", "studio", "ecrin", "carnet"];
 /** The styles this build can draw; another one is shown as Classique. */
 export const DELIVERED_STYLES = styleIds;
-const modes: ModePreference[] = ["light", "dark", "system"];
+const modes: ModePreference[] = ["light", "dark", "system", "glass"];
 const motions: MotionPreference[] = ["standard", "discrete", "none"];
 
 /** "atelier.system.standard.97493a.studio" ("-" for no accent). */
@@ -129,16 +129,24 @@ export const defaultAccent = (
 export function paletteFor(
   style: StyleId,
   ambiance: AmbianceId,
-  mode: Mode,
+  mode: Mode | "glass",
   accent: string | null,
 ): AppliedPalette {
-  const base = basePalette(style, ambiance, mode);
-  const chosen = accent ?? (style === "studio" ? STUDIO_SIGNATURE : null);
+  const glass = mode === "glass";
+  const base = glass ? glassBase : basePalette(style, ambiance, mode);
+  const chosen =
+    accent ??
+    (glass
+      ? defaultAccent(style, ambiance)
+      : style === "studio"
+        ? STUDIO_SIGNATURE
+        : null);
   const field = signatureOf(chosen ?? base.accent, base);
   if (!chosen) return { ...base, ...field };
   const surfaces = [base.paper, base.paperRaised, base.sand];
+  if (glass) surfaces.push(base.line); // Darkest part of the frosted work surface.
   const tone = readableTone(chosen, surfaces, base.ink);
-  const soft = mix(chosen, base.paper, mode === "light" ? 0.86 : 0.78);
+  const soft = mix(chosen, base.paper, mode === "dark" ? 0.78 : 0.86);
   const strong = readableTone(
     mix(tone, base.ink, 0.25),
     [...surfaces, soft],
@@ -197,6 +205,21 @@ const names: [keyof AppliedPalette, string][] = [
   ["shadowRgb", "--shadow-rgb"],
 ];
 
+// The room casts a warm light; the professional's tint belongs to the glass.
+const glassBase: Palette = {
+  ...ecrinPalettes.light,
+  paper: "#EFE6DC",
+  paperRaised: "#FFF9F2",
+  sand: "#E5D9CC",
+  sandDeep: "#D8C9BC",
+  line: "#C5B4A7",
+  lineStrong: "#948275",
+  ink: "#241E1C",
+  inkSoft: "#453B37",
+  inkMuted: "#51453F",
+  shadowRgb: "66 40 29",
+};
+
 function declarations(palette: AppliedPalette, mode: Mode) {
   return [
     ...names.map(([key, name]) => `${name}:${palette[key]};`),
@@ -218,6 +241,27 @@ export function appearanceCss(value: Appearance) {
       paletteFor(value.style, value.ambiance, mode, value.accent),
       mode,
     );
+  if (value.mode === "glass") {
+    const palette = paletteFor(
+      value.style,
+      value.ambiance,
+      "glass",
+      value.accent,
+    );
+    const tint = value.accent ?? defaultAccent(value.style, value.ambiance);
+    // Keep both ends of the coloured reflection legible with the same ink.
+    const awayFromInk =
+      palette.onSignature === glassBase.ink
+        ? glassBase.paperRaised
+        : glassBase.ink;
+    const fieldShade = mix(palette.signature, awayFromInk, 0.38);
+    const fieldLight = readableTone(
+      mix(palette.signature, palette.onSignature, 0.24),
+      [palette.onSignature],
+      awayFromInk,
+    );
+    return `${scope}{${declarations(palette, "light")}--glass-tint:${tint};--glass-field-shade:${fieldShade};--glass-field-light:${fieldLight};}`;
+  }
   if (value.mode === "light") return `${scope}{${of("light")}}`;
   if (value.mode === "dark") return `${scope}{${of("dark")}}`;
   return `${scope}{${of("light")}}@media (prefers-color-scheme: dark){${scope}{${of("dark")}}}`;
@@ -227,11 +271,12 @@ export function appearanceCss(value: Appearance) {
 export function accentKeptAsIs(
   style: StyleId,
   ambiance: AmbianceId,
-  mode: Mode,
+  mode: Mode | "glass",
   accent: string,
 ) {
-  const base = basePalette(style, ambiance, mode);
-  return [base.paper, base.paperRaised, base.sand].every(
-    (surface) => contrast(accent, surface) >= 4.5,
-  );
+  const base =
+    mode === "glass" ? glassBase : basePalette(style, ambiance, mode);
+  const surfaces = [base.paper, base.paperRaised, base.sand];
+  if (mode === "glass") surfaces.push(base.line);
+  return surfaces.every((surface) => contrast(accent, surface) >= 4.5);
 }

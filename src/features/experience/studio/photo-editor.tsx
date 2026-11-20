@@ -1,7 +1,13 @@
 "use client";
 
 import { motion } from "motion/react";
-import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import {
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 
 import type { Focal, PhotoSlot } from "../engine/config";
 import {
@@ -36,6 +42,7 @@ export function PhotoEditor({
   onUpload,
   onDelete,
   onBack,
+  children,
 }: {
   slot: PhotoSlot;
   /** Her photo in this place; null: none yet. */
@@ -54,6 +61,7 @@ export function PhotoEditor({
     forGood: boolean,
   ) => Promise<{ ok: true } | { ok: false; code: string }>;
   onBack: () => void;
+  children?: ReactNode;
 }) {
   const photo = useStudioPhoto();
   const pad = useRef<HTMLDivElement>(null);
@@ -145,6 +153,8 @@ export function PhotoEditor({
               : `Réalisation ${slot + 1}`}
         </span>
       </div>
+
+      {children}
 
       {id ? (
         <p className="text-[13.5px] leading-snug text-black/60">

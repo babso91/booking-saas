@@ -51,8 +51,8 @@ export function CarnetShell({
   const inMore = inSettings || current === "services" || current === "loyalty";
 
   return (
-    <div data-carnet-frame="" className={styles.desk}>
-      <div className={styles.sheet}>
+    <div data-carnet-frame="" className={`glass-ground ${styles.desk}`}>
+      <div className={`glass-paper ${styles.sheet}`}>
         <header className={styles.head}>
           <Link href={sectionHref.today} className={styles.studio}>
             {business.name}
@@ -93,7 +93,10 @@ export function CarnetShell({
         </nav>
       </div>
 
-      <nav aria-label="Navigation principale" className={styles.ribbon}>
+      <nav
+        aria-label="Navigation principale"
+        className={`glass-dock ${styles.ribbon}`}
+      >
         {ribbon.map((tab) => (
           <Link
             key={tab.section}

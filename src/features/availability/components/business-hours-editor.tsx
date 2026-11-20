@@ -70,10 +70,12 @@ const linkAction =
 export function BusinessHoursEditor({
   timezone,
   scope,
+  scheduleOptions,
 }: {
   timezone: string;
   /** Whose week this is (signed-in user and business, from the session). */
   scope: DraftScope;
+  scheduleOptions?: ReactNode;
 }) {
   // One editor per identity. The page can be rendered again for another
   // identity without being unmounted: the key replaces the editor during
@@ -85,6 +87,7 @@ export function BusinessHoursEditor({
       key={scopeId(scope)}
       timezone={timezone}
       draftKey={draftKeyFor(scope, "hours")}
+      scheduleOptions={scheduleOptions}
     />
   );
 }
@@ -92,10 +95,12 @@ export function BusinessHoursEditor({
 function HoursEditor({
   timezone,
   draftKey,
+  scheduleOptions,
 }: {
   timezone: string;
   /** Session storage key of the unsaved week (this identity only). */
   draftKey: string;
+  scheduleOptions?: ReactNode;
 }) {
   const router = useRouter();
   const [load, setLoad] = useState<Load>({ status: "loading" });
@@ -335,7 +340,7 @@ function HoursEditor({
 
   if (load.status === "loading") {
     return (
-      <Frame timezone={timezone}>
+      <Frame timezone={timezone} scheduleOptions={scheduleOptions}>
         <div className="flex flex-col gap-3" aria-busy="true">
           <span className="sr-only" role="status">
             Chargement des horaires…
@@ -353,7 +358,7 @@ function HoursEditor({
 
   if (load.status === "error") {
     return (
-      <Frame timezone={timezone}>
+      <Frame timezone={timezone} scheduleOptions={scheduleOptions}>
         <Notice
           tone={load.error.code === "network" ? "offline" : "error"}
           title={describeError(load.error).title}
@@ -383,7 +388,7 @@ function HoursEditor({
   }
 
   return (
-    <Frame timezone={timezone}>
+    <Frame timezone={timezone} scheduleOptions={scheduleOptions}>
       <form
         noValidate
         aria-busy={state === "loading"}
@@ -559,9 +564,11 @@ function HoursEditor({
 
 function Frame({
   timezone,
+  scheduleOptions,
   children,
 }: {
   timezone: string;
+  scheduleOptions?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -572,10 +579,17 @@ function Frame({
             Horaires
           </h1>
           <p className="text-[14.5px] text-ink-muted">
-            Tes horaires d’ouverture chaque semaine, à l’heure de ton activité (
-            {timezone}), quel que soit l’appareil utilisé.
+            Les horaires utilisent le fuseau horaire de ton activité ({timezone}
+            ).
           </p>
         </header>
+        {scheduleOptions}
+        <h2 className="font-display text-[26px] leading-tight text-ink">
+          Horaires habituels
+        </h2>
+        <p className="-mt-3 text-sm text-ink-muted">
+          Ces horaires se répètent chaque semaine.
+        </p>
         {children}
       </div>
     </div>

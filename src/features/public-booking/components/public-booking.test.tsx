@@ -176,6 +176,10 @@ beforeEach(() => {
       return api.booking(JSON.parse(String(init?.body)));
     }
     if (url.pathname.endsWith("/availability")) {
+      if (url.searchParams.has("through")) {
+        const date = url.searchParams.get("date")!;
+        return ok({ days: [{ date, slots: slotsFor(date) }] });
+      }
       const choices = url.searchParams.get("optionChoiceIds");
       // Answers only when there are some: the call is the one of before.
       return choices === null
@@ -288,6 +292,96 @@ describe("from her mini-site", () => {
     expect(
       screen.queryByRole("heading", { name: "Choisissez un créneau" }),
     ).toBeNull();
+  });
+});
+
+describe("published booking formats", () => {
+  it.each([
+    ["calendar", "Mois"],
+    ["chronological", "Semaine"],
+  ] as const)(
+    "%s opens on real dates, with a fresh quote before contact",
+    async (format, view) => {
+      render(
+        <PublicBooking
+          business={business}
+          catalog={catalogOf([services[0]!])}
+          format={format}
+        />,
+      );
+      expect(
+        (await screen.findByRole("button", { name: view })).getAttribute(
+          "aria-pressed",
+        ),
+      ).toBe("true");
+      if (format === "calendar") {
+        fireEvent.click(
+          await screen.findByRole("button", { name: /, 2 créneaux$/ }),
+        );
+      }
+      fireEvent.click(await slotButton("09:30"));
+      expect(
+        await screen.findByRole("heading", { name: "Vos coordonnées" }),
+      ).toBeTruthy();
+      expect(api.availability).toHaveBeenCalledWith(SERVICE_A, today);
+    },
+  );
+
+  it("showcase displays the site's submitted work and the live service prices", async () => {
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        format="showcase"
+        gallery={
+          <figure>
+            <figcaption>Volume mixte</figcaption>
+          </figure>
+        }
+      />,
+    );
+    expect(screen.getByText("Volume mixte")).toBeTruthy();
+    await chooseService();
+    expect(await slotButton("09:30")).toBeTruthy();
+  });
+
+  it("guided follows the selected category and offers completed steps for editing", async () => {
+    const catalog = catalogOf(services);
+    const [a, b] = catalog.groups[0]!.services;
+    catalog.groups = [
+      { category: { id: "cils", name: "Cils" }, services: [a!] },
+      { category: { id: "soins", name: "Soins" }, services: [b!] },
+    ];
+    render(
+      <PublicBooking business={business} catalog={catalog} format="guided" />,
+    );
+    const progress = within(
+      screen.getByRole("navigation", { name: "Étapes de la réservation" }),
+    );
+    expect(progress.queryByRole("button")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Soins/ }));
+    expect(screen.queryByRole("button", { name: /Pose cil à cil/ })).toBeNull();
+    await chooseService("Rehaussement");
+    fireEvent.click(progress.getByRole("button", { name: "Prestation" }));
+    expect(screen.getByRole("button", { name: /Cils/ })).toBeTruthy();
+  });
+
+  it("studio preview reaches review without posting a booking", async () => {
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        format="guided"
+        preview
+      />,
+    );
+    await toReview();
+    const button = screen.getByRole("button", {
+      name: "Confirmation désactivée dans l’aperçu",
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(api.booking).not.toHaveBeenCalled();
   });
 });
 

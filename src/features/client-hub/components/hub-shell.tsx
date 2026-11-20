@@ -29,6 +29,7 @@ import { cn } from "@/lib/cn";
 import type { HubError } from "../client/api";
 import { initial } from "../client/format";
 import { ClientHubSessionProvider, useClientHub } from "../client/session";
+import { hubAppointmentPath, hubSignInHref } from "../links";
 import { HubErrorNotice, Skeleton, hubErrorCopy } from "./hub-parts";
 
 export const hubHref = {
@@ -37,7 +38,7 @@ export const hubHref = {
   appointments: (businessId: string) =>
     `/espace/${encodeURIComponent(businessId)}/rendez-vous` as Route,
   appointment: (businessId: string, appointmentId: string) =>
-    `/espace/${encodeURIComponent(businessId)}/rendez-vous/${encodeURIComponent(appointmentId)}` as Route,
+    hubAppointmentPath(businessId, appointmentId) as Route,
   loyalty: (businessId: string) =>
     `/espace/${encodeURIComponent(businessId)}/fidelite` as Route,
 };
@@ -89,10 +90,17 @@ export function HubPage({
   const { session, recheck, verify } = useClientHub();
   const router = useRouter();
   const signedOut = session.status === "signed-out";
+  const signOutReason = session.status === "signed-out" ? session.reason : null;
 
   useEffect(() => {
-    if (signedOut) router.replace(hubHref.signIn);
-  }, [router, signedOut]);
+    if (signedOut) {
+      const target =
+        signOutReason === "signed-out" || signOutReason === "elsewhere"
+          ? hubHref.signIn
+          : hubSignInHref(window.location.pathname);
+      router.replace(target as Route);
+    }
+  }, [router, signedOut, signOutReason]);
 
   if (session.status === "signed-in") {
     const { profile } = session;

@@ -161,6 +161,18 @@ export function fetchAppointment(
   );
 }
 
+export function cancelHubAppointment(
+  businessId: string,
+  appointmentId: string,
+  input: { requestId: string; expectedVersion: number },
+  signal?: AbortSignal,
+) {
+  return request<ClientHubAppointmentDetailDto>(
+    `${business(businessId)}/appointments/${encodeURIComponent(appointmentId)}/cancel`,
+    { ...json("POST", input), signal },
+  );
+}
+
 export function fetchLoyalty(businessId: string, signal?: AbortSignal) {
   return request<ClientHubLoyaltyDto>(`${business(businessId)}/loyalty`, {
     method: "GET",

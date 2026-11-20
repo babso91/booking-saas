@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import { Notice } from "@/components/ui/notice";
 
@@ -8,6 +8,8 @@ import type { PublicCatalog } from "@/features/catalog/model";
 
 import type { PublicBusiness } from "../client/api";
 import { useBookingFlow } from "../client/use-booking-flow";
+import type { BookingFormat } from "../formats";
+import { GuidedProgress } from "./guided-progress";
 import { BookingConfirmation } from "./booking-confirmation";
 import { ContactStep } from "./contact-step";
 import { OptionsStep } from "./options-step";
@@ -25,9 +27,15 @@ export function PublicBooking({
   business,
   catalog,
   embedded = false,
+  format = "classic",
+  gallery,
+  preview = false,
   initialServiceId,
 }: {
   business: PublicBusiness;
+  format?: BookingFormat;
+  gallery?: ReactNode;
+  preview?: boolean;
   /** As get_public_catalog projects it: services, categories, options. */
   catalog: PublicCatalog;
   /**
@@ -41,10 +49,15 @@ export function PublicBooking({
    */
   initialServiceId?: string;
 }) {
-  const flow = useBookingFlow({ business, catalog });
+  const flow = useBookingFlow({ business, catalog, preview });
   const heading = useRef<HTMLHeadingElement>(null);
   const opened = useRef(false);
-  const asked = useRef(initialServiceId);
+  const onlyService =
+    flow.services.length === 1 &&
+    (format === "calendar" || format === "chronological");
+  const asked = useRef(
+    initialServiceId ?? (onlyService ? flow.services[0]?.id : undefined),
+  );
 
   // Once, on arrival: the same action as a tap on that service.
   useEffect(() => {
@@ -67,6 +80,7 @@ export function PublicBooking({
   const Root = embedded ? "div" : "main";
   return (
     <Root
+      data-booking-format={format}
       className={
         embedded
           ? "flex w-full flex-col gap-7"
@@ -101,17 +115,35 @@ export function PublicBooking({
         </Notice>
       ) : (
         <>
+          {format === "guided" && flow.step !== "done" ? (
+            <GuidedProgress flow={flow} />
+          ) : null}
           {flow.step !== "done" ? <PendingNotice flow={flow} /> : null}
           {flow.step === "service" ? (
-            <ServiceStep flow={flow} headingRef={heading} />
+            <ServiceStep
+              flow={flow}
+              headingRef={heading}
+              format={format}
+              gallery={gallery}
+            />
           ) : flow.step === "options" ? (
             <OptionsStep flow={flow} headingRef={heading} />
           ) : flow.step === "slot" ? (
-            <SlotStep flow={flow} headingRef={heading} />
+            <SlotStep
+              flow={flow}
+              headingRef={heading}
+              initialView={
+                format === "calendar"
+                  ? "month"
+                  : format === "chronological"
+                    ? "week"
+                    : "day"
+              }
+            />
           ) : flow.step === "contact" ? (
             <ContactStep flow={flow} headingRef={heading} />
           ) : flow.step === "review" ? (
-            <ReviewStep flow={flow} headingRef={heading} />
+            <ReviewStep flow={flow} headingRef={heading} preview={preview} />
           ) : flow.booking ? (
             <BookingConfirmation
               booking={flow.booking}

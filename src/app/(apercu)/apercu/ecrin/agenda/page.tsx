@@ -25,7 +25,7 @@ export const metadata = { title: "Écrin · Agenda" };
 export default async function EcrinAgendaPreviewPage({
   searchParams,
 }: PageProps<"/apercu/ecrin/agenda">) {
-  const { heure, apparence, jour, jeu, vue } = await searchParams;
+  const { heure, apparence, jour, jeu, vue, rdv } = await searchParams;
   const week =
     jeu === "charge"
       ? sampleBusyWeek
@@ -58,6 +58,8 @@ export default async function EcrinAgendaPreviewPage({
         current="agenda"
       >
         <EcrinAgendaPreview
+          key={typeof rdv === "string" ? rdv : date}
+          initialVisitId={typeof rdv === "string" ? rdv : undefined}
           week={week}
           date={date}
           now={Date.parse(sampleInstant(SAMPLE_TODAY, time))}

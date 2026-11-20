@@ -67,6 +67,25 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"business_date_hours": {
+                  Row: {
+                    "business_id": string,"date": string,"ends_at": string,"starts_at": string
+                  }
+                  Insert: {
+                    "business_id": string,"date": string,"ends_at": string,"starts_at": string
+                  }
+                  Update: {
+                    "business_id"?: string,"date"?: string,"ends_at"?: string,"starts_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "business_date_hours_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"business_hours": {
                   Row: {
                     "business_id": string,"created_at": string,"ends_at": string,"id": string,"starts_at": string,"updated_at": string,"weekday": number
@@ -1349,6 +1368,9 @@ isOneToOne: false
 "get_public_availability":
 { Args: { "p_date": string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_slug": string }; Returns: Json
                            },
+"get_public_availability_calendar":
+{ Args: { "p_from": string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_slug": string,"p_to": string }; Returns: Json
+                           },
 "get_public_business":
 { Args: { "p_slug": string }; Returns: {
               "cancellation_policy": string,"currency": string,"description": string,"location": string,"logo_path": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"name": string,"slot_interval_minutes": number,"slug": string,"timezone": string,"today": string,"waitlist_enabled": boolean
@@ -1637,6 +1659,9 @@ isOneToOne: false
                            },
 "set_booking_policy":
 { Args: { "p_business_id": string,"p_cancellation_lead_minutes": number,"p_reschedule_lead_minutes": number }; Returns: Json
+                           },
+"set_business_date_hours":
+{ Args: { "p_business_id": string,"p_date": string,"p_ends_at"?: string,"p_expected_ends_at"?: string,"p_expected_starts_at"?: string,"p_starts_at"?: string }; Returns: undefined
                            },
 "set_business_legal_profile":
 { Args: { "p_address": string,"p_business_id": string,"p_contact_email": string,"p_legal_name": string,"p_registration_number": string }; Returns: Json

@@ -107,7 +107,8 @@ export function getCalendarEnv(): CalendarEnv | null {
   return parsed.success ? parsed.data : null;
 }
 
-const cronEnvSchema = z.object({ CRON_SECRET: z.string().min(32) });
+// Clipboard copies (for example `openssl rand`) can include a final newline.
+const cronEnvSchema = z.object({ CRON_SECRET: z.string().trim().min(32) });
 
 /** Secret of the scheduled jobs, or null (jobs then refuse every call). */
 export function getCronSecret(): string | null {

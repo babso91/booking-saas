@@ -116,12 +116,12 @@ const businessUrl = (slug: string) =>
   `/api/public/businesses/${encodeURIComponent(slug)}`;
 
 /** The public profile, its active services and its catalogue. */
-export function fetchPublicBusiness(slug: string) {
+export function fetchPublicBusiness(slug: string, signal?: AbortSignal) {
   return request<{
     business: PublicBusiness;
     services: PublicService[];
     catalog: PublicCatalog;
-  }>(businessUrl(slug), { method: "GET" }, READ_TIMEOUT_MS);
+  }>(businessUrl(slug), { method: "GET", signal }, READ_TIMEOUT_MS);
 }
 
 /** Real slots of one civil day, in the business time zone. */
@@ -136,6 +136,29 @@ export function fetchAvailability(
   if (optionChoiceIds.length > 0)
     query.set("optionChoiceIds", optionChoiceIds.join(","));
   return request<Availability>(
+    `${businessUrl(slug)}/availability?${query}`,
+    { method: "GET", signal },
+    READ_TIMEOUT_MS,
+  );
+}
+
+export type CalendarAvailabilityDay = {
+  date: string;
+  slots: Pick<Slot, "startsAt" | "localStartsAt">[];
+};
+
+export function fetchAvailabilityCalendar(
+  slug: string,
+  serviceId: string,
+  from: string,
+  through: string,
+  optionChoiceIds: string[],
+  signal: AbortSignal,
+) {
+  const query = new URLSearchParams({ serviceId, date: from, through });
+  if (optionChoiceIds.length)
+    query.set("optionChoiceIds", optionChoiceIds.join(","));
+  return request<{ days: CalendarAvailabilityDay[] }>(
     `${businessUrl(slug)}/availability?${query}`,
     { method: "GET", signal },
     READ_TIMEOUT_MS,
