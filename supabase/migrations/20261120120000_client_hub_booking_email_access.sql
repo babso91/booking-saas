@@ -9,22 +9,82 @@
 -- empty space (tester's report, Higani backlog point 78).
 --
 -- A session now reaches ONE appointment from its emails when, all at once:
---   1. an email of THIS appointment carrying that link (confirmation,
---      change or reminder) was sent to the session's verified address:
---      accepted by the provider, or handed to it (first_submitted_at, its
---      answer possibly lost), as appointment_contact_informed counts it;
+--   1. the booking confirmation of THIS appointment was sent to the
+--      session's verified address and the provider accepted it (status
+--      'sent'). An attempt alone, a failed send, a reminder alone or a
+--      change email alone opens nothing (founder's rule, first version);
 --   2. that address is still the appointment's (given to another customer:
 --      the former recipient loses it);
 --   3. it is still the record's (an address corrected by the professional:
 --      the former one loses it);
---   4. the professional has not revoked the Hub access of that record for
---      that address (a record never opened is not a revoked one).
+--   4. the professional has not withdrawn the access of that customer
+--      (« Retirer l'accès », or « Retirer l'accès depuis les e-mails » on a
+--      record she never opened): a record never opened is not a withdrawn
+--      one. A withdrawal covers every email link of that customer in the
+--      business, whatever her address since; an automatic revocation (her
+--      address changed after a grant) does not block the new address.
 -- It then reads that appointment and may cancel or move it under the
 -- business's policy (unchanged). Nothing else: the business in her space,
 -- the record, its other appointments and the loyalty still need the
 -- professional's grant (docs/CLIENT_HUB_CONTRACT.md § 4). A login alone, or
 -- an address that matches without any email of the appointment sent to
 -- it, still shows nothing.
+
+-- Why an access row was revoked: 'withdrawn' by the professional, or
+-- 'email_changed' (the record's address changed after a grant). Rows
+-- revoked before this migration keep null: treated as withdrawn for the
+-- address they named.
+alter table public.client_hub_access
+  add column revocation text check (revocation in ('withdrawn', 'email_changed')),
+  add check (revocation is null or revoked_at is not null);
+
+comment on column public.client_hub_access.revocation is
+  'Why revoked_at is set: withdrawn (by a member, also without a prior grant: granted_by null) or email_changed (automatic). Null: active, or revoked before 20261120120000.';
+
+-- A withdrawal by the professional, as rule 4 reads it.
+create function private.client_hub_withdrawn(
+  p_business_id uuid,
+  p_client_id uuid,
+  p_email text
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.client_hub_access g
+    where g.business_id = p_business_id
+      and g.client_id = p_client_id
+      and g.revoked_at is not null
+      and (g.revocation = 'withdrawn'
+           or (g.revocation is null and g.email::text = p_email))
+  );
+$$;
+
+revoke all on function private.client_hub_withdrawn(uuid, uuid, text) from public;
+
+-- The email change still revokes a grant at once, now saying why.
+create or replace function private.client_hub_revoke_on_email_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if private.canonical_email(new.email::text) is distinct from private.canonical_email(old.email::text) then
+    update public.client_hub_access a
+    set revoked_at = pg_catalog.now(),
+        revoked_by = (select auth.uid()),
+        revocation = 'email_changed'
+    where a.business_id = new.business_id
+      and a.client_id = new.id
+      and a.revoked_at is null;
+  end if;
+  return null;
+end;
+$$;
 
 -- The appointment of `p_business_id` the account reaches from its emails
 -- (rules 1–4), or null.
@@ -50,17 +110,11 @@ as $$
       select 1 from public.email_events e
       where e.appointment_id = a.id
         and e.business_id = a.business_id
-        and e.type in ('booking_confirmation', 'appointment_changed', 'appointment_reminder')
-        and (e.status = 'sent' or e.first_submitted_at is not null)
+        and e.type = 'booking_confirmation'
+        and e.status = 'sent'
         and private.canonical_email(e.recipient_email::text) = p_account.email::text
     )
-    and not exists (
-      select 1 from public.client_hub_access g
-      where g.business_id = a.business_id
-        and g.client_id = a.client_id
-        and g.email = p_account.email
-        and g.revoked_at is not null
-    );
+    and not private.client_hub_withdrawn(a.business_id, a.client_id, p_account.email::text);
 $$;
 
 revoke all on function private.client_hub_emailed_appointment(private.client_hub_accounts, uuid, uuid) from public;
@@ -226,5 +280,103 @@ begin
       where s.starts_at <> v_appointment.starts_at
     ), '[]'::jsonb)
   );
+end;
+$$;
+
+-- « Retirer l'accès » now also works on a record never opened (« Retirer
+-- l'accès depuis les e-mails »): the customer's email links are withdrawn
+-- directly, nothing is opened on the way (no grant, granted_by null). The
+-- withdrawal covers the customer in the business, all her email links,
+-- until a member grants access again. Otherwise unchanged.
+create or replace function public.client_hub_set_access(
+  p_business_id uuid,
+  p_client_id uuid,
+  p_granted boolean,
+  p_expected_email text default null
+)
+returns table (granted boolean, email text, granted_at timestamptz)
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_email text;
+  v_current public.client_hub_access%rowtype;
+begin
+  perform private.assert_agenda_access(p_business_id);
+
+  if p_granted is null then
+    raise exception using errcode = '22023', message = 'invalid_input', hint = 'granted';
+  end if;
+
+  select private.canonical_email(c.email::text) into v_email
+  from public.clients c
+  where c.id = p_client_id
+    and c.business_id = p_business_id
+  for share;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'client_not_found', hint = 'clientId';
+  end if;
+
+  if p_granted and p_expected_email is not null
+    and v_email is distinct from private.canonical_email(p_expected_email) then
+    raise exception using errcode = 'P0001', message = 'stale_client', hint = 'clientId';
+  end if;
+
+  select a.* into v_current
+  from public.client_hub_access a
+  where a.business_id = p_business_id
+    and a.client_id = p_client_id
+  for update;
+
+  if p_granted then
+    if v_email is null then
+      raise exception using errcode = 'P0001', message = 'client_hub_email_required', hint = 'clientId';
+    end if;
+
+    if v_current.client_id is not null
+      and v_current.revoked_at is null
+      and v_current.email::text = v_email then
+      return query select true, v_email, v_current.granted_at;
+      return;
+    end if;
+
+    insert into public.client_hub_access (business_id, client_id, email, granted_by, granted_at)
+    values (p_business_id, p_client_id, v_email, (select auth.uid()), pg_catalog.now())
+    on conflict (business_id, client_id) do update
+      set email = excluded.email,
+          granted_by = excluded.granted_by,
+          granted_at = excluded.granted_at,
+          revoked_by = null,
+          revoked_at = null,
+          revocation = null;
+
+    return query select true, v_email, pg_catalog.now();
+    return;
+  end if;
+
+  if v_current.client_id is not null then
+    -- Opened, or revoked by an email change: withdrawn now (idempotent).
+    if v_current.revoked_at is null or v_current.revocation is distinct from 'withdrawn' then
+      update public.client_hub_access a
+      set revoked_by = (select auth.uid()),
+          revoked_at = pg_catalog.now(),
+          revocation = 'withdrawn'
+      where a.business_id = p_business_id
+        and a.client_id = p_client_id;
+    end if;
+  elsif v_email is not null then
+    -- Never opened: her email links are withdrawn, nothing is opened.
+    insert into public.client_hub_access (
+      business_id, client_id, email, granted_by, granted_at, revoked_by, revoked_at, revocation
+    ) values (
+      p_business_id, p_client_id, v_email, null, pg_catalog.now(),
+      (select auth.uid()), pg_catalog.now(), 'withdrawn'
+    );
+  end if;
+
+  return query select false, null::text, null::timestamptz;
 end;
 $$;

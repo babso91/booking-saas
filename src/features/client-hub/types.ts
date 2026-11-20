@@ -122,4 +122,11 @@ export type ClientHubAccessDto = {
    */
   email: string | null;
   grantedAt: string | null;
+  /**
+   * The professional withdrew this customer's access (« Retirer l'accès »,
+   * also on a record never opened): she can neither see her history nor
+   * manage her appointments from their emails, until access is granted
+   * again (docs/CLIENT_HUB_CONTRACT.md § 4).
+   */
+  withdrawn: boolean;
 };

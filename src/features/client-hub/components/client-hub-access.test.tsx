@@ -27,12 +27,14 @@ const granted = (email: string): ClientHubAccessDto => ({
   granted: true,
   email,
   grantedAt: "2026-10-20T09:00:00Z",
+  withdrawn: false,
 });
 const none: ClientHubAccessDto = {
   clientId: CLIENT,
   granted: false,
   email: null,
   grantedAt: null,
+  withdrawn: false,
 };
 const done = <T,>(data: T): ActionResult<T> => ({ ok: true, data });
 const refused = (code: string): ActionResult<never> =>
@@ -75,6 +77,64 @@ async function grant() {
 }
 
 describe("Client Hub access on the CRM record", () => {
+  it("never opened: says what she can do from her email, and withdraws it directly, opening nothing", async () => {
+    const withdrawn: ClientHubAccessDto = { ...none, withdrawn: true };
+    actions.setClientHubAccessAction.mockResolvedValue(done(withdrawn));
+    render(card());
+    expect(
+      await screen.findByText(
+        /Tu choisis si la cliente peut consulter son historique\. Elle peut aussi gérer un rendez-vous depuis son e-mail de confirmation, selon tes conditions d’annulation\./,
+      ),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Retirer l’accès depuis les e-mails",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toMatch(/même si une page est déjà ouverte/);
+    expect(dialog.textContent).toMatch(/tous ses rendez-vous/);
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Retirer l’accès depuis les e-mails",
+      }),
+    );
+    // A withdrawal, never a grant on the way.
+    expect(actions.setClientHubAccessAction).toHaveBeenCalledTimes(1);
+    expect(actions.setClientHubAccessAction).toHaveBeenCalledWith({
+      clientId: CLIENT,
+      granted: false,
+    });
+    expect(await screen.findByText("Accès retiré")).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Tu as retiré l’accès de Camille Martin : elle ne peut ni consulter son historique, ni gérer ses rendez-vous depuis ses e-mails\./,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", {
+        name: "Retirer l’accès depuis les e-mails",
+      }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Autoriser l’accès" }),
+    ).toBeTruthy();
+  });
+
+  it("opened: withdrawing says her email links stop too", async () => {
+    actions.getClientHubAccessAction.mockResolvedValue(
+      done(granted("camille@exemple.fr")),
+    );
+    render(card());
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Retirer l’accès" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toMatch(
+      /elle ne peut plus gérer ses rendez-vous depuis ses e-mails/,
+    );
+  });
+
   it("is never granted by itself: reading the record only reads the access", async () => {
     render(card());
     expect(await screen.findByText("Non autorisé")).toBeTruthy();

@@ -81,6 +81,8 @@ const D2 = localDate(4);
 const D3 = localDate(5);
 // A usual day of its own for the access cases.
 const D4 = localDate(6);
+const D5 = localDate(7);
+const D6 = localDate(8);
 
 function request(
   method: string,
@@ -616,9 +618,9 @@ describe("the journey: book, confirm, manage, cancel", () => {
 });
 
 describe("point 78: who may manage it from the email", () => {
-  /** A guest's booking on D4 at `time`, its confirmation really sent. */
-  async function emailed(address: string, time: string) {
-    const shown = await availability(A, serviceA, D4);
+  /** A guest's booking at `time` on `date`; its emails not delivered yet. */
+  async function booked(address: string, time: string, date = D4) {
+    const shown = await availability(A, serviceA, date);
     const at = (shown.body.data.slots as Slot[]).find(
       (s) => s.localStartsAt.slice(11, 16) === time,
     )!;
@@ -626,10 +628,23 @@ describe("point 78: who may manage it from the email", () => {
       await book({ startsAt: at.startsAt, email: address }),
     );
     expect(created.status, JSON.stringify(created.body)).toBe(201);
-    await deliver(A.id);
-    expect(mailTo(address)).toHaveLength(1);
     return created.body.data.booking.appointmentId as string;
   }
+  /** The same, its booking confirmation accepted by the provider. */
+  async function emailed(address: string, time: string, date = D4) {
+    const id = await booked(address, time, date);
+    await deliver(A.id);
+    expect(mailTo(address)).toHaveLength(1);
+    return id;
+  }
+  const sentOf = async (id: string) =>
+    (
+      await db.query<{ type: string; status: string; submitted: boolean }>(
+        `select type, status, first_submitted_at is not null as submitted
+         from public.email_events where appointment_id = $1 order by created_at`,
+        [id],
+      )
+    ).rows;
   const fresh = (label: string) =>
     `${label}-${randomUUID().slice(0, 6)}@client.test`;
   const clientOf = async (id: string) =>
@@ -769,9 +784,9 @@ describe("point 78: who may manage it from the email", () => {
     );
     expect(refused.status).toBe(404);
     expect((await hubRead(cookie, A.id, id)).status).toBe(404);
-    // Nothing was ever sent to the new customer: nothing yet. Her reminder
-    // (no confirmation after a reassignment, NOTIFICATIONS_CONTRACT.md)
-    // carries the link: once it has gone out, she reaches it.
+    // Nothing was ever sent to the new customer: nothing. After a
+    // reassignment she gets a reminder, no confirmation
+    // (NOTIFICATIONS_CONTRACT.md): a reminder alone opens nothing either.
     const newcomer = await signIn(second);
     expect((await hubRead(newcomer, A.id, id)).status).toBe(404);
     await db.query(
@@ -784,7 +799,167 @@ describe("point 78: who may manage it from the email", () => {
     expect(
       mailTo(second).filter((m) => !/^\d{8}/.test(m.subject)),
     ).toHaveLength(1);
-    expect((await hubRead(newcomer, A.id, id)).status).toBe(200);
+    expect((await hubRead(newcomer, A.id, id)).status).toBe(404);
+  });
+
+  it("a failed send, or an attempt whose answer was lost, opens nothing", async () => {
+    const failed = fresh("echec");
+    const failedId = await booked(failed, "09:00", D5);
+    transport.failNext("provider_rejected_422", "permanent");
+    await deliver(A.id);
+    const attempted = fresh("tentative");
+    const attemptedId = await booked(attempted, "11:00", D5);
+    transport.acceptThenFailNext();
+    await deliver(A.id);
+
+    expect(await sentOf(failedId)).toContainEqual({
+      type: "booking_confirmation",
+      status: "failed",
+      submitted: true,
+    });
+    expect(
+      (await sentOf(attemptedId)).find(
+        (e) => e.type === "booking_confirmation",
+      ),
+    ).toMatchObject({ submitted: true });
+    expect(
+      (await sentOf(attemptedId)).find((e) => e.type === "booking_confirmation")
+        ?.status,
+    ).not.toBe("sent");
+    expect((await hubRead(await signIn(failed), A.id, failedId)).status).toBe(
+      404,
+    );
+    expect(
+      (await hubRead(await signIn(attempted), A.id, attemptedId)).status,
+    ).toBe(404);
+  });
+
+  it("a reminder alone, or a change email alone, opens nothing", async () => {
+    const address = fresh("rappel");
+    const id = await booked(address, "13:00", D5);
+    transport.failNext("provider_rejected_422", "permanent");
+    await deliver(A.id);
+    const cookie = await signIn(address);
+
+    // Her reminder goes out: still nothing.
+    await db.query(
+      `update public.email_events set scheduled_for = now() - interval '1 second'
+       where appointment_id = $1 and type = 'appointment_reminder' and status = 'pending'`,
+      [id],
+    );
+    await deliver(A.id);
+    expect(await sentOf(id)).toContainEqual({
+      type: "appointment_reminder",
+      status: "sent",
+      submitted: true,
+    });
+    expect((await hubRead(cookie, A.id, id)).status).toBe(404);
+
+    // The professional moves it: the change email goes out, still nothing.
+    const shown = await availability(A, serviceA, D5);
+    const later = (shown.body.data.slots as Slot[]).find(
+      (s) => s.localStartsAt.slice(11, 16) === "15:00",
+    )!;
+    const { rows } = await db.query(
+      "select version, service_id, client_id from public.appointments where id = $1",
+      [id],
+    );
+    const moved = await ownerA.client.rpc(
+      "agenda_update_appointment" as never,
+      {
+        p_business_id: A.id,
+        p_appointment_id: id,
+        p_expected_version: rows[0].version,
+        p_service_id: rows[0].service_id,
+        p_client_id: rows[0].client_id,
+        p_starts_at: later.startsAt,
+      } as never,
+    );
+    expect(moved.error).toBeNull();
+    await deliver(A.id);
+    expect(await sentOf(id)).toContainEqual({
+      type: "appointment_changed",
+      status: "sent",
+      submitted: true,
+    });
+    expect((await hubRead(cookie, A.id, id)).status).toBe(404);
+  });
+
+  it("« Retirer l'accès depuis les e-mails » on a record never opened, page already open: cut, nothing opened, for all her links", async () => {
+    const address = fresh("retiree");
+    const id = await emailed(address, "09:00", D6);
+    const cookie = await signIn(address);
+    const opened = await hubRead(cookie, A.id, id);
+    expect(opened.body.data.actions.cancel.allowed).toBe(true);
+    const { client_id } = await clientOf(id);
+
+    const withdrawn = await ownerA.client.rpc(
+      "client_hub_set_access" as never,
+      {
+        p_business_id: A.id,
+        p_client_id: client_id,
+        p_granted: false,
+      } as never,
+    );
+    expect(withdrawn.error).toBeNull();
+    const { rows } = await db.query(
+      "select revoked_at is not null as revoked, revocation, granted_by from public.client_hub_access where client_id = $1",
+      [client_id],
+    );
+    // Withdrawn without ever being granted: nothing was opened on the way.
+    expect(rows).toEqual([
+      { revoked: true, revocation: "withdrawn", granted_by: null },
+    ]);
+    const me = await json(
+      await getHubMe(request("GET", "/api/client-hub/me", { cookie })),
+    );
+    expect(me.body.data.businesses).toEqual([]);
+
+    // Her page was already open: cancelling is refused, reading too.
+    const refused = await hubCancel(
+      cookie,
+      A.id,
+      id,
+      opened.body.data.actions.version,
+    );
+    expect(refused.status).toBe(404);
+    expect((await hubRead(cookie, A.id, id)).status).toBe(404);
+
+    // It covers the customer, not one address: her address corrected, a
+    // new booking confirmed at the new one stays closed.
+    const corrected = fresh("corrigee-retiree");
+    await db.query("update public.clients set email = $2 where id = $1", [
+      client_id,
+      corrected,
+    ]);
+    const next = await emailed(corrected, "11:00", D6);
+    expect((await clientOf(next)).client_id).toBe(client_id);
+    expect((await hubRead(await signIn(corrected), A.id, next)).status).toBe(
+      404,
+    );
+  });
+
+  it("an address changed after a grant is no withdrawal: the new address manages its confirmed booking", async () => {
+    const address = fresh("ouverte");
+    const first = await emailed(address, "13:00", D6);
+    const { client_id } = await clientOf(first);
+    const granted = await ownerA.client.rpc(
+      "client_hub_set_access" as never,
+      {
+        p_business_id: A.id,
+        p_client_id: client_id,
+        p_granted: true,
+        p_expected_email: address,
+      } as never,
+    );
+    expect(granted.error).toBeNull();
+    const renamed = fresh("nouvelle-adresse");
+    await db.query("update public.clients set email = $2 where id = $1", [
+      client_id,
+      renamed,
+    ]);
+    const next = await emailed(renamed, "15:00", D6);
+    expect((await hubRead(await signIn(renamed), A.id, next)).status).toBe(200);
   });
 
   it("past the policy's limit, she is told, nothing changes", async () => {
