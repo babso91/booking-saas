@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { businessToday } from "@/features/public-booking/client/business-time";
 import { sampleSite } from "@/features/experience/fixtures/sample-sites";
 import {
   bookingFormats,
@@ -97,7 +98,27 @@ it("publishes the chosen Core booking format, preserves it across universes and 
     ).toBe("true");
     const slots = dialog.getByRole("button", { name: / à \d{2}:\d{2}$/ });
     // Near the end of the week all remaining openings can be in the past.
-    await dialog.getByRole("button", { name: "Semaine suivante" }).click();
+    const today = businessToday("Europe/Paris");
+    const [response] = await Promise.all([
+      page.waitForResponse((res) => {
+        const url = new URL(res.url());
+        return (
+          url.pathname.endsWith("/availability") &&
+          url.searchParams.has("through") &&
+          (url.searchParams.get("date") ?? "") > today
+        );
+      }),
+      dialog.getByRole("button", { name: "Semaine suivante" }).click(),
+    ]);
+    const { data } = (await response.json()) as {
+      data: { days: { date: string; slots: Record<string, string>[] }[] };
+    };
+    expect(data.days).toHaveLength(7);
+    for (const day of data.days) {
+      expect(Object.keys(day).sort()).toEqual(["date", "slots"]);
+      for (const slot of day.slots)
+        expect(Object.keys(slot).sort()).toEqual(["localStartsAt", "startsAt"]);
+    }
     await slots.first().click();
     await dialog.getByRole("heading", { name: "Vos coordonnées" }).waitFor();
     expect(await noSideScroll(page)).toBe(true);

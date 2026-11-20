@@ -1921,9 +1921,8 @@ describe("cancellation notices", () => {
     expect(notice.to).toBe("screen@example.test");
     expect(notice.subject).toBe("Rendez-vous annulé – Studio Mila Lashes");
     // Understandable without the confirmation she never received.
-    expect(notice.text).toContain(
-      "Votre rendez-vous a été annulé par l’établissement.",
-    );
+    expect(notice.text).toContain("Votre rendez-vous a été annulé.");
+    expect(notice.text).not.toContain("par l’établissement");
     expect(notice.text).toContain("Établissement : Studio Mila Lashes");
     expect(notice.text).toContain("Prestation : Volume mixte");
     expect(notice.text).toMatch(/Date : \p{L}+ \d{1,2} \p{L}+ \d{4} à 10 h/u);
