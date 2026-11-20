@@ -20,6 +20,8 @@ Ce document décrit le socle backend qui garde les préférences d'apparence de 
 
 Les préférences d'une professionnelle ne changent jamais ce que voient les autres membres ni les clientes. La personnalisation de l'établissement ne passe jamais par ses préférences.
 
+Le sélecteur **Format d’agenda** de Signature mémorise le choix du membre dans `auth.users.raw_user_meta_data`, sous la clé `higani_agenda_<membershipId>`. Une valeur absente ou inconnue ouvre l’agenda de l’univers. Le serveur vérifie l’appartenance et le forfait courant dans `public.sites.plan` avant de proposer ou d’enregistrer un format Signature. Un retour en Core ouvre l’agenda de l’univers.
+
 ## 2. Schéma
 
 `public.member_preferences` : une ligne par appartenance (`business_id`, `user_id`).
@@ -30,7 +32,7 @@ Les préférences d'une professionnelle ne changent jamais ce que voient les aut
 | `incarnation`              | uuid                                     | identité de la ligne, tirée au hasard à sa création, fixe ensuite (trigger)                      | —           |
 | `style`                    | domaine `member_preference_style`        | `classique`, `studio`, `ecrin`, `carnet`                                                         | `classique` |
 | `ambiance`                 | domaine `member_preference_ambiance`     | `atelier`, `lin`, `sauge`                                                                        | `atelier`   |
-| `color_mode`               | domaine `member_preference_color_mode`   | `light`, `dark`, `system`, `glass`                                                                        | `light`     |
+| `color_mode`               | domaine `member_preference_color_mode`   | `light`, `dark`, `system`, `glass`                                                               | `light`     |
 | `accent`                   | domaine `member_preference_accent`, null | `#RRGGBB` en majuscules, ou `null` (couleur du style)                                            | `null`      |
 | `motion`                   | domaine `member_preference_motion`       | `standard`, `discrete`, `none`                                                                   | `standard`  |
 | `version`                  | bigint ≥ 1                               | tenue par la base, + 1 par changement réel                                                       | 1           |
