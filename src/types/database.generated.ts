@@ -214,13 +214,13 @@ isOneToOne: false
                   ]
                 },"client_hub_access": {
                   Row: {
-                    "business_id": string,"client_id": string,"email": string,"granted_at": string,"granted_by": string | null,"revoked_at": string | null,"revoked_by": string | null
+                    "business_id": string,"client_id": string,"email": string,"granted_at": string,"granted_by": string | null,"revocation": string | null,"revoked_at": string | null,"revoked_by": string | null
                   }
                   Insert: {
-                    "business_id": string,"client_id": string,"email": string,"granted_at"?: string,"granted_by"?: string | null,"revoked_at"?: string | null,"revoked_by"?: string | null
+                    "business_id": string,"client_id": string,"email": string,"granted_at"?: string,"granted_by"?: string | null,"revocation"?: string | null,"revoked_at"?: string | null,"revoked_by"?: string | null
                   }
                   Update: {
-                    "business_id"?: string,"client_id"?: string,"email"?: string,"granted_at"?: string,"granted_by"?: string | null,"revoked_at"?: string | null,"revoked_by"?: string | null
+                    "business_id"?: string,"client_id"?: string,"email"?: string,"granted_at"?: string,"granted_by"?: string | null,"revocation"?: string | null,"revoked_at"?: string | null,"revoked_by"?: string | null
                   }
                   Relationships: [
                     {

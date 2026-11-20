@@ -162,6 +162,53 @@ Prouver qu'on possède l'adresse ne prouve donc pas que la fiche, ses rendez-vou
 3. L'email attesté est celui du compte.
 4. La fiche a **toujours** cet email. Tout changement d'email de la fiche **révoque** l'accès (trigger, quel que soit le chemin d'écriture) : la nouvelle adresse n'obtient rien sans une nouvelle autorisation, et revenir à l'ancienne adresse ne fait pas revivre l'autorisation.
 
+**Accès à un rendez-vous depuis ses e-mails** (migration
+`20261120120000_client_hub_booking_email_access.sql`). Une cliente dont la
+professionnelle n'a jamais ouvert la fiche gère quand même la réservation
+qu'elle a reçue par e-mail : le lien « Gérer ou annuler mon rendez-vous »
+mène, après le code, à **ce rendez-vous**. Une session l'atteint si, à la
+fois :
+
+1. **la confirmation de réservation** de ce rendez-vous a été envoyée à son
+   adresse vérifiée, et le fournisseur l'a **acceptée** (`sent`). Une
+   tentative seule, un échec d'envoi, un rappel seul ou un e-mail de
+   modification seul n'ouvrent rien (règle de la première version) ;
+2. cette adresse est **toujours** celle du rendez-vous (attribué à une autre
+   cliente : l'ancienne destinataire le perd) ;
+3. elle est **toujours** celle de la fiche (adresse corrigée par la
+   professionnelle : l'ancienne la perd) ;
+4. la professionnelle **n'a pas retiré l'accès** de cette cliente. Une fiche
+   jamais ouverte n'est pas une fiche retirée.
+
+Elle lit alors ce rendez-vous, et l'annule ou le déplace selon la politique
+de l'établissement (inchangée, désactivée par défaut). Les écritures
+revérifient ces règles sous verrou : une correction, une révocation ou une
+réattribution survenue pendant que sa page était ouverte est prise en
+compte. Rien d'autre ne s'ouvre : ni l'activité dans `me`, ni la fiche, ni
+ses autres rendez-vous, ni la fidélité. Une simple connexion, ou une adresse
+qui correspond sans que la confirmation de ce rendez-vous lui ait été
+envoyée, ne montre toujours rien. Test : `tests/integration/booking-journey.test.ts`
+(« point 78 »).
+
+**Retirer l'accès** (`client_hub_set_access(false)`,
+`setClientHubAccessAction({ clientId, granted: false })`) :
+
+- fiche ouverte : bouton « Retirer l'accès » ; fiche jamais ouverte : bouton
+  « Retirer l'accès depuis les e-mails ». Le retrait se fait directement,
+  **sans ouvrir l'historique au passage** (ligne retirée, `granted_by` nul) ;
+- il porte sur **la cliente dans l'établissement** : tous les liens de ses
+  e-mails, quelle que soit son adresse ensuite, jusqu'à ce qu'un membre
+  autorise à nouveau l'accès (ce qui ouvre aussi l'historique) ;
+- il vaut aussi pour une page déjà ouverte : lecture et annulation sont
+  refusées dès le retrait ;
+- un retrait automatique (adresse de la fiche changée après une
+  autorisation, `revocation = 'email_changed'`) n'est pas un retrait : la
+  nouvelle adresse gère ses rendez-vous confirmés. Les lignes retirées avant
+  cette migration (`revocation` nul) valent retrait pour l'adresse qu'elles
+  nomment ;
+- limite : il n'existe pas encore de « rétablir la gestion par e-mail sans
+  ouvrir l'historique » ; autoriser l'accès rétablit les deux.
+
 **En dehors de ces cas, l'activité n'existe pas pour la cliente :**
 
 - `client_hub_not_found` (404), qu'il s'agisse d'une activité inconnue, d'une fiche sans autorisation ou de l'identifiant d'une autre cliente ;
@@ -174,7 +221,7 @@ Prouver qu'on possède l'adresse ne prouve donc pas que la fiche, ses rendez-vou
 
 ### Réservations historiques non vérifiées
 
-Elles ne deviennent visibles qu'**à travers l'autorisation de la professionnelle** pour la fiche. Une réservation publique faite avec l'adresse d'une personne ne lui montre rien à sa connexion (testé). Une fois la fiche autorisée, tout son historique est visible, en projection sûre (§ 6). La professionnelle connaît sa cliente : c'est la preuve supplémentaire retenue en V1.
+Elles ne deviennent visibles qu'**à travers l'autorisation de la professionnelle** pour la fiche. Une réservation publique faite avec l'adresse d'une personne ne lui montre rien à sa connexion (testé). Seule exception : le rendez-vous dont la confirmation lui a été envoyée s'ouvre par le lien de cet e-mail (§ 4), car elle en a déjà reçu les détails ; la fiche et son historique restent fermés. Une fois la fiche autorisée, tout son historique est visible, en projection sûre (§ 6). La professionnelle connaît sa cliente : c'est la preuve supplémentaire retenue en V1.
 
 ## 5. Côté professionnelle
 
@@ -257,7 +304,7 @@ Les professionnelles restent la seule autorité sur ces opérations.
 ## 9. Limites connues
 
 - **Envoi réel non configuré :** voir l'encadré en tête de document.
-- **Accès par autorisation seulement :** une cliente sans autorisation de sa professionnelle voit un espace vide. Il n'y a pas encore d'invitation par email : la professionnelle ouvre l'accès depuis la fiche cliente (§ 11) et transmet elle-même le lien de l'espace.
+- **Accès par autorisation, sauf depuis ses e-mails :** une cliente sans autorisation de sa professionnelle n'a pas d'activité dans son espace. Elle atteint toutefois chaque rendez-vous dont la confirmation lui a été envoyée, par le lien de cet e-mail (§ 4), sauf si la professionnelle a retiré son accès. Il n'y a pas encore d'invitation par email pour le reste : la professionnelle ouvre l'accès depuis la fiche cliente (§ 11) et transmet elle-même le lien de l'espace.
 - **Réservation depuis l'espace :** une réservation faite pendant une session n'est pas rattachée automatiquement ; elle suit la règle d'autorisation.
 - **Durée de session fixe :** 7 jours, sans « appareils connectés » détaillés. La déconnexion de toutes les sessions existe.
 - **Pas de captcha :** les limites de débit sont la seule défense contre l'envoi massif de codes vers des adresses arbitraires.

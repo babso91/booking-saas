@@ -137,7 +137,7 @@ export function ClientHubAccess({
       setDone(
         result.data.granted
           ? `Accès ouvert pour ${result.data.email}. Aucune invitation n’est envoyée : transmets-lui le lien de son espace.`
-          : "Accès retiré : son espace n’affiche plus rien de ta part.",
+          : "Accès retiré : elle ne peut plus consulter son historique ni gérer ses rendez-vous depuis ses e-mails.",
       );
       return;
     }
@@ -165,6 +165,8 @@ export function ClientHubAccess({
     [],
   );
 
+  const opened = read.status === "ready" && read.access.granted;
+
   return (
     <section
       aria-labelledby={headingId}
@@ -184,7 +186,7 @@ export function ClientHubAccess({
             </span>
           ) : (
             <span className="inline-flex h-6 items-center rounded-full bg-sand px-2.5 text-[12px] font-semibold text-ink-soft">
-              Non autorisé
+              {read.access.withdrawn ? "Accès retiré" : "Non autorisé"}
             </span>
           )
         ) : null}
@@ -283,20 +285,34 @@ export function ClientHubAccess({
 
       <ConfirmDialog
         open={confirm === "revoke" && read.status === "ready"}
-        title="Retirer l’accès ?"
+        title={
+          opened ? "Retirer l’accès ?" : "Retirer l’accès depuis les e-mails ?"
+        }
         description={displayName}
-        confirmLabel="Retirer l’accès"
+        confirmLabel={
+          opened ? "Retirer l’accès" : "Retirer l’accès depuis les e-mails"
+        }
         tone="danger"
         state={write === "loading" ? "loading" : "idle"}
         onConfirm={() => void send(false)}
         onCancel={() => setConfirm(null)}
       >
         <div className="flex flex-col gap-3 text-[14.5px] leading-relaxed text-ink-soft">
-          <p>
-            Dès maintenant, son espace n’affiche plus rien de ton activité, même
-            si elle est déjà connectée. Ses rendez-vous et ses points ne
-            changent pas.
-          </p>
+          {opened ? (
+            <p>
+              Dès maintenant, son espace n’affiche plus rien de ton activité,
+              même si elle est déjà connectée, et elle ne peut plus gérer ses
+              rendez-vous depuis ses e-mails. Ses rendez-vous et ses points ne
+              changent pas.
+            </p>
+          ) : (
+            <p>
+              Dès maintenant, elle ne peut plus gérer ses rendez-vous depuis ses
+              e-mails, même si une page est déjà ouverte. Cela vaut pour tous
+              ses rendez-vous dans ton activité. Rien ne s’ouvre, et ses
+              rendez-vous ne changent pas.
+            </p>
+          )}
           {typeof write === "object" ? (
             <WriteError error={write}>L’accès n’a pas été retiré.</WriteError>
           ) : null}
@@ -394,24 +410,54 @@ function Body({
           retiré automatiquement.
         </Notice>
       ) : null}
+      {access.withdrawn ? (
+        <p className="flex items-start gap-2 text-[14px] leading-relaxed text-ink-soft">
+          <LockIcon size={15} className="mt-1 shrink-0" />
+          Tu as retiré l’accès de {displayName} : elle ne peut ni consulter son
+          historique, ni gérer ses rendez-vous depuis ses e-mails.
+        </p>
+      ) : null}
       {email ? (
         <>
           <p className="text-[14px] leading-relaxed text-ink-soft">
-            {displayName} pourra consulter ses rendez-vous et sa fidélité en se
-            connectant avec un code reçu à{" "}
+            {access.withdrawn
+              ? "En autorisant l’accès, tu lui ouvres à nouveau son historique et la gestion de ses rendez-vous, avec un code reçu à "
+              : `${displayName} pourra consulter ses rendez-vous et sa fidélité en se connectant avec un code reçu à `}
             <strong className="font-semibold wrap-anywhere text-ink">
               {email}
             </strong>
             .
           </p>
-          <p className="flex items-start gap-2 text-[13px] leading-relaxed text-ink-muted">
-            <LockIcon size={15} className="mt-0.5 shrink-0" />
-            Rien n’est ouvert sans ton accord, et aucune invitation n’est
-            envoyée : tu lui transmets toi-même le lien de son espace.
-          </p>
-          <Button size="md" onClick={onGrant} disabled={busy} className="w-fit">
-            Autoriser l’accès
-          </Button>
+          {access.withdrawn ? null : (
+            <p className="flex items-start gap-2 text-[13px] leading-relaxed text-ink-muted">
+              <LockIcon size={15} className="mt-0.5 shrink-0" />
+              Tu choisis si la cliente peut consulter son historique. Elle peut
+              aussi gérer un rendez-vous depuis son e-mail de confirmation,
+              selon tes conditions d’annulation. Aucune invitation n’est envoyée
+              : tu lui transmets toi-même le lien de son espace.
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="md"
+              onClick={onGrant}
+              disabled={busy}
+              className="w-fit"
+            >
+              Autoriser l’accès
+            </Button>
+            {access.withdrawn ? null : (
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={onRevoke}
+                disabled={busy}
+                className="w-fit"
+              >
+                Retirer l’accès depuis les e-mails
+              </Button>
+            )}
+          </div>
         </>
       ) : (
         <>

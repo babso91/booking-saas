@@ -230,6 +230,9 @@ export async function listLedger(
 // Professional side (the user's session, membership checked in SQL)
 // ---------------------------------------------------------------------------
 
+const sameAddress = (a: string | null, b: string | null) =>
+  a !== null && b !== null && a.trim().toLowerCase() === b.trim().toLowerCase();
+
 export async function getClientHubAccess(
   client: AppSupabaseClient,
   businessId: string,
@@ -238,13 +241,13 @@ export async function getClientHubAccess(
   const [access, record] = await Promise.all([
     client
       .from("client_hub_access")
-      .select("email, granted_at, revoked_at")
+      .select("email, granted_at, revoked_at, revocation")
       .eq("business_id", businessId)
       .eq("client_id", clientId)
       .maybeSingle(),
     client
       .from("clients")
-      .select("id")
+      .select("id, email")
       .eq("business_id", businessId)
       .eq("id", clientId)
       .maybeSingle(),
@@ -255,11 +258,21 @@ export async function getClientHubAccess(
 
   // A change of the record's email revokes the access (database trigger).
   const active = access.data && access.data.revoked_at === null;
+  // As private.client_hub_withdrawn reads it (rows revoked before the
+  // reason was kept: for the address they named).
+  const withdrawn = Boolean(
+    access.data &&
+    access.data.revoked_at !== null &&
+    (access.data.revocation === "withdrawn" ||
+      (access.data.revocation === null &&
+        sameAddress(access.data.email, record.data.email))),
+  );
   return {
     clientId,
     granted: Boolean(active),
     email: active ? access.data!.email : null,
     grantedAt: active ? access.data!.granted_at : null,
+    withdrawn,
   };
 }
 
