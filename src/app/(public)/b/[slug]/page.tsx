@@ -12,8 +12,14 @@ import { showcaseOf } from "@/features/experience/catalog/model";
 import { siteFontClasses } from "@/features/experience/fonts";
 import { MiniSite } from "@/features/experience/mini-site";
 import { publicPhotoBase, publicView } from "@/features/experience/published";
+import {
+  jsonForScript,
+  localBusinessData,
+  shareDescription,
+} from "@/features/experience/share";
 import { PublicBooking } from "@/features/public-booking/components/public-booking";
 import { getPublishedSite } from "@/features/sites/data/sites";
+import { publicSitesIndexable } from "@/lib/env/server";
 import { AppException } from "@/lib/errors";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
 
@@ -46,17 +52,61 @@ const readPublicPage = cache(async (slug: string) => {
   return { business, catalog, site, hours };
 });
 
+/** The app's origin, read at run time (one build, several origins). */
+function appOrigin() {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_APP_URL ?? "");
+  } catch {
+    return undefined;
+  }
+}
+
+/** Her page in a shared link and a search engine (Higani 26, 27). */
+function shareOf(
+  page: NonNullable<Awaited<ReturnType<typeof readPublicPage>>>,
+) {
+  const { business, site } = page;
+  const config = site ? publicView(site) : null;
+  // The name her site shows (her Studio's), else her business's.
+  const name = config?.brand.name.trim() || business.name;
+  return {
+    config,
+    name,
+    // Her name alone: her page is hers, not the product's.
+    title: config ? name : `Réserver chez ${name}`,
+    description: shareDescription({
+      name,
+      config,
+      description: business.description,
+      location: business.location,
+    }),
+    path: `/b/${business.slug}`,
+  };
+}
+
 export async function generateMetadata({
   params,
 }: PageProps<"/b/[slug]">): Promise<Metadata> {
   const page = await readPublicPage((await params).slug);
+  if (!page) return { title: "Réservation", robots: { index: false } };
+  const { config, name, title, description, path } = shareOf(page);
   return {
-    title: page
-      ? page.site
-        ? page.business.name
-        : `Réserver chez ${page.business.name}`
-      : "Réservation",
-    robots: { index: false },
+    metadataBase: appOrigin(),
+    title: { absolute: title },
+    description,
+    alternates: { canonical: path },
+    // The image is opengraph-image.tsx, next to this page.
+    openGraph: {
+      type: "website",
+      locale: "fr_FR",
+      url: path,
+      siteName: name,
+      title,
+      description,
+    },
+    twitter: { card: "summary_large_image", title, description },
+    // Only a site she published, and only where indexing is turned on.
+    robots: { index: Boolean(config) && publicSitesIndexable() },
   };
 }
 
@@ -66,19 +116,40 @@ export default async function PublicBookingPage({
   const page = await readPublicPage((await params).slug);
   if (!page) notFound();
 
-  if (page.site)
+  const { config, name, description, path } = shareOf(page);
+  if (config) {
+    const origin = appOrigin()?.origin ?? "";
+    const cover = config.content.cover;
+    const data = localBusinessData({
+      name,
+      description,
+      url: `${origin}${path}`,
+      // Her cover as her public photos serve it (none: no image).
+      image: cover
+        ? `${origin}${publicPhotoBase(page.business.slug)}/${cover}/1200`
+        : undefined,
+      config,
+      hours: page.hours,
+    });
     return (
-      <MiniSite
-        config={publicView(page.site)}
-        catalog={showcaseOf(page.catalog)}
-        photoBase={publicPhotoBase(page.business.slug)}
-        // The same booking as her booking page: her catalogue, options
-        // included, priced and timed by the server.
-        booking={{ business: page.business, catalog: page.catalog }}
-        hours={page.hours}
-        fontClasses={siteFontClasses}
-      />
+      <>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: jsonForScript(data) }}
+        />
+        <MiniSite
+          config={config}
+          catalog={showcaseOf(page.catalog)}
+          photoBase={publicPhotoBase(page.business.slug)}
+          // The same booking as her booking page: her catalogue, options
+          // included, priced and timed by the server.
+          booking={{ business: page.business, catalog: page.catalog }}
+          hours={page.hours}
+          fontClasses={siteFontClasses}
+        />
+      </>
     );
+  }
 
   return <PublicBooking business={page.business} catalog={page.catalog} />;
 }

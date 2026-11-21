@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
 import { sampleSite } from "@/features/experience/fixtures/sample-sites";
@@ -242,6 +243,41 @@ describe("her practical infos and the index", () => {
     expect(await noSideScroll(page)).toBe(true);
     await expectAccessible(page, "mini-site practical");
     await capture(page, "mini-site practical 390");
+
+    // Her link when shared, and her page for search engines (Higani 26,
+    // 27): her name alone, what she does, never indexed on a test server,
+    // her published practical infos as schema.org data.
+    const head = await page.evaluate(() => {
+      const meta = (selector: string) =>
+        document.querySelector(selector)?.getAttribute("content") ?? null;
+      const data = document.querySelector('script[type="application/ld+json"]');
+      return {
+        title: document.title,
+        description: meta('meta[name="description"]'),
+        robots: meta('meta[name="robots"]'),
+        image: meta('meta[property="og:image"]'),
+        data: JSON.parse(data?.textContent ?? "null"),
+      };
+    });
+    expect(head.title).toBe("Studio Lumière");
+    expect(head.description).toMatch(/^Cils & regard/);
+    expect(head.robots).toBe("noindex");
+    expect(head.data).toMatchObject({
+      "@type": "LocalBusiness",
+      name: "Studio Lumière",
+      address: "12 rue Mercière, 69002 Lyon",
+      telephone: "04 78 00 00 00",
+    });
+    expect(head.data.openingHoursSpecification).toHaveLength(3);
+    // A JPEG every messenger reads, at the size they expect.
+    const shared = new URL(head.image!);
+    const preview = await page.request.get(
+      `${APP}${shared.pathname}${shared.search}`,
+    );
+    expect(preview.status()).toBe(200);
+    expect(preview.headers()["content-type"]).toBe("image/jpeg");
+    const picture = await sharp(await preview.body()).metadata();
+    expect([picture.width, picture.height]).toEqual([1200, 630]);
 
     expect(errors).toEqual([]);
     expect(consoleErrors).toEqual([]);

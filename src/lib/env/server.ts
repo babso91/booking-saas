@@ -117,3 +117,11 @@ export function getCronSecret(): string | null {
   });
   return parsed.success ? parsed.data.CRON_SECRET : null;
 }
+
+/**
+ * Published mini-sites may be indexed by search engines (Higani point 26).
+ * Off unless set to "true": a test environment such as Higani Stage stays
+ * out of search results, and turning it on is a decision for production.
+ */
+export const publicSitesIndexable = () =>
+  process.env.PUBLIC_SITES_INDEXABLE === "true";
