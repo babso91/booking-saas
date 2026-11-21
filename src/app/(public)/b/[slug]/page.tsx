@@ -14,6 +14,8 @@ import { MiniSite } from "@/features/experience/mini-site";
 import { publicPhotoBase, publicView } from "@/features/experience/published";
 import { PublicBooking } from "@/features/public-booking/components/public-booking";
 import { getPublishedSite } from "@/features/sites/data/sites";
+import { publicReviews } from "@/features/reviews/data";
+import { ReviewsSection } from "@/features/reviews/reviews-section";
 import { AppException } from "@/lib/errors";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
 
@@ -65,10 +67,22 @@ export default async function PublicBookingPage({
 }: PageProps<"/b/[slug]">) {
   const page = await readPublicPage((await params).slug);
   if (!page) notFound();
+  const reviewPage = await publicReviews(
+    createPublicSupabaseClient(),
+    page.business.slug,
+  ).catch(() => null);
+  const reviews = (
+    <ReviewsSection
+      key={page.business.slug}
+      slug={page.business.slug}
+      initial={reviewPage}
+    />
+  );
 
   if (page.site)
     return (
       <MiniSite
+        reviews={reviews}
         config={publicView(page.site)}
         catalog={showcaseOf(page.catalog)}
         photoBase={publicPhotoBase(page.business.slug)}
@@ -80,5 +94,10 @@ export default async function PublicBookingPage({
       />
     );
 
-  return <PublicBooking business={page.business} catalog={page.catalog} />;
+  return (
+    <>
+      <PublicBooking business={page.business} catalog={page.catalog} />
+      {reviews}
+    </>
+  );
 }

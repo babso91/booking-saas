@@ -1133,6 +1133,9 @@ isOneToOne: false
 "client_hub_appointments":
 { Args: { "p_after_id"?: string,"p_after_starts_at"?: string,"p_business_id": string,"p_limit"?: number,"p_scope": string,"p_session_token": string }; Returns: Json
                            },
+"client_hub_business_review":
+{ Args: { "p_comment"?: string,"p_session_token": string,"p_slug": string,"p_stars"?: number }; Returns: Json
+                           },
 "client_hub_cancel_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_expected_version": number,"p_request_id": string,"p_session_token": string }; Returns: Json
                            },
@@ -1380,6 +1383,9 @@ isOneToOne: false
 { Args: { "p_slug": string }; Returns: {
               "ends_at": string,"starts_at": string,"weekday": number
             }[]
+                           },
+"get_public_business_reviews":
+{ Args: { "p_offset"?: number,"p_slug": string }; Returns: Json
                            },
 "get_public_catalog":
 { Args: { "p_slug": string }; Returns: Json

@@ -47,6 +47,7 @@ export default async function AgendaPage({ searchParams }: PageProps<"/app">) {
       )}
       <AgendaView
         key={business.membershipId}
+        shareSlug={business.slug}
         formatSettings={
           signature
             ? {

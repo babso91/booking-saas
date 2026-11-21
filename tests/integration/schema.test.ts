@@ -101,6 +101,7 @@ describe("migrated schema", () => {
       // Her usual week for her site's practical infos: weekday and times
       // only, behind the same slug guard (public_business_hours).
       "get_public_business_hours",
+      "get_public_business_reviews",
       "get_public_catalog",
       "get_public_services",
       // The published version of a mini-site (site_publishing migration).

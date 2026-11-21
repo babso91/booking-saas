@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
   type Ref,
   type RefObject,
 } from "react";
@@ -67,7 +68,9 @@ export function MiniSite({
   fontClasses,
   edit,
   hours = null,
+  reviews,
 }: {
+  reviews?: ReactNode;
   config: SiteConfig;
   catalog: ShowcaseGroup[];
   /**
@@ -178,6 +181,7 @@ export function MiniSite({
                 />
               </div>
             ) : null}
+            {reviews}
           </main>
           <Footer />
           <QuickBook />
