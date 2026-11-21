@@ -30,6 +30,7 @@ const notPublished = () =>
 const emptyCatalog = { currency: "EUR", groups: [] };
 
 beforeEach(() => {
+  vi.unstubAllEnvs();
   data.getPublicBusiness.mockReset();
   data.getPublicBusinessHours.mockReset();
   data.getPublicBusinessHours.mockResolvedValue([]);
@@ -63,7 +64,19 @@ describe("/b/[slug]", () => {
 
   it("without a published site: the booking page with her catalogue, as before", async () => {
     const metadata = await generateMetadata(params("studio-mila") as never);
-    expect(metadata.title).toBe("Réserver chez Studio Mila");
+    // Her name, not the product's; never indexed without a site she published,
+    // even where indexing is on (Higani 26, 27).
+    expect(metadata).toMatchObject({
+      title: { absolute: "Réserver chez Studio Mila" },
+      description: "Réservez en ligne chez Studio Mila.",
+      alternates: { canonical: "/b/studio-mila" },
+      openGraph: { url: "/b/studio-mila", locale: "fr_FR" },
+      robots: { index: false },
+    });
+    vi.stubEnv("PUBLIC_SITES_INDEXABLE", "true");
+    expect(
+      (await generateMetadata(params("studio-mila") as never)).robots,
+    ).toEqual({ index: false });
     const page = await PublicBookingPage(params("studio-mila") as never);
     expect(page.props).toMatchObject({
       business: { slug: "studio-mila" },
@@ -103,11 +116,37 @@ describe("/b/[slug]", () => {
     // Her usual hours, for her practical infos (read with her site only).
     const hours = [{ weekday: 1, startsAt: "09:00", endsAt: "19:00" }];
     data.getPublicBusinessHours.mockResolvedValue(hours);
-    expect((await generateMetadata(params("studio-mila") as never)).title).toBe(
-      "Studio Mila",
-    );
+    const metadata = await generateMetadata(params("studio-mila") as never);
+    expect(metadata).toMatchObject({
+      title: { absolute: "Studio Mila" },
+      openGraph: {
+        type: "website",
+        url: "/b/studio-mila",
+        title: "Studio Mila",
+      },
+      twitter: { card: "summary_large_image" },
+      // Published, but indexing stays off unless turned on (Higani Stage).
+      robots: { index: false },
+    });
+    vi.stubEnv("PUBLIC_SITES_INDEXABLE", "true");
+    expect(
+      (await generateMetadata(params("studio-mila") as never)).robots,
+    ).toEqual({ index: true });
     const page = await PublicBookingPage(params("studio-mila") as never);
-    expect(page.props).toMatchObject({
+    const [script, site] = page.props.children;
+    // Her page for search engines: schema.org data, closed safely.
+    expect(script.props.type).toBe("application/ld+json");
+    expect(
+      JSON.parse(script.props.dangerouslySetInnerHTML.__html),
+    ).toMatchObject({
+      "@type": "LocalBusiness",
+      name: "Studio Mila",
+      // Her cover as her public photos serve it.
+      image: expect.stringMatching(
+        /\/api\/public\/businesses\/studio-mila\/site\/photos\/11111111-1111-4111-8111-111111111111\/1200$/,
+      ),
+    });
+    expect(site.props).toMatchObject({
       catalog: groups,
       // Her booking: the catalogue as the server projects it, options
       // included, never a list of services of its own.
