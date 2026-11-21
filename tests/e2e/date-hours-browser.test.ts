@@ -40,8 +40,9 @@ it("adds, revisits and restores two different Thursdays independently", async ()
     await page.getByRole("switch", { name: "Jeudi ouvert" }).waitFor();
     await page.getByLabel("Date à modifier").fill(date);
   };
-  const opening = page.getByLabel("Ouverture", { exact: true });
-  const closing = page.getByLabel("Fermeture", { exact: true });
+  // The date starts from Thursday's usual 09:00–20:00 (one range).
+  const opening = page.getByLabel("Début de la plage 1", { exact: true });
+  const closing = page.getByLabel("Fin de la plage 1", { exact: true });
   for (const [date, end] of [
     [first, "18:00"],
     [second, "22:00"],
