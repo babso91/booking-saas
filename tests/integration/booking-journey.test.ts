@@ -995,6 +995,54 @@ describe("point 78: who may manage it from the email", () => {
   });
 });
 
+describe("point 152: her reminders are not marketing", () => {
+  it("a withdrawn marketing consent never stops her appointment reminder", async () => {
+    const address = `marketing-${randomUUID().slice(0, 6)}@client.test`;
+    const shown = await availability(A, serviceA, D6);
+    const at = (shown.body.data.slots as Slot[]).at(-1)!;
+    const created = await json(
+      await book({ startsAt: at.startsAt, email: address }),
+    );
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const id = created.body.data.booking.appointmentId as string;
+    await deliver(A.id);
+    const { rows } = await db.query<{ client_id: string }>(
+      "select client_id from public.appointments where id = $1",
+      [id],
+    );
+
+    // She says no to marketing (recorded by her professional).
+    const withdrawn = await ownerA.client.rpc("marketing_set_consent", {
+      p_business_id: A.id,
+      p_client_id: rows[0]!.client_id,
+      p_purpose: "marketing",
+      p_channel: "email",
+      p_action: "withdraw",
+      p_proof_version: null,
+      p_request_id: randomUUID(),
+    } as never);
+    expect(withdrawn.error).toBeNull();
+
+    // Her reminder still goes out, and it is not a marketing message.
+    await db.query(
+      `update public.email_events set scheduled_for = now() - interval '1 second'
+       where appointment_id = $1 and type = 'appointment_reminder' and status = 'pending'`,
+      [id],
+    );
+    await deliver(A.id);
+    const { rows: events } = await db.query<{ type: string; status: string }>(
+      "select type, status from public.email_events where appointment_id = $1 order by created_at",
+      [id],
+    );
+    expect(events).toEqual([
+      { type: "booking_confirmation", status: "sent" },
+      { type: "appointment_reminder", status: "sent" },
+    ]);
+    const reminder = mailTo(address).at(-1)!;
+    expect(reminder.text).not.toMatch(/désinscri|unsubscribe/i);
+  });
+});
+
 describe("point 204: each business sees its own", () => {
   it("B's owner sees nothing of A; the public page gives no customer data", async () => {
     const appointments = await ownerB.client
