@@ -84,11 +84,14 @@ export const replaceBusinessHoursSchema = z
 
 export const bookingHorizonDaysSchema = z.number().int().min(1).max(365);
 
+/** Minimum notice before an online booking, in minutes (7 days at most). */
+export const bookingNoticeMinutesSchema = z.number().int().min(0).max(10_080);
+
 export const updateBookingSettingsSchema = z
   .object({
     slotIntervalMinutes: z.number().int().min(5).max(120).optional(),
     bufferMinutes: z.number().int().min(0).max(240).optional(),
-    minimumBookingNoticeMinutes: z.number().int().min(0).max(10_080).optional(),
+    minimumBookingNoticeMinutes: bookingNoticeMinutesSchema.optional(),
     maximumBookingAdvanceDays: bookingHorizonDaysSchema.optional(),
   })
   .refine((changes) => Object.values(changes).some((v) => v !== undefined), {

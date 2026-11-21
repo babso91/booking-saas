@@ -15,6 +15,7 @@ import {
 } from "@/features/availability/data/schedule";
 import {
   bookingHorizonDaysSchema,
+  bookingNoticeMinutesSchema,
   createAvailabilityExceptionSchema,
   deleteAvailabilityExceptionSchema,
   listAvailabilityExceptionsSchema,
@@ -76,6 +77,25 @@ export async function setBookingHorizonAction(input: unknown) {
         maximumBookingAdvanceDays: data.days,
       });
       return settings.maximumBookingAdvanceDays;
+    },
+  );
+  if (result.ok) revalidatePath("/b/[slug]", "page");
+  return result;
+}
+
+/** The minimum notice of online bookings (owner or admin of this business). */
+export async function setBookingNoticeAction(input: unknown) {
+  const result = await runBusinessAction(
+    z.object({ businessId: z.uuid(), minutes: bookingNoticeMinutesSchema }),
+    input,
+    async ({ client, businessId, role }, data) => {
+      if (businessId !== data.businessId || role === "practitioner") {
+        throw new AppException("forbidden");
+      }
+      const settings = await updateBookingSettings(client, businessId, {
+        minimumBookingNoticeMinutes: data.minutes,
+      });
+      return settings.minimumBookingNoticeMinutes;
     },
   );
   if (result.ok) revalidatePath("/b/[slug]", "page");
