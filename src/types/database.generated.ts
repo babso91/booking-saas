@@ -1668,6 +1668,19 @@ isOneToOne: false
 "set_business_date_hours":
 { Args: { "p_business_id": string,"p_date": string,"p_ends_at"?: string,"p_expected_ends_at"?: string,"p_expected_starts_at"?: string,"p_starts_at"?: string }; Returns: undefined
                            },
+"set_business_date_ranges":
+{ Args: { "p_business_id": string,"p_date": string,"p_expected": Json,"p_ranges": Json }; Returns: {
+              "business_id": string,
+"date": string,
+"ends_at": string,
+"starts_at": string
+            }[]
+                          SetofOptions: {
+        from: "*"
+        to: "business_date_hours"
+        isOneToOne: false
+        isSetofReturn: true
+      } },
 "set_business_legal_profile":
 { Args: { "p_address": string,"p_business_id": string,"p_contact_email": string,"p_legal_name": string,"p_registration_number": string }; Returns: Json
                            },
