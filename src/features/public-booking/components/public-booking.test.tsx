@@ -781,12 +781,11 @@ describe("refusals", () => {
     expect(api.availability.mock.calls.length).toBe(readsBefore + 1);
     expect(api.availability).toHaveBeenLastCalledWith(SERVICE_A, today);
 
+    // Her details were given already: straight back to the review, not
+    // asked again (Higani point 68).
     fireEvent.click(await slotButton("14:00"));
-    await screen.findByRole("heading", { name: "Vos coordonnées" });
-    expect(field(/^Prénom/).value).toBe("Inès");
-    expect(field(/^Email/).value).toBe("ines.benali@exemple.fr");
-    fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
     await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+    expect(screen.getByText(/Inès · ines.benali@exemple.fr/)).toBeTruthy();
     api.booking.mockImplementationOnce(() =>
       ok({ booking: bookingFor() }, 201),
     );
@@ -1254,5 +1253,130 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
     );
     // No answers to send: no optionChoiceIds.
     expect(bookingBodies()[0]).not.toHaveProperty("optionChoiceIds");
+  });
+
+  // Higani point 68: changing one thing never erases the others needlessly.
+  describe("back without losing anything", () => {
+    const pressed = async (time: string) =>
+      (await slotButton(time)).getAttribute("aria-pressed");
+
+    it("an option changed from the review: her slot and details kept, the new price shown before she confirms", async () => {
+      await toReviewWithOptions();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Changer les options" }),
+      );
+      await screen.findByRole("heading", {
+        name: "Personnalisez votre prestation",
+      });
+      fireEvent.click(screen.getByRole("radio", { name: /^Oui/ }));
+      await screen.findByText(/1 h 05 · 48,50\s€/);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Choisir un créneau" }),
+      );
+      await screen.findByRole("heading", { name: "Choisissez un créneau" });
+      // Still offered with the new duration: still hers.
+      expect(await pressed("09:30")).toBe("true");
+      fireEvent.click(await slotButton("09:30"));
+      // Her details were given: not asked again.
+      await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+      expect(screen.getByText(/Inès · ines.benali@exemple.fr/)).toBeTruthy();
+      expect(screen.getAllByText(/48,50\s€/).length).toBeGreaterThan(0);
+      api.booking.mockImplementationOnce(() =>
+        ok({ booking: bookingFor() }, 201),
+      );
+      fireEvent.click(confirmButton());
+      await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+      expect(bookingBodies()[0]).toMatchObject({
+        startsAt: `${today}T16:30:00.000Z`,
+        optionChoiceIds: [LARGE, OUI],
+        expectedPriceCents: 4850,
+        expectedDurationMinutes: 65,
+        firstName: "Inès",
+      });
+    });
+
+    it("an option that no longer fits her slot: only the slot is chosen again", async () => {
+      await toReviewWithOptions();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Changer les options" }),
+      );
+      await screen.findByRole("heading", {
+        name: "Personnalisez votre prestation",
+      });
+      // With the glitter, 09:30 is no longer offered that day.
+      api.availability.mockImplementation((_, date, choices) =>
+        ok({
+          date,
+          timezone: TZ,
+          slots: choices?.includes(OUI) ? [slotsFor(date)[1]] : slotsFor(date),
+          quote: quoteFor(choices ? choices.split(",") : []),
+        }),
+      );
+      fireEvent.click(screen.getByRole("radio", { name: /^Oui/ }));
+      await screen.findByText(/1 h 05 · 48,50\s€/);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Choisir un créneau" }),
+      );
+      await screen.findByRole("heading", { name: "Choisissez un créneau" });
+      expect(screen.queryByRole("button", { name: /à 09:30$/ })).toBeNull();
+      expect(await pressed("14:00")).toBe("false");
+      fireEvent.click(await slotButton("14:00"));
+      await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+      expect(screen.getByText(/Inès · ines.benali@exemple.fr/)).toBeTruthy();
+    });
+
+    it("the same service chosen again from the list: her answers and her slot kept", async () => {
+      await toOptions();
+      fireEvent.click(screen.getByRole("radio", { name: /Large/ }));
+      await screen.findByText(/1 h 05 · 44,50\s€/);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Choisir un créneau" }),
+      );
+      await screen.findByRole("heading", { name: "Choisissez un créneau" });
+      fireEvent.click(await slotButton("09:30"));
+      await screen.findByRole("heading", { name: "Vos coordonnées" });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Changer de créneau" }),
+      );
+      await screen.findByRole("heading", { name: "Choisissez un créneau" });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Changer de prestation" }),
+      );
+      await screen.findByRole("heading", { name: "Choisissez une prestation" });
+      fireEvent.click(screen.getByRole("button", { name: /Motif au henné/ }));
+      await screen.findByRole("heading", {
+        name: "Personnalisez votre prestation",
+      });
+      expect(
+        (screen.getByRole("radio", { name: /Large/ }) as HTMLInputElement)
+          .checked,
+      ).toBe(true);
+      await screen.findByText(/1 h 05 · 44,50\s€/);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Choisir un créneau" }),
+      );
+      await screen.findByRole("heading", { name: "Choisissez un créneau" });
+      expect(await pressed("09:30")).toBe("true");
+    });
+
+    it("another service: its own answers, but the day she chose and her details stay", async () => {
+      await toReviewWithOptions();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Changer les options" }),
+      );
+      await screen.findByRole("heading", {
+        name: "Personnalisez votre prestation",
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Changer de prestation" }),
+      );
+      await screen.findByRole("heading", { name: "Choisissez une prestation" });
+      fireEvent.click(screen.getByRole("button", { name: /Rehaussement/ }));
+      await screen.findByRole("heading", { name: "Choisissez un créneau" });
+      expect(api.availability).toHaveBeenLastCalledWith(SERVICE_B, today);
+      fireEvent.click(await slotButton("14:00"));
+      await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+      expect(screen.getByText(/Inès · ines.benali@exemple.fr/)).toBeTruthy();
+    });
   });
 });

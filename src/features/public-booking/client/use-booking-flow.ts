@@ -368,17 +368,50 @@ export function useBookingFlow({
     });
   }
 
+  /**
+   * After a new read of her day: the slot she had chosen stays chosen when
+   * it is still offered, with the quote it has now (shown again on the
+   * review before she confirms); otherwise she chooses another.
+   */
+  function keepSlot(kept: Slot | null) {
+    return (fresh: Slot[], quote: Quote) => {
+      const same = kept
+        ? fresh.find((item) => item.startsAt === kept.startsAt)
+        : undefined;
+      setSlot(same ?? null);
+      setSlotQuote(same ? quote : null);
+    };
+  }
+
+  /** Her details already given and valid: they are not asked again. */
+  function afterSlot() {
+    if (Object.keys(checkContact(contact)).length > 0) {
+      setStep("contact");
+      return;
+    }
+    setSubmit({ status: "idle" });
+    setStep("review");
+  }
+
   function chooseService(id: string) {
     const chosen = services.find((item) => item.id === id);
     if (sending.current || !chosen) return;
-    const next = answersFor(chosen);
+    // The same service chosen again (back from the list): her answers and
+    // her slot are kept, as long as they are still valid.
+    const same = id === serviceId;
+    const next = answersFor(chosen, same ? answers : {});
     setServiceId(id);
     setAnswers(next);
     setSlot(null);
     setSlotQuote(null);
     setNotice(null);
     setStep(chosen.options.length > 0 ? "options" : "slot");
-    loadSlots(id, date, choiceIdsOf(chosen, next));
+    loadSlots(
+      id,
+      date,
+      choiceIdsOf(chosen, next),
+      same ? keepSlot(slot) : undefined,
+    );
   }
 
   /** Her answer to one group (null: none, for an optional one). */
@@ -394,8 +427,9 @@ export function useBookingFlow({
     setSlot(null);
     setSlotQuote(null);
     setNotice(null);
-    // The duration changes with the answers: the slots too.
-    loadSlots(service.id, date, choiceIdsOf(service, next));
+    // The duration changes with the answers: the slots too. Her slot stays
+    // chosen if it still fits.
+    loadSlots(service.id, date, choiceIdsOf(service, next), keepSlot(slot));
   }
 
   /** On to the slots, once the quote of these answers is known. */
@@ -422,7 +456,7 @@ export function useBookingFlow({
     setSlot(next);
     setSlotQuote(slots.quote);
     setNotice(null);
-    setStep("contact");
+    afterSlot();
   }
 
   function chooseCalendarSlot(day: string, startsAt: string) {
@@ -441,7 +475,7 @@ export function useBookingFlow({
       }
       setSlot(match);
       setSlotQuote(quote);
-      setStep("contact");
+      afterSlot();
     });
   }
 
