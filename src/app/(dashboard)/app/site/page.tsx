@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { requireReadyBusiness } from "@/features/auth/data/guards";
+import { getPublicBusinessHours } from "@/features/businesses/data/public-business";
 import { getPublicCatalog } from "@/features/catalog/data/catalog";
 import {
   areaIdentityKey,
@@ -25,10 +26,12 @@ export default async function SiteStudioPage() {
   // rendered into the payload of its redirect response.
   const { user, business } = await requireReadyBusiness();
   const client = await createServerSupabaseClient();
-  const [site, catalog, photos] = await Promise.all([
+  const [site, catalog, photos, hours] = await Promise.all([
     getSite(client, business.id),
     getPublicCatalog(client, business.slug),
     listSitePhotos(client, business.id),
+    // Her usual hours, as her clients will read them in her infos.
+    getPublicBusinessHours(client, business.slug),
   ]);
   const online = site?.published
     ? await getSiteVersion(client, business.id, site.published.versionId)
@@ -57,6 +60,7 @@ export default async function SiteStudioPage() {
       businessId={business.id}
       photos={photos.map((photo) => ({ id: photo.id, status: photo.status }))}
       fontClasses={siteFontClasses}
+      hours={hours}
     />
   );
 }

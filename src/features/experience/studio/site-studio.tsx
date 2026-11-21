@@ -16,6 +16,7 @@ import type { PhotoSlot, SiteConfig } from "../engine/config";
 import { renderConfigOf } from "../engine/from-site";
 import { ensureReadable } from "../engine/harmony";
 import { MiniSite } from "../mini-site";
+import type { UsualHours } from "../practical";
 import {
   studioActionsFor,
   type StudioActions,
@@ -58,6 +59,7 @@ export function SiteStudio({
   fontClasses,
   businessId,
   actions: given,
+  hours = null,
 }: {
   /** Her site as read now (null: nothing saved yet). */
   site: SiteDto | null;
@@ -75,6 +77,8 @@ export function SiteStudio({
   businessId: string;
   /** Her server; an in-memory one only in a design preview or a test. */
   actions?: StudioActions;
+  /** Her usual weekly hours, shown in her infos as her clients see them. */
+  hours?: UsualHours[] | null;
 }) {
   const actions = useMemo(
     () => given ?? studioActionsFor(businessId),
@@ -301,6 +305,7 @@ export function SiteStudio({
           previewSlug={given ? undefined : slug}
           openBookingPreviewRef={bookingPreview}
           fontClasses={fontClasses}
+          hours={hours}
           edit={
             view === "draft"
               ? {
@@ -333,8 +338,8 @@ export function SiteStudio({
           catalog={catalog}
           plan={plan}
           onDesign={(next) => {
-            // Another universe: her name, texts and photos follow; her
-            // catalogue is not part of the design at all.
+            // Another universe: her name, texts, photos and practical
+            // infos follow; her catalogue is not part of the design at all.
             const base = universes[next].config;
             history.set({
               ...base,
@@ -342,6 +347,7 @@ export function SiteStudio({
               brand: draft.brand,
               content: draft.content,
               hidden: draft.hidden,
+              ...(draft.practical ? { practical: draft.practical } : {}),
             });
             setReplay((value) => value + 1);
           }}

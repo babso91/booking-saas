@@ -17,6 +17,7 @@ import type {
   MotionId,
   Palette,
   PhotoSlot,
+  Practical,
   Section,
   ShapeId,
   SiteConfig,
@@ -24,6 +25,7 @@ import type {
 } from "../engine/config";
 import { euros, minutes } from "../engine/engine";
 import { advise, ensureReadable } from "../engine/harmony";
+import { emptyPractical } from "../practical";
 import {
   grades,
   motions,
@@ -131,6 +133,7 @@ type Tab =
   | "universe"
   | "photos"
   | "texts"
+  | "infos"
   | "colors"
   | "composition"
   | "style"
@@ -227,6 +230,7 @@ export function Studio({
     { id: "sections", label: "Sections" },
     { id: "photos", label: "Photos" },
     { id: "texts", label: "Textes" },
+    { id: "infos", label: "Infos" },
     { id: "colors", label: "Couleurs" },
     ...(creative
       ? [
@@ -906,6 +910,13 @@ export function Studio({
                         </fieldset>
                       ) : null}
                     </>
+                  ) : current === "infos" ? (
+                    <PracticalFields
+                      value={config.practical ?? emptyPractical}
+                      onChange={(practical, key) =>
+                        set({ practical }, `practical.${key}`)
+                      }
+                    />
                   ) : current === "colors" ? (
                     <>
                       <p className="text-[13px] text-black/55">
@@ -1374,18 +1385,124 @@ function Advice({
   );
 }
 
+/**
+ * Her "Infos pratiques" (Higani point 5): what her clients read before
+ * booking or coming. Every field is optional; her hours come from her
+ * schedule, her phone and e-mail only from what she types here.
+ */
+function PracticalFields({
+  value,
+  onChange,
+}: {
+  value: Practical;
+  onChange: (value: Practical, key: keyof Practical) => void;
+}) {
+  const field = (key: Exclude<keyof Practical, "showHours">) => ({
+    value: value[key],
+    onChange: (text: string) => onChange({ ...value, [key]: text }, key),
+  });
+  return (
+    <>
+      <p className="text-[13.5px] text-black/60">
+        Ce que tes clientes doivent savoir avant de réserver ou de venir. Tout
+        est facultatif : un champ vide n’apparaît pas sur ton site.
+      </p>
+      <Text
+        label="Adresse"
+        maxLength={siteLimits.practicalAddress}
+        {...field("address")}
+      />
+      <Text
+        label="Zone d’intervention (si tu te déplaces)"
+        maxLength={siteLimits.practicalArea}
+        {...field("area")}
+      />
+      <button
+        type="button"
+        role="switch"
+        aria-checked={value.showHours}
+        onClick={() =>
+          onChange({ ...value, showHours: !value.showHours }, "showHours")
+        }
+        className="flex min-h-14 w-full cursor-pointer items-center gap-3 rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-left"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block text-[15px] font-medium">
+            Afficher mes horaires habituels
+          </span>
+          <span className="block text-[12.5px] leading-snug text-black/55">
+            Lus depuis ton planning : ils restent d’accord avec tes créneaux.
+          </span>
+        </span>
+        <span
+          aria-hidden="true"
+          className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${value.showHours ? "bg-[#2B3BFF]" : "bg-black/20"}`}
+        >
+          <span
+            className={`absolute top-0.5 size-6 rounded-full bg-white shadow transition-transform ${value.showHours ? "translate-x-[22px]" : "translate-x-0.5"}`}
+          />
+        </span>
+      </button>
+      <Text
+        label="Accès (code, étage, transports, stationnement)"
+        multiline
+        maxLength={siteLimits.practicalAccess}
+        {...field("access")}
+      />
+      <Text
+        label="Avant de venir (consignes)"
+        multiline
+        maxLength={siteLimits.practicalInstructions}
+        {...field("instructions")}
+      />
+      <Text
+        label="Paiements acceptés"
+        maxLength={siteLimits.practicalPayment}
+        {...field("payment")}
+      />
+      <Text
+        label="Accessibilité"
+        multiline
+        maxLength={siteLimits.practicalAccessibility}
+        {...field("accessibility")}
+      />
+      <p className="mt-2 border-t border-black/10 pt-4 text-[13px] font-semibold">
+        Contact
+      </p>
+      <p className="text-[12.5px] leading-snug text-black/55">
+        Ton téléphone et ton e-mail n’apparaissent sur ton site que si tu les
+        écris ici.
+      </p>
+      <Text
+        label="Téléphone"
+        type="tel"
+        maxLength={siteLimits.practicalPhone}
+        {...field("phone")}
+      />
+      <Text
+        label="E-mail"
+        type="email"
+        maxLength={siteLimits.practicalEmail}
+        {...field("email")}
+      />
+    </>
+  );
+}
+
 function Text({
   label,
   value,
   onChange,
   multiline,
   maxLength,
+  type = "text",
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   multiline?: boolean;
   maxLength?: number;
+  type?: "text" | "tel" | "email";
 }) {
   const className =
     "w-full rounded-xl border border-black/10 bg-white px-3 text-[16px] outline-none focus:border-black/40";
@@ -1402,8 +1519,10 @@ function Text({
         />
       ) : (
         <input
+          type={type}
           value={value}
           maxLength={maxLength}
+          autoComplete="off"
           onChange={(event) => onChange(event.target.value)}
           className={`${className} h-12`}
         />

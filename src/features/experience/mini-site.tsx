@@ -34,11 +34,14 @@ import {
   inkOn,
   motions,
 } from "./engine/tokens";
+import { practicalItems, type UsualHours } from "./practical";
 import { Intro } from "./scenes/intro";
+import { PracticalInfo } from "./scenes/practical-info";
 import { SiteIndex, SiteIndexButton } from "./site-index";
 import {
   anchorOf,
   destinations as destinationsOf,
+  practicalDestination,
   shownSections,
 } from "./sections";
 import { Opening } from "./scenes/opening";
@@ -63,6 +66,7 @@ export function MiniSite({
   openBookingPreviewRef,
   fontClasses,
   edit,
+  hours = null,
 }: {
   config: SiteConfig;
   catalog: ShowcaseGroup[];
@@ -84,6 +88,8 @@ export function MiniSite({
   openBookingPreviewRef?: Ref<() => void>;
   /** The faces of the universes (fonts.ts), declared on the site's root. */
   fontClasses: string;
+  /** Her usual weekly hours (get_public_business_hours), for her infos. */
+  hours?: UsualHours[] | null;
 }) {
   const [booking, setBooking] = useState<{ serviceId?: string } | null>(null);
   useImperativeHandle(openBookingPreviewRef, () => () => setBooking({}), []);
@@ -93,7 +99,16 @@ export function MiniSite({
   // Her choice of scenes (the opening and her services always show), the
   // empty ones left out of her public site (sections.ts).
   const sections = shownSections(config, { editing: Boolean(edit) });
-  const destinations = destinationsOf(sections);
+  // Her "Infos pratiques", after her scenes, when there is something.
+  const practical = practicalItems({
+    practical: config.practical,
+    hours,
+    cancellationPolicy: bookable?.business.cancellationPolicy ?? null,
+  });
+  const destinations = [
+    ...destinationsOf(sections),
+    ...(practical.length ? [practicalDestination] : []),
+  ];
   // Where the index sends her client once it has closed.
   const going = useRef<string | null>(null);
   // Chapter numbers of the scenes after the opening: (01), (02)…
@@ -151,6 +166,18 @@ export function MiniSite({
                 <div key={`${section.kind}-${position}`}>{scene}</div>
               );
             })}
+            {practical.length ? (
+              <div
+                id={practicalDestination.id}
+                tabIndex={-1}
+                className="scroll-mt-16 outline-none"
+              >
+                <PracticalInfo
+                  items={practical}
+                  index={(chapters.at(-1) ?? 0) + 1}
+                />
+              </div>
+            ) : null}
           </main>
           <Footer />
           <QuickBook />

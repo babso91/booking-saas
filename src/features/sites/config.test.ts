@@ -6,9 +6,45 @@ import { sampleSiteConfig } from "./site-fixture";
 
 const ASSET = "6f1c1d1e-4a39-4b4f-9a49-1f6b1c4f1a01";
 
+const practical = {
+  address: "12 rue Mercière, 69002 Lyon",
+  area: "",
+  access: "Code 4B12, 2e étage.",
+  instructions: "",
+  payment: "CB, espèces",
+  accessibility: "",
+  phone: "+33 6 12 34 56 78",
+  email: "contact@example.com",
+  showHours: true,
+};
+
 describe("siteConfigSchema", () => {
   it("accepts the lab's configuration shape", () => {
     expect(siteConfigSchema.safeParse(sampleSiteConfig()).success).toBe(true);
+  });
+
+  it("accepts her practical infos, and a version without them", () => {
+    expect(
+      siteConfigSchema.safeParse(sampleSiteConfig({ practical })).success,
+    ).toBe(true);
+    const parsed = siteConfigSchema.parse(sampleSiteConfig());
+    expect(parsed.practical).toBeUndefined();
+  });
+
+  it("refuses practical infos that are not plain, or not a contact", () => {
+    for (const bad of [
+      { access: "<b>Code</b>" },
+      { phone: "appelle-moi" },
+      { email: "pas-un-email" },
+      { website: "https://example.com" },
+      { address: "x".repeat(161) },
+    ]) {
+      expect(
+        siteConfigSchema.safeParse(
+          sampleSiteConfig({ practical: { ...practical, ...bad } } as never),
+        ).success,
+      ).toBe(false);
+    }
   });
 
   it("refuses what the registry does not know", () => {

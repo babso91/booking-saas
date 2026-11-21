@@ -37,6 +37,14 @@ export const siteLimits = {
   portraitRole: 80,
   portraitText: 1200,
   works: 24,
+  practicalAddress: 160,
+  practicalArea: 160,
+  practicalAccess: 400,
+  practicalInstructions: 600,
+  practicalPayment: 160,
+  practicalAccessibility: 300,
+  practicalPhone: 30,
+  practicalEmail: 120,
 } as const;
 
 /**
@@ -110,6 +118,31 @@ const section = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
+
+/**
+ * Her "Infos pratiques" (Higani point 5). Every text may be empty (not
+ * shown). Her phone and e-mail are published only because she typed them
+ * here: never copied from her account.
+ */
+const practical = z
+  .object({
+    address: plainText(siteLimits.practicalAddress),
+    area: plainText(siteLimits.practicalArea),
+    access: plainText(siteLimits.practicalAccess),
+    instructions: plainText(siteLimits.practicalInstructions),
+    payment: plainText(siteLimits.practicalPayment),
+    accessibility: plainText(siteLimits.practicalAccessibility),
+    phone: plainText(siteLimits.practicalPhone).refine(
+      (value) => /^(\+?[0-9][0-9 .()-]{5,})?$/.test(value),
+      "Numéro de téléphone invalide.",
+    ),
+    email: plainText(siteLimits.practicalEmail).refine(
+      (value) => !value || z.email().safeParse(value).success,
+      "Adresse e-mail invalide.",
+    ),
+    showHours: z.boolean(),
+  })
+  .strict();
 
 const sceneKind = z.enum(["opening", "intro", "work", "portrait", "services"]);
 
@@ -196,6 +229,8 @@ export const siteConfigSchema = z
     booking: z.enum(["page", "sheet"]),
     bookingFormat: z.enum(bookingFormats).optional(),
     quickBook: z.enum(["bar", "pill"]),
+    /** Absent on versions published before it: no block of hers. */
+    practical: practical.optional(),
   })
   .strict();
 

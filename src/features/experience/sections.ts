@@ -53,7 +53,18 @@ const DESTINATIONS: Partial<Record<SceneKind, { id: string; label: string }>> =
     portrait: { id: "portrait", label: "Portrait" },
   };
 
-export type Destination = { kind: SceneKind; id: string; label: string };
+export type Destination = {
+  kind: SceneKind | "practical";
+  id: string;
+  label: string;
+};
+
+/** Her "Infos pratiques", after her scenes (practical-info.tsx). */
+export const practicalDestination: Destination = {
+  kind: "practical",
+  id: "infos",
+  label: "Infos pratiques",
+};
 
 /** Where the site's index leads: the shown scenes worth reaching, once. */
 export function destinations(sections: readonly Section[]): Destination[] {

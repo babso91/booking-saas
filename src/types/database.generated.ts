@@ -1376,6 +1376,11 @@ isOneToOne: false
               "cancellation_policy": string,"currency": string,"description": string,"location": string,"logo_path": string,"maximum_booking_advance_days": number,"minimum_booking_notice_minutes": number,"name": string,"slot_interval_minutes": number,"slug": string,"timezone": string,"today": string,"waitlist_enabled": boolean
             }[]
                            },
+"get_public_business_hours":
+{ Args: { "p_slug": string }; Returns: {
+              "ends_at": string,"starts_at": string,"weekday": number
+            }[]
+                           },
 "get_public_catalog":
 { Args: { "p_slug": string }; Returns: Json
                            },
