@@ -1384,6 +1384,11 @@ isOneToOne: false
 "get_public_catalog":
 { Args: { "p_slug": string }; Returns: Json
                            },
+"get_public_next_slots":
+{ Args: { "p_slug": string }; Returns: {
+              "ends_at": string,"local_ends_at": string,"local_starts_at": string,"service_id": string,"starts_at": string
+            }[]
+                           },
 "get_public_services":
 { Args: { "p_slug": string }; Returns: {
               "currency": string,"description": string,"display_order": number,"duration_minutes": number,"id": string,"name": string,"price_cents": number

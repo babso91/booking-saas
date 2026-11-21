@@ -47,3 +47,38 @@ export async function getAvailableSlots(
     localEndsAt: slot.local_ends_at,
   }));
 }
+
+/** A service's next bookable slot, or null when none within the horizon. */
+export type NextSlotDto = { serviceId: string; slot: SlotDto | null };
+
+/**
+ * The next bookable slot of every service bookable online (Higani point 2),
+ * in one read: the same engine as the slots, the answers the booking page
+ * preselects for required options. Earliest first, services without any
+ * slot last. Unknown businesses raise `business_not_found`.
+ */
+export async function getNextSlots(
+  client: AppSupabaseClient,
+  slug: string,
+): Promise<NextSlotDto[]> {
+  const { data, error } = await client.rpc("get_public_next_slots", {
+    p_slug: slug,
+  });
+
+  if (error) {
+    throw databaseException(error);
+  }
+
+  return data.map((row) => ({
+    serviceId: row.service_id,
+    slot:
+      row.starts_at && row.ends_at && row.local_starts_at && row.local_ends_at
+        ? {
+            startsAt: new Date(row.starts_at).toISOString(),
+            endsAt: new Date(row.ends_at).toISOString(),
+            localStartsAt: row.local_starts_at,
+            localEndsAt: row.local_ends_at,
+          }
+        : null,
+  }));
+}
