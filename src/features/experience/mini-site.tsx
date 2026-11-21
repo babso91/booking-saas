@@ -16,7 +16,7 @@ import type { PublicCatalog } from "@/features/catalog/model";
 import type { PublicBusiness } from "@/features/public-booking/client/api";
 
 import type { ShowcaseGroup } from "./catalog/model";
-import type { SiteConfig } from "./engine/config";
+import type { Section, SiteConfig } from "./engine/config";
 import {
   Detail,
   Display,
@@ -35,6 +35,12 @@ import {
   motions,
 } from "./engine/tokens";
 import { Intro } from "./scenes/intro";
+import { SiteIndex, SiteIndexButton } from "./site-index";
+import {
+  anchorOf,
+  destinations as destinationsOf,
+  shownSections,
+} from "./sections";
 import { Opening } from "./scenes/opening";
 import { Portrait } from "./scenes/portrait";
 import { Services } from "./scenes/services";
@@ -83,10 +89,13 @@ export function MiniSite({
   useImperativeHandle(openBookingPreviewRef, () => () => setBooking({}), []);
   const siteRoot = useRef<HTMLDivElement>(null);
   const armed = useRevealArming(siteRoot);
-  // Her choice of scenes (the opening and her services always show).
-  const sections = config.sections.filter(
-    (section) => !config.hidden?.includes(section.kind),
-  );
+  const [index, setIndex] = useState(false);
+  // Her choice of scenes (the opening and her services always show), the
+  // empty ones left out of her public site (sections.ts).
+  const sections = shownSections(config, { editing: Boolean(edit) });
+  const destinations = destinationsOf(sections);
+  // Where the index sends her client once it has closed.
+  const going = useRef<string | null>(null);
   // Chapter numbers of the scenes after the opening: (01), (02)…
   const chapters = sections.map(
     (_, position) =>
@@ -120,47 +129,64 @@ export function MiniSite({
               setBooking(service ? { serviceId: service.id } : {}),
           }}
         >
-          <Header />
+          <Header
+            index={destinations.length > 1 ? () => setIndex(true) : undefined}
+          />
           <main>
             {sections.map((section, position) => {
-              const chapter = chapters[position]!;
-              const key = `${section.kind}-${position}`;
-              switch (section.kind) {
-                case "opening":
-                  return <Opening key={key} variant={section.variant} />;
-                case "intro":
-                  return (
-                    <Intro
-                      key={key}
-                      variant={section.variant}
-                      index={chapter}
-                    />
-                  );
-                case "work":
-                  return (
-                    <Work key={key} variant={section.variant} index={chapter} />
-                  );
-                case "portrait":
-                  return (
-                    <Portrait
-                      key={key}
-                      variant={section.variant}
-                      index={chapter}
-                    />
-                  );
-                case "services":
-                  return (
-                    <Services
-                      key={key}
-                      variant={section.variant}
-                      index={chapter}
-                    />
-                  );
-              }
+              const anchor = anchorOf(sections, position);
+              const scene = renderScene(section, chapters[position]!);
+              return anchor ? (
+                // Reached from the index: focus lands here, under the
+                // fixed header (scroll-margin), not on the page's top.
+                <div
+                  key={`${section.kind}-${position}`}
+                  id={anchor}
+                  tabIndex={-1}
+                  className="scroll-mt-16 outline-none"
+                >
+                  {scene}
+                </div>
+              ) : (
+                <div key={`${section.kind}-${position}`}>{scene}</div>
+              );
             })}
           </main>
           <Footer />
           <QuickBook />
+          <AnimatePresence
+            onExitComplete={() => {
+              const target = going.current
+                ? document.getElementById(going.current)
+                : null;
+              going.current = null;
+              if (!target) return;
+              const still = window.matchMedia(
+                "(prefers-reduced-motion: reduce)",
+              ).matches;
+              target.scrollIntoView({
+                behavior: still ? "auto" : "smooth",
+                block: "start",
+              });
+              target.focus({ preventScroll: true });
+            }}
+          >
+            {index ? (
+              <SiteIndex
+                key="index"
+                destinations={destinations}
+                onGo={(id) => {
+                  going.current = id;
+                  setIndex(false);
+                }}
+                onBook={() => {
+                  setIndex(false);
+                  setBooking({});
+                }}
+                onClose={() => setIndex(false)}
+              />
+            ) : null}
+          </AnimatePresence>
           <AnimatePresence>
             {booking ? (
               <SiteBooking
@@ -178,6 +204,22 @@ export function MiniSite({
   );
 }
 
+/** One of her scenes, in its variant, numbered as a chapter. */
+function renderScene(section: Section, chapter: number) {
+  switch (section.kind) {
+    case "opening":
+      return <Opening variant={section.variant} />;
+    case "intro":
+      return <Intro variant={section.variant} index={chapter} />;
+    case "work":
+      return <Work variant={section.variant} index={chapter} />;
+    case "portrait":
+      return <Portrait variant={section.variant} index={chapter} />;
+    case "services":
+      return <Services variant={section.variant} index={chapter} />;
+  }
+}
+
 /**
  * Her name over everything, in white with mix-blend-mode: difference (the
  * site's signature: it inverts whatever passes under it). A name is a
@@ -185,40 +227,52 @@ export function MiniSite({
  * blended colour cannot be guaranteed on mid tones, so it is a separate,
  * opaque chip in the site's night colours, its ink computed to read.
  */
-function Header() {
+function Header({ index }: { index?: () => void }) {
   const { config, catalog, book } = useEngine();
   const { palette } = config.tokens;
+  const chip = {
+    background: palette.bg,
+    color: inkOn(palette.bg, palette.ink),
+    borderRadius: "min(var(--s-control), 999px)",
+  };
+  // The name's room: clear of the chips on its right.
+  const room = catalog.length
+    ? index
+      ? "pr-44"
+      : "pr-32"
+    : index
+      ? "pr-20"
+      : "pr-5";
   return (
     <header>
       <div className="pointer-events-none fixed inset-x-0 top-0 z-40 text-white mix-blend-difference">
         {/* One line, clear of the "Réserver" chip: a long name ends in an
             ellipsis here (it is set whole on the opening, just below). */}
         <div
-          className={`mx-auto flex max-w-[1100px] items-center pt-[max(env(safe-area-inset-top),14px)] pb-3 pl-5 ${catalog.length ? "pr-32" : "pr-5"}`}
+          className={`mx-auto flex max-w-[1100px] items-center pt-[max(env(safe-area-inset-top),14px)] pb-3 pl-5 ${room}`}
         >
           <Display className="min-w-0 truncate py-2 text-[18px] leading-none">
             {config.brand.name}
           </Display>
         </div>
       </div>
-      {catalog.length ? (
+      {catalog.length || index ? (
         <div
           data-header-action=""
           className="pointer-events-none fixed inset-x-0 top-0 z-40"
         >
-          <div className="mx-auto flex max-w-[1100px] justify-end px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3">
-            <button
-              type="button"
-              onClick={() => book(null)}
-              className="pointer-events-auto -mr-1 min-h-11 cursor-pointer px-3 leading-none"
-              style={{
-                background: palette.bg,
-                color: inkOn(palette.bg, palette.ink),
-                borderRadius: "min(var(--s-control), 999px)",
-              }}
-            >
-              <Detail>Réserver</Detail>
-            </button>
+          <div className="mx-auto flex max-w-[1100px] justify-end gap-2 px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3">
+            {index ? <SiteIndexButton onOpen={index} style={chip} /> : null}
+            {catalog.length ? (
+              <button
+                type="button"
+                onClick={() => book(null)}
+                className="pointer-events-auto -mr-1 min-h-11 cursor-pointer px-3 leading-none"
+                style={chip}
+              >
+                <Detail>Réserver</Detail>
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}

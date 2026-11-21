@@ -8,6 +8,7 @@ import {
   periodLabel,
   shiftAnchor,
   visibleRange,
+  type VisibleRange,
 } from "@/features/agenda/client/dates";
 import { cn } from "@/lib/cn";
 
@@ -33,10 +34,20 @@ export function AvailabilityCalendar({
   chronological?: boolean;
   onSelectDate: (date: string) => void;
 }) {
-  const range = visibleRange(view, anchor);
+  // Chronological: the next seven bookable days from the one shown, not
+  // the calendar week (on a Saturday evening, a calendar week would leave
+  // one day to compare). Its arrows move by seven days.
+  const rolling = chronological && view === "week";
+  const range = rolling
+    ? rollingRange(flow.days, anchor)
+    : visibleRange(view, anchor);
   const days = range.days.filter(
     (day) => day >= flow.days[0]! && day <= flow.days.at(-1)!,
   );
+  const shift = (direction: 1 | -1) =>
+    rolling
+      ? shiftRolling(flow.days, range.startDate, direction)
+      : shiftAnchor(view, anchor, direction);
   const from = days[0];
   const through = days.at(-1);
   const { slug } = flow.business;
@@ -81,10 +92,14 @@ export function AvailabilityCalendar({
           type="button"
           className={navClass}
           aria-label={
-            view === "month" ? "Mois précédent" : "Semaine précédente"
+            view === "month"
+              ? "Mois précédent"
+              : rolling
+                ? "Sept jours précédents"
+                : "Semaine précédente"
           }
           disabled={range.startDate <= flow.days[0]!}
-          onClick={() => onAnchor(shiftAnchor(view, anchor, -1))}
+          onClick={() => onAnchor(shift(-1))}
         >
           ‹
         </button>
@@ -97,9 +112,15 @@ export function AvailabilityCalendar({
         <button
           type="button"
           className={navClass}
-          aria-label={view === "month" ? "Mois suivant" : "Semaine suivante"}
+          aria-label={
+            view === "month"
+              ? "Mois suivant"
+              : rolling
+                ? "Sept jours suivants"
+                : "Semaine suivante"
+          }
           disabled={range.endDate >= flow.days.at(-1)!}
-          onClick={() => onAnchor(shiftAnchor(view, anchor, 1))}
+          onClick={() => onAnchor(shift(1))}
         >
           ›
         </button>
@@ -200,6 +221,39 @@ export function AvailabilityCalendar({
       )}
     </div>
   );
+}
+
+const ROLLING_DAYS = 7;
+
+/** Seven bookable days from `anchor` (or the first bookable after it). */
+export function rollingRange(
+  bookable: readonly string[],
+  anchor: string,
+): VisibleRange {
+  const found = bookable.findIndex((day) => day >= anchor);
+  const start = Math.max(
+    0,
+    Math.min(
+      found === -1 ? bookable.length - 1 : found,
+      bookable.length - ROLLING_DAYS,
+    ),
+  );
+  const days = bookable.slice(start, start + ROLLING_DAYS);
+  return { startDate: days[0]!, endDate: days.at(-1)!, days };
+}
+
+/** The first day of the seven before or after those starting at `start`. */
+export function shiftRolling(
+  bookable: readonly string[],
+  start: string,
+  direction: 1 | -1,
+): string {
+  const index = Math.max(0, bookable.indexOf(start));
+  const next = Math.min(
+    Math.max(0, index + direction * ROLLING_DAYS),
+    Math.max(0, bookable.length - ROLLING_DAYS),
+  );
+  return bookable[next]!;
 }
 
 function SlotTimes({
