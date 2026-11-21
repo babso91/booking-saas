@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
-import { getPublicBusiness } from "@/features/businesses/data/public-business";
+import {
+  getPublicBusiness,
+  getPublicBusinessHours,
+} from "@/features/businesses/data/public-business";
 import { businessSlugSchema } from "@/features/businesses/schemas/slug";
 import { getPublicCatalog } from "@/features/catalog/data/catalog";
 import { showcaseOf } from "@/features/experience/catalog/model";
@@ -38,7 +41,9 @@ const readPublicPage = cache(async (slug: string) => {
     }),
   ]);
   if (!catalog) return null;
-  return { business, catalog, site };
+  // Her usual hours, for her site's "Infos pratiques" only.
+  const hours = site ? await getPublicBusinessHours(client, parsed.data) : [];
+  return { business, catalog, site, hours };
 });
 
 export async function generateMetadata({
@@ -70,6 +75,7 @@ export default async function PublicBookingPage({
         // The same booking as her booking page: her catalogue, options
         // included, priced and timed by the server.
         booking={{ business: page.business, catalog: page.catalog }}
+        hours={page.hours}
         fontClasses={siteFontClasses}
       />
     );

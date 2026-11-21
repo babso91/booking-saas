@@ -59,11 +59,18 @@ export function PublicBooking({
     initialServiceId ?? (onlyService ? flow.services[0]?.id : undefined),
   );
 
-  // Once, on arrival: the same action as a tap on that service.
+  // Once, on arrival: the same action as a tap on that service. Its read
+  // is aborted if the flow unmounts; a remount (React's development check,
+  // a preserved subtree shown again) asks it again rather than waiting on
+  // a read that will never answer.
   useEffect(() => {
-    if (!asked.current) return;
-    flow.actions.chooseService(asked.current);
+    const id = asked.current;
+    if (!id) return;
+    flow.actions.chooseService(id);
     asked.current = undefined;
+    return () => {
+      asked.current = id;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
   }, []);
 

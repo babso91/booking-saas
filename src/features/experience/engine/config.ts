@@ -29,6 +29,28 @@ export type Portrait = {
   text: string;
 };
 
+/**
+ * Her practical information (Higani point 5), all optional: an empty text
+ * is not shown. Her usual hours are read from her schedule, not typed
+ * here; `showHours` only says whether they appear.
+ */
+export type Practical = {
+  /** Where she receives (or empty when she travels). */
+  address: string;
+  /** Where she travels to. */
+  area: string;
+  /** Door code, floor, transport, parking. */
+  access: string;
+  /** What to do or bring before coming. */
+  instructions: string;
+  payment: string;
+  accessibility: string;
+  /** Published only because she wrote it here. */
+  phone: string;
+  email: string;
+  showHours: boolean;
+};
+
 export type Palette = {
   /** Night surface (opening, work) and its ink. */
   bg: string;
@@ -104,4 +126,6 @@ export type SiteConfig = {
   bookingFormat?: BookingFormat;
   /** The always-present quick booking (mobile first): a bar or a pill. */
   quickBook: "bar" | "pill";
+  /** Her "Infos pratiques"; absent on versions published before it. */
+  practical?: Practical;
 };

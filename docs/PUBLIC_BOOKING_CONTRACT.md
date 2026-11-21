@@ -37,6 +37,7 @@ Ce document décrit le contrat que l'interface (Claude UI) doit utiliser. L'inte
    - La route `POST /api/bookings` l'appelle avec la clé de service et transmet l'adresse de l'appelant **établie par l'ingress de confiance** (§ 9.1).
    - Appeler le RPC avec la clé publique est refusé.
    - Les lectures (profil, prestations, créneaux) restent publiques.
+   - `public.get_public_business_hours(p_slug)` (Higani point 5, migration `20261121100000`) : les horaires hebdomadaires habituels (`weekday` 0 = dimanche, `starts_at`, `ends_at`), même visibilité que `get_public_business`, en lecture seule. Plusieurs plages par jour possibles (pause). Les exceptions par date (`business_date_hours`) n'y figurent pas : elles restent dans les créneaux. Utilisée par les « Infos pratiques » du mini-site.
 
 ## 3. Contrat de `POST /api/bookings`
 

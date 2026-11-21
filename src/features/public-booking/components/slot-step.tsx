@@ -318,9 +318,9 @@ export function SlotStep({
             </ul>
           ) : null}
         </div>
-      ) : (
+      ) : view === "month" ? (
         <TimeZoneNote timezone={business.timezone} />
-      )}
+      ) : null}
     </section>
   );
 }

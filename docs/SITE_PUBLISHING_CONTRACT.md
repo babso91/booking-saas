@@ -63,6 +63,12 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
 - **Couleurs :** `#rrggbb`.
 - **Photos :** jamais une URL. Une photo est `{ "asset": "<uuid>" }`, une photo de `site_assets` **de cet établissement**, prête (`ready`) ou révoquée (`revoked`, dessinée sans photo : c'est le cas d'une ancienne version restaurée), vérifiée par la base à chaque enregistrement. Une photo en attente, inconnue ou d'un autre établissement est refusée (`site_asset_unavailable`). Les points focaux sont indexés par l'identifiant de l'asset, `x` et `y` de 0 à 100.
 - **Œuvres :** de 0 à 24.
+- **Infos pratiques (`practical`, facultatif, Higani point 5) :**
+  - champs : `address` 160, `area` 160, `access` 400, `instructions` 600, `payment` 160, `accessibility` 300, `phone` 30, `email` 120, tous en texte brut et vides possibles, plus `showHours` (booléen) ;
+  - `phone` : chiffres, espaces, `+ . ( ) -` ; `email` : une adresse valide ou vide. Le téléphone et l'e-mail ne sont publiés que parce que la pro les a écrits dans l'onglet « Infos » du Studio : rien n'est recopié depuis son compte ;
+  - les horaires ne sont **pas** dans la configuration. Ils sont lus depuis son planning (`get_public_business_hours`, horaires hebdomadaires habituels), affichés comme « Horaires habituels » si `showHours` est vrai. Les exceptions par date restent portées par les créneaux, donc la page ne dit jamais « ouvert aujourd'hui » ;
+  - le bloc est rendu après les scènes, sous Core comme sous Signature (ce n'est pas une scène de la composition), avec son entrée « Infos pratiques » dans le sommaire ;
+  - **anciennes publications** (sans `practical`) : rien de nouveau, sauf la politique d'annulation que l'établissement publie déjà sur sa page de réservation (`cancellation_policy`), affichée sous « Annulation ». Les horaires n'apparaissent pas tant que la pro n'a pas enregistré son bloc.
 - **Taille :** 256 Kio au plus pour le document.
 - **Évolution :** `schema_version` est stocké avec chaque brouillon et chaque version. Une version 2 viendra avec des fonctions de migration pures (1 → 2) appliquées à la lecture, sans réécrire l'historique.
 

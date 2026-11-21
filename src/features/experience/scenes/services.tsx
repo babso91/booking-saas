@@ -176,7 +176,14 @@ function PriceIndex({ index }: { index: number }) {
                       >
                         {service.name}
                       </Display>
-                      <Detail>{priceOf(service)}</Detail>
+                      {/* Price and duration at first sight (point 34):
+                          the row says what she commits to before it opens. */}
+                      <span className="flex flex-col items-end gap-1 text-right">
+                        <Detail>{priceOf(service)}</Detail>
+                        <span className="text-[var(--u-soft-paper)]">
+                          <Detail>{minutesOf(service)}</Detail>
+                        </span>
+                      </span>
                     </button>
                     <AnimatePresence initial={false}>
                       {expanded ? (
@@ -196,8 +203,7 @@ function PriceIndex({ index }: { index: number }) {
                                 </p>
                               ) : null}
                               <OptionsNote service={service} />
-                              <div className="flex flex-wrap items-center justify-between gap-3">
-                                <Note>Durée {minutesOf(service)}</Note>
+                              <div className="flex flex-wrap items-center justify-end gap-3">
                                 <button
                                   type="button"
                                   onClick={() => book(service)}

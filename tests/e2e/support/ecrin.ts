@@ -118,7 +118,7 @@ export async function expectAccessible(page: Page, what: string) {
     const { axe } = window as unknown as {
       axe: {
         run: (
-          context: Document,
+          context: Document | { exclude: string[][] },
           options: object,
         ) => Promise<{
           violations: {
@@ -128,11 +128,18 @@ export async function expectAccessible(page: Page, what: string) {
         }>;
       };
     };
-    const { violations } = await axe.run(document, {
-      runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] },
-      // WCAG 2.5.3, outside those tags: what she sees is in what she can say.
-      rules: { "label-content-name-mismatch": { enabled: true } },
-    });
+    // Her mini-site's name in its header is a logotype set white with
+    // mix-blend-mode: difference (mini-site.tsx): it shows as the inverse of
+    // what passes under it, which axe cannot compute (it reads white on her
+    // light paper), and WCAG 1.4.3 exempts logotypes. Only that element.
+    const { violations } = await axe.run(
+      { exclude: [["[data-blend-logotype]"]] },
+      {
+        runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] },
+        // WCAG 2.5.3, outside those tags: what she sees is in what she can say.
+        rules: { "label-content-name-mismatch": { enabled: true } },
+      },
+    );
     return violations.map(
       ({ id, nodes }) =>
         `${id}: ${nodes
