@@ -8,6 +8,7 @@ import {
   within,
   cleanup,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PublicCatalog } from "@/features/catalog/model";
@@ -251,6 +252,36 @@ describe("the business and its services", () => {
 });
 
 describe("from her mini-site", () => {
+  it("a service tapped there opens on its quote and slots, even when React mounts it twice", async () => {
+    // StrictMode (development, her studio's preview) unmounts and remounts
+    // the flow at once: the first read is aborted, the second must be asked.
+    render(
+      <StrictMode>
+        <PublicBooking
+          business={business}
+          catalog={catalogOf(services)}
+          embedded
+          initialServiceId={SERVICE_B}
+        />
+      </StrictMode>,
+    );
+    await flush();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Choisissez un créneau" }),
+      ).toBeTruthy(),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/1 h 15 · 65,50\s€/)).toBeTruthy(),
+    );
+    expect(screen.queryByText(/Calcul du prix/)).toBeNull();
+    expect(
+      api.availability.mock.calls.some(
+        ([serviceId]) => serviceId === SERVICE_B,
+      ),
+    ).toBe(true);
+  });
+
   it("a service tapped there opens on its required options, never straight on slots", async () => {
     const catalog = catalogOf(services);
     catalog.groups[0]!.services[0]!.options = [

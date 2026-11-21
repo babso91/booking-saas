@@ -64,7 +64,8 @@ it("publishes the chosen Core booking format, preserves it across universes and 
     await preview
       .getByText("Aperçu du parcours · Réservation désactivée")
       .waitFor();
-    await preview.getByRole("button", { name: "Semaine suivante" }).click();
+    // Chronologique: the next seven bookable days, then the seven after.
+    await preview.getByRole("button", { name: "Sept jours suivants" }).click();
     await preview
       .getByRole("button", { name: / à \d{2}:\d{2}$/ })
       .first()
@@ -97,7 +98,8 @@ it("publishes the chosen Core booking format, preserves it across universes and 
         .getAttribute("aria-pressed"),
     ).toBe("true");
     const slots = dialog.getByRole("button", { name: / à \d{2}:\d{2}$/ });
-    // Near the end of the week all remaining openings can be in the past.
+    // Late in the day all of today's openings can be in the past: the next
+    // seven days (Chronologique) are read instead.
     const today = businessToday("Europe/Paris");
     const [response] = await Promise.all([
       page.waitForResponse((res) => {
@@ -108,7 +110,7 @@ it("publishes the chosen Core booking format, preserves it across universes and 
           (url.searchParams.get("date") ?? "") > today
         );
       }),
-      dialog.getByRole("button", { name: "Semaine suivante" }).click(),
+      dialog.getByRole("button", { name: "Sept jours suivants" }).click(),
     ]);
     const { data } = (await response.json()) as {
       data: { days: { date: string; slots: Record<string, string>[] }[] };

@@ -272,7 +272,10 @@ function Header({ index }: { index?: () => void }) {
       : "pr-5";
   return (
     <header>
-      <div className="pointer-events-none fixed inset-x-0 top-0 z-40 text-white mix-blend-difference">
+      <div
+        data-blend-logotype=""
+        className="pointer-events-none fixed inset-x-0 top-0 z-40 text-white mix-blend-difference"
+      >
         {/* One line, clear of the "Réserver" chip: a long name ends in an
             ellipsis here (it is set whole on the opening, just below). */}
         <div

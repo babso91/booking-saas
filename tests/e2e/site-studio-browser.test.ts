@@ -260,10 +260,11 @@ describe("her studio — her photos and her plan", () => {
     expect(JSON.stringify(draft.config)).not.toMatch(/demo:|unsplash/);
     await expectAccessible(page, "studio photo");
 
-    // Reusing an image in two gallery entries must keep their titles separate.
+    // Reusing an image in three gallery entries must keep their titles
+    // separate, the third one included (Higani point 17).
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "← Réglages", exact: true }).click();
-    for (const title of ["Cil à cil", "Volume mixte"]) {
+    for (const title of ["Cil à cil", "Volume mixte", "Brow lift"]) {
       await page
         .getByRole("button", { name: "Ajouter une réalisation" })
         .click();
@@ -292,6 +293,7 @@ describe("her studio — her photos and her plan", () => {
         works: [
           { photo: { asset: assets[0]!.id }, title: "Rehaussement de cils" },
           { photo: { asset: assets[0]!.id }, title: "Volume mixte" },
+          { photo: { asset: assets[0]!.id }, title: "Brow lift" },
         ],
       },
     });
@@ -301,6 +303,9 @@ describe("her studio — her photos and her plan", () => {
     expect(
       await page.getByLabel("Titre de la réalisation 1").inputValue(),
     ).toBe("Rehaussement de cils");
+    expect(
+      await page.getByLabel("Titre de la réalisation 3").inputValue(),
+    ).toBe("Brow lift");
 
     await page.getByRole("button", { name: "Publier" }).click();
     await page.getByText("En ligne · version 1").waitFor();
@@ -314,6 +319,19 @@ describe("her studio — her photos and her plan", () => {
       .getByRole("button", { name: /Volume mixte/ })
       .getByText("Volume mixte", { exact: true })
       .waitFor();
+    await visitor
+      .getByRole("button", { name: /Brow lift/ })
+      .getByText("Brow lift", { exact: true })
+      .waitFor();
+    const published = await db.query<{ config: unknown }>(
+      `select v.config from public.site_versions v
+       join public.sites s on s.published_version_id = v.id
+       where s.business_id = $1`,
+      [pro.businessId],
+    );
+    expect(published.rows[0]!.config).toMatchObject({
+      content: { works: [{}, {}, { title: "Brow lift" }] },
+    });
     await visitor.close();
 
     expect(errors).toEqual([]);

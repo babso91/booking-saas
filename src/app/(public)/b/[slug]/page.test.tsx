@@ -4,7 +4,7 @@ import { AppException } from "@/lib/errors";
 import { sampleSiteConfig } from "@/features/sites/site-fixture";
 
 const { data, sites, catalog } = vi.hoisted(() => ({
-  data: { getPublicBusiness: vi.fn() },
+  data: { getPublicBusiness: vi.fn(), getPublicBusinessHours: vi.fn() },
   sites: { getPublishedSite: vi.fn() },
   catalog: { getPublicCatalog: vi.fn() },
 }));
@@ -31,6 +31,8 @@ const emptyCatalog = { currency: "EUR", groups: [] };
 
 beforeEach(() => {
   data.getPublicBusiness.mockReset();
+  data.getPublicBusinessHours.mockReset();
+  data.getPublicBusinessHours.mockResolvedValue([]);
   sites.getPublishedSite.mockReset();
   catalog.getPublicCatalog.mockReset();
   data.getPublicBusiness.mockResolvedValue({
@@ -49,6 +51,7 @@ describe("/b/[slug]", () => {
     );
     expect(catalog.getPublicCatalog).not.toHaveBeenCalled();
     expect(sites.getPublishedSite).not.toHaveBeenCalled();
+    expect(data.getPublicBusinessHours).not.toHaveBeenCalled();
   });
 
   it("an invalid address is a 404 page, nothing read", async () => {
@@ -67,6 +70,8 @@ describe("/b/[slug]", () => {
       catalog: emptyCatalog,
     });
     expect(page.props).not.toHaveProperty("config");
+    // Her hours serve her site's infos only: not read without one.
+    expect(data.getPublicBusinessHours).not.toHaveBeenCalled();
   });
 
   it("with one: her published site, through her current plan, booking on the same catalogue", async () => {
@@ -95,6 +100,9 @@ describe("/b/[slug]", () => {
     const groups = [{ category: null, services: [] }];
     const read = { currency: "EUR", groups };
     catalog.getPublicCatalog.mockResolvedValue(read);
+    // Her usual hours, for her practical infos (read with her site only).
+    const hours = [{ weekday: 1, startsAt: "09:00", endsAt: "19:00" }];
+    data.getPublicBusinessHours.mockResolvedValue(hours);
     expect((await generateMetadata(params("studio-mila") as never)).title).toBe(
       "Studio Mila",
     );
@@ -104,6 +112,7 @@ describe("/b/[slug]", () => {
       // Her booking: the catalogue as the server projects it, options
       // included, never a list of services of its own.
       booking: { business: { slug: "studio-mila" }, catalog: read },
+      hours,
       photoBase: "/api/public/businesses/studio-mila/site/photos",
       fontClasses: "fonts",
       config: {

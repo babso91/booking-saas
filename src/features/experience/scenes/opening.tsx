@@ -149,7 +149,7 @@ function DidoneCutOpening() {
             <Detail>Nº 01 — {config.brand.kind}</Detail>
             <Detail>{config.brand.location}</Detail>
           </p>
-          <h1 className="overflow-hidden">
+          <h1 className="mt-3 overflow-hidden">
             <span
               className={`block ${nameLine.className}`}
               style={nameLine.style}

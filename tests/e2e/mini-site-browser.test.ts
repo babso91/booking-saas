@@ -136,3 +136,114 @@ describe.each(VARIANTS)(
     });
   },
 );
+
+// Higani points 5 and 17: her practical infos, her usual hours read from
+// her schedule, the index straight to them, and an empty gallery left out.
+describe("her practical infos and the index", () => {
+  it("phone 390: the index leads to her infos; her hours are her schedule's", async () => {
+    const pro = await professionalWithVisit("Mila", "Lou");
+    const actor = pro.browser.member!.userId;
+    const { rows } = await db.query<{ slug: string }>(
+      "select slug from public.businesses where id = $1",
+      [pro.businessId],
+    );
+    const slug = rows[0]!.slug;
+    await db.query("delete from public.business_hours where business_id = $1", [
+      pro.businessId,
+    ]);
+    for (const [weekday, startsAt, endsAt] of [
+      [1, "09:00", "12:30"],
+      [1, "14:00", "19:00"],
+      [6, "10:00", "17:00"],
+    ] as const) {
+      await db.query(
+        `insert into public.business_hours (business_id, weekday, starts_at, ends_at)
+         values ($1, $2, $3, $4)`,
+        [pro.businessId, weekday, startsAt, endsAt],
+      );
+    }
+    const config = sampleSite("mila");
+    expect(config.content.works).toEqual([]);
+    const { rows: saved } = await db.query<{ revision: number }>(
+      "select public.save_site_draft($1, $2, 0, 1, $3::jsonb) as revision",
+      [
+        pro.businessId,
+        actor,
+        JSON.stringify({
+          ...config,
+          brand: { ...config.brand, name: "Studio Lumière" },
+          practical: {
+            address: "12 rue Mercière, 69002 Lyon",
+            area: "",
+            access: "Code 4B12, 2e étage.",
+            instructions: "Venir démaquillée.",
+            payment: "CB, espèces",
+            accessibility: "",
+            phone: "04 78 00 00 00",
+            email: "",
+            showHours: true,
+          },
+        }),
+      ],
+    );
+    await db.query("select * from public.publish_site($1, $2, $3)", [
+      pro.businessId,
+      actor,
+      saved[0]!.revision,
+    ]);
+
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 390,
+      height: 844,
+      phone: true,
+    });
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`${APP}/b/${slug}`);
+    await page.getByText("Studio Lumière").first().waitFor();
+    // No work published yet: no empty "Réalisations 00".
+    expect(await page.getByText("Réalisations").count()).toBe(0);
+
+    await page.getByRole("button", { name: "Sommaire" }).click();
+    const index = page.getByRole("dialog", { name: "Sommaire" });
+    await index.getByRole("button", { name: "Infos pratiques" }).waitFor();
+    expect(
+      await index.getByRole("button", { name: "Réalisations" }).count(),
+    ).toBe(0);
+    await expectAccessible(page, "mini-site index");
+    await capture(page, "mini-site index 390");
+    await index.getByRole("button", { name: "Infos pratiques" }).click();
+    await index.waitFor({ state: "detached" });
+    await page.waitForFunction(() => document.activeElement?.id === "infos");
+
+    const infos = page.locator("#infos");
+    await infos.getByText("Horaires habituels").first().waitFor();
+    // Her schedule's ranges, a lunch break included; closed days said.
+    const monday = infos.getByRole("row", { name: /Lundi/ });
+    expect(await monday.textContent()).toContain("9 h – 12 h 30, 14 h – 19 h");
+    expect(
+      await infos.getByRole("row", { name: /Mardi/ }).textContent(),
+    ).toContain("Fermé");
+    await infos.getByText("Code 4B12, 2e étage.").waitFor();
+    expect(
+      await infos
+        .getByRole("link", { name: "04 78 00 00 00" })
+        .getAttribute("href"),
+    ).toBe("tel:0478000000");
+    expect(
+      await infos
+        .getByRole("link", { name: /Itinéraire/ })
+        .getAttribute("target"),
+    ).toBe("_blank");
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "mini-site practical");
+    await capture(page, "mini-site practical 390");
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+});
