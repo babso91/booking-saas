@@ -11,6 +11,9 @@ const { data, sites, catalog } = vi.hoisted(() => ({
 vi.mock("@/features/businesses/data/public-business", () => data);
 vi.mock("@/features/sites/data/sites", () => sites);
 vi.mock("@/features/catalog/data/catalog", () => catalog);
+vi.mock("@/features/availability/data/slots", () => ({
+  getNextSlots: vi.fn().mockResolvedValue([]),
+}));
 // next/font runs at build time only.
 vi.mock("@/features/experience/fonts", () => ({ siteFontClasses: "fonts" }));
 vi.mock("@/lib/supabase/public", () => ({

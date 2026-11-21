@@ -7,6 +7,7 @@ import {
   getPublicBusinessHours,
 } from "@/features/businesses/data/public-business";
 import { businessSlugSchema } from "@/features/businesses/schemas/slug";
+import { getNextSlots } from "@/features/availability/data/slots";
 import { getPublicCatalog } from "@/features/catalog/data/catalog";
 import { showcaseOf } from "@/features/experience/catalog/model";
 import { siteFontClasses } from "@/features/experience/fonts";
@@ -42,8 +43,17 @@ const readPublicPage = cache(async (slug: string) => {
   ]);
   if (!catalog) return null;
   // Her usual hours, for her site's "Infos pratiques" only.
-  const hours = site ? await getPublicBusinessHours(client, parsed.data) : [];
-  return { business, catalog, site, hours };
+  const [hours, nextSlots] = site
+    ? await Promise.all([
+        getPublicBusinessHours(client, parsed.data),
+        // Her next slots (Higani point 2): a hint, never a broken page.
+        getNextSlots(client, parsed.data).catch((error: unknown) => {
+          console.error("Next slots unavailable", error);
+          return null;
+        }),
+      ])
+    : [[], null];
+  return { business, catalog, site, hours, nextSlots };
 });
 
 export async function generateMetadata({
@@ -76,6 +86,7 @@ export default async function PublicBookingPage({
         // included, priced and timed by the server.
         booking={{ business: page.business, catalog: page.catalog }}
         hours={page.hours}
+        nextSlots={page.nextSlots}
         fontClasses={siteFontClasses}
       />
     );

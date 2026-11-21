@@ -31,6 +31,7 @@ export function PublicBooking({
   gallery,
   preview = false,
   initialServiceId,
+  initialDate,
 }: {
   business: PublicBusiness;
   format?: BookingFormat;
@@ -48,8 +49,10 @@ export function PublicBooking({
    * options when it has some, else on its slots.
    */
   initialServiceId?: string;
+  /** The day to open on: that service's next slot, shown on her site. */
+  initialDate?: string;
 }) {
-  const flow = useBookingFlow({ business, catalog, preview });
+  const flow = useBookingFlow({ business, catalog, preview, initialDate });
   const heading = useRef<HTMLHeadingElement>(null);
   const opened = useRef(false);
   const onlyService =

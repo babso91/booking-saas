@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import type { CatalogService, ShowcaseGroup } from "../catalog/model";
+import type { NextSlots } from "../next-slot";
 import type { PhotoSlot, SiteConfig } from "./config";
 import { grades, motions, typePairs } from "./tokens";
 
@@ -45,6 +46,10 @@ type Engine = {
   catalog: ShowcaseGroup[];
   book: (service: CatalogService | null) => void;
   edit?: EngineEdit;
+  /** Her next bookable slot by service (Higani point 2): a hint only. */
+  next?: NextSlots;
+  /** Her today (business time zone), to say « Demain » rightly. */
+  today?: string;
 };
 
 const Context = createContext<Engine | null>(null);

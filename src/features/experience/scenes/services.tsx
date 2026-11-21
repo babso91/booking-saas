@@ -9,6 +9,7 @@ import {
   type ShowcaseGroup,
 } from "../catalog/model";
 import type { ServicesVariant } from "../engine/config";
+import { nextLabel } from "../next-slot";
 import {
   Detail,
   Display,
@@ -106,6 +107,24 @@ function OptionsNote({ service }: { service: CatalogService }) {
 
 // Her price and duration as her booking page says them: at least, "dès"
 // when an answer can add to them (startingAt).
+/** Her next slot for this service (Higani point 2), when she has one. */
+function NextSlotNote({
+  service,
+  className = "",
+}: {
+  service: CatalogService;
+  className?: string;
+}) {
+  const { next, today } = useEngine();
+  const slot = next?.[service.id];
+  if (!slot || !today) return null;
+  return (
+    <span className={`block ${className}`}>
+      <Note>Prochaine dispo · {nextLabel(slot.localStartsAt, today)}</Note>
+    </span>
+  );
+}
+
 function priceOf(service: CatalogService) {
   const from = startingAt(service);
   return from.priceVaries
@@ -203,6 +222,7 @@ function PriceIndex({ index }: { index: number }) {
                                 </p>
                               ) : null}
                               <OptionsNote service={service} />
+                              <NextSlotNote service={service} />
                               <div className="flex flex-wrap items-center justify-end gap-3">
                                 <button
                                   type="button"
@@ -305,6 +325,7 @@ function Shelf() {
                         <OptionsNote service={service} />
                       </p>
                     ) : null}
+                    <NextSlotNote service={service} className="mt-3" />
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-[17px] tabular-nums">
@@ -415,6 +436,7 @@ function Tiles() {
                           <OptionsNote service={service} />
                         </span>
                       ) : null}
+                      <NextSlotNote service={service} className="mt-2" />
                       <span className="mt-5 inline-block">
                         <Detail>{edit ? "Modifier →" : "Réserver →"}</Detail>
                       </span>
