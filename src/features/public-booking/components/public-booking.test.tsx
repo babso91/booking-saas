@@ -366,6 +366,39 @@ describe("published booking formats", () => {
     expect(screen.getByRole("button", { name: /Cils/ })).toBeTruthy();
   });
 
+  // Higani point 54: "Réserver" on one of her services, in every format she
+  // can publish, opens on that service, never on the list again.
+  it.each([
+    "classic",
+    "calendar",
+    "chronological",
+    "showcase",
+    "guided",
+  ] as const)(
+    "%s: a service chosen on her site is already chosen here",
+    async (format) => {
+      render(
+        <PublicBooking
+          business={business}
+          catalog={catalogOf(services)}
+          format={format}
+          embedded
+          initialServiceId={SERVICE_B}
+        />,
+      );
+      await screen.findByRole("heading", { name: "Choisissez un créneau" });
+      expect(screen.queryByRole("list", { name: "Prestations" })).toBeNull();
+      await waitFor(() =>
+        expect(
+          api.availability.mock.calls.some(([id]) => id === SERVICE_B),
+        ).toBe(true),
+      );
+      expect(api.availability.mock.calls.some(([id]) => id === SERVICE_A)).toBe(
+        false,
+      );
+    },
+  );
+
   it("studio preview reaches review without posting a booking", async () => {
     render(
       <PublicBooking
