@@ -87,3 +87,35 @@ export async function listPublicServices(
     currency: row.currency,
   }));
 }
+
+/** One range of her usual week (get_public_business_hours). */
+export type PublicBusinessHoursDto = {
+  /** 0 Sunday … 6 Saturday. */
+  weekday: number;
+  /** "09:00" (business time). */
+  startsAt: string;
+  endsAt: string;
+};
+
+/**
+ * Her usual weekly hours, by slug, as visible as her public profile. Usual
+ * only: exceptions by date stay with the slots (docs/PUBLIC_BOOKING_CONTRACT.md).
+ */
+export async function getPublicBusinessHours(
+  client: AppSupabaseClient,
+  slug: string,
+): Promise<PublicBusinessHoursDto[]> {
+  const { data, error } = await client.rpc("get_public_business_hours", {
+    p_slug: slug,
+  });
+
+  if (error) {
+    throw databaseException(error);
+  }
+
+  return data.map((row) => ({
+    weekday: row.weekday,
+    startsAt: row.starts_at.slice(0, 5),
+    endsAt: row.ends_at.slice(0, 5),
+  }));
+}
