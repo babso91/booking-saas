@@ -449,6 +449,127 @@ describe("published booking formats", () => {
   });
 });
 
+// Higani point 37: a long catalogue (eight services and more) offers a
+// search by name, category or a word of the description; the results
+// replace the list, in her order, whatever the format.
+describe("a long catalogue: find a service", () => {
+  const item = (
+    n: number,
+    name: string,
+    description: string | null = null,
+  ) => ({
+    id: `30000000-0000-4000-8000-0000000001${String(n).padStart(2, "0")}`,
+    name,
+    description,
+    durationMinutes: 60,
+    priceCents: 5000,
+    options: [],
+  });
+  const long: PublicCatalog = {
+    currency: "EUR",
+    groups: [
+      {
+        category: { id: "cils", name: "Cils & regard" },
+        services: [
+          item(1, "Volume russe"),
+          item(2, "Volume mixte"),
+          item(3, "Rehaussement", "Courbés et teintés."),
+        ],
+      },
+      {
+        category: { id: "ongles", name: "Ongles" },
+        services: [
+          item(4, "Pose gel"),
+          item(5, "Semi-permanent mains"),
+          item(6, "Dépose"),
+        ],
+      },
+      {
+        category: null,
+        services: [
+          item(7, "Restructuration sourcils"),
+          item(8, "Teinture sourcils"),
+        ],
+      },
+    ],
+  };
+  const searchBox = () =>
+    screen.getByRole("searchbox", { name: "Rechercher une prestation" });
+  const search = (value: string) =>
+    fireEvent.change(searchBox(), { target: { value } });
+  const all = long.groups.flatMap((group) =>
+    group.services.map((service) => service.name),
+  );
+  /** The services offered, in the order shown. */
+  const names = () =>
+    screen
+      .queryAllByRole("button")
+      .map((button) => all.find((name) => button.textContent?.startsWith(name)))
+      .filter(Boolean);
+
+  beforeEach(() => {
+    api.business.mockImplementation(() =>
+      ok({ business, services, catalog: long }),
+    );
+  });
+
+  it("a short catalogue has no search field", () => {
+    renderPage();
+    expect(
+      screen.queryByRole("searchbox", { name: "Rechercher une prestation" }),
+    ).toBeNull();
+  });
+
+  it("by name, by category, by a word of the description; says how many", () => {
+    render(<PublicBooking business={business} catalog={long} />);
+    expect(names()).toHaveLength(8);
+    search("sourcils");
+    expect(names()).toEqual(["Restructuration sourcils", "Teinture sourcils"]);
+    expect(screen.getByText("2 prestations")).toBeTruthy();
+    search("ONGLES");
+    expect(names()).toEqual(["Pose gel", "Semi-permanent mains", "Dépose"]);
+    expect(screen.getByRole("heading", { name: "Ongles" })).toBeTruthy();
+    search("teintes");
+    expect(names()).toEqual(["Rehaussement"]);
+    expect(screen.getByText("1 prestation")).toBeTruthy();
+  });
+
+  it("nothing found: says so, and one tap shows her whole catalogue again", () => {
+    render(<PublicBooking business={business} catalog={long} />);
+    search("brushing");
+    expect(names()).toEqual([]);
+    expect(
+      screen.getByText("Aucune prestation ne correspond à « brushing »"),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Effacer la recherche" }),
+    );
+    expect(names()).toHaveLength(8);
+    expect((searchBox() as HTMLInputElement).value).toBe("");
+  });
+
+  it("guided: a search goes past the choice of a category, and back", async () => {
+    render(
+      <PublicBooking business={business} catalog={long} format="guided" />,
+    );
+    expect(
+      screen.getByRole("heading", {
+        name: "Quelle catégorie vous intéresse ?",
+      }),
+    ).toBeTruthy();
+    search("gel");
+    expect(
+      screen.getByRole("heading", { name: "Choisissez une prestation" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Ongles/ })).toBeNull();
+    search("");
+    expect(screen.getByRole("button", { name: /^Ongles/ })).toBeTruthy();
+    search("gel");
+    await chooseService("Pose gel");
+    expect(api.availability.mock.calls[0]![0]).toBe(item(4, "").id);
+  });
+});
+
 describe("days and slots", () => {
   it("lists the real slots of the business's today, as the business's wall clocks (never the device's)", async () => {
     renderPage();

@@ -2,7 +2,15 @@
 import { bookingLabel, sectionTitle } from "@/features/sites/presentation";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+
+import {
+  countServices,
+  resultLine,
+  searchable,
+  searchCatalog,
+  wordsOf,
+} from "@/features/catalog/search";
 
 import {
   startingAt,
@@ -43,13 +51,84 @@ export function Services({
   return <PriceIndex index={index} />;
 }
 
-/** Where each group starts in the whole list (continuous numbering). */
-const offsets = (groups: ShowcaseGroup[]) =>
-  groups.map((_, index) =>
+/**
+ * Each service's place in her whole list (continuous numbering): its
+ * number, and its colour among the tiles, stay the same while she searches.
+ */
+const numbersOf = (groups: ShowcaseGroup[]) =>
+  new Map(
     groups
-      .slice(0, index)
-      .reduce((sum, group) => sum + group.services.length, 0),
+      .flatMap((group) => group.services)
+      .map((service, index) => [service.id, index + 1]),
   );
+
+// A long catalogue can be searched (Higani point 37): by name, category or a
+// word of the description or of a booking question (catalog/search.ts).
+// What is shown is her catalogue filtered, in her order; her numbering
+// stays. Below SEARCH_FROM services there is no field: the list is short.
+function useSearch(catalog: ShowcaseGroup[]) {
+  const [query, setQuery] = useState("");
+  const groups = useMemo(() => searchCatalog(catalog, query), [catalog, query]);
+  return {
+    offered: searchable(catalog),
+    query,
+    setQuery,
+    groups,
+    active: wordsOf(query).length > 0,
+  };
+}
+
+type Search = ReturnType<typeof useSearch>;
+
+/** The search field, drawn in the scene's own colours (currentColor). */
+function SceneSearch({ search }: { search: Search }) {
+  if (!search.offered) return null;
+  const count = countServices(search.groups);
+  return (
+    <div role="search" className="mt-6">
+      <label
+        className="flex h-12 items-center gap-3 border border-current/45 px-4 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-current"
+        style={{ borderRadius: "min(var(--s-control), 22px)" }}
+      >
+        <svg
+          aria-hidden
+          viewBox="0 0 20 20"
+          className="size-[18px] shrink-0"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        >
+          <circle cx="8.5" cy="8.5" r="5.5" />
+          <path d="m12.6 12.6 4.4 4.4" strokeLinecap="round" />
+        </svg>
+        <span className="sr-only">Rechercher une prestation</span>
+        <input
+          type="search"
+          value={search.query}
+          onChange={(event) => search.setQuery(event.target.value)}
+          placeholder="Nom, catégorie ou mot-clé"
+          enterKeyHint="search"
+          autoComplete="off"
+          spellCheck={false}
+          // 16px: a phone does not zoom into the field.
+          className="h-full min-w-0 flex-1 bg-transparent text-[16px] outline-none placeholder:text-current placeholder:opacity-60"
+        />
+      </label>
+      <p role="status" className="mt-2 min-h-5">
+        {search.active ? <Note>{resultLine(count, search.query)}</Note> : null}
+      </p>
+      {search.active && count === 0 ? (
+        <button
+          type="button"
+          onClick={() => search.setQuery("")}
+          className="min-h-11 cursor-pointer underline underline-offset-4"
+        >
+          <Note>Effacer la recherche</Note>
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 /** Long names get a smaller size instead of breaking the composition. */
 const long = (name: string) => name.length > 38;
@@ -121,8 +200,17 @@ function minutesOf(service: CatalogService) {
 
 function PriceIndex({ index }: { index: number }) {
   const { config, catalog, book, edit, motion: language } = useEngine();
-  const [open, setOpen] = useState<string | null>(null);
-  const starts = offsets(catalog);
+  // Several can be open at once (Higani point 36): she reads two close
+  // services one under the other, without closing one to open the other.
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = (id: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  const numbers = numbersOf(catalog);
+  const search = useSearch(catalog);
   return (
     <section
       data-booking-scene
@@ -138,8 +226,9 @@ function PriceIndex({ index }: { index: number }) {
           )}
           <Detail>Prix TTC</Detail>
         </div>
-        <CategoryNav groups={catalog} />
-        {catalog.map((group, groupIndex) => (
+        <SceneSearch search={search} />
+        {search.active ? null : <CategoryNav groups={catalog} />}
+        {search.groups.map((group) => (
           <div
             key={group.category?.id ?? "sans-categorie"}
             id={group.category ? `categorie-${group.category.id}` : undefined}
@@ -154,9 +243,9 @@ function PriceIndex({ index }: { index: number }) {
               </h3>
             ) : null}
             <ol>
-              {group.services.map((service, position) => {
-                const number = starts[groupIndex]! + position + 1;
-                const expanded = open === service.id;
+              {group.services.map((service) => {
+                const number = numbers.get(service.id)!;
+                const expanded = open.has(service.id);
                 return (
                   <li
                     key={service.id}
@@ -169,9 +258,7 @@ function PriceIndex({ index }: { index: number }) {
                     <button
                       type="button"
                       onClick={() =>
-                        edit
-                          ? edit.service(service.id)
-                          : setOpen(expanded ? null : service.id)
+                        edit ? edit.service(service.id) : toggle(service.id)
                       }
                       aria-expanded={edit ? undefined : expanded}
                       className="grid w-full cursor-pointer grid-cols-[2.2rem_1fr_auto] items-baseline gap-x-2 py-5 text-left"
@@ -244,6 +331,7 @@ function PriceIndex({ index }: { index: number }) {
 function Shelf() {
   const { config, catalog, book, edit } = useEngine();
   const reveal = useReveal();
+  const search = useSearch(catalog);
   return (
     <section
       data-booking-scene
@@ -263,9 +351,10 @@ function Shelf() {
         <p className="mt-3 max-w-[38ch] text-[15.5px] leading-relaxed text-[var(--u-soft-paper)]">
           Le temps indiqué est le vôtre : on ne le raccourcit pas.
         </p>
-        <CategoryNav groups={catalog} />
+        <SceneSearch search={search} />
+        {search.active ? null : <CategoryNav groups={catalog} />}
       </div>
-      {catalog.map((group) => (
+      {search.groups.map((group) => (
         <div
           key={group.category?.id ?? "sans-categorie"}
           id={group.category ? `categorie-${group.category.id}` : undefined}
@@ -357,9 +446,9 @@ function Tiles() {
     "bg-[var(--u-ink)] text-[var(--u-bg)]",
   ];
   // A long menu gets denser tiles: the rhythm stays, the scroll shortens.
-  const dense =
-    catalog.reduce((sum, group) => sum + group.services.length, 0) > 10;
-  const starts = offsets(catalog);
+  const dense = countServices(catalog) > 10;
+  const numbers = numbersOf(catalog);
+  const search = useSearch(catalog);
   return (
     <section
       data-booking-scene
@@ -376,9 +465,10 @@ function Tiles() {
             </Display>
           </motion.h2>
         )}
-        <CategoryNav groups={catalog} />
+        <SceneSearch search={search} />
+        {search.active ? null : <CategoryNav groups={catalog} />}
       </div>
-      {catalog.map((group, groupIndex) => (
+      {search.groups.map((group) => (
         <div
           key={group.category?.id ?? "sans-categorie"}
           id={group.category ? `categorie-${group.category.id}` : undefined}
@@ -398,7 +488,7 @@ function Tiles() {
           <ul className="grid gap-3 md:grid-cols-2">
             {group.services.map((service, position) => {
               const className =
-                tones[(starts[groupIndex]! + position) % tones.length];
+                tones[(numbers.get(service.id)! - 1) % tones.length];
               return (
                 <motion.li
                   key={service.id}

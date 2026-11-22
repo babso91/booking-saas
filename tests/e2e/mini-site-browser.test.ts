@@ -247,3 +247,133 @@ describe("her practical infos and the index", () => {
     expect(consoleErrors).toEqual([]);
   });
 });
+
+// Higani points 36 and 37: a long catalogue (eight services and more) on her
+// published site. Two close services read together, a search by name or
+// category on her site and in the booking it opens.
+describe("her long catalogue", () => {
+  it("phone 320: two close services open together; found by name or category", async () => {
+    const pro = await professionalWithVisit("Mila", "Lou");
+    const actor = pro.browser.member!.userId;
+    const { rows } = await db.query<{ slug: string }>(
+      "select slug from public.businesses where id = $1",
+      [pro.businessId],
+    );
+    const slug = rows[0]!.slug;
+    const { rows: category } = await db.query<{ id: string }>(
+      `insert into public.service_categories (business_id, name)
+       values ($1, 'Sourcils') returning id`,
+      [pro.businessId],
+    );
+    // With the seed's "Rehaussement de cils": nine services.
+    for (const [index, name, description, inCategory] of [
+      [1, "Volume russe", "Dense et léger, effet œil de biche.", false],
+      [2, "Volume mixte", "Entre naturel et dense.", false],
+      [3, "Teinture des cils", null, false],
+      [4, "Restructuration", null, true],
+      [5, "Brow lift", "Tenue 6 à 8 semaines.", true],
+      [6, "Épilation", null, true],
+      [7, "Soin hydratant", null, false],
+      [8, "Soin anti-âge", null, false],
+    ] as const) {
+      await db.query(
+        `insert into public.services
+           (business_id, name, description, duration_minutes, price_cents,
+            display_order, category_id)
+         values ($1, $2, $3, 60, 5000, $4, $5)`,
+        [
+          pro.businessId,
+          name,
+          description,
+          index,
+          inCategory ? category[0]!.id : null,
+        ],
+      );
+    }
+    const revision = await saveDraft(
+      pro.businessId,
+      actor,
+      0,
+      "Studio Lumière",
+      "mila",
+    );
+    await db.query("select * from public.publish_site($1, $2, $3)", [
+      pro.businessId,
+      actor,
+      revision,
+    ]);
+
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 320,
+      height: 760,
+      phone: true,
+    });
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`${APP}/b/${slug}`);
+    const scene = page.locator("[data-booking-scene]");
+    await scene.getByText("Volume mixte").waitFor();
+
+    // Point 36: opening the second does not close the first.
+    const row = (name: string) =>
+      scene.getByRole("button", { name: new RegExp(name) });
+    await row("Volume russe").click();
+    await row("Volume mixte").click();
+    expect(await row("Volume russe").getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+    expect(await row("Volume mixte").getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+    await scene.getByText("Dense et léger, effet œil de biche.").waitFor();
+    await scene.getByText("Entre naturel et dense.").waitFor();
+
+    // Point 37: by category, then by name; nothing found is said.
+    const search = scene.getByRole("searchbox", {
+      name: "Rechercher une prestation",
+    });
+    await search.fill("sourcils");
+    await scene.getByText("3 prestations").waitFor();
+    await scene.getByText("Brow lift").waitFor();
+    expect(await scene.getByText("Volume russe").count()).toBe(0);
+    await search.fill("rehauss");
+    await scene.getByText("1 prestation").waitFor();
+    await search.fill("brushing");
+    await scene
+      .getByText("Aucune prestation ne correspond à « brushing »")
+      .waitFor();
+    await scene.getByRole("button", { name: "Effacer la recherche" }).click();
+    await scene.getByText("Soin anti-âge").waitFor();
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "mini-site long catalogue");
+    await capture(page, "mini-site long catalogue 320");
+
+    // The booking it opens: searched too, the service found is booked.
+    await page
+      .locator("[data-header-action]")
+      .getByRole("button", { name: "Réserver" })
+      .click();
+    const sheet = page.getByRole("dialog", {
+      name: "Réserver chez Studio Lumière",
+    });
+    await sheet
+      .getByRole("heading", { name: "Choisissez une prestation" })
+      .waitFor();
+    await sheet
+      .getByRole("searchbox", { name: "Rechercher une prestation" })
+      .fill("brow");
+    await sheet.getByText("1 prestation").waitFor();
+    await expectAccessible(page, "booking long catalogue");
+    await sheet.getByRole("button", { name: /Brow lift/ }).click();
+    await sheet
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+});
