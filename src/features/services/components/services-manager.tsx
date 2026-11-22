@@ -35,6 +35,7 @@ import {
 import type { ServiceOption } from "@/features/catalog/model";
 import {
   deleteServiceAction,
+  duplicateServiceAction,
   reorderServicesAction,
   setServiceActiveAction,
 } from "@/features/services/actions/services";
@@ -93,7 +94,11 @@ async function readCatalog() {
 }
 
 /** A row action in progress or refused. */
-type RowState = { id: string; kind: "active" | "delete"; error?: UiError };
+type RowState = {
+  id: string;
+  kind: "active" | "delete" | "duplicate";
+  error?: UiError;
+};
 
 const linkAction =
   "cursor-pointer text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4";
@@ -134,6 +139,9 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
   const [deleting, setDeleting] = useState<ServiceView | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const reads = useRef(0);
+  // One copy per click on « Dupliquer »: kept until answered, so that a
+  // retry after a lost answer is the same request (point 41).
+  const copies = useRef(new Map<string, string>());
   // An unconfirmed creation kept from earlier (closed form, other page).
   const pendingRaw = useSyncExternalStore(
     noSubscription,
@@ -290,6 +298,47 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
       return;
     }
     setRow({ id: service.id, kind: "delete", error: result.error });
+  }
+
+  /** A copy of the service, deactivated, opened for her changes (point 41). */
+  async function duplicate(service: ServiceView) {
+    if ((row && !row.error) || ordering === "saving") return;
+    const requestId = copies.current.get(service.id) ?? crypto.randomUUID();
+    copies.current.set(service.id, requestId);
+    setRow({ id: service.id, kind: "duplicate" });
+    const result = await callAction(() =>
+      duplicateServiceAction({ serviceId: service.id, requestId }),
+    );
+    if (result.ok) {
+      copies.current.delete(service.id);
+      const copy = result.data;
+      setLoad((value) =>
+        value.status === "ready"
+          ? {
+              ...value,
+              services: value.services.some((item) => item.id === copy.id)
+                ? value.services
+                : [...value.services, copy],
+            }
+          : value,
+      );
+      setRow(null);
+      setAnnouncement(
+        `${copy.name} a été créée, désactivée. Modifie ce qui change puis active-la.`,
+      );
+      setSheet({ mode: "edit", service: copy });
+      // Its options and its place come from the server.
+      reload();
+      return;
+    }
+    // Answered (a refusal): the next click is a new request.
+    if (result.error.code !== "network") copies.current.delete(service.id);
+    setRow({ id: service.id, kind: "duplicate", error: result.error });
+    if (
+      result.error.code === "not_found" ||
+      result.error.code === "service_not_found"
+    )
+      reload();
   }
 
   async function moveCategory(category: CatalogCategory, delta: -1 | 1) {
@@ -474,6 +523,7 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
                     locked={pending || ordering === "saving"}
                     onEdit={() => setSheet({ mode: "edit", service })}
                     onToggle={() => void toggleActive(service)}
+                    onDuplicate={() => void duplicate(service)}
                     onMove={(delta) => void move(service, delta)}
                     onDelete={() => {
                       setRow(null);
@@ -663,6 +713,7 @@ function ServiceRow({
   locked,
   onEdit,
   onToggle,
+  onDuplicate,
   onMove,
   onDelete,
 }: {
@@ -678,6 +729,7 @@ function ServiceRow({
   locked: boolean;
   onEdit: () => void;
   onToggle: () => void;
+  onDuplicate: () => void;
   onMove: (delta: -1 | 1) => void;
   onDelete: () => void;
 }) {
@@ -741,6 +793,15 @@ function ServiceRow({
         </p>
       ) : null}
 
+      {row?.kind === "duplicate" && row.error ? (
+        <p role="alert" className="text-[13.5px] text-danger">
+          {row.error.code === "not_found" ||
+          row.error.code === "service_not_found"
+            ? "Cette prestation n’existe plus : la liste a été rechargée."
+            : "La copie n’a pas pu être créée. Réessaie."}
+        </p>
+      ) : null}
+
       <div className="-mx-1 flex flex-wrap items-center gap-1 border-t border-line pt-2">
         <button
           type="button"
@@ -750,6 +811,15 @@ function ServiceRow({
           className={small}
         >
           Modifier
+        </button>
+        <button
+          type="button"
+          onClick={onDuplicate}
+          disabled={locked}
+          aria-label={`Dupliquer ${service.name}`}
+          className={small}
+        >
+          {row?.kind === "duplicate" && !row.error ? "Copie…" : "Dupliquer"}
         </button>
         {/* Alone in its section: nowhere to go, no arrows to read. */}
         {count > 1 ? (

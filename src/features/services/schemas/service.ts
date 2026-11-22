@@ -38,6 +38,15 @@ export const createServiceSchema = z.object({
   requestId: z.uuid(),
 });
 
+/**
+ * A copy of one of her services (point 41), one per click: a retry of the
+ * same command answers the same copy.
+ */
+export const duplicateServiceSchema = z.object({
+  serviceId: serviceIdSchema,
+  requestId: z.uuid(),
+});
+
 /** Only the changed fields, on the basis of the version they were read at. */
 export const updateServiceSchema = z.object({
   serviceId: serviceIdSchema,
@@ -78,3 +87,4 @@ export const deleteServiceSchema = z.object({ serviceId: serviceIdSchema });
 
 export type CreateServiceInput = z.output<typeof createServiceSchema>;
 export type UpdateServiceInput = z.output<typeof updateServiceSchema>;
+export type DuplicateServiceInput = z.output<typeof duplicateServiceSchema>;

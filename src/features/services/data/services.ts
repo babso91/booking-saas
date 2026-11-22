@@ -2,6 +2,7 @@ import "server-only";
 
 import type {
   CreateServiceInput,
+  DuplicateServiceInput,
   UpdateServiceInput,
 } from "@/features/services/schemas/service";
 import { AppException, appErrorMessages } from "@/lib/errors";
@@ -144,6 +145,38 @@ export async function createService(
     return await getService(client, businessId, data.service_id);
   } catch (error) {
     // A replay answered just before a concurrent deletion committed.
+    if (error instanceof AppException && error.code === "not_found") {
+      throw serviceDeleted();
+    }
+    throw error;
+  }
+}
+
+/**
+ * Copies a service (point 41): description, price, length, category,
+ * questions and answers, the people who perform it and its loyalty points.
+ * The copy starts deactivated, right after the original. Once per
+ * `requestId`, like a creation.
+ */
+export async function duplicateService(
+  client: AppSupabaseClient,
+  businessId: string,
+  input: DuplicateServiceInput,
+): Promise<ServiceDto> {
+  const { data, error } = await client
+    .rpc("duplicate_service", {
+      p_business_id: businessId,
+      p_request_id: input.requestId,
+      p_service_id: input.serviceId,
+    })
+    .single();
+
+  if (error) throw databaseException(error);
+  if (data.status === "deleted") throw serviceDeleted();
+
+  try {
+    return await getService(client, businessId, data.service_id);
+  } catch (error) {
     if (error instanceof AppException && error.code === "not_found") {
       throw serviceDeleted();
     }
