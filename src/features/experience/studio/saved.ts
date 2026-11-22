@@ -15,17 +15,21 @@ const own = (id: string | null) => (id && !isDemo(id) ? id : null);
 /** Her draft as the server keeps it. */
 export function savedConfigOf(config: SiteConfig): SavedConfig {
   const cover = own(config.content.cover);
+  const logo = own(config.content.logo ?? null);
   const portrait = own(config.content.portrait.photo);
   // A work is a photo of hers: without one, it is not saved.
   const works = config.content.works.filter((work) => own(work.photo));
   const kept = new Set(
-    [cover, portrait, ...works.map((work) => work.photo)].filter(Boolean),
+    [cover, portrait, logo, ...works.map((work) => work.photo)].filter(Boolean),
   );
   return {
     ...config,
     content: {
       ...config.content,
       cover: cover ? { asset: cover } : null,
+      ...(config.content.logo !== undefined
+        ? { logo: logo ? { asset: logo } : null }
+        : {}),
       portrait: {
         ...config.content.portrait,
         photo: portrait ? { asset: portrait } : null,

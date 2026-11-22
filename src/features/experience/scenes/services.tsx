@@ -1,4 +1,5 @@
 "use client";
+import { bookingLabel, sectionTitle } from "@/features/sites/presentation";
 
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
@@ -119,7 +120,7 @@ function minutesOf(service: CatalogService) {
 }
 
 function PriceIndex({ index }: { index: number }) {
-  const { catalog, book, edit, motion: language } = useEngine();
+  const { config, catalog, book, edit, motion: language } = useEngine();
   const [open, setOpen] = useState<string | null>(null);
   const starts = offsets(catalog);
   return (
@@ -129,7 +130,12 @@ function PriceIndex({ index }: { index: number }) {
     >
       <div className="mx-auto max-w-[1100px] px-5 pt-16 pb-40">
         <div className="flex items-baseline justify-between border-t border-current pt-4">
-          <Detail>({String(index).padStart(2, "0")}) Prestations</Detail>
+          {sectionTitle(config.presentation, "services", "Prestations") && (
+            <Detail>
+              ({String(index).padStart(2, "0")}){" "}
+              {sectionTitle(config.presentation, "services", "Prestations")}
+            </Detail>
+          )}
           <Detail>Prix TTC</Detail>
         </div>
         <CategoryNav groups={catalog} />
@@ -210,7 +216,13 @@ function PriceIndex({ index }: { index: number }) {
                                   className="cursor-pointer bg-[var(--u-ink-on-paper)] px-4 py-3 text-[var(--u-paper)]"
                                   style={{ borderRadius: "var(--s-control)" }}
                                 >
-                                  <Detail>Réserver ce soin →</Detail>
+                                  <Detail>
+                                    {bookingLabel(
+                                      config.presentation,
+                                      "Réserver ce soin",
+                                    )}{" "}
+                                    →
+                                  </Detail>
                                 </button>
                               </div>
                             </div>
@@ -230,7 +242,7 @@ function PriceIndex({ index }: { index: number }) {
 }
 
 function Shelf() {
-  const { catalog, book, edit } = useEngine();
+  const { config, catalog, book, edit } = useEngine();
   const reveal = useReveal();
   return (
     <section
@@ -238,12 +250,16 @@ function Shelf() {
       className="bg-[var(--u-paper)] pt-20 pb-36 text-[var(--u-ink-on-paper)]"
     >
       <div className="mx-auto max-w-[1100px] px-6">
-        <motion.h2
-          className="text-[44px] leading-none md:text-[64px]"
-          {...reveal()}
-        >
-          <Display>Rituels</Display>
-        </motion.h2>
+        {!config.presentation?.labels?.services?.hideTitle && (
+          <motion.h2
+            className="text-[44px] leading-none [overflow-wrap:anywhere] md:text-[64px]"
+            {...reveal()}
+          >
+            <Display>
+              {sectionTitle(config.presentation, "services", "Rituels")}
+            </Display>
+          </motion.h2>
+        )}
         <p className="mt-3 max-w-[38ch] text-[15.5px] leading-relaxed text-[var(--u-soft-paper)]">
           Le temps indiqué est le vôtre : on ne le raccourcit pas.
         </p>
@@ -318,7 +334,7 @@ function Shelf() {
                       className="cursor-pointer bg-[var(--u-ink-on-paper)] px-5 py-3 text-[14.5px] text-[var(--u-paper)]"
                       style={{ borderRadius: "var(--s-control)" }}
                     >
-                      {edit ? "Modifier" : "Réserver"}
+                      {edit ? "Modifier" : bookingLabel(config.presentation)}
                     </button>
                   </div>
                 </article>
@@ -333,7 +349,7 @@ function Shelf() {
 
 /** Colour tiles: each service a bold block, booked in one tap. */
 function Tiles() {
-  const { catalog, book, edit } = useEngine();
+  const { config, catalog, book, edit } = useEngine();
   const reveal = useReveal();
   const tones = [
     "bg-[var(--u-accent)] text-[var(--u-on-accent)]",
@@ -350,12 +366,16 @@ function Tiles() {
       className="bg-[var(--u-bg)] px-3 pt-16 pb-36 text-[var(--u-ink)]"
     >
       <div className="mx-auto max-w-[1100px] px-2">
-        <motion.h2
-          className="text-[clamp(48px,15vw,140px)] leading-[0.85]"
-          {...reveal()}
-        >
-          <Display>Le menu</Display>
-        </motion.h2>
+        {!config.presentation?.labels?.services?.hideTitle && (
+          <motion.h2
+            className="text-[clamp(48px,15vw,140px)] leading-[0.85] [overflow-wrap:anywhere]"
+            {...reveal()}
+          >
+            <Display>
+              {sectionTitle(config.presentation, "services", "Le menu")}
+            </Display>
+          </motion.h2>
+        )}
         <CategoryNav groups={catalog} />
       </div>
       {catalog.map((group, groupIndex) => (
@@ -416,7 +436,12 @@ function Tiles() {
                         </span>
                       ) : null}
                       <span className="mt-5 inline-block">
-                        <Detail>{edit ? "Modifier →" : "Réserver →"}</Detail>
+                        <Detail>
+                          {edit
+                            ? "Modifier"
+                            : bookingLabel(config.presentation)}{" "}
+                          →
+                        </Detail>
                       </span>
                     </span>
                   </button>
@@ -435,7 +460,7 @@ function Tiles() {
  * composition does not jump), and says so; in the studio, what to do.
  */
 function Empty({ variant }: { variant: ServicesVariant }) {
-  const { edit } = useEngine();
+  const { config, edit } = useEngine();
   const night = variant === "tiles";
   return (
     <section
@@ -446,12 +471,14 @@ function Empty({ variant }: { variant: ServicesVariant }) {
       }
     >
       <div className="mx-auto flex max-w-[1100px] flex-col gap-4 border-t border-current pt-6">
-        <Display
-          as="h2"
-          className="text-[clamp(40px,10vw,88px)] leading-[0.95]"
-        >
-          Bientôt
-        </Display>
+        {!config.presentation?.labels?.services?.hideTitle && (
+          <Display
+            as="h2"
+            className="text-[clamp(40px,10vw,88px)] leading-[0.95]"
+          >
+            {sectionTitle(config.presentation, "services", "Bientôt")}
+          </Display>
+        )}
         <Note
           className={`max-w-[36ch] text-[16px] ${night ? "text-[var(--u-muted)]" : "text-[var(--u-soft-paper)]"}`}
         >

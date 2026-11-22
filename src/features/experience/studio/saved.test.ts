@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { siteConfigSchema } from "@/features/sites/config";
+import { siteAssetIds, siteConfigSchema } from "@/features/sites/config";
 
 import { renderConfigOf } from "../engine/from-site";
 import { demo } from "./photos";
@@ -20,6 +20,20 @@ describe("her draft, as the server keeps it", () => {
       expect(saved.content.works).toEqual([]);
       expect(siteConfigSchema.safeParse(saved).success).toBe(true);
     }
+  });
+
+  it("round-trips an optional logo through the same publication and revocation rules as the photos", () => {
+    const draft = firstDraft(universes.alma, "Studio");
+    expect(renderConfigOf(savedConfigOf(draft)).content.logo).toBeUndefined();
+    for (const logo of [A, B]) {
+      draft.content.logo = logo;
+      const saved = siteConfigSchema.parse(savedConfigOf(draft));
+      expect(siteAssetIds(saved)).toEqual([logo]);
+      expect(renderConfigOf(saved).content.logo).toBe(logo);
+      expect(renderConfigOf(saved, [logo]).content.logo).toBeNull();
+    }
+    draft.content.logo = null;
+    expect(siteAssetIds(savedConfigOf(draft))).toEqual([]);
   });
 
   it("her photos become { asset }; demo photos never leave the studio", () => {

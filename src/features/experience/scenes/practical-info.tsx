@@ -1,6 +1,7 @@
 "use client";
+import { sectionTitle } from "@/features/sites/presentation";
 
-import { Detail, useReveal } from "../engine/engine";
+import { Detail, useEngine, useReveal } from "../engine/engine";
 import { directionsHref, telHref, type PracticalItem } from "../practical";
 
 // Her "Infos pratiques": set on her day surface like her services, in her
@@ -16,14 +17,23 @@ export function PracticalInfo({
   index: number;
 }) {
   const reveal = useReveal();
+  const title = sectionTitle(
+    useEngine().config.presentation,
+    "practical",
+    "Infos pratiques",
+  );
   if (!items.length) return null;
   return (
     <section className="bg-[var(--u-paper)] text-[var(--u-ink-on-paper)]">
       <div className="mx-auto max-w-[1100px] px-5 pt-16 pb-24">
         <div className="flex items-baseline justify-between border-t border-current pt-4">
-          <h2>
-            <Detail>({String(index).padStart(2, "0")}) Infos pratiques</Detail>
-          </h2>
+          {title && (
+            <h2>
+              <Detail>
+                ({String(index).padStart(2, "0")}) {title}
+              </Detail>
+            </h2>
+          )}
         </div>
         <dl className="mt-10 grid gap-x-12 gap-y-9 md:grid-cols-2">
           {items.map((item, position) => (

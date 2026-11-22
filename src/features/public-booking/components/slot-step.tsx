@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type Ref } from "react";
+import { useRef, type Ref } from "react";
 
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 
 import { dayLabel, dayParts, wallTime } from "../client/business-time";
 import type { BookingFlow } from "../client/use-booking-flow";
+import type { BookingFormat } from "../formats";
 import {
   linkAction,
   QuoteLine,
@@ -17,6 +18,11 @@ import {
 import { AvailabilityCalendar } from "./availability-calendar";
 
 const WEEK = 7;
+export type CalendarPosition = {
+  view: "day" | "week" | "month";
+  anchor: string;
+  fromMonth: boolean;
+};
 
 /**
  * Choose a slot in the business time zone, within the booking horizon.
@@ -24,24 +30,50 @@ const WEEK = 7;
 export function SlotStep({
   flow,
   headingRef,
-  initialView = "day",
+  position,
+  onPosition,
+  format,
 }: {
   flow: BookingFlow;
-  initialView?: "day" | "week" | "month";
+  position: CalendarPosition;
+  onPosition: (next: CalendarPosition) => void;
+  format: BookingFormat;
   headingRef: Ref<HTMLHeadingElement>;
 }) {
   const { service, days, date, slots, slot, notice, business } = flow;
   const index = Math.max(0, days.indexOf(date));
-  const [page, setPage] = useState(Math.floor(index / WEEK));
-  const [shownDate, setShownDate] = useState(date);
-  const [view, setView] = useState<"day" | "week" | "month">(initialView);
-  const [anchor, setAnchor] = useState(date);
+  const { view, anchor } = position;
   const daySlots = useRef<HTMLDivElement>(null);
-  // The day can change from the flow (a slot refused): show its week.
-  if (shownDate !== date) {
-    setShownDate(date);
-    setPage(Math.floor(index / WEEK));
+  const inlineMonth = view === "month" && format !== "calendar";
+  const clampDate = (day: string) =>
+    day < days[0]! ? days[0]! : day > days.at(-1)! ? days.at(-1)! : day;
+  const page = Math.floor(Math.max(0, days.indexOf(clampDate(anchor))) / WEEK);
+  function goToView(
+    next: CalendarPosition["view"],
+    day: string,
+    fromMonth = false,
+  ) {
+    const chosen = clampDate(day);
+    if ((next === "day" && chosen !== date) || slots.status === "loading")
+      flow.actions.chooseDate(chosen);
+    onPosition({ view: next, anchor: chosen, fromMonth });
   }
+  function chooseDate(day: string) {
+    flow.actions.chooseDate(day);
+    onPosition({ ...position, anchor: day });
+  }
+
+  function selectMonthDay(day: string) {
+    if (format === "calendar") {
+      goToView("day", day, true);
+      return;
+    }
+    chooseDate(day);
+    requestAnimationFrame(() => {
+      daySlots.current?.scrollIntoView?.({ block: "start" });
+    });
+  }
+
   const pages = Math.ceil(days.length / WEEK);
   const week = days.slice(page * WEEK, page * WEEK + WEEK);
   const nextDay = days[index + 1];
@@ -124,8 +156,7 @@ export function SlotStep({
             type="button"
             aria-pressed={view === value}
             onClick={() => {
-              if (view === "day") setAnchor(date);
-              setView(value);
+              if (view !== value) goToView(value, anchor);
             }}
             className={cn(
               "min-h-11 rounded-xl border px-3 text-sm font-semibold",
@@ -138,19 +169,23 @@ export function SlotStep({
           </button>
         ))}
       </nav>
+      {position.fromMonth && (
+        <button
+          type="button"
+          className={linkAction + " self-start"}
+          onClick={() => goToView("month", date)}
+        >
+          ← Revenir au mois
+        </button>
+      )}
       {view !== "day" ? (
         <AvailabilityCalendar
           view={view}
           anchor={anchor}
-          onAnchor={setAnchor}
+          onAnchor={(next) => goToView(view, next)}
           flow={flow}
-          chronological={initialView === "week"}
-          onSelectDate={(day) => {
-            flow.actions.chooseDate(day);
-            requestAnimationFrame(() => {
-              daySlots.current?.scrollIntoView?.({ block: "start" });
-            });
-          }}
+          chronological={format === "chronological"}
+          onSelectDate={selectMonthDay}
         />
       ) : (
         <fieldset className="flex min-w-0 flex-col gap-3">
@@ -160,7 +195,7 @@ export function SlotStep({
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
-              onClick={() => setPage((value) => Math.max(0, value - 1))}
+              onClick={() => chooseDate(days[(page - 1) * WEEK]!)}
               disabled={page === 0}
               aria-label="Semaine précédente"
               className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-ink-soft hover:bg-sand disabled:cursor-not-allowed disabled:opacity-30"
@@ -174,7 +209,7 @@ export function SlotStep({
             </p>
             <button
               type="button"
-              onClick={() => setPage((value) => Math.min(pages - 1, value + 1))}
+              onClick={() => chooseDate(days[(page + 1) * WEEK]!)}
               disabled={page >= pages - 1}
               aria-label="Semaine suivante"
               className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-ink-soft hover:bg-sand disabled:cursor-not-allowed disabled:opacity-30"
@@ -190,7 +225,7 @@ export function SlotStep({
                 <button
                   key={day}
                   type="button"
-                  onClick={() => flow.actions.chooseDate(day)}
+                  onClick={() => chooseDate(day)}
                   aria-pressed={selected}
                   className={cn(
                     "flex min-w-0 cursor-pointer flex-col items-center gap-0.5 rounded-2xl border px-0.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
@@ -225,8 +260,8 @@ export function SlotStep({
         </Notice>
       ) : null}
       {view === "day" ||
-      (view === "month" && anchor.slice(0, 7) === date.slice(0, 7)) ? (
-        <div ref={daySlots} className="flex flex-col gap-3">
+      (inlineMonth && anchor.slice(0, 7) === date.slice(0, 7)) ? (
+        <div ref={daySlots} className="flex min-h-36 flex-col gap-3">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <h3 className="text-[15px] font-medium text-ink first-letter:uppercase">
               {dayLabel(date)}
@@ -283,7 +318,7 @@ export function SlotStep({
                 <button
                   type="button"
                   className={linkAction}
-                  onClick={() => flow.actions.chooseDate(nextDay)}
+                  onClick={() => chooseDate(nextDay)}
                 >
                   Voir le {dayLabel(nextDay)}
                 </button>

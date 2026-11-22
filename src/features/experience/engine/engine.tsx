@@ -233,7 +233,9 @@ export function EditTarget({
           ? "Modifier la photo de couverture"
           : slot === "portrait"
             ? "Modifier la photo de ton portrait"
-            : `Modifier la photo de la réalisation ${slot + 1}`
+            : slot === "logo"
+              ? "Modifier le logo"
+              : `Modifier la photo de la réalisation ${slot + 1}`
       }
       className={`${className} cursor-pointer`}
     >
@@ -250,8 +252,9 @@ export function EditTarget({
  * JavaScript or before hydration, the element is simply visible.
  */
 export function useReveal() {
+  const { motion } = useEngine();
   return (index = 0) => ({
-    "data-reveal": "",
+    "data-reveal": motion.entrance,
     "data-reveal-index": String(Math.min(Math.max(index, 0), 8)),
   });
 }

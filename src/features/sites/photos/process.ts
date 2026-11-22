@@ -61,6 +61,7 @@ export function realType(
  */
 export async function processSitePhoto(
   input: Buffer,
+  purpose?: "logo",
 ): Promise<ProcessedSitePhoto> {
   if (input.byteLength === 0) unsupported("Le fichier est vide.");
   if (input.byteLength > sitePhotoLimits.maxBytes) {
@@ -99,8 +100,9 @@ export async function processSitePhoto(
   const height = turned ? metadata.width : metadata.height;
   const ratio = Math.max(width, height) / Math.min(width, height);
   if (
-    Math.min(width, height) < sitePhotoLimits.minSide ||
-    ratio > sitePhotoLimits.maxAspect
+    purpose !== "logo" &&
+    (Math.min(width, height) < sitePhotoLimits.minSide ||
+      ratio > sitePhotoLimits.maxAspect)
   ) {
     throw new AppException("site_photo_invalid");
   }
