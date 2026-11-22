@@ -567,3 +567,134 @@ describe("her next opening (point 60)", () => {
     expect(consoleErrors).toEqual([]);
   });
 });
+
+// Higani point 6: her conditions are on her site, and read before she commits.
+describe("her conditions before booking (point 6)", () => {
+  it("phone 390: her infos list them; the last step reads them above the confirm button", async () => {
+    const pro = await professionalWithVisit("Mila", "Lou");
+    const actor = pro.browser.member!.userId;
+    const { rows } = await db.query<{ slug: string }>(
+      "select slug from public.businesses where id = $1",
+      [pro.businessId],
+    );
+    const slug = rows[0]!.slug;
+    await db.query(
+      "update public.businesses set cancellation_policy = $2 where id = $1",
+      [pro.businessId, "Gratuite jusqu’à 24 h avant."],
+    );
+    await db.query("delete from public.business_hours where business_id = $1", [
+      pro.businessId,
+    ]);
+    for (const weekday of [0, 1, 2, 3, 4, 5, 6]) {
+      await db.query(
+        `insert into public.business_hours (business_id, weekday, starts_at, ends_at)
+         values ($1, $2, '09:00', '19:00')`,
+        [pro.businessId, weekday],
+      );
+    }
+    const config = sampleSite("mila");
+    const { rows: saved } = await db.query<{ revision: number }>(
+      "select public.save_site_draft($1, $2, 0, 1, $3::jsonb) as revision",
+      [
+        pro.businessId,
+        actor,
+        JSON.stringify({
+          ...config,
+          brand: { ...config.brand, name: "Studio Lumière" },
+          practical: {
+            address: "12 rue Mercière, 69002 Lyon",
+            area: "",
+            access: "",
+            instructions: "Venir démaquillée.",
+            payment: "",
+            accessibility: "",
+            phone: "",
+            email: "",
+            showHours: false,
+            lateness: "Au-delà de 15 minutes, la séance est raccourcie.",
+            noShow: "Prévenez-moi au plus tôt si vous ne pouvez pas venir.",
+            companions: "Un accompagnant maximum, sans enfant en bas âge.",
+          },
+        }),
+      ],
+    );
+    await db.query("select * from public.publish_site($1, $2, $3)", [
+      pro.businessId,
+      actor,
+      saved[0]!.revision,
+    ]);
+
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 390,
+      height: 844,
+      phone: true,
+    });
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`${APP}/b/${slug}`);
+    await page.getByText("Studio Lumière").first().waitFor();
+
+    const infos = page.locator("#infos");
+    await infos.getByText("Retard", { exact: true }).waitFor();
+    await infos.getByText("Rendez-vous manqué", { exact: true }).waitFor();
+    await infos.getByText("Accompagnants", { exact: true }).waitFor();
+    await infos
+      .getByText("Prévenez-moi au plus tôt si vous ne pouvez pas venir.")
+      .waitFor();
+
+    const scene = page.locator("[data-booking-scene]");
+    await scene.getByRole("button", { name: /Rehaussement de cils/ }).click();
+    await scene.getByRole("button", { name: /Réserver ce soin/ }).click();
+    const sheet = page.getByRole("dialog", {
+      name: "Réserver chez Studio Lumière",
+    });
+    await sheet
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+    // The sheet opens on her next availability: its slots are listed.
+    const slots = sheet.getByRole("list", { name: /^Créneaux du / });
+    await slots.waitFor();
+    await slots.getByRole("button").first().click();
+
+    await sheet.getByRole("heading", { name: "Vos coordonnées" }).waitFor();
+    await sheet.getByLabel(/^Prénom/).fill("Inès");
+    await sheet.getByLabel(/^Email/).fill(`ines-${slug}@client.test.local`);
+    await sheet.getByRole("button", { name: "Continuer" }).click();
+    await sheet
+      .getByRole("heading", { name: "Vérifiez et confirmez" })
+      .waitFor();
+
+    const region = sheet.getByRole("region", {
+      name: "À savoir avant de confirmer",
+    });
+    await region.waitFor();
+    expect(await region.locator("dt").allInnerTexts()).toEqual([
+      "Annulation",
+      "Retard",
+      "Rendez-vous manqué",
+      "Accompagnants",
+      "Avant de venir",
+    ]);
+    await region.getByText("Gratuite jusqu’à 24 h avant.").waitFor();
+    await region.getByText("Venir démaquillée.").waitFor();
+    const confirm = sheet.getByRole("button", {
+      name: /Confirmer la réservation/,
+    });
+    await confirm.scrollIntoViewIfNeeded();
+    // Above the button, never after it.
+    const regionBox = (await region.boundingBox())!;
+    const confirmBox = (await confirm.boundingBox())!;
+    expect(regionBox.y).toBeLessThan(confirmBox.y);
+
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "booking conditions");
+    await capture(page, "p6-conditions-390");
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+});
