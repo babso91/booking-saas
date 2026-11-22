@@ -1281,14 +1281,16 @@ describe("private notes", () => {
          and strpos(p.prosrc, 'client_notes') > 0
        order by 1`,
     );
+    // (The rights of access and erasure read it from their private bodies,
+    // wrapped by the public functions since the reviews, 20261122220000.)
     expect(rows).toEqual([
+      { name: "private.privacy_erase_client_base", anon: false },
+      { name: "private.privacy_export_client_base", anon: false },
       { name: "public.crm_client_timeline", anon: false },
       { name: "public.crm_create_client_note", anon: false },
       { name: "public.crm_delete_client_note", anon: false },
       { name: "public.crm_list_client_notes", anon: false },
       { name: "public.crm_update_client_note", anon: false },
-      { name: "public.privacy_erase_client", anon: false },
-      { name: "public.privacy_export_client", anon: false },
     ]);
   });
 

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { createClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -460,8 +460,10 @@ describe("her own agreement, with her booking", () => {
           p_token_hash: hashUnsubscribeToken(token),
         }),
       );
-    const first = `cnf_${"a".repeat(43)}`;
-    const second = `cnf_${"b".repeat(43)}`;
+    // Unique per run: a token hash is unique across the database.
+    const token = () => `cnf_${randomBytes(32).toString("base64url")}`;
+    const first = token();
+    const second = token();
     expect(await ask(first)).toMatchObject({ status: "pending" });
     // The transport failed (never marked sent): the retry gets a new link.
     expect(await ask(second)).toMatchObject({ status: "pending" });
@@ -477,7 +479,7 @@ describe("her own agreement, with her booking", () => {
         p_token_hash: hashUnsubscribeToken(second),
       }),
     );
-    expect(await ask(`cnf_${"c".repeat(43)}`)).toMatchObject({
+    expect(await ask(token())).toMatchObject({
       status: "already_requested",
     });
     expect(
