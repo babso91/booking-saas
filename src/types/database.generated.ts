@@ -1308,6 +1308,9 @@ isOneToOne: false
               "note_id": string,"status": string
             }[]
                            },
+"crm_export_client":
+{ Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
+                           },
 "crm_list_client_notes":
 { Args: { "p_before_at"?: string,"p_before_id"?: string,"p_business_id": string,"p_client_id": string,"p_limit"?: number }; Returns: Json
                            },

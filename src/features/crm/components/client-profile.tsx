@@ -32,6 +32,7 @@ import type {
   UpdateClientResultDto,
 } from "@/features/crm/types";
 import { ClientHubAccess } from "@/features/client-hub/components/client-hub-access";
+import { ClientDataExport } from "@/features/crm/components/client-data-export";
 import {
   ClientLoyalty,
   type LoyaltyVisit,
@@ -454,11 +455,19 @@ export function ClientProfile({
       onStale={() => setProfileRun((value) => value + 1)}
     />
   );
+  const privacy = (
+    <ClientDataExport
+      key={`${scope.userId}:${scope.businessId}:${clientId}`}
+      clientId={clientId}
+      displayName={data.client.displayName}
+    />
+  );
   const dossier = (
     <Dossier
       profile={data}
       loyalty={loyalty}
       clientHub={clientHub}
+      privacy={privacy}
       notes={notesList.state}
       noteHandlers={noteHandlers}
       onNotesRetry={notesList.reload}
@@ -833,6 +842,7 @@ function Dossier({
   profile,
   loyalty,
   clientHub,
+  privacy,
   notes,
   noteHandlers,
   onNotesRetry,
@@ -846,6 +856,8 @@ function Dossier({
   loyalty: ReactNode;
   /** Her Client Hub access (its own reads and writes). */
   clientHub: ReactNode;
+  /** Her personal data, exported on her request (point 205). */
+  privacy: ReactNode;
   notes: NotesListState;
   noteHandlers: NoteHandlers;
   onNotesRetry: () => void;
@@ -920,6 +932,8 @@ function Dossier({
       </DossierSection>
 
       {clientHub}
+
+      {privacy}
 
       {loyalty}
 
