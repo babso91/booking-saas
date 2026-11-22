@@ -389,6 +389,61 @@ describe("point 100: who changed an appointment, and what", () => {
     ).toBe("appointment_not_found");
   });
 
+  it("once her client is erased (point 205), nothing of the client remains in the history", async (context) => {
+    const { rowCount } = await db.query(
+      "select 1 from pg_proc where proname = 'privacy_erase_client'",
+    );
+    // Runs once the erasure (#129) is merged alongside.
+    if (!rowCount) context.skip();
+
+    const zoe = await createClientRecord(
+      business.id,
+      "zoe.martin@client.test",
+      "Zoé",
+    );
+    await db.query(
+      "update public.clients set last_name = 'Martin' where id = $1",
+      [zoe],
+    );
+    const { rows } = await db.query<{ id: string }>(
+      `insert into public.appointments (
+         business_id, client_id, service_id, starts_at, ends_at, status,
+         service_name_snapshot, duration_minutes_snapshot, price_cents_snapshot,
+         buffer_minutes_snapshot, internal_notes
+       )
+       values ($1, $2, $3, now() - interval '3 days',
+               now() - interval '3 days' + interval '1 hour', 'completed',
+               'Coupe', 60, 4000, 0, 'Code porte 1234')
+       returning id`,
+      [business.id, zoe, coupe],
+    );
+    const id = rows[0]!.id;
+    const { rows: version } = await db.query<{ version: number }>(
+      "select version from public.clients where id = $1",
+      [zoe],
+    );
+    await ok(
+      call(owner.client, "privacy_erase_client", {
+        p_business_id: business.id,
+        p_client_id: zoe,
+        p_expected_version: version[0]!.version,
+      }),
+    );
+
+    const [erased] = (await history(id)).data.entries;
+    expect(erased).toMatchObject({
+      actor: { kind: "member", isYou: true },
+      changes: [{ type: "notes" }],
+    });
+    const stored = await db.query<{ text: string }>(
+      "select string_agg(changes::text || coalesce(actor_name, ''), ' ') as text from private.appointment_changes where appointment_id = $1",
+      [id],
+    );
+    for (const trace of ["Zoé", "Martin", "zoe.martin", "1234"]) {
+      expect(stored.rows[0]!.text).not.toContain(trace);
+    }
+  });
+
   it("every function writing appointments is a known actor (new ones must be labelled)", async () => {
     // A signed-in member, or the service role (the client's own flows).
     // Adding a writer: check how its actor is labelled, then add it here.
@@ -401,13 +456,29 @@ describe("point 100: who changed an appointment, and what", () => {
            or p.prosrc ~* 'delete\\s+from\\s+public\\.appointments')
        order by 1`,
     );
-    expect(rows.map((r) => r.name)).toEqual([
-      "private.create_public_booking_at", // client (service role)
-      "public.agenda_create_appointment", // member
-      "public.agenda_set_appointment_status", // member
-      "public.agenda_update_appointment", // member
-      "public.client_hub_cancel_appointment", // client (service role)
-      "public.client_hub_reschedule_appointment", // client (service role)
-    ]);
+    // Every writer, with the actor its writes are labelled with.
+    const known: Record<string, string> = {
+      "private.create_public_booking_at": "client (service role)",
+      "public.agenda_create_appointment": "member",
+      "public.agenda_set_appointment_status": "member",
+      "public.agenda_update_appointment": "member",
+      "public.client_hub_cancel_appointment": "client (service role)",
+      "public.client_hub_reschedule_appointment": "client (service role)",
+      // Point 205 (#129): she erases her client; only contact snapshots
+      // change, which records nothing (her note, if cleared, is hers).
+      "public.privacy_erase_client": "member",
+    };
+    const writers = rows.map((r) => r.name);
+    expect(writers.filter((name) => !(name in known))).toEqual([]);
+    expect(writers).toEqual(
+      expect.arrayContaining([
+        "private.create_public_booking_at",
+        "public.agenda_create_appointment",
+        "public.agenda_set_appointment_status",
+        "public.agenda_update_appointment",
+        "public.client_hub_cancel_appointment",
+        "public.client_hub_reschedule_appointment",
+      ]),
+    );
   });
 });
