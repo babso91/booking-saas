@@ -15,15 +15,25 @@ import {
 } from "../client/business-time";
 import { canonicalContact } from "../client/contact";
 import type { BookingFlow } from "../client/use-booking-flow";
-import { answerRows, Facts, linkAction, StepHeading } from "./booking-parts";
+import {
+  answerRows,
+  Facts,
+  linkAction,
+  placeLine,
+  StepHeading,
+  type BookingPlace,
+} from "./booking-parts";
 
 /** Step 4: everything that will be booked, then the confirmation. */
 export function ReviewStep({
   flow,
   headingRef,
   preview = false,
+  place,
 }: {
   preview?: boolean;
+  /** Her published place, when booking from her site. */
+  place?: BookingPlace;
   flow: BookingFlow;
   headingRef: Ref<HTMLHeadingElement>;
 }) {
@@ -40,6 +50,7 @@ export function ReviewStep({
   } = flow;
   if (!service || !slot || !quote) return null;
   const details = canonicalContact(contact);
+  const lieu = placeLine(place, business.location);
   const failure = submit.status === "failed" ? submit.error : null;
 
   return (
@@ -65,6 +76,8 @@ export function ReviewStep({
       <Facts
         rows={[
           ["Établissement", business.name],
+          // Where, before she commits (Higani 56, 69).
+          ...(lieu ? [["Lieu", lieu] as [string, string]] : []),
           ["Prestation", quote.serviceName],
           ...answerRows(quote.options),
           [

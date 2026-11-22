@@ -11,6 +11,25 @@ import type { BookableService, SlotsState } from "../client/use-booking-flow";
 // Small presentation pieces shared by the steps of the functional booking
 // page. Visual only: every rule lives in useBookingFlow.
 
+/**
+ * Where she receives and how to reach her, as her site publishes it
+ * ("Infos pratiques"): shown before and after booking (Higani 56, 69, 77).
+ * Absent on her plain booking page: her general location stands in.
+ */
+export type BookingPlace = {
+  address: string;
+  area: string;
+  instructions: string;
+  phone: string;
+  email: string;
+};
+
+/** Her address, else her area, else her general location. */
+export const placeLine = (
+  place: BookingPlace | undefined,
+  location: string | null,
+) => place?.address.trim() || place?.area.trim() || location?.trim() || null;
+
 export const linkAction =
   "cursor-pointer text-left text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50";
 
