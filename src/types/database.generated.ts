@@ -1339,6 +1339,11 @@ isOneToOne: false
 "discard_site_asset":
 { Args: { "p_actor": string,"p_asset_id": string,"p_business_id": string }; Returns: undefined
                            },
+"duplicate_service":
+{ Args: { "p_business_id": string,"p_name"?: string,"p_request_id": string,"p_service_id": string }; Returns: {
+              "service_id": string,"status": string
+            }[]
+                           },
 "email_outbox_claim":
 { Args: { "p_business_id"?: string,"p_limit"?: number,"p_per_business"?: number }; Returns: Json
                            },

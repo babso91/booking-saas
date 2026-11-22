@@ -7,6 +7,7 @@ import { runBusinessAction } from "@/features/businesses/actions/run-business-ac
 import {
   createService,
   deleteService,
+  duplicateService,
   listServices,
   reorderServices,
   setServiceActive,
@@ -15,6 +16,7 @@ import {
 import {
   createServiceSchema,
   deleteServiceSchema,
+  duplicateServiceSchema,
   reorderServicesSchema,
   setServiceActiveSchema,
   updateServiceSchema,
@@ -41,6 +43,21 @@ export async function createServiceAction(input: unknown) {
     createServiceSchema,
     input,
     ({ client, businessId }, data) => createService(client, businessId, data),
+  );
+  if (result.ok) revalidateServicePages();
+  return result;
+}
+
+/**
+ * Copies a service (point 41), deactivated, right after the original.
+ * Idempotent by `requestId`, like a creation.
+ */
+export async function duplicateServiceAction(input: unknown) {
+  const result = await runBusinessAction(
+    duplicateServiceSchema,
+    input,
+    ({ client, businessId }, data) =>
+      duplicateService(client, businessId, data),
   );
   if (result.ok) revalidateServicePages();
   return result;

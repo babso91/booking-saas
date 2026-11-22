@@ -116,17 +116,18 @@ Le rendez-vous garde `service_name_snapshot`, `price_cents_snapshot` et `duratio
 
 ### Studio et dashboard (Server Actions)
 
-| Action                                                                                                   | Données             | Erreurs propres                                                                |
-| -------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------ |
-| `getCatalogAction()`                                                                                     | `CatalogDto`        | — (complet, en un seul document)                                               |
-| `createCategoryAction({ name, visible?, requestId })`                                                    | `CategoryDto`       | `idempotency_conflict`, `category_deleted`                                     |
-| `updateCategoryAction({ categoryId, expectedVersion, name?, visible? })`                                 | `CategoryDto`       | `stale_category`, `category_not_found`                                         |
-| `reorderCategoriesAction({ categoryIds })` (toutes, une fois)                                            | `CategoryDto[]`     | `validation_error`                                                             |
-| `deleteCategoryAction({ categoryId })`                                                                   | —                   | `category_not_found`                                                           |
-| `setServiceOptionsAction({ serviceId, expectedVersion, options, deletedOptionIds?, deletedChoiceIds? })` | `CatalogServiceDto` | `options_incomplete`, `stale_service`, `service_not_found`, `validation_error` |
-| `createServiceAction({ …, categoryId? })` (existante)                                                    | `ServiceDto`        | `category_not_found`                                                           |
-| `updateServiceAction({ serviceId, expectedVersion, changes: { …, categoryId? } })` (existante)           | `ServiceDto`        | `category_not_found`, `stale_service`                                          |
-| `reorderServicesAction`, `setServiceActiveAction`, `deleteServiceAction` (existantes)                    | inchangées          | inchangées                                                                     |
+| Action                                                                                                   | Données                 | Erreurs propres                                                                |
+| -------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------ |
+| `getCatalogAction()`                                                                                     | `CatalogDto`            | — (complet, en un seul document)                                               |
+| `createCategoryAction({ name, visible?, requestId })`                                                    | `CategoryDto`           | `idempotency_conflict`, `category_deleted`                                     |
+| `updateCategoryAction({ categoryId, expectedVersion, name?, visible? })`                                 | `CategoryDto`           | `stale_category`, `category_not_found`                                         |
+| `reorderCategoriesAction({ categoryIds })` (toutes, une fois)                                            | `CategoryDto[]`         | `validation_error`                                                             |
+| `deleteCategoryAction({ categoryId })`                                                                   | —                       | `category_not_found`                                                           |
+| `setServiceOptionsAction({ serviceId, expectedVersion, options, deletedOptionIds?, deletedChoiceIds? })` | `CatalogServiceDto`     | `options_incomplete`, `stale_service`, `service_not_found`, `validation_error` |
+| `createServiceAction({ …, categoryId? })` (existante)                                                    | `ServiceDto`            | `category_not_found`                                                           |
+| `updateServiceAction({ serviceId, expectedVersion, changes: { …, categoryId? } })` (existante)           | `ServiceDto`            | `category_not_found`, `stale_service`                                          |
+| `reorderServicesAction`, `setServiceActiveAction`, `deleteServiceAction` (existantes)                    | inchangées              | inchangées                                                                     |
+| `duplicateServiceAction({ serviceId, requestId })` (point 41)                                            | `ServiceDto` (la copie) | `service_not_found`, `idempotency_conflict`, `service_deleted`                 |
 
 ```ts
 type CatalogDto = {
@@ -222,6 +223,18 @@ type OptionChoice = { id; label; priceDeltaCents; durationDeltaMinutes };
 - `updateAppointmentAction` prend `optionChoiceIds?` (règles du § 6).
 - `AgendaAppointmentDto` gagne `options: OptionSnapshot[]`. `priceCents` et `durationMinutes` sont les totaux convenus.
 - Les erreurs sont celles du tableau ci-dessus.
+
+**Duplication (point 41).** `duplicate_service(p_business_id, p_request_id, p_service_id, p_name?)` copie une prestation, avec :
+
+- sa description, son prix, sa durée et sa catégorie ;
+- ses questions et réponses, avec de nouveaux identifiants et dans le même ordre ;
+- les personnes qui la font et ses points de fidélité.
+
+Rien de réservé ne suit la copie : rendez-vous, listes d'attente et récompenses restent sur l'originale. La copie s'appelle « {nom} (copie) », tronqué pour rester dans les 120 caractères.
+
+Elle commence **désactivée**, pour qu'une copie à moitié modifiée n'apparaisse jamais sur la page, et se place juste après l'originale (même position, son nom se trie après). L'écran l'ouvre aussitôt pour que la pro change ce qui diffère.
+
+Réservée au propriétaire et aux admins (`forbidden` sinon). Idempotente par `requestId`, avec la même table que la création : un renvoi rend la même copie, une autre commande sous le même identifiant est un `idempotency_conflict`, une copie supprimée depuis répond `deleted`. Tests : `tests/integration/service-duplicate.test.ts`.
 
 ## 9. Publication : décision V1 (effet immédiat)
 

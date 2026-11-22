@@ -29,6 +29,7 @@ const { actions } = vi.hoisted(() => ({
     setServiceActiveAction: vi.fn(),
     reorderServicesAction: vi.fn(),
     deleteServiceAction: vi.fn(),
+    duplicateServiceAction: vi.fn(),
     getBookingSettingsAction: vi.fn(),
     getCatalogAction: vi.fn(),
     createCategoryAction: vi.fn(),
@@ -64,6 +65,8 @@ vi.mock("@/features/services/actions/services", () => ({
     actions.reorderServicesAction(...args),
   deleteServiceAction: (...args: unknown[]) =>
     actions.deleteServiceAction(...args),
+  duplicateServiceAction: (...args: unknown[]) =>
+    actions.duplicateServiceAction(...args),
 }));
 vi.mock("@/features/availability/actions/schedule", () => ({
   getBookingSettingsAction: (...args: unknown[]) =>
@@ -1618,5 +1621,69 @@ describe("her categories", () => {
     await flush();
     // CATALOG_CONTRACT.md § 10: not before the public booking knows them.
     expect(dialog().queryByText(/Motif/)).toBeNull();
+  });
+});
+
+describe("duplicating a service (point 41)", () => {
+  it("a deactivated copy, opened for her changes; a lost answer is resent with the same request id", async () => {
+    const original = service({ name: "Henné sourcils" });
+    await renderManager([original]);
+    const copy = service({
+      name: "Henné sourcils (copie)",
+      active: false,
+      displayOrder: original.displayOrder,
+    });
+    actions.duplicateServiceAction
+      .mockResolvedValueOnce(fail("network"))
+      .mockResolvedValueOnce(ok(copy));
+
+    const button = () =>
+      list().getByRole("button", { name: "Dupliquer Henné sourcils" });
+    fireEvent.click(button());
+    await flush();
+    expect(list().getByRole("alert").textContent).toBe(
+      "La copie n’a pas pu être créée. Réessaie.",
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    actions.listServicesAction.mockResolvedValue(ok([original, copy]));
+    fireEvent.click(button());
+    await flush();
+    const [first, second] = actions.duplicateServiceAction.mock.calls.map(
+      ([command]) => command as { serviceId: string; requestId: string },
+    );
+    expect(first!.serviceId).toBe(original.id);
+    expect(second).toEqual(first);
+
+    // Opened at once on the copy, listed deactivated.
+    expect(field(/^Nom/).value).toBe("Henné sourcils (copie)");
+    expect(
+      list()
+        .getAllByRole("heading")
+        .map((heading) => heading.textContent),
+    ).toEqual(["Henné sourcils", "Henné sourcils (copie)Désactivée"]);
+  });
+
+  it("each new click after an answer is a new copy", async () => {
+    const original = service({ name: "Brow lift" });
+    await renderManager([original]);
+    actions.duplicateServiceAction.mockImplementation(async () =>
+      ok(service({ name: "Brow lift (copie)", active: false })),
+    );
+    for (let click = 0; click < 2; click += 1) {
+      fireEvent.click(
+        list().getAllByRole("button", { name: "Dupliquer Brow lift" })[0]!,
+      );
+      await flush();
+      fireEvent.keyDown(document.activeElement ?? document.body, {
+        key: "Escape",
+      });
+      await flush();
+    }
+    const ids = actions.duplicateServiceAction.mock.calls.map(
+      ([command]) => (command as { requestId: string }).requestId,
+    );
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
   });
 });
