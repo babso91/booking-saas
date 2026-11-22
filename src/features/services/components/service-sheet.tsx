@@ -821,6 +821,8 @@ function ServiceFields({
       <TextAreaField
         label="Description"
         optional
+        // Higani point 35: what helps a client choose, never required.
+        hint="Ce qui est inclus, le résultat attendu, ce qu’il faut prévoir. Tes retours à la ligne sont gardés."
         value={draft.description}
         onChange={(event) => onChange("description", event.target.value)}
         error={errors.description}

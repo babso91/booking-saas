@@ -1,8 +1,15 @@
 "use client";
 
-import { useSyncExternalStore, type ReactNode, type Ref } from "react";
+import {
+  useId,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { formatPrice } from "@/features/agenda/client/money";
+import { longDescription } from "@/features/catalog/description";
 import { durationLabel } from "@/features/services/client/service-form";
 
 import { deviceTimeZone, zoneCity } from "../client/business-time";
@@ -127,11 +134,162 @@ export function QuoteLine({ slots }: { slots: SlotsState }) {
   return <p className="text-[15px] text-ink-muted">—</p>;
 }
 
-/** The answers as the server priced them (a quote or a booking). */
+/**
+ * The answers as the server priced them (a quote or a booking), each with
+ * what it adds (Higani point 55): « Volume (+15,00 € · +30 min) ».
+ */
 export function answerRows(
-  options: { question: string; label: string }[],
+  options: {
+    question: string;
+    label: string;
+    priceDeltaCents?: number;
+    durationDeltaMinutes?: number;
+  }[],
+  currency?: string,
 ): [string, ReactNode][] {
-  return options.map((option) => [option.question, option.label]);
+  return options.map((option) => {
+    const adds =
+      currency && (option.priceDeltaCents || option.durationDeltaMinutes)
+        ? ` (${choiceLine(
+            {
+              priceDeltaCents: option.priceDeltaCents ?? 0,
+              durationDeltaMinutes: option.durationDeltaMinutes ?? 0,
+            },
+            currency,
+          )})`
+        : "";
+    return [option.question, `${option.label}${adds}`];
+  });
+}
+
+/**
+ * The server's quote, line by line (Higani point 55): the service, what
+ * each answer adds, the total. Only the total when no answer adds anything.
+ */
+export function QuoteBreakdown({
+  slots,
+  serviceName,
+}: {
+  slots: SlotsState;
+  serviceName: string;
+}) {
+  if (slots.status !== "ready") return <QuoteLine slots={slots} />;
+  const { quote } = slots;
+  const adding = quote.options.filter(
+    (option) => option.priceDeltaCents || option.durationDeltaMinutes,
+  );
+  if (!adding.length) return <QuoteLine slots={slots} />;
+  const basePrice =
+    quote.priceCents -
+    adding.reduce((sum, option) => sum + option.priceDeltaCents, 0);
+  const baseMinutes =
+    quote.durationMinutes -
+    adding.reduce((sum, option) => sum + option.durationDeltaMinutes, 0);
+  const row = "flex items-baseline justify-between gap-4";
+  return (
+    <dl className="flex flex-col gap-1.5 text-[14.5px] tabular-nums">
+      <div className={row}>
+        <dt className="min-w-0 wrap-anywhere text-ink-soft">{serviceName}</dt>
+        <dd className="shrink-0 text-ink-soft">
+          {serviceLine(baseMinutes, basePrice, quote.currency)}
+        </dd>
+      </div>
+      {adding.map((option) => (
+        <div key={option.optionId} className={row}>
+          <dt className="min-w-0 wrap-anywhere text-ink-soft">
+            {option.question} : {option.label}
+          </dt>
+          <dd className="shrink-0 text-ink-soft">
+            {choiceLine(option, quote.currency)}
+          </dd>
+        </div>
+      ))}
+      <div className={`${row} mt-1 border-t border-line pt-2`}>
+        <dt className="font-semibold text-ink">Total</dt>
+        <dd className="shrink-0 text-[17px] font-semibold text-ink">
+          {serviceLine(quote.durationMinutes, quote.priceCents, quote.currency)}
+        </dd>
+      </div>
+    </dl>
+  );
+}
+
+/** Her conditions, as a list (review, and on demand before). */
+export function ConditionsList({
+  conditions,
+}: {
+  conditions: [string, string][];
+}) {
+  return (
+    <dl className="flex flex-col gap-3 text-[14px]">
+      {conditions.map(([label, text]) => (
+        <div key={label} className="flex flex-col gap-0.5">
+          <dt className="font-medium text-ink">{label}</dt>
+          <dd className="whitespace-pre-line wrap-anywhere text-ink-soft">
+            {text}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/**
+ * Her conditions one tap away before she gives her details (Higani point
+ * 56): « Conditions : annulation, retard », opened on demand.
+ */
+export function ConditionsPeek({
+  conditions,
+}: {
+  conditions: [string, string][];
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  if (!conditions.length) return null;
+  const names = conditions.map(([label]) => label.toLowerCase()).join(", ");
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
+        className={`${linkAction} min-h-11 self-start`}
+      >
+        Conditions : {names}
+      </button>
+      {open ? (
+        <div id={id}>
+          <ConditionsList conditions={conditions} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Its description, a few lines first, « Lire la suite » for the rest
+ * (Higani point 35). Her line breaks are kept.
+ */
+export function useFoldedText(text: string | null | undefined) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const long = longDescription(text);
+  return {
+    id,
+    folded: long && !open,
+    toggle: long ? (
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
+        className={`${linkAction} min-h-11 self-start`}
+      >
+        {open ? "Réduire" : "Lire la suite"}
+      </button>
+    ) : null,
+  };
 }
 
 const STATUS_LABELS: Record<string, string> = {

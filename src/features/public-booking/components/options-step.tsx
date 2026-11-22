@@ -10,7 +10,7 @@ import type { BookingFlow } from "../client/use-booking-flow";
 import {
   choiceLine,
   linkAction,
-  QuoteLine,
+  QuoteBreakdown,
   StepHeading,
   whatsLeft,
 } from "./booking-parts";
@@ -78,7 +78,7 @@ export function OptionsStep({
         aria-live="polite"
       >
         <p className="text-[13.5px] text-ink-muted">Votre prestation</p>
-        <QuoteLine slots={slots} />
+        <QuoteBreakdown slots={slots} serviceName={service.name} />
       </div>
 
       {slots.status === "error" ? (

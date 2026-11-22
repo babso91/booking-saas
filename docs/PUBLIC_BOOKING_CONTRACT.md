@@ -171,6 +171,7 @@ Le parcours `/b/[slug]` utilise ce contrat tel quel, sans aucun changement backe
   - une autre prestation demandée depuis le site ouvre celle-ci, et seules ses coordonnées sont reprises ;
   - une demande non confirmée (`pending-booking`) passe avant : elle a son propre retour ;
   - effacée après une réservation réussie ou « Recommencer ». Rien dans l'aperçu du Studio. Rien n'est envoyé au serveur.
+- **Sans surprise (Higani point 56)** : dès l'étape du créneau, avant ses coordonnées, la carte de la prestation donne le prix et la durée du devis, le lieu (son adresse publiée, sinon sa zone, sinon la localisation de l'établissement) et « Conditions : annulation, retard… », qui s'ouvre sur demande. Le récapitulatif reprend le tout. Pas encore affichés : le professionnel (la réservation publique ne choisit pas de membre de l'équipe) et l'acompte (aucun n'est encaissé ; points 74 et 163 de Cloud).
 - **Sans ambiguïté (Higani point 70)** : « Créneau choisi, pas encore réservé. » sur les coordonnées, puis au récapitulatif « Ce créneau n'est pas encore réservé : il le sera quand vous confirmerez. ». Pendant l'envoi : « Envoi de votre réservation… Restez sur cette page, la réponse arrive. ». Seule la réponse du serveur affiche « Rendez-vous confirmé ».
 
 - **Créneaux :**

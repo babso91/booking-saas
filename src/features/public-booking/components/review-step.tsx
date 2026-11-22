@@ -18,6 +18,7 @@ import type { BookingFlow } from "../client/use-booking-flow";
 import {
   answerRows,
   conditionRows,
+  ConditionsList,
   Facts,
   linkAction,
   placeLine,
@@ -83,7 +84,7 @@ export function ReviewStep({
           // Where, before she commits (Higani 56, 69).
           ...(lieu ? [["Lieu", lieu] as [string, string]] : []),
           ["Prestation", quote.serviceName],
-          ...answerRows(quote.options),
+          ...answerRows(quote.options, quote.currency),
           [
             "Date",
             <span key="date" className="first-letter:uppercase">
@@ -149,16 +150,7 @@ export function ReviewStep({
           >
             À savoir avant de confirmer
           </h3>
-          <dl className="flex flex-col gap-3 text-[14px]">
-            {conditions.map(([label, text]) => (
-              <div key={label} className="flex flex-col gap-0.5">
-                <dt className="font-medium text-ink">{label}</dt>
-                <dd className="whitespace-pre-line wrap-anywhere text-ink-soft">
-                  {text}
-                </dd>
-              </div>
-            ))}
-          </dl>
+          <ConditionsList conditions={conditions} />
         </section>
       ) : null}
 
