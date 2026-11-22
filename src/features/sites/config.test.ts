@@ -56,6 +56,35 @@ describe("siteConfigSchema", () => {
     expect(parsed.practical).toBeUndefined();
   });
 
+  it("her conditions (point 6): optional, plain and bounded", () => {
+    const conditions = {
+      lateness: "Au-delà de 15 minutes, la prestation peut être écourtée.",
+      noShow: "Prévenez-moi au plus tôt.",
+      companions: "Les enfants ne peuvent pas être accueillis.",
+    };
+    expect(
+      siteConfigSchema.parse(
+        sampleSiteConfig({ practical: { ...practical, ...conditions } }),
+      ).practical,
+    ).toMatchObject(conditions);
+    // A version published before them still reads.
+    expect(
+      siteConfigSchema.parse(sampleSiteConfig({ practical })).practical
+        ?.lateness,
+    ).toBeUndefined();
+    for (const bad of [
+      { lateness: "<i>retard</i>" },
+      { noShow: "x".repeat(301) },
+      { companions: 3 },
+    ]) {
+      expect(
+        siteConfigSchema.safeParse(
+          sampleSiteConfig({ practical: { ...practical, ...bad } } as never),
+        ).success,
+      ).toBe(false);
+    }
+  });
+
   it("refuses practical infos that are not plain, or not a contact", () => {
     for (const bad of [
       { access: "<b>Code</b>" },

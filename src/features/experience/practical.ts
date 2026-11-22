@@ -27,6 +27,9 @@ export const emptyPractical: Practical = {
   phone: "",
   email: "",
   showHours: true,
+  lateness: "",
+  noShow: "",
+  companions: "",
 };
 
 export type PracticalItem =
@@ -78,8 +81,9 @@ export function usualWeek(
 
 /**
  * What her "Infos pratiques" shows, in the order a client needs it:
- * where, when, how to get in, what to bring, how to pay, access, the
- * cancellation terms, how to reach her. Empty when there is nothing.
+ * where, when, how to get in, what to bring, how to pay, access, her
+ * conditions (cancellation, lateness, a missed visit, companions), how to
+ * reach her. Empty when there is nothing.
  */
 export function practicalItems({
   practical,
@@ -115,6 +119,9 @@ export function practicalItems({
   text("Paiement", practical?.payment);
   text("Accessibilité", practical?.accessibility);
   text("Annulation", cancellationPolicy);
+  text("Retard", practical?.lateness);
+  text("Rendez-vous manqué", practical?.noShow);
+  text("Accompagnants", practical?.companions);
   const phone = practical?.phone.trim() || null;
   const email = practical?.email.trim() || null;
   if (phone || email)

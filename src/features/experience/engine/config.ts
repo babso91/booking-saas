@@ -50,6 +50,10 @@ export type Practical = {
   phone: string;
   email: string;
   showHours: boolean;
+  /** Her conditions (Higani point 6): if she is late, misses it, comes with someone. */
+  lateness?: string;
+  noShow?: string;
+  companions?: string;
 };
 
 export type Palette = {

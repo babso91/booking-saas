@@ -21,6 +21,7 @@ import { BookingConfirmation } from "./booking-confirmation";
 import { ContactStep } from "./contact-step";
 import { OptionsStep } from "./options-step";
 import { PendingNotice } from "./pending-notice";
+import type { BookingPlace } from "./booking-parts";
 import { ReviewStep } from "./review-step";
 import { ServiceStep } from "./service-step";
 import styles from "./booking-motion.module.css";
@@ -41,6 +42,7 @@ export function PublicBooking({
   initialServiceId,
   backRef,
   initialDate,
+  place,
 }: {
   backRef?: Ref<() => boolean>;
   business: PublicBusiness;
@@ -61,6 +63,8 @@ export function PublicBooking({
   initialServiceId?: string;
   /** The day to open on: that service's next slot, shown on her site. */
   initialDate?: string;
+  /** Her published place and contact ("Infos pratiques" of her site). */
+  place?: BookingPlace;
 }) {
   const flow = useBookingFlow({ business, catalog, preview, initialDate });
   const initialView =
@@ -203,12 +207,19 @@ export function PublicBooking({
             ) : flow.step === "contact" ? (
               <ContactStep flow={flow} headingRef={heading} />
             ) : flow.step === "review" ? (
-              <ReviewStep flow={flow} headingRef={heading} preview={preview} />
+              <ReviewStep
+                flow={flow}
+                headingRef={heading}
+                preview={preview}
+                place={place}
+              />
             ) : flow.booking ? (
               <BookingConfirmation
                 booking={flow.booking}
                 local={flow.bookedLocal}
                 cancellationPolicy={business.cancellationPolicy}
+                place={place}
+                location={business.location}
                 onAnother={flow.actions.restart}
                 headingRef={heading}
               />

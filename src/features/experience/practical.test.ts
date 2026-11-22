@@ -54,6 +54,24 @@ describe("practicalItems", () => {
     expect(items.map((item) => item.label)).toEqual(["Annulation"]);
   });
 
+  it("her conditions follow her cancellation terms (point 6)", () => {
+    const items = practicalItems({
+      practical: {
+        ...emptyPractical,
+        lateness: "Au-delà de 15 minutes, la prestation peut être écourtée.",
+        noShow: " ",
+        companions: "Les enfants ne peuvent pas être accueillis.",
+      },
+      hours: null,
+      cancellationPolicy: "Annulation gratuite jusqu’à 24 h avant.",
+    });
+    expect(items.map((item) => item.label)).toEqual([
+      "Annulation",
+      "Retard",
+      "Accompagnants",
+    ]);
+  });
+
   it("shows only what she filled in, in a client's order", () => {
     const items = practicalItems({
       practical: {

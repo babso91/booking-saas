@@ -202,6 +202,7 @@ export function SiteBooking({
                 embedded
                 initialServiceId={initialServiceId}
                 initialDate={initialDate}
+                place={config.practical}
               />
             ) : previewSlug ? (
               loaded ? (

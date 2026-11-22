@@ -11,6 +11,52 @@ import type { BookableService, SlotsState } from "../client/use-booking-flow";
 // Small presentation pieces shared by the steps of the functional booking
 // page. Visual only: every rule lives in useBookingFlow.
 
+/**
+ * Where she receives and how to reach her, as her site publishes it
+ * ("Infos pratiques"): shown before and after booking (Higani 56, 69, 77).
+ * Absent on her plain booking page: her general location stands in.
+ */
+export type BookingPlace = {
+  address: string;
+  area: string;
+  instructions: string;
+  phone: string;
+  email: string;
+  /** Her conditions (Higani point 6); absent from older publications. */
+  lateness?: string;
+  noShow?: string;
+  companions?: string;
+};
+
+/**
+ * Her conditions, read before she commits (Higani point 6): her
+ * cancellation terms (her business), then what her site says about being
+ * late, a missed visit, companions and what to do before coming. Only what
+ * she wrote; no deposit until one is really taken.
+ */
+export function conditionRows(
+  cancellationPolicy: string | null,
+  place: BookingPlace | undefined,
+): [string, string][] {
+  return (
+    [
+      ["Annulation", cancellationPolicy],
+      ["Retard", place?.lateness],
+      ["Rendez-vous manqué", place?.noShow],
+      ["Accompagnants", place?.companions],
+      ["Avant de venir", place?.instructions],
+    ] as const
+  ).flatMap(([label, text]) =>
+    text?.trim() ? [[label, text.trim()] as [string, string]] : [],
+  );
+}
+
+/** Her address, else her area, else her general location. */
+export const placeLine = (
+  place: BookingPlace | undefined,
+  location: string | null,
+) => place?.address.trim() || place?.area.trim() || location?.trim() || null;
+
 export const linkAction =
   "cursor-pointer text-left text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50";
 
