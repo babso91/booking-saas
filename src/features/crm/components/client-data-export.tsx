@@ -88,7 +88,7 @@ export function ClientDataExport({
       <p className="text-sm text-ink-muted">
         Si {displayName} te demande les informations que tu as sur elle,
         exporte-les ici : fiche, rendez-vous, notes, consentements, fidélité,
-        formulaires et e-mails envoyés, dans un fichier que tu peux lui
+        formulaires, avis et e-mails envoyés, dans un fichier que tu peux lui
         transmettre. Le fichier contient aussi tes notes sur elle.
       </p>
       <Button
@@ -168,10 +168,10 @@ function ClientErasure({
     <div className="flex flex-col gap-3 border-t border-line pt-3">
       <p className="text-sm text-ink-muted">
         Si elle demande l’effacement de ses données : son nom, ses coordonnées,
-        tes notes, ses réponses aux formulaires, ses consentements et son accès
-        à l’espace client sont effacés. Ses rendez-vous passés restent dans ton
-        historique, sans nom ni coordonnées. C’est impossible tant qu’elle a un
-        rendez-vous à venir.
+        tes notes, ses réponses aux formulaires, ses consentements, son avis et
+        son accès à l’espace client sont effacés. Ses rendez-vous passés restent
+        dans ton historique, sans nom ni coordonnées. C’est impossible tant
+        qu’elle a un rendez-vous à venir.
       </p>
       <Button
         type="button"
@@ -200,7 +200,7 @@ function ClientErasure({
       <ConfirmDialog
         open={asking}
         title={`Effacer définitivement les données de ${displayName} ?`}
-        description="Son nom, ses coordonnées, tes notes, ses réponses aux formulaires, ses consentements et son accès à l’espace client seront effacés. Ses rendez-vous passés et leurs montants restent, sans nom ni coordonnées. Aucun e-mail ne lui est envoyé. C’est irréversible."
+        description="Son nom, ses coordonnées, tes notes, ses réponses aux formulaires, ses consentements, son avis et son accès à l’espace client seront effacés. Ses rendez-vous passés et leurs montants restent, sans nom ni coordonnées. Aucun e-mail ne lui est envoyé. C’est irréversible."
         confirmLabel="Effacer définitivement"
         tone="danger"
         state={pending ? "loading" : "idle"}

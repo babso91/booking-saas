@@ -380,8 +380,9 @@ describe("point 205: erasing her data", () => {
       businessId: business.id,
       clientId: ines,
       serviceId: service,
-      startsAt: "2027-01-05T09:00:00Z",
-      endsAt: "2027-01-05T10:00:00Z",
+      // A month from the run: always to come.
+      startsAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      endsAt: new Date(Date.now() + 30 * 86_400_000 + 3_600_000).toISOString(),
     });
     const refused = await erase();
     expect(refused.error?.message).toBe("client_has_upcoming_appointments");
@@ -502,5 +503,133 @@ describe("point 205: erasing her data", () => {
     });
     expect(anonymous.error).not.toBeNull();
     expect((await recordOf(ines)).erased_at).toBeNull();
+  });
+});
+
+describe("point 205 with her reviews (point 8)", () => {
+  let tag: string;
+  let current: string;
+  let previous: string;
+
+  /** A client space account (one per address), as signing in creates it. */
+  const account = async (email: string) =>
+    (
+      await db.query<{ id: string }>(
+        "insert into private.client_hub_accounts (email) values ($1) returning id",
+        [email],
+      )
+    ).rows[0]!.id;
+  const review = (
+    businessId: string,
+    accountId: string,
+    stars: number,
+    comment: string,
+    daysAgo: number,
+  ) =>
+    db.query(
+      `insert into private.business_reviews (business_id, account_id, stars, comment, posted_at)
+       values ($1, $2, $3, $4, now() - $5 * interval '1 day')`,
+      [businessId, accountId, stars, comment, daysAgo],
+    );
+  const reviewsOf = async (businessId: string) =>
+    (
+      await db.query<{ comment: string }>(
+        "select comment from private.business_reviews where business_id = $1 order by comment",
+        [businessId],
+      )
+    ).rows.map((row) => row.comment);
+  const erase = async () => {
+    const { rows } = await db.query<{ version: number }>(
+      "select version from public.clients where id = $1",
+      [ines],
+    );
+    return owner.client.rpc("privacy_erase_client", {
+      p_business_id: business.id,
+      p_client_id: ines,
+      p_expected_version: rows[0]!.version,
+    });
+  };
+
+  let elsewhere: TestBusiness;
+
+  beforeEach(async () => {
+    tag = randomUUID().slice(0, 8);
+    current = `ines-${tag}@client.test`;
+    previous = `ines.avant-${tag}@client.test`;
+    // Nothing to come; a past visit booked with her former address, which
+    // she changed since.
+    await db.query(
+      "update public.appointments set status = 'cancelled' where client_id = $1",
+      [ines],
+    );
+    await db.query("update public.clients set email = $2 where id = $1", [
+      ines,
+      previous,
+    ]);
+    await insertAppointment({
+      businessId: business.id,
+      clientId: ines,
+      serviceId: service,
+      startsAt: "2026-10-01T09:00:00Z",
+      endsAt: "2026-10-01T10:00:00Z",
+      status: "completed",
+    });
+    await db.query("update public.clients set email = $2 where id = $1", [
+      ines,
+      current,
+    ]);
+
+    const mine = await account(current);
+    const former = await account(previous);
+    const someone = await account(`lou-${tag}@client.test`);
+    await review(business.id, former, 4, "Bien, avant", 40);
+    await review(business.id, mine, 5, "Parfait, Inès", 3);
+    await review(business.id, someone, 3, "Correct", 2);
+    const stranger = await createProfessional("export-elsewhere");
+    elsewhere = await createBusiness(stranger.userId);
+    await review(elsewhere.id, mine, 5, "Ailleurs aussi", 1);
+  });
+
+  it("her export holds her reviews of this business, at both her addresses", async () => {
+    const { data, error } = await exportOf(owner, ines);
+    expect(error).toBeNull();
+    const reviews = (data as { reviews: Record<string, unknown>[] }).reviews;
+    expect(reviews.map(({ stars, comment }) => ({ stars, comment }))).toEqual([
+      { stars: 4, comment: "Bien, avant" },
+      { stars: 5, comment: "Parfait, Inès" },
+    ]);
+    expect(reviews[0]).toHaveProperty("postedAt");
+  });
+
+  it("her erasure deletes them; another client's and another business's stay", async () => {
+    const { data, error } = await erase();
+    expect(error).toBeNull();
+    expect(data).toMatchObject({ erased: true });
+    expect(await reviewsOf(business.id)).toEqual(["Correct"]);
+    expect(await reviewsOf(elsewhere.id)).toEqual(["Ailleurs aussi"]);
+    // Her public page counts what remains.
+    const { data: shown } = await anonClient().rpc(
+      "get_public_business_reviews" as never,
+      { p_slug: business.slug } as never,
+    );
+    expect(shown).toMatchObject({ count: 1 });
+  });
+
+  it("a refused erasure deletes nothing", async () => {
+    await insertAppointment({
+      businessId: business.id,
+      clientId: ines,
+      serviceId: service,
+      startsAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      endsAt: new Date(Date.now() + 30 * 86_400_000 + 3_600_000).toISOString(),
+    });
+    expect((await erase()).error?.message).toBe(
+      "client_has_upcoming_appointments",
+    );
+    expect(await reviewsOf(business.id)).toEqual([
+      "Bien, avant",
+      "Correct",
+      "Parfait, Inès",
+    ]);
   });
 });
