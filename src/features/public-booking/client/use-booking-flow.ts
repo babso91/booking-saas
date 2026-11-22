@@ -29,6 +29,12 @@ import {
   type Quote,
   type Slot,
 } from "./api";
+import {
+  clearBookingDraft,
+  readBookingDraft,
+  writeBookingDraft,
+  type BookingDraft,
+} from "./booking-draft";
 import { addDays, businessToday, wallDate } from "./business-time";
 import {
   canonicalContact,
@@ -108,6 +114,8 @@ export type FlowNotice =
   | "options_changed"
   /** The price or duration changed since it was shown: shown again. */
   | "quote_changed"
+  /** Her booking in progress, taken back after a reload or a closed sheet. */
+  | "resumed"
   | null;
 
 /** Answers that say for sure nothing was booked by this request. */
@@ -213,6 +221,10 @@ export function useBookingFlow({
   const [notice, setNotice] = useState<FlowNotice>(null);
   /** The business page no longer exists (or no longer takes bookings). */
   const [gone, setGone] = useState(false);
+  /** Her booking in progress in this tab, as it was on arrival (point 67). */
+  const [draft] = useState<BookingDraft | null>(() =>
+    preview ? null : readBookingDraft(slug),
+  );
 
   const raw = useSyncExternalStore(
     subscribePendingBooking,
@@ -243,6 +255,25 @@ export function useBookingFlow({
   }, []);
 
   const service = services.find((item) => item.id === serviceId) ?? null;
+
+  // Her choices, kept in this tab as she goes (Higani point 67): taken
+  // back if the page reloads or her booking sheet closes by accident.
+  // Nothing chosen (on arrival, started over, after another booking): no
+  // draft, written after any write still pending from before.
+  useEffect(() => {
+    if (preview) return;
+    if (!serviceId) return clearBookingDraft(slug);
+    if (step === "done") return;
+    writeBookingDraft(slug, {
+      serviceId,
+      answers,
+      date,
+      startsAt: slot?.startsAt ?? null,
+      step,
+      contact,
+      savedAt: Date.now(),
+    });
+  }, [preview, slug, serviceId, answers, date, slot, step, contact]);
   /** Civil days that can be asked for: today to the booking horizon. */
   const days = useMemo(
     () =>
@@ -505,8 +536,73 @@ export function useBookingFlow({
     setContactErrors(errors);
     if (Object.keys(errors).length > 0) return false;
     setSubmit({ status: "idle" });
+    settleResumed();
     setStep("review");
     return true;
+  }
+
+  /** The « taken back » note has been read once she moves on. */
+  function settleResumed() {
+    setNotice((current) => (current === "resumed" ? null : current));
+  }
+
+  /**
+   * Her booking in progress taken back (point 67): her details always;
+   * with `whole`, her service, answers and day too, then her slot if it
+   * is still offered (read again, with its quote), on the step she was
+   * at. Nothing is booked: she still confirms. False when there is none.
+   */
+  function resume(whole: boolean): boolean {
+    if (!draft) return false;
+    setContact(draft.contact);
+    if (!whole || draft.step === "service") return true;
+    const chosen = services.find((item) => item.id === draft.serviceId);
+    if (!chosen) return true;
+    const next = answersFor(chosen, draft.answers);
+    const day = days.includes(draft.date) ? draft.date : date;
+    setServiceId(chosen.id);
+    setAnswers(next);
+    setDate(day);
+    setNotice("resumed");
+    const onOptions = draft.step === "options" && chosen.options.length > 0;
+    setStep(onOptions ? "options" : "slot");
+    const target = draft.step;
+    const startsAt = draft.startsAt;
+    loadSlots(
+      chosen.id,
+      day,
+      choiceIdsOf(chosen, next),
+      startsAt && (target === "contact" || target === "review")
+        ? (fresh, quote) => {
+            const same = fresh.find((item) => item.startsAt === startsAt);
+            // Taken meanwhile: she chooses another on that day.
+            if (!same) return;
+            setSlot(same);
+            setSlotQuote(quote);
+            setStep(
+              target === "review" &&
+                Object.keys(checkContact(draft.contact)).length === 0
+                ? "review"
+                : "contact",
+            );
+          }
+        : undefined,
+    );
+    return true;
+  }
+
+  /** Starts again from her services, by her choice (her details kept). */
+  function startOver() {
+    if (sending.current) return;
+    reads.current += 1;
+    readAbort.current?.abort();
+    setServiceId(null);
+    setAnswers({});
+    setSlot(null);
+    setSlotQuote(null);
+    setSlots({ status: "idle" });
+    setNotice(null);
+    setStep("service");
   }
 
   /** Back to an earlier step (never while a booking is being sent). */
@@ -519,6 +615,7 @@ export function useBookingFlow({
       reads.current += 1;
       readAbort.current?.abort();
     }
+    settleResumed();
     setStep(target);
     if (target === "slot" || target === "options") refreshSlots();
   }
@@ -590,6 +687,7 @@ export function useBookingFlow({
 
     if (result.ok) {
       clearPendingBooking(slug);
+      clearBookingDraft(slug);
       lastKey.current = null;
       setBooking(result.data.booking);
       setBookedSlot({
@@ -727,6 +825,11 @@ export function useBookingFlow({
     /** Where a step is in her journey (1-based), and how many there are. */
     stepNumber: (of: Exclude<BookingStep, "done">) => steps.indexOf(of) + 1,
     stepCount: steps.length,
+    /** What is left after a step, in order (point 65). */
+    stepsAfter: (of: Exclude<BookingStep, "done">) =>
+      steps.slice(steps.indexOf(of) + 1),
+    /** A booking in progress was kept in this tab (point 67). */
+    draftServiceId: draft?.serviceId ?? null,
     service,
     answers,
     /** The quote of the chosen slot: what the review shows and sends. */
@@ -770,6 +873,8 @@ export function useBookingFlow({
       abandonPending,
       sendAsNew,
       restart,
+      resume,
+      startOver,
     },
   };
 }

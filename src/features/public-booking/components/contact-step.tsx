@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type Ref } from "react";
+import { useId, useRef, useState, type Ref } from "react";
 
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/field";
@@ -9,7 +9,7 @@ import { cn } from "@/lib/cn";
 import { dayLabel, wallDate, wallTime } from "../client/business-time";
 import { CONTACT_LIMITS, type ContactField } from "../client/contact";
 import type { BookingFlow } from "../client/use-booking-flow";
-import { linkAction, StepHeading } from "./booking-parts";
+import { linkAction, StepHeading, whatsLeft } from "./booking-parts";
 
 const ORDER: ContactField[] = ["firstName", "lastName", "email", "phone"];
 
@@ -23,6 +23,16 @@ export function ContactStep({
 }) {
   const { contact, contactErrors: errors, slot, service } = flow;
   const formRef = useRef<HTMLFormElement>(null);
+  // Higani point 66: her first name and email are enough. Her name and
+  // phone stay one tap away, open by themselves once there is something
+  // in them (her own, a draft taken back, a correction asked).
+  const [more, setMore] = useState(false);
+  const moreId = useId();
+  const optionalShown =
+    more ||
+    Boolean(
+      contact.lastName || contact.phone || errors.lastName || errors.phone,
+    );
   if (!slot || !service) return null;
 
   function next() {
@@ -50,6 +60,7 @@ export function ContactStep({
         <StepHeading
           step={flow.stepNumber("contact")}
           total={flow.stepCount}
+          left={whatsLeft(flow.stepsAfter("contact"))}
           headingRef={headingRef}
         >
           Vos coordonnées
@@ -62,6 +73,10 @@ export function ContactStep({
         <p className="text-[14px] text-ink-soft first-letter:uppercase">
           {dayLabel(wallDate(slot.localStartsAt))} à{" "}
           {wallTime(slot.localStartsAt)}
+        </p>
+        {/* Higani point 70: chosen is not booked. */}
+        <p className="text-[13px] text-ink-muted">
+          Créneau choisi, pas encore réservé.
         </p>
         <button
           type="button"
@@ -92,13 +107,6 @@ export function ContactStep({
           {...field("firstName")}
         />
         <TextField
-          label="Nom"
-          optional
-          autoComplete="family-name"
-          maxLength={CONTACT_LIMITS.lastName}
-          {...field("lastName")}
-        />
-        <TextField
           label="Email"
           type="email"
           inputMode="email"
@@ -108,16 +116,46 @@ export function ContactStep({
           maxLength={CONTACT_LIMITS.email}
           {...field("email")}
         />
-        <TextField
-          label="Téléphone"
-          optional
-          type="tel"
-          inputMode="tel"
-          autoComplete="tel"
-          maxLength={CONTACT_LIMITS.phone}
-          hint="Pour que l’établissement puisse vous joindre si besoin."
-          {...field("phone")}
-        />
+        {optionalShown ? (
+          <div id={moreId} className="flex flex-col gap-4">
+            <TextField
+              label="Nom"
+              optional
+              autoComplete="family-name"
+              maxLength={CONTACT_LIMITS.lastName}
+              {...field("lastName")}
+            />
+            <TextField
+              label="Téléphone"
+              optional
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              maxLength={CONTACT_LIMITS.phone}
+              hint="Pour que l’établissement puisse vous joindre si besoin."
+              {...field("phone")}
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            aria-expanded={false}
+            aria-controls={moreId}
+            className={cn(linkAction, "self-start")}
+            onClick={() => {
+              setMore(true);
+              // On to the first field it shows.
+              requestAnimationFrame(() =>
+                document
+                  .getElementById(moreId)
+                  ?.querySelector<HTMLInputElement>("input")
+                  ?.focus(),
+              );
+            }}
+          >
+            Ajouter mon nom ou un téléphone (facultatif)
+          </button>
+        )}
         <Button type="submit" size="lg" fullWidth>
           Continuer
         </Button>

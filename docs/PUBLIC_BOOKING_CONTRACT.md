@@ -151,15 +151,27 @@ Le parcours `/b/[slug]` utilise ce contrat tel quel, sans aucun changement backe
   - `api.ts` appelle les routes et ne lève jamais d'exception : erreur réseau, délai dépassé ou réponse illisible donnent `network` ;
   - `business-time.ts` gère les jours civils et les heures murales ;
   - `contact.ts` reprend les mêmes limites que le schéma zod ;
-  - `pending-booking.ts` conserve la demande non confirmée.
+  - `pending-booking.ts` conserve la demande non confirmée ;
+  - `booking-draft.ts` conserve la réservation en cours (point 67, ci-dessous).
 
   Un futur mini-site de marque réutilise ce hook et ne remplace que la présentation.
 
 - **Présentation fonctionnelle** (`src/features/public-booking/components/`) :
   - quatre étapes (prestation, créneau, coordonnées, vérification), puis la confirmation ;
-  - à chaque étape, le focus va sur le titre.
+  - à chaque étape, le focus va sur le titre ;
+  - **progression (Higani point 65)** : chaque étape dit sa place et ce qui reste, par exemple « Étape 2 sur 4 · Ensuite : vos coordonnées, puis la vérification ». La dernière dit « Dernière étape ». Une prestation à options compte une étape de plus (« vos options »).
 
 ### Règles appliquées
+
+- **Saisie minimale (Higani point 66)** : seuls le prénom et l'e-mail sont demandés. Le nom et le téléphone restent derrière « Ajouter mon nom ou un téléphone (facultatif) ». La section s'ouvre d'elle-même dès qu'un des deux est rempli ou à corriger, et rien n'est envoyé pour un champ vide. Aucun réglage ne rend le téléphone obligatoire aujourd'hui.
+- **Réservation en cours conservée (Higani point 67)** :
+  - service, réponses, jour, créneau choisi, étape et coordonnées sont gardés dans l'onglet (`sessionStorage`, clé `public-booking-draft:<slug>`, six heures au plus), à chaque choix ;
+  - **retour sur la page** (rechargement, onglet repris par le téléphone, feuille de réservation fermée par erreur) : la réservation reprend à l'étape où elle était, avec « Votre réservation reprend là où vous l'aviez laissée. Rien n'est réservé tant que vous n'avez pas confirmé. » et un lien « Recommencer » ;
+  - le créneau n'est jamais repris tel quel : la journée est relue. S'il est encore proposé, il est re-choisi avec son devis actuel. Sinon, elle choisit un autre créneau du même jour, ses coordonnées gardées ;
+  - une autre prestation demandée depuis le site ouvre celle-ci, et seules ses coordonnées sont reprises ;
+  - une demande non confirmée (`pending-booking`) passe avant : elle a son propre retour ;
+  - effacée après une réservation réussie ou « Recommencer ». Rien dans l'aperçu du Studio. Rien n'est envoyé au serveur.
+- **Sans ambiguïté (Higani point 70)** : « Créneau choisi, pas encore réservé. » sur les coordonnées, puis au récapitulatif « Ce créneau n'est pas encore réservé : il le sera quand vous confirmerez. ». Pendant l'envoi : « Envoi de votre réservation… Restez sur cette page, la réponse arrive. ». Seule la réponse du serveur affiche « Rendez-vous confirmé ».
 
 - **Créneaux :**
   - jamais calculés dans le navigateur ;
