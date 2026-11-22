@@ -198,6 +198,7 @@ export function SiteBooking({
                 backRef={backRef}
                 embedded
                 initialServiceId={initialServiceId}
+                place={config.practical}
               />
             ) : previewSlug ? (
               loaded ? (
