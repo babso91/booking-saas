@@ -14,6 +14,7 @@ import { BookingConfirmation } from "./booking-confirmation";
 import { ContactStep } from "./contact-step";
 import { OptionsStep } from "./options-step";
 import { PendingNotice } from "./pending-notice";
+import type { BookingPlace } from "./booking-parts";
 import { ReviewStep } from "./review-step";
 import { ServiceStep } from "./service-step";
 import { SlotStep } from "./slot-step";
@@ -31,6 +32,7 @@ export function PublicBooking({
   gallery,
   preview = false,
   initialServiceId,
+  place,
 }: {
   business: PublicBusiness;
   format?: BookingFormat;
@@ -48,6 +50,8 @@ export function PublicBooking({
    * options when it has some, else on its slots.
    */
   initialServiceId?: string;
+  /** Her published place and contact ("Infos pratiques" of her site). */
+  place?: BookingPlace;
 }) {
   const flow = useBookingFlow({ business, catalog, preview });
   const heading = useRef<HTMLHeadingElement>(null);
@@ -150,12 +154,19 @@ export function PublicBooking({
           ) : flow.step === "contact" ? (
             <ContactStep flow={flow} headingRef={heading} />
           ) : flow.step === "review" ? (
-            <ReviewStep flow={flow} headingRef={heading} preview={preview} />
+            <ReviewStep
+              flow={flow}
+              headingRef={heading}
+              preview={preview}
+              place={place}
+            />
           ) : flow.booking ? (
             <BookingConfirmation
               booking={flow.booking}
               local={flow.bookedLocal}
               cancellationPolicy={business.cancellationPolicy}
+              place={place}
+              location={business.location}
               onAnother={flow.actions.restart}
               headingRef={heading}
             />

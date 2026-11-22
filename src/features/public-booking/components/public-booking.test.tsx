@@ -574,6 +574,83 @@ describe("contact details", () => {
   });
 });
 
+// Higani 56, 69, 77: where she receives and how to reach her, before
+// and after booking, from what her site publishes; her general location
+// when she publishes no address.
+describe("where, and how to reach her", () => {
+  const place = {
+    address: "12 rue Mercière, 69002 Lyon",
+    area: "",
+    instructions: "Venir démaquillée.",
+    phone: "04 78 00 00 00",
+    email: "contact@exemple.fr",
+  };
+  const book = async () => {
+    await chooseService();
+    fireEvent.click(await slotButton("09:30"));
+    await screen.findByRole("heading", { name: "Vos coordonnées" });
+    fillContact();
+    fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
+    await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+  };
+
+  it("her site's address before she commits, then with directions, her instructions and her contact", async () => {
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        embedded
+        place={place}
+      />,
+    );
+    await book();
+    expect(screen.getByText("Lieu")).toBeTruthy();
+    expect(screen.getByText("12 rue Mercière, 69002 Lyon")).toBeTruthy();
+    api.booking.mockImplementationOnce(() =>
+      ok({ booking: bookingFor() }, 201),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    expect(screen.getByText("12 rue Mercière, 69002 Lyon")).toBeTruthy();
+    const directions = screen.getByRole("link", { name: /Itinéraire/ });
+    expect(directions.getAttribute("href")).toMatch(
+      /^https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=12%20rue/,
+    );
+    expect(directions.getAttribute("target")).toBe("_blank");
+    expect(screen.getByText("Avant de venir")).toBeTruthy();
+    expect(screen.getByText("Venir démaquillée.")).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "04 78 00 00 00" }).getAttribute("href"),
+    ).toBe("tel:0478000000");
+    expect(
+      screen
+        .getByRole("link", { name: "contact@exemple.fr" })
+        .getAttribute("href"),
+    ).toBe("mailto:contact@exemple.fr");
+  });
+
+  it("without a site: her general location, no directions, no contact she did not publish", async () => {
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        embedded
+      />,
+    );
+    await book();
+    expect(screen.getByText("Vancouver, Main Street")).toBeTruthy();
+    api.booking.mockImplementationOnce(() =>
+      ok({ booking: bookingFor() }, 201),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    expect(screen.getByText("Vancouver, Main Street")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Itinéraire/ })).toBeNull();
+    expect(screen.queryByText("Contact")).toBeNull();
+    expect(screen.queryByText("Avant de venir")).toBeNull();
+  });
+});
+
 describe("booking", () => {
   it("sends exactly the reviewed booking once, then shows the backend's confirmation (no email promised)", async () => {
     api.booking.mockImplementationOnce(() =>

@@ -1,6 +1,6 @@
 "use client";
 
-import type { Ref } from "react";
+import type { ReactNode, Ref } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -14,7 +14,17 @@ import {
   wallTime,
   zoneCity,
 } from "../client/business-time";
-import { answerRows, Facts, StepHeading, statusLabel } from "./booking-parts";
+import { directionsHref, telHref } from "@/features/experience/practical";
+
+import {
+  answerRows,
+  Facts,
+  linkAction,
+  placeLine,
+  StepHeading,
+  statusLabel,
+  type BookingPlace,
+} from "./booking-parts";
 
 /**
  * The booking as the backend answered it (authoritative): nothing here is
@@ -30,6 +40,8 @@ export function BookingConfirmation({
   booking,
   local,
   cancellationPolicy,
+  place,
+  location = null,
   onAnother,
   headingRef,
 }: {
@@ -37,10 +49,19 @@ export function BookingConfirmation({
   /** The booked slot's wall clock, or null if the time changed since. */
   local: string | null;
   cancellationPolicy: string | null;
+  /** Her published place and contact, when booked from her site. */
+  place?: BookingPlace;
+  /** Her general location, when she publishes no address. */
+  location?: string | null;
   onAnother: () => void;
   headingRef: Ref<HTMLHeadingElement>;
 }) {
   const confirmed = booking.status === "confirmed";
+  const lieu = placeLine(place, location);
+  const address = place?.address.trim();
+  const instructions = place?.instructions.trim();
+  const phone = place?.phone.trim();
+  const email = place?.email.trim();
   return (
     <section aria-labelledby="booking-done" className="flex flex-col gap-5">
       <div id="booking-done">
@@ -66,6 +87,28 @@ export function BookingConfirmation({
       <Facts
         rows={[
           ["Établissement", booking.businessName],
+          // Where to go (Higani 77): her address with directions.
+          ...(lieu
+            ? [
+                [
+                  "Lieu",
+                  <span key="lieu" className="flex flex-col gap-1">
+                    <span className="wrap-anywhere">{lieu}</span>
+                    {address ? (
+                      <a
+                        href={directionsHref(address)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={linkAction}
+                      >
+                        Itinéraire
+                        <span className="sr-only"> (nouvel onglet)</span>
+                      </a>
+                    ) : null}
+                  </span>,
+                ] as [string, ReactNode],
+              ]
+            : []),
           ["Prestation", booking.serviceName],
           // As booked: the answers and the totals the server recorded.
           ...answerRows(booking.options ?? []),
@@ -104,6 +147,31 @@ export function BookingConfirmation({
           <p className="whitespace-pre-line wrap-anywhere">
             {cancellationPolicy}
           </p>
+        </div>
+      ) : null}
+
+      {instructions ? (
+        <div className="flex flex-col gap-1 text-[14px] text-ink-soft">
+          <p className="font-medium text-ink">Avant de venir</p>
+          <p className="whitespace-pre-line wrap-anywhere">{instructions}</p>
+        </div>
+      ) : null}
+      {phone || email ? (
+        <div className="flex flex-col gap-1 text-[14px] text-ink-soft">
+          <p className="font-medium text-ink">Contact</p>
+          {phone ? (
+            <a href={telHref(phone)} className={`${linkAction} min-h-11`}>
+              {phone}
+            </a>
+          ) : null}
+          {email ? (
+            <a
+              href={`mailto:${email}`}
+              className={`${linkAction} min-h-11 wrap-anywhere`}
+            >
+              {email}
+            </a>
+          ) : null}
         </div>
       ) : null}
 
