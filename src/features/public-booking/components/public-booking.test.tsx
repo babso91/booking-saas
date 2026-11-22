@@ -138,6 +138,10 @@ const api = {
       (serviceId: string, date: string, choices?: string) => Promise<Response>
     >(),
   booking: vi.fn<(body: Record<string, unknown>) => Promise<Response>>(),
+  calendar:
+    vi.fn<
+      (serviceId: string, from: string, through: string) => Promise<Response>
+    >(),
 };
 const bookingBodies = () =>
   api.booking.mock.calls.map(([body]) => body as Record<string, unknown>);
@@ -171,16 +175,21 @@ beforeEach(() => {
   api.business.mockImplementation(() =>
     ok({ business, services, catalog: catalogOf(services) }),
   );
+  api.calendar.mockImplementation((_, from) =>
+    ok({ days: [{ date: from, slots: slotsFor(from) }] }),
+  );
   globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "http://localhost");
     if (url.pathname === "/api/bookings") {
       return api.booking(JSON.parse(String(init?.body)));
     }
     if (url.pathname.endsWith("/availability")) {
-      if (url.searchParams.has("through")) {
-        const date = url.searchParams.get("date")!;
-        return ok({ days: [{ date, slots: slotsFor(date) }] });
-      }
+      if (url.searchParams.has("through"))
+        return api.calendar(
+          url.searchParams.get("serviceId")!,
+          url.searchParams.get("date")!,
+          url.searchParams.get("through")!,
+        );
       const choices = url.searchParams.get("optionChoiceIds");
       // Answers only when there are some: the call is the one of before.
       return choices === null
@@ -628,26 +637,115 @@ describe("days and slots", () => {
     ).toBe("true");
   });
 
-  it("a day without slots says so and offers the next day", async () => {
-    api.availability.mockImplementation((_, date) =>
-      ok({
-        date,
-        timezone: TZ,
-        slots: date === today ? [] : slotsFor(date),
-        quote: quoteOf(SERVICE_A),
-      }),
-    );
-    renderPage();
-    await chooseService();
-    expect(
-      await screen.findByText("Aucun créneau disponible ce jour-là."),
-    ).toBeTruthy();
-    const tomorrow = addDays(today, 1);
-    fireEvent.click(
-      screen.getByRole("button", { name: `Voir le ${dayLabel(tomorrow)}` }),
-    );
-    expect(await slotButton("09:30")).toBeTruthy();
-    expect(api.availability).toHaveBeenLastCalledWith(SERVICE_A, tomorrow);
+  describe("a day or a period without a slot (point 60)", () => {
+    const daysFrom = (from: string, through: string) => {
+      const list: string[] = [];
+      for (let day = from; day <= through; day = addDays(day, 1))
+        list.push(day);
+      return list;
+    };
+    /** Her calendar read: slots on `open` only. */
+    const openOn =
+      (open: string) => (_: string, from: string, through: string) =>
+        ok({
+          days: daysFrom(from, through).map((date) => ({
+            date,
+            slots: date === open ? slotsFor(date) : [],
+          })),
+        });
+    const dayOpenOn = (open: string) =>
+      api.availability.mockImplementation((_, date) =>
+        ok({
+          date,
+          timezone: TZ,
+          slots: date === open ? slotsFor(date) : [],
+          quote: quoteOf(SERVICE_A),
+        }),
+      );
+    const horizon = addDays(today, business.maximumBookingAdvanceDays);
+
+    it("an empty day offers her next real slot, past the closed days", async () => {
+      const open = addDays(today, 4);
+      dayOpenOn(open);
+      api.calendar.mockImplementation(openOn(open));
+      renderPage();
+      await chooseService();
+      expect(
+        await screen.findByText("Aucun créneau disponible ce jour-là."),
+      ).toBeTruthy();
+      const next = await screen.findByRole("button", {
+        name: `Prochain créneau : ${dayLabel(open)} à 09:30`,
+      });
+      // Read after that day, up to her horizon, by her real calendar.
+      expect(api.calendar).toHaveBeenCalledWith(
+        SERVICE_A,
+        addDays(today, 1),
+        horizon,
+      );
+      expect(screen.queryByRole("button", { name: /^Voir le / })).toBeNull();
+      fireEvent.click(next);
+      expect(await slotButton("09:30")).toBeTruthy();
+      expect(api.availability).toHaveBeenLastCalledWith(SERVICE_A, open);
+    });
+
+    it("nothing up to her horizon is said, with another service to try", async () => {
+      dayOpenOn("");
+      api.calendar.mockImplementation(openOn(""));
+      renderPage();
+      await chooseService();
+      expect(
+        await screen.findByText(
+          `Les réservations en ligne sont ouvertes jusqu’au ${dayLabel(horizon)} : aucun créneau d’ici là.`,
+        ),
+      ).toBeTruthy();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Choisir une autre prestation" }),
+      );
+      expect(
+        await screen.findByRole("button", { name: /Pose cil à cil/ }),
+      ).toBeTruthy();
+    });
+
+    it("if that search cannot be read, the next day stays one tap away", async () => {
+      dayOpenOn(addDays(today, 1));
+      api.calendar.mockImplementation(() => refuse(500, "internal"));
+      renderPage();
+      await chooseService();
+      const tomorrow = addDays(today, 1);
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: `Voir le ${dayLabel(tomorrow)}`,
+        }),
+      );
+      expect(await slotButton("09:30")).toBeTruthy();
+      expect(api.availability).toHaveBeenLastCalledWith(SERVICE_A, tomorrow);
+    });
+
+    it("an empty week offers the next slot and moves there", async () => {
+      const open = addDays(today, 12);
+      api.calendar.mockImplementation(openOn(open));
+      render(
+        <PublicBooking
+          business={business}
+          catalog={catalogOf([services[0]!])}
+          format="chronological"
+        />,
+      );
+      expect(
+        await screen.findByText("Aucun créneau disponible sur cette période."),
+      ).toBeTruthy();
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: `Prochain créneau : ${dayLabel(open)} à 09:30`,
+        }),
+      );
+      expect(
+        await screen.findByRole("heading", { name: dayLabel(open) }),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText("Aucun créneau disponible sur cette période."),
+      ).toBeNull();
+    });
   });
 
   it("a later answer for an earlier day or service never replaces the latest choice", async () => {

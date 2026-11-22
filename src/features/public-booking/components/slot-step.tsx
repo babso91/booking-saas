@@ -16,6 +16,7 @@ import {
   TimeZoneNote,
 } from "./booking-parts";
 import { AvailabilityCalendar } from "./availability-calendar";
+import { NextOpeningNote } from "./next-opening";
 
 const WEEK = 7;
 export type CalendarPosition = {
@@ -186,6 +187,10 @@ export function SlotStep({
           flow={flow}
           chronological={format === "chronological"}
           onSelectDate={selectMonthDay}
+          // Her month above the day's slots: the day says what is next.
+          nextOpening={
+            !(inlineMonth && anchor.slice(0, 7) === date.slice(0, 7))
+          }
         />
       ) : (
         <fieldset className="flex min-w-0 flex-col gap-3">
@@ -310,20 +315,13 @@ export function SlotStep({
                 : "Les créneaux n’ont pas pu être chargés."}
             </Notice>
           ) : slots.status === "ready" && slots.slots.length === 0 ? (
-            <div className="flex flex-col items-start gap-2 rounded-2xl border border-line bg-paper-raised px-4 py-4">
-              <p className="text-[14.5px] text-ink-soft">
-                Aucun créneau disponible ce jour-là.
-              </p>
-              {nextDay ? (
-                <button
-                  type="button"
-                  className={linkAction}
-                  onClick={() => chooseDate(nextDay)}
-                >
-                  Voir le {dayLabel(nextDay)}
-                </button>
-              ) : null}
-            </div>
+            <NextOpeningNote
+              flow={flow}
+              after={date}
+              lead="Aucun créneau disponible ce jour-là."
+              onGo={chooseDate}
+              fallbackDay={nextDay}
+            />
           ) : slots.status === "ready" ? (
             <ul
               className="grid grid-cols-3 gap-2 sm:grid-cols-4"
