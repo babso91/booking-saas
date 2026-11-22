@@ -54,6 +54,23 @@ describe("practicalItems", () => {
     expect(items.map((item) => item.label)).toEqual(["Annulation"]);
   });
 
+  it("her WhatsApp joins her contact when it is an international number (point 4)", () => {
+    const contact = (whatsapp: string) =>
+      practicalItems({
+        practical: { ...emptyPractical, whatsapp },
+        hours: null,
+        cancellationPolicy: null,
+      }).at(-1);
+    expect(contact("+33 6 12 34 56 78")).toEqual({
+      kind: "contact",
+      label: "Contact",
+      phone: null,
+      email: null,
+      whatsapp: "+33 6 12 34 56 78",
+    });
+    expect(contact("06 12 34 56 78")).toBeUndefined();
+  });
+
   it("her conditions follow her cancellation terms (point 6)", () => {
     const items = practicalItems({
       practical: {
@@ -95,6 +112,7 @@ describe("practicalItems", () => {
       label: "Contact",
       phone: "06 12 34 56 78",
       email: null,
+      whatsapp: null,
     });
   });
 

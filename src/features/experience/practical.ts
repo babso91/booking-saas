@@ -41,6 +41,8 @@ export type PracticalItem =
       label: string;
       phone: string | null;
       email: string | null;
+      /** Shown only when it reads as an international number. */
+      whatsapp: string | null;
     };
 
 const WEEK = [1, 2, 3, 4, 5, 6, 0];
@@ -124,14 +126,25 @@ export function practicalItems({
   text("Accompagnants", practical?.companions);
   const phone = practical?.phone.trim() || null;
   const email = practical?.email.trim() || null;
-  if (phone || email)
-    items.push({ kind: "contact", label: "Contact", phone, email });
+  const whatsapp = whatsappHref(practical?.whatsapp)
+    ? practical!.whatsapp!.trim()
+    : null;
+  if (phone || email || whatsapp)
+    items.push({ kind: "contact", label: "Contact", phone, email, whatsapp });
   return items;
 }
 
 /** A phone number as a tel: link (digits and a leading +). */
 export function telHref(phone: string): string {
   return `tel:${phone.replace(/[^\d+]/g, "")}`;
+}
+
+/** A WhatsApp link for an international number (+33 6 …), else null. */
+export function whatsappHref(number: string | undefined) {
+  const digits = number?.replace(/[^\d+]/g, "") ?? "";
+  return /^\+\d{8,15}$/.test(digits)
+    ? `https://wa.me/${digits.slice(1)}`
+    : null;
 }
 
 /** Directions to her address, opened only when a client asks for them. */

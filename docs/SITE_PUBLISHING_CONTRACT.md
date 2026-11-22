@@ -73,6 +73,15 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
   - elles s'affichent dans « Infos pratiques » après « Annulation », et au récapitulatif de la réservation **avant** « Confirmer la réservation », dans « À savoir avant de confirmer » : Annulation (`cancellation_policy` de l'établissement), Retard, Rendez-vous manqué, Accompagnants, Avant de venir (`instructions`). Sans site publié, seule l'annulation y figure ;
   - ce sont des textes affichés, pas des règles appliquées par la réservation. **Pas d'acompte** tant qu'aucun acompte n'est réellement demandé (Cloud, points 74 et 163) ;
   - la politique d'annulation reste celle saisie à l'inscription : aucun écran ne permet encore de la modifier ensuite.
+- **Contact immédiat (Higani point 4) :**
+  - `practical.whatsapp` (30 caractères, texte brut, facultatif) s'ajoute au téléphone et à l'e-mail ;
+  - le lien WhatsApp (`https://wa.me/<chiffres>`) n'est publié que pour un numéro international (`+` puis 8 à 15 chiffres). Sinon rien n'est affiché, et le Studio dit pourquoi ; le brouillon n'est jamais refusé pour ça ;
+  - ses canaux remplis (« Appeler », « WhatsApp », « Écrire ») apparaissent **en bas de son site et dans son menu**, à un geste de partout, en plus d'« Infos pratiques ». Rien n'est affiché pour un canal vide. Pas de formulaire de contact : il faudrait un envoi côté serveur et un texte validé.
+- **Réseaux et liens (`links`, facultatif, Higani point 3) :**
+  - jusqu'à 8 liens `{ network, url, label? }`. `network` ∈ instagram, tiktok, facebook, linkedin, youtube, pinterest, website, other ; `url` 300 caractères, `label` 40 (pour « other »), en texte brut ;
+  - `url` est gardée **telle que saisie** (une adresse ou son @nom). Le site ne lie que ce qui se lit comme une adresse http(s) avec un vrai nom de domaine (`experience/reach.ts`) : un @nom devient l'adresse du réseau, `www.…` reçoit `https://`. Tout autre schéma (`javascript:`, `data:`, `mailto:`…) n'est jamais lié. Un lien illisible est gardé dans le brouillon, signalé dans le Studio et absent du site ;
+  - rendu en liens texte, dans la typographie de l'univers (pas de logos de marque), ouverts dans un nouvel onglet (`noopener noreferrer`), en bas du site et dans le menu ;
+  - **anciennes publications** (sans `links` ni `whatsapp`) : rien de nouveau.
 - **Taille :** 256 Kio au plus pour le document.
 - **Évolution :** `schema_version` est stocké avec chaque brouillon et chaque version. Une version 2 viendra avec des fonctions de migration pures (1 → 2) appliquées à la lecture, sans réécrire l'historique.
 

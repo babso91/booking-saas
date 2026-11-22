@@ -7,6 +7,7 @@ import { useRef, type CSSProperties } from "react";
 
 import { Detail, Display, useEngine } from "./engine/engine";
 import { SitePortal, useModal } from "./engine/modal";
+import { ReachLinks } from "./scenes/reach-links";
 import type { Destination } from "./sections";
 
 // The site's index: from the header, straight to her services, her work,
@@ -143,6 +144,7 @@ export function SiteIndex({
             ) : null}
           </ol>
         </nav>
+        <ReachLinks className="mx-auto w-full max-w-[1100px] px-5 pb-[max(env(safe-area-inset-bottom),40px)]" />
       </motion.div>
     </SitePortal>
   );

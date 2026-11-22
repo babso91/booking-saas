@@ -1,7 +1,13 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 import Link from "next/link";
 
@@ -32,7 +38,8 @@ import type {
 } from "../engine/config";
 import { euros, minutes } from "../engine/engine";
 import { advise, ensureReadable } from "../engine/harmony";
-import { emptyPractical } from "../practical";
+import { emptyPractical, whatsappHref } from "../practical";
+import { LinksFields } from "./links-fields";
 import {
   grades,
   motions,
@@ -1071,12 +1078,18 @@ export function Studio({
                       ) : null}
                     </>
                   ) : current === "infos" ? (
-                    <PracticalFields
-                      value={config.practical ?? emptyPractical}
-                      onChange={(practical, key) =>
-                        set({ practical }, `practical.${key}`)
-                      }
-                    />
+                    <>
+                      <PracticalFields
+                        value={config.practical ?? emptyPractical}
+                        onChange={(practical, key) =>
+                          set({ practical }, `practical.${key}`)
+                        }
+                      />
+                      <LinksFields
+                        value={config.links ?? []}
+                        onChange={(links) => set({ links }, "links")}
+                      />
+                    </>
                   ) : current === "colors" ? (
                     <>
                       <p className="text-[13px] text-black/55">
@@ -1658,6 +1671,17 @@ function PracticalFields({
         {...field("phone")}
       />
       <Text
+        label="WhatsApp (avec l’indicatif, ex. +33 6 12 34 56 78)"
+        type="tel"
+        maxLength={siteLimits.practicalWhatsapp}
+        hint={
+          value.whatsapp?.trim() && !whatsappHref(value.whatsapp)
+            ? "Ajoute l’indicatif du pays (+33…) : sans lui, le lien WhatsApp n’apparaît pas."
+            : undefined
+        }
+        {...field("whatsapp")}
+      />
+      <Text
         label="E-mail"
         type="email"
         maxLength={siteLimits.practicalEmail}
@@ -1675,6 +1699,7 @@ function Text({
   maxLength,
   type = "text",
   placeholder,
+  hint,
 }: {
   label: string;
   value: string;
@@ -1683,7 +1708,10 @@ function Text({
   maxLength?: number;
   type?: "text" | "tel" | "email";
   placeholder?: string;
+  /** Said under the field (why what she typed will not show). */
+  hint?: string;
 }) {
+  const hintId = useId();
   const className =
     "w-full rounded-xl border border-black/10 bg-white px-3 text-[16px] outline-none focus:border-black/40";
   return (
@@ -1704,11 +1732,17 @@ function Text({
           placeholder={placeholder}
           value={value}
           maxLength={maxLength}
+          aria-describedby={hint ? hintId : undefined}
           autoComplete="off"
           onChange={(event) => onChange(event.target.value)}
           className={`${className} h-12`}
         />
       )}
+      {hint ? (
+        <span id={hintId} className="text-[12.5px] leading-snug text-[#B3261E]">
+          {hint}
+        </span>
+      ) : null}
     </label>
   );
 }
