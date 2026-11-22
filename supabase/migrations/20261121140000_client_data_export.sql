@@ -12,7 +12,7 @@
 -- requests made with her address, and the marketing messages sent to her.
 -- Excluded: secrets and technical keys (token hashes, request ids and
 -- fingerprints, leases), and nothing from any other business.
-create function public.crm_export_client(p_business_id uuid, p_client_id uuid)
+create function public.privacy_export_client(p_business_id uuid, p_client_id uuid)
 returns jsonb
 language plpgsql
 stable
@@ -219,5 +219,5 @@ begin
 end;
 $$;
 
-revoke all on function public.crm_export_client(uuid, uuid) from public, anon, authenticated;
-grant execute on function public.crm_export_client(uuid, uuid) to authenticated;
+revoke all on function public.privacy_export_client(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.privacy_export_client(uuid, uuid) to authenticated;

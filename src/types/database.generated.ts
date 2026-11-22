@@ -288,13 +288,13 @@ isOneToOne: false
                   ]
                 },"clients": {
                   Row: {
-                    "business_id": string,"created_at": string,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"email": string | null,"first_name": string,"id": string,"internal_notes": string | null,"last_name": string | null,"loyalty_token_hash": string | null,"phone": string | null,"updated_at": string,"version": number
+                    "business_id": string,"created_at": string,"creation_request_fingerprint": string | null,"creation_request_id": string | null,"email": string | null,"erased_at": string | null,"first_name": string,"id": string,"internal_notes": string | null,"last_name": string | null,"loyalty_token_hash": string | null,"phone": string | null,"updated_at": string,"version": number
                   }
                   Insert: {
-                    "business_id": string,"created_at"?: string,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"email"?: string | null,"first_name": string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string,"version"?: number
+                    "business_id": string,"created_at"?: string,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"email"?: string | null,"erased_at"?: string | null,"first_name": string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string,"version"?: number
                   }
                   Update: {
-                    "business_id"?: string,"created_at"?: string,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"email"?: string | null,"first_name"?: string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string,"version"?: number
+                    "business_id"?: string,"created_at"?: string,"creation_request_fingerprint"?: string | null,"creation_request_id"?: string | null,"email"?: string | null,"erased_at"?: string | null,"first_name"?: string,"id"?: string,"internal_notes"?: string | null,"last_name"?: string | null,"loyalty_token_hash"?: string | null,"phone"?: string | null,"updated_at"?: string,"version"?: number
                   }
                   Relationships: [
                     {
@@ -1308,9 +1308,6 @@ isOneToOne: false
               "note_id": string,"status": string
             }[]
                            },
-"crm_export_client":
-{ Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
-                           },
 "crm_list_client_notes":
 { Args: { "p_before_at"?: string,"p_before_id"?: string,"p_business_id": string,"p_client_id": string,"p_limit"?: number }; Returns: Json
                            },
@@ -1551,6 +1548,12 @@ isOneToOne: false
                            },
 "preview_appointment_series":
 { Args: { "p_business_id": string,"p_client_id": string,"p_count": number,"p_first_local_start": string,"p_option_choice_ids": (string)[],"p_repeat_every_weeks": number,"p_service_id": string,"p_until_local_date": string }; Returns: Json
+                           },
+"privacy_erase_client":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_expected_version": number }; Returns: Json
+                           },
+"privacy_export_client":
+{ Args: { "p_business_id": string,"p_client_id": string }; Returns: Json
                            },
 "promotion_create":
 { Args: { "p_business_id": string,"p_input": Json }; Returns: Json

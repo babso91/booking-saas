@@ -3,11 +3,16 @@
 import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Notice } from "@/components/ui/notice";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
 import { describeError } from "@/features/auth/client/error-copy";
 
-import { exportClientDataAction } from "../actions/client-export";
+import {
+  eraseClientDataAction,
+  exportClientDataAction,
+} from "../actions/client-export";
+import { getClientRecordAction } from "../actions/client-management";
 
 /** "Inès Martin" → "ines-martin", for a file name. */
 const fileSlug = (name: string) =>
@@ -25,9 +30,12 @@ const fileSlug = (name: string) =>
 export function ClientDataExport({
   clientId,
   displayName,
+  onErased,
 }: {
   clientId: string;
   displayName: string;
+  /** Her record changed: read it again. */
+  onErased?: () => void;
 }) {
   const [pending, setPending] = useState(false);
   const [done, setDone] = useState(false);
@@ -98,6 +106,111 @@ export function ClientDataExport({
       {error ? (
         <Notice tone="error">{describeError(error).message}</Notice>
       ) : null}
+      <ClientErasure
+        clientId={clientId}
+        displayName={displayName}
+        onErased={onErased}
+      />
     </section>
+  );
+}
+
+/** Her right to erasure, behind an explicit confirmation. */
+function ClientErasure({
+  clientId,
+  displayName,
+  onErased,
+}: {
+  clientId: string;
+  displayName: string;
+  onErased?: () => void;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [outcome, setOutcome] = useState<"erased" | "already" | null>(null);
+  const [error, setError] = useState<UiError | null>(null);
+  const busy = useRef(false);
+
+  async function erase() {
+    if (busy.current) return;
+    busy.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      // The record as it is now: erased only if nobody changed it since.
+      const record = await callAction(() =>
+        getClientRecordAction({ clientId }),
+      );
+      if (!record.ok) {
+        setError(record.error);
+        return;
+      }
+      const result = await callAction(() =>
+        eraseClientDataAction({
+          clientId,
+          expectedVersion: record.data.version,
+        }),
+      );
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setOutcome(result.data.erased ? "erased" : "already");
+      setAsking(false);
+      onErased?.();
+    } finally {
+      busy.current = false;
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-line pt-3">
+      <p className="text-sm text-ink-muted">
+        Si elle demande l’effacement de ses données : son nom, ses coordonnées,
+        tes notes, ses réponses aux formulaires, ses consentements et son accès
+        à l’espace client sont effacés. Ses rendez-vous passés restent dans ton
+        historique, sans nom ni coordonnées. C’est impossible tant qu’elle a un
+        rendez-vous à venir.
+      </p>
+      <Button
+        type="button"
+        size="md"
+        variant="ghost"
+        onClick={() => {
+          setError(null);
+          setOutcome(null);
+          setAsking(true);
+        }}
+        className="self-start"
+      >
+        Effacer ses données
+      </Button>
+      {outcome === "erased" ? (
+        <Notice tone="success">
+          Données effacées. La fiche reste dans ton historique sous le nom «
+          Cliente effacée ».
+        </Notice>
+      ) : outcome === "already" ? (
+        <Notice tone="success">Ses données étaient déjà effacées.</Notice>
+      ) : null}
+      {error && !asking ? (
+        <Notice tone="error">{describeError(error).message}</Notice>
+      ) : null}
+      <ConfirmDialog
+        open={asking}
+        title={`Effacer définitivement les données de ${displayName} ?`}
+        description="Son nom, ses coordonnées, tes notes, ses réponses aux formulaires, ses consentements et son accès à l’espace client seront effacés. Ses rendez-vous passés et leurs montants restent, sans nom ni coordonnées. Aucun e-mail ne lui est envoyé. C’est irréversible."
+        confirmLabel="Effacer définitivement"
+        tone="danger"
+        state={pending ? "loading" : "idle"}
+        onConfirm={() => void erase()}
+        onCancel={() => setAsking(false)}
+      >
+        {error ? (
+          <Notice tone="error">{describeError(error).message}</Notice>
+        ) : null}
+      </ConfirmDialog>
+    </div>
   );
 }

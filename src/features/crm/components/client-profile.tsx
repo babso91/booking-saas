@@ -460,6 +460,10 @@ export function ClientProfile({
       key={`${scope.userId}:${scope.businessId}:${clientId}`}
       clientId={clientId}
       displayName={data.client.displayName}
+      onErased={() => {
+        setProfileRun((value) => value + 1);
+        reloadTimeline();
+      }}
     />
   );
   const dossier = (
