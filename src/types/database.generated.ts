@@ -1203,6 +1203,12 @@ isOneToOne: false
               "account_id": string,"email": string,"expires_at": string,"session_token": string,"status": string
             }[]
                            },
+"closure_commit":
+{ Args: { "p_business_id": string,"p_decisions": Json,"p_end_date": string,"p_message": string,"p_reason": string,"p_request_id": string,"p_start_date": string }; Returns: Json
+                           },
+"closure_preview":
+{ Args: { "p_business_id": string,"p_end_date": string,"p_start_date": string }; Returns: Json
+                           },
 "commit_appointment_series":
 { Args: { "p_business_id": string,"p_preview_version": string,"p_request_id": string,"p_selected": Json }; Returns: Json
                            },

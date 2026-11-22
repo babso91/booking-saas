@@ -196,6 +196,12 @@ export const appErrorMessages = {
   calendar_conflict:
     "Une ou plusieurs dates ne sont plus libres : rien n’a été créé.",
   series_stale: "Cet aperçu n’est plus valable : rien n’a été créé.",
+  closure_stale:
+    "L’agenda a changé depuis l’affichage de la liste : rien n’a été fait.",
+  closure_conflict:
+    "Le nouvel horaire d’un rendez-vous n’est pas libre : rien n’a été fait.",
+  too_many_appointments:
+    "Plus de 100 rendez-vous sur ces dates : ferme une période plus courte.",
   invitation_password_required:
     "Choisissez votre mot de passe pour rejoindre l’équipe.",
   invitation_email_unavailable:
@@ -413,6 +419,9 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   too_many_occurrences: 422,
   calendar_conflict: 409,
   series_stale: 409,
+  closure_stale: 409,
+  closure_conflict: 409,
+  too_many_appointments: 422,
   invitation_password_required: 403,
   invitation_email_unavailable: 503,
   unsubscribe_link_invalid: 404,
