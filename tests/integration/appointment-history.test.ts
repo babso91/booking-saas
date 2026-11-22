@@ -465,8 +465,10 @@ describe("point 100: who changed an appointment, and what", () => {
       "public.client_hub_cancel_appointment": "client (service role)",
       "public.client_hub_reschedule_appointment": "client (service role)",
       // Point 205 (#129): she erases her client; only contact snapshots
-      // change, which records nothing (her note, if cleared, is hers).
+      // change, which records nothing (her note, if cleared, is hers). Its
+      // body moved to private once wrapped for the reviews (20261122220000).
       "public.privacy_erase_client": "member",
+      "private.privacy_erase_client_base": "member",
     };
     const writers = rows.map((r) => r.name);
     expect(writers.filter((name) => !(name in known))).toEqual([]);
