@@ -6,6 +6,11 @@ import type {
   SeriesCommitted,
   SeriesPreview,
 } from "@/features/appointment-series/data";
+import {
+  generateTeamInviteToken,
+  hashTeamInviteToken,
+  type TeamMemberDto,
+} from "@/features/team/data/team";
 import type { AppSupabaseClient } from "@/lib/supabase/types";
 
 import {
@@ -300,5 +305,196 @@ describe("commit", () => {
         [service],
       );
     }
+  });
+});
+
+// Point 99: after the series, the professional changes it from her agenda,
+// one date at a time, through the same functions as any appointment.
+describe("changing a series from the agenda", () => {
+  type Row = {
+    id: string;
+    starts_at: Date;
+    status: string;
+    version: number;
+    series_id: string | null;
+  };
+  const rowsOf = async (ids: string[]) =>
+    (
+      await db.query<Row>(
+        "select id, starts_at, status, version, series_id from public.appointments where id = any($1)",
+        [ids],
+      )
+    ).rows.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  type Email = {
+    id: string;
+    appointment_id: string;
+    type: string;
+    status: string;
+    scheduled_for: Date | null;
+    starts_at: string;
+  };
+  const emailsOf = async (ids: string[]) =>
+    (
+      await db.query<Email>(
+        "select id, appointment_id, type, status, scheduled_for, payload ->> 'starts_at' as starts_at from public.email_events where appointment_id = any($1)",
+        [ids],
+      )
+    ).rows;
+
+  it("moves one date and cancels another, and leaves the rest of the series as it was", async () => {
+    const tuesday = freshTuesday();
+    const p = await ok<SeriesPreview>(
+      preview(`${tuesday}T10:00:00`, { count: 4 }),
+    );
+    const done = await ok<SeriesCommitted>(commit(p.previewVersion, all(p)));
+    const ids = done.appointmentIds;
+    expect(ids).toHaveLength(4);
+    const [first, second, third, fourth] = ids as [
+      string,
+      string,
+      string,
+      string,
+    ];
+
+    // One reminder per date, each before its own date; nothing else.
+    const queued = await emailsOf(ids);
+    expect(queued.map((e) => [e.appointment_id, e.type, e.status])).toEqual(
+      expect.arrayContaining(
+        ids.map((id) => [id, "appointment_reminder", "pending"]),
+      ),
+    );
+    expect(queued).toHaveLength(4);
+    const before = await rowsOf(ids);
+
+    // The second date, a day later (same time), from the agenda.
+    const moved = new Date(before[1]!.starts_at.getTime() + 86_400_000);
+    await ok(
+      call(owner.client, "agenda_update_appointment", {
+        p_business_id: business.id,
+        p_appointment_id: second,
+        p_expected_version: 1,
+        p_service_id: service,
+        p_client_id: clientId,
+        p_starts_at: moved.toISOString(),
+      }),
+    );
+    // The third, cancelled.
+    await ok(
+      call(owner.client, "agenda_set_appointment_status", {
+        p_business_id: business.id,
+        p_appointment_id: third,
+        p_expected_version: 1,
+        p_status: "cancelled",
+      }),
+    );
+
+    const after = await rowsOf(ids);
+    // Untouched: the first and the fourth, to the version.
+    expect(after[0]).toEqual(before[0]);
+    expect(after[3]).toEqual(before[3]);
+    // Changed, and still part of the series.
+    expect(after[1]).toMatchObject({
+      status: "confirmed",
+      version: 2,
+      series_id: done.seriesId,
+    });
+    expect(after[1]!.starts_at.toISOString()).toBe(moved.toISOString());
+    expect(after[2]).toMatchObject({
+      status: "cancelled",
+      series_id: done.seriesId,
+    });
+
+    // Reminders follow each date: the first and fourth keep theirs, the
+    // moved one gets a new one for its new time, the cancelled one none.
+    // She hears of nothing else: the professional entered these dates and
+    // nothing has been sent about them yet.
+    const emails = await emailsOf(ids);
+    const pending = (id: string) =>
+      emails.filter(
+        (e) =>
+          e.appointment_id === id &&
+          e.type === "appointment_reminder" &&
+          e.status === "pending",
+      );
+    const kept = (id: string) => queued.find((e) => e.appointment_id === id);
+    expect(pending(first)).toEqual([kept(first)]);
+    expect(pending(fourth)).toEqual([kept(fourth)]);
+    expect(pending(second)).toHaveLength(1);
+    expect(new Date(pending(second)[0]!.starts_at).toISOString()).toBe(
+      moved.toISOString(),
+    );
+    expect(pending(third)).toEqual([]);
+    expect(emails.filter((e) => e.type !== "appointment_reminder")).toEqual([]);
+
+    // The dates freed in the agenda are free again; the others are not.
+    const again = await ok<SeriesPreview>(
+      preview(`${tuesday}T10:00:00`, { count: 4 }),
+    );
+    expect(again.occurrences.map((o) => o.state)).toEqual([
+      "conflict",
+      "available",
+      "available",
+      "conflict",
+    ]);
+  });
+
+  it("is the owner's and admins': a practitioner cannot repeat an appointment", async () => {
+    const member = await ok<TeamMemberDto>(
+      call(owner.client, "create_staff_member", {
+        p_business_id: business.id,
+        p_operation_id: randomUUID(),
+        p_display_name: "Inès",
+        p_bookable: true,
+        p_service_ids: [service],
+      }),
+    );
+    const ines = await createProfessional("series-practitioner");
+    const token = generateTeamInviteToken();
+    await ok(
+      call(owner.client, "send_team_invitation", {
+        p_business_id: business.id,
+        p_operation_id: randomUUID(),
+        p_staff_id: member.id,
+        p_expected_revision: member.revision,
+        p_email: ines.email,
+        p_role: "practitioner",
+        p_token_hash: hashTeamInviteToken(token),
+      }),
+    );
+    await ok(
+      call(ines.client, "accept_team_invitation", {
+        p_token_hash: hashTeamInviteToken(token),
+      }),
+    );
+
+    const tuesday = freshTuesday();
+    const asInes = await call(ines.client, "preview_appointment_series", {
+      p_business_id: business.id,
+      p_client_id: clientId,
+      p_service_id: service,
+      p_option_choice_ids: [],
+      p_first_local_start: `${tuesday}T10:00:00`,
+      p_repeat_every_weeks: 1,
+      p_count: 2,
+      p_until_local_date: null,
+    });
+    expect(asInes.error?.message).toBe("forbidden");
+
+    // Nor confirm one the owner previewed.
+    const p = await ok<SeriesPreview>(
+      preview(`${tuesday}T10:00:00`, { count: 2 }),
+    );
+    const committed = await call(ines.client, "commit_appointment_series", {
+      p_business_id: business.id,
+      p_request_id: randomUUID(),
+      p_preview_version: p.previewVersion,
+      p_selected: all(p),
+    });
+    expect(committed.error?.message).toBe("forbidden");
+    const { rows } = await db.query(
+      "select count(*)::int as n from public.appointments where business_id = $1 and starts_at = any($2)",
+      [business.id, all(p).map((o) => o.startsAt)],
+    );
+    expect(rows[0].n).toBe(0);
   });
 });
