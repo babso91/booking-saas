@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { sampleSite } from "@/features/experience/fixtures/sample-sites";
 import { fromLabel, nextLabel } from "@/features/experience/next-slot";
+import { dayLabel } from "@/features/public-booking/client/business-time";
 
 import { capture } from "./support/capture";
 import { expectAccessible, noSideScroll, signedInPage } from "./support/ecrin";
@@ -462,6 +463,104 @@ describe("her next availability", () => {
     await page
       .getByRole("dialog", { name: "Réserver chez Studio Lumière" })
       .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+});
+
+// Higani point 60: a day without a slot offers her next real one.
+describe("her next opening (point 60)", () => {
+  it("phone 390: an empty today says so and offers her next slot; the button opens that day", async () => {
+    const pro = await professionalWithVisit("Mila", "Lou");
+    const actor = pro.browser.member!.userId;
+    const { rows } = await db.query<{ slug: string }>(
+      "select slug from public.businesses where id = $1",
+      [pro.businessId],
+    );
+    const slug = rows[0]!.slug;
+    // One weekday only, three days after today (Europe/Paris): today is closed.
+    const { rows: days } = await db.query<{
+      today: string;
+      open: string;
+      weekday: number;
+    }>(
+      `select (now() at time zone 'Europe/Paris')::date::text as today,
+              ((now() at time zone 'Europe/Paris')::date + 3)::text as open,
+              extract(dow from (now() at time zone 'Europe/Paris')::date + 3)::int as weekday`,
+    );
+    const { today, open, weekday } = days[0]!;
+    await db.query("delete from public.business_hours where business_id = $1", [
+      pro.businessId,
+    ]);
+    await db.query(
+      `insert into public.business_hours (business_id, weekday, starts_at, ends_at)
+       values ($1, $2, '09:00', '19:00')`,
+      [pro.businessId, weekday],
+    );
+    const revision = await saveDraft(
+      pro.businessId,
+      actor,
+      0,
+      "Studio Lumière",
+      "mila",
+    );
+    await db.query("select * from public.publish_site($1, $2, $3)", [
+      pro.businessId,
+      actor,
+      revision,
+    ]);
+
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 390,
+      height: 844,
+      phone: true,
+    });
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`${APP}/b/${slug}`);
+    await page.getByText("Studio Lumière").first().waitFor();
+
+    const scene = page.locator("[data-booking-scene]");
+    await scene.getByRole("button", { name: /Rehaussement de cils/ }).click();
+    await scene.getByRole("button", { name: /Réserver ce soin/ }).click();
+    const dialog = page.getByRole("dialog", {
+      name: "Réserver chez Studio Lumière",
+    });
+    await dialog
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+
+    // The sheet opens on her next availability (point 2): go back to today.
+    await dialog.getByRole("button", { name: dayLabel(today) }).click();
+
+    await dialog.getByText("Aucun créneau disponible ce jour-là.").waitFor();
+    const next = dialog.getByRole("button", {
+      name: new RegExp(
+        `^Prochain créneau : ${dayLabel(open)} à \\d{2}:\\d{2}$`,
+      ),
+    });
+    await next.waitFor();
+    expect(await next.innerText()).toBe(
+      `Prochain créneau : ${dayLabel(open)} à 09:00`,
+    );
+    await expectAccessible(page, "booking next opening");
+    expect(await noSideScroll(page)).toBe(true);
+    await capture(page, "p60-next-opening-390");
+
+    // Tapped: that day's slots are offered.
+    await next.click();
+    await dialog.getByText("Aucun créneau disponible ce jour-là.").waitFor({
+      state: "detached",
+    });
+    await dialog
+      .getByRole("button", { name: new RegExp(`${dayLabel(open)} à 09:00`) })
+      .first()
       .waitFor();
 
     expect(errors).toEqual([]);

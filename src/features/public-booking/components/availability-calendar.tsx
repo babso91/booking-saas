@@ -18,6 +18,7 @@ import {
 } from "../client/api";
 import { dayLabel, wallTime } from "../client/business-time";
 import { choiceIdsOf, type BookingFlow } from "../client/use-booking-flow";
+import { NextOpeningNote } from "./next-opening";
 
 export function AvailabilityCalendar({
   view,
@@ -26,6 +27,7 @@ export function AvailabilityCalendar({
   flow,
   chronological = false,
   onSelectDate,
+  nextOpening = true,
 }: {
   view: "week" | "month";
   anchor: string;
@@ -33,6 +35,8 @@ export function AvailabilityCalendar({
   flow: BookingFlow;
   chronological?: boolean;
   onSelectDate: (date: string) => void;
+  /** An empty period offers her next slot (Higani point 60). */
+  nextOpening?: boolean;
 }) {
   // Chronological: the next seven bookable days from the one shown, not
   // the calendar week (on a Saturday evening, a calendar week would leave
@@ -84,6 +88,8 @@ export function AvailabilityCalendar({
   }, [key, slug, serviceId, from, through, choices]);
   const result = loaded?.key === key ? loaded : null;
   const byDate = new Map(result?.days?.map((day) => [day.date, day.slots]));
+  const empty =
+    !!result?.days && result.days.every((day) => day.slots.length === 0);
   const listedDays = chronological
     ? result?.days?.filter((day) => day.slots.length > 0)
     : result?.days;
@@ -142,7 +148,7 @@ export function AvailabilityCalendar({
           ? "Recherche des créneaux disponibles…"
           : pendingStart
             ? "Vérification de l’horaire…"
-            : result.days
+            : result.days && !empty
               ? view === "month"
                 ? "Choisissez un jour pour voir ses horaires."
                 : "Choisissez un horaire."
@@ -159,6 +165,18 @@ export function AvailabilityCalendar({
             Réessayer
           </button>
         </p>
+      ) : null}
+      {empty && nextOpening && through ? (
+        <NextOpeningNote
+          flow={flow}
+          after={through}
+          lead={
+            view === "month"
+              ? "Aucun créneau disponible ce mois-ci."
+              : "Aucun créneau disponible sur cette période."
+          }
+          onGo={onAnchor}
+        />
       ) : null}
       {view === "month" ? (
         <>
@@ -215,9 +233,11 @@ export function AvailabilityCalendar({
           ))}
         </div>
       ) : chronological && listedDays?.length === 0 ? (
-        <p role="status" className="text-sm text-ink-muted">
-          Aucun créneau disponible sur cette période.
-        </p>
+        nextOpening ? null : (
+          <p role="status" className="text-sm text-ink-muted">
+            Aucun créneau disponible sur cette période.
+          </p>
+        )
       ) : (
         listedDays?.map(({ date, slots }) => (
           <section
