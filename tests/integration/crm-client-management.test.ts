@@ -1269,9 +1269,10 @@ describe("private notes", () => {
       ).error?.code,
     ).toBe("42501");
 
-    // No function but the CRM notes functions and the relationship timeline
-    // reads the table: the public booking functions (the only ones anonymous
-    // callers may run) never do.
+    // No function but the CRM notes functions, the relationship timeline and
+    // the customer's rights of access and erasure (owner or admin, point
+    // 205) reads the table: the public booking functions (the only ones
+    // anonymous callers may run) never do.
     const { rows } = await db.query<{ name: string; anon: boolean }>(
       `select p.pronamespace::regnamespace || '.' || p.proname as name,
               has_function_privilege('anon', p.oid, 'execute') as anon
@@ -1280,7 +1281,11 @@ describe("private notes", () => {
          and strpos(p.prosrc, 'client_notes') > 0
        order by 1`,
     );
+    // (The rights of access and erasure read it from their private bodies,
+    // wrapped by the public functions since the reviews, 20261122220000.)
     expect(rows).toEqual([
+      { name: "private.privacy_erase_client_base", anon: false },
+      { name: "private.privacy_export_client_base", anon: false },
       { name: "public.crm_client_timeline", anon: false },
       { name: "public.crm_create_client_note", anon: false },
       { name: "public.crm_delete_client_note", anon: false },

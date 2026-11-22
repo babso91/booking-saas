@@ -53,7 +53,7 @@ async function snapshot() {
   const { rows } = await db.query(
     `select
        (select md5(string_agg((to_jsonb(a) - 'options_snapshot' - 'policy_snapshot' - 'staff_id' - 'series_id')::text, '|' order by a.id)) from public.appointments a where a.business_id = $1) as appointments,
-       (select md5(string_agg(c::text, '|' order by c.id)) from public.clients c where c.business_id = $1) as clients`,
+       (select md5(string_agg((to_jsonb(c) - 'erased_at')::text, '|' order by c.id)) from public.clients c where c.business_id = $1) as clients`,
     [business.id],
   );
   return JSON.stringify(rows[0]);

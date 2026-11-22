@@ -21,6 +21,11 @@ export const appErrorMessages = {
     "Une autre fiche cliente utilise déjà cette adresse email.",
   stale_client:
     "Cette fiche cliente a été modifiée entre-temps. Rechargez-la avant de réessayer.",
+  client_has_upcoming_appointments:
+    "Cette cliente a encore un rendez-vous à venir : annulez-le avant d’effacer ses données.",
+  client_erasure_busy:
+    "Un e-mail est en cours d’envoi à cette cliente. Réessayez dans un instant.",
+  client_erased: "Les données de cette cliente ont été effacées.",
   note_not_found: "Cette note est introuvable.",
   note_deleted:
     "Cette note a déjà été enregistrée, puis supprimée. Elle n’a pas été recréée.",
@@ -303,6 +308,9 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   client_not_found: 404,
   client_email_conflict: 409,
   stale_client: 409,
+  client_has_upcoming_appointments: 409,
+  client_erasure_busy: 409,
+  client_erased: 410,
   note_not_found: 404,
   note_deleted: 410,
   stale_note: 409,

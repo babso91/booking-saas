@@ -131,6 +131,21 @@ export const errorCopy: Record<
     title: "Modifiée entre-temps",
     message: "Cette fiche a changé. Recharge-la avant de réessayer.",
   },
+  client_has_upcoming_appointments: {
+    title: "Rendez-vous à venir",
+    message:
+      "Elle a encore un rendez-vous à venir. Annule-le d’abord, puis efface ses données.",
+  },
+  client_erasure_busy: {
+    title: "Envoi en cours",
+    message:
+      "Un e-mail est en train de lui être envoyé. Réessaie dans un instant.",
+  },
+  client_erased: {
+    title: "Données effacées",
+    message:
+      "Les données de cette cliente ont été effacées : cette fiche ne peut plus recevoir de rendez-vous.",
+  },
   note_not_found: {
     title: "Introuvable",
     message: "Cette note est introuvable.",
