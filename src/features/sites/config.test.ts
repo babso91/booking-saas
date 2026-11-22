@@ -85,6 +85,40 @@ describe("siteConfigSchema", () => {
     }
   });
 
+  it("her links and WhatsApp (points 3, 4): kept as typed, plain, bounded", () => {
+    const links = [
+      { network: "instagram", url: "@studio.mila" },
+      { network: "other", url: "pas encore fini", label: "Boutique" },
+    ];
+    // A half-typed link never blocks her draft: the page decides.
+    expect(
+      siteConfigSchema.parse(
+        sampleSiteConfig({
+          practical: { ...practical, whatsapp: "+33 6" },
+          links,
+        } as never),
+      ).links,
+    ).toEqual(links);
+    expect(siteConfigSchema.parse(sampleSiteConfig()).links).toBeUndefined();
+    for (const bad of [
+      { links: [{ network: "myspace", url: "x" }] },
+      { links: [{ network: "website", url: "<a>x</a>" }] },
+      { links: [{ network: "website", url: "x".repeat(301) }] },
+      { links: [{ network: "website", url: "x", extra: true }] },
+      {
+        links: Array.from({ length: 9 }, () => ({
+          network: "website",
+          url: "x.fr",
+        })),
+      },
+      { practical: { ...practical, whatsapp: "x".repeat(31) } },
+    ]) {
+      expect(
+        siteConfigSchema.safeParse(sampleSiteConfig(bad as never)).success,
+      ).toBe(false);
+    }
+  });
+
   it("refuses practical infos that are not plain, or not a contact", () => {
     for (const bad of [
       { access: "<b>Code</b>" },

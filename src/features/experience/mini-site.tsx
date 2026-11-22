@@ -42,6 +42,7 @@ import { earliestOf, fromLabel, nextSlotsOf } from "./next-slot";
 import { practicalItems, type UsualHours } from "./practical";
 import { Intro } from "./scenes/intro";
 import { PracticalInfo } from "./scenes/practical-info";
+import { ReachLinks } from "./scenes/reach-links";
 import { SiteIndex, SiteIndexButton } from "./site-index";
 import { sitePages, shownSections } from "./sections";
 import { Opening } from "./scenes/opening";
@@ -380,6 +381,7 @@ function Footer() {
               .join(" · ")}
           </Detail>
         </span>
+        <ReachLinks className="mt-2" />
       </div>
     </footer>
   );

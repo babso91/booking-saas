@@ -2,7 +2,12 @@
 import { sectionTitle } from "@/features/sites/presentation";
 
 import { Detail, useEngine, useReveal } from "../engine/engine";
-import { directionsHref, telHref, type PracticalItem } from "../practical";
+import {
+  directionsHref,
+  telHref,
+  whatsappHref,
+  type PracticalItem,
+} from "../practical";
 
 // Her "Infos pratiques": set on her day surface like her services, in her
 // faces and colours, as a list a client scans before booking or coming.
@@ -113,6 +118,16 @@ function ItemBody({ item }: { item: PracticalItem }) {
           {item.phone ? (
             <a href={telHref(item.phone)} className={link}>
               {item.phone}
+            </a>
+          ) : null}
+          {item.whatsapp ? (
+            <a
+              href={whatsappHref(item.whatsapp)!}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={link}
+            >
+              WhatsApp · {item.whatsapp}
             </a>
           ) : null}
           {item.email ? (

@@ -698,3 +698,126 @@ describe("her conditions before booking (point 6)", () => {
     expect(consoleErrors).toEqual([]);
   });
 });
+
+// Higani points 3 and 4: her channels and her links elsewhere, at the foot of
+// her page and in her menu. Unreadable entries are left off.
+describe("her links and contact (points 3, 4)", () => {
+  it("phone 390: channels and links at the foot and in the menu; the unreadable one left off", async () => {
+    const pro = await professionalWithVisit("Mila", "Lou");
+    const actor = pro.browser.member!.userId;
+    const { rows } = await db.query<{ slug: string }>(
+      "select slug from public.businesses where id = $1",
+      [pro.businessId],
+    );
+    const slug = rows[0]!.slug;
+    const config = sampleSite("mila");
+    const { rows: saved } = await db.query<{ revision: number }>(
+      "select public.save_site_draft($1, $2, 0, 1, $3::jsonb) as revision",
+      [
+        pro.businessId,
+        actor,
+        JSON.stringify({
+          ...config,
+          brand: { ...config.brand, name: "Studio Lumière" },
+          practical: {
+            address: "12 rue Mercière, 69002 Lyon",
+            area: "",
+            access: "",
+            instructions: "",
+            payment: "",
+            accessibility: "",
+            phone: "04 78 00 00 00",
+            email: "mila@studio-lumiere.fr",
+            whatsapp: "+33 6 12 34 56 78",
+            showHours: false,
+          },
+          links: [
+            { network: "instagram", url: "@studio.mila" },
+            { network: "website", url: "pas un lien" },
+            { network: "website", url: "studio-mila.fr" },
+          ],
+        }),
+      ],
+    );
+    await db.query("select * from public.publish_site($1, $2, $3)", [
+      pro.businessId,
+      actor,
+      saved[0]!.revision,
+    ]);
+
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 390,
+      height: 844,
+      phone: true,
+    });
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`${APP}/b/${slug}`);
+    await page.getByText("Studio Lumière").first().waitFor();
+
+    const footer = page.locator("footer");
+    await footer.scrollIntoViewIfNeeded();
+    const contact = footer.getByRole("list", { name: "Contact" });
+    await contact.waitFor();
+    const channels = contact.getByRole("link");
+    expect(await channels.count()).toBe(3);
+    expect(
+      await channels.evaluateAll((all) =>
+        all.map((a) => (a as HTMLAnchorElement).getAttribute("href")),
+      ),
+    ).toEqual([
+      "tel:0478000000",
+      "https://wa.me/33612345678",
+      "mailto:mila@studio-lumiere.fr",
+    ]);
+
+    const networks = footer.getByRole("list", { name: "Réseaux et liens" });
+    const items = networks.getByRole("link");
+    expect(await items.count()).toBe(2);
+    expect(
+      await items.evaluateAll((all) =>
+        all.map((a) => ({
+          text: (a.textContent ?? "").trim(),
+          href: (a as HTMLAnchorElement).href,
+          target: (a as HTMLAnchorElement).target,
+        })),
+      ),
+    ).toEqual([
+      {
+        text: "Instagram",
+        href: "https://www.instagram.com/studio.mila",
+        target: "_blank",
+      },
+      { text: "Site web", href: "https://studio-mila.fr/", target: "_blank" },
+    ]);
+    expect(await page.getByText("pas un lien").count()).toBe(0);
+
+    // The booking bar never hides them.
+    const last = (await networks.boundingBox())!;
+    expect(last.y + last.height).toBeLessThanOrEqual(844);
+    await capture(page, "p3-4-reach-390");
+
+    // The same channels in her menu.
+    await page.getByRole("button", { name: "Sommaire" }).click();
+    const index = page.getByRole("dialog", { name: "Sommaire" });
+    const menuContact = index.getByRole("list", { name: "Contact" });
+    await menuContact.waitFor();
+    expect(await menuContact.getByRole("link").count()).toBe(3);
+    expect(
+      await index
+        .getByRole("list", { name: "Réseaux et liens" })
+        .getByRole("link")
+        .count(),
+    ).toBe(2);
+
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "links and contact");
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+});

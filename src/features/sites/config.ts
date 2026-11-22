@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { siteLinkNetworks } from "./links";
 import { pageSectionKinds } from "./presentation";
 
 import { bookingFormats } from "@/features/public-booking/formats";
@@ -51,6 +52,10 @@ export const siteLimits = {
   practicalLateness: 300,
   practicalNoShow: 300,
   practicalCompanions: 300,
+  practicalWhatsapp: 30,
+  links: 8,
+  linkUrl: 300,
+  linkLabel: 40,
 } as const;
 
 /**
@@ -149,11 +154,32 @@ const practical = z
     showHours: z.boolean(),
     // Her conditions before booking (Higani point 6). Absent from sites
     // published before: nothing is shown for them.
+    // Higani point 4: a messaging number, shown as a WhatsApp link when it
+    // reads as an international number; never blocks her draft.
+    whatsapp: plainText(siteLimits.practicalWhatsapp).optional(),
     lateness: plainText(siteLimits.practicalLateness).optional(),
     noShow: plainText(siteLimits.practicalNoShow).optional(),
     companions: plainText(siteLimits.practicalCompanions).optional(),
   })
   .strict();
+
+/**
+ * Her links elsewhere (Higani point 3). Kept as she typed them (plain
+ * text, an address or her @name): the page links only what reads as an
+ * http(s) address (experience/reach.ts), so a half-typed link never blocks
+ * her draft and nothing else is ever linked.
+ */
+const links = z
+  .array(
+    z
+      .object({
+        network: z.enum(siteLinkNetworks),
+        url: plainText(siteLimits.linkUrl),
+        label: plainText(siteLimits.linkLabel).optional(),
+      })
+      .strict(),
+  )
+  .max(siteLimits.links);
 
 const sceneKind = z.enum(["opening", "intro", "work", "portrait", "services"]);
 
@@ -270,6 +296,7 @@ export const siteConfigSchema = z
     quickBook: z.enum(["bar", "pill"]),
     /** Absent on versions published before it: no block of hers. */
     practical: practical.optional(),
+    links: links.optional(),
   })
   .strict();
 

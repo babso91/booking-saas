@@ -6,6 +6,7 @@
 // the engine composes them and feeds them tokens and content, so a new
 // universe is configuration while each scene keeps its own art.
 
+import type { SiteLink } from "@/features/sites/links";
 import type { SitePresentation } from "@/features/sites/presentation";
 import type { BookingFormat } from "@/features/public-booking/formats";
 
@@ -50,6 +51,8 @@ export type Practical = {
   phone: string;
   email: string;
   showHours: boolean;
+  /** Higani point 4: her WhatsApp number, international (+33…). */
+  whatsapp?: string;
   /** Her conditions (Higani point 6): if she is late, misses it, comes with someone. */
   lateness?: string;
   noShow?: string;
@@ -135,4 +138,6 @@ export type SiteConfig = {
   quickBook: "bar" | "pill";
   /** Her "Infos pratiques"; absent on versions published before it. */
   practical?: Practical;
+  /** Her links elsewhere (Higani point 3), as she typed them. */
+  links?: SiteLink[];
 };
