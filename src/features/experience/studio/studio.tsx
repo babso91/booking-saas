@@ -40,6 +40,8 @@ import { euros, minutes } from "../engine/engine";
 import { advise, ensureReadable } from "../engine/harmony";
 import { emptyPractical, whatsappHref } from "../practical";
 import { LinksFields } from "./links-fields";
+import { suggestionsFor } from "./suggestions";
+import { SuggestionsCard } from "./suggestions-card";
 import {
   grades,
   motions,
@@ -121,7 +123,17 @@ const universeMoods: Record<UniverseId, string> = {
   "nail-lab": "Expressif · couleur franche, mouvement vif",
 };
 
-type Tab =
+/** Where each section of her page is edited (Higani point 120). */
+export const sectionTabs = {
+  opening: "texts",
+  intro: "texts",
+  work: "photos",
+  portrait: "texts",
+  services: "catalog",
+  practical: "infos",
+} as const;
+
+export type Tab =
   | "history"
   | "catalog"
   | "reservation"
@@ -161,7 +173,16 @@ export function Studio({
   flash,
   publicPath,
   onLeave,
+  hasHours = null,
+  tabRequest = null,
+  onClientView,
 }: {
+  /** Opens « Comme mes clientes » (points 122, 123). */
+  onClientView?: () => void;
+  /** A tab asked from her page (« Modifier » on a section): opened. */
+  tabRequest?: { tab: Tab; at: number } | null;
+  /** Her usual hours are set (null: not known here). */
+  hasHours?: boolean | null;
   open: boolean;
   onOpen: (open: boolean) => void;
   universe: Universe;
@@ -203,6 +224,12 @@ export function Studio({
 }) {
   const photo = useStudioPhoto();
   const [tab, setTab] = useState<Tab>("universe");
+  // A section's « Modifier » on her page: its tab, each time it is asked.
+  const [asked, setAsked] = useState(tabRequest);
+  if (tabRequest !== asked) {
+    setAsked(tabRequest);
+    if (tabRequest) setTab(tabRequest.tab);
+  }
   const config = draft.value;
   const workInPhotoEditor =
     typeof photoSlot === "number" ? config.content.works[photoSlot] : undefined;
@@ -511,7 +538,18 @@ export function Studio({
               </div>
               {/* Where her draft stands: saved, saving, a conflict… */}
               <div className="px-4 pb-2">{status}</div>
-              {published ? <LiveLink path={publicPath} /> : null}
+              <div className="flex flex-wrap items-center gap-x-1 gap-y-1 px-3 pb-2">
+                {onClientView ? (
+                  <button
+                    type="button"
+                    onClick={onClientView}
+                    className="h-9 shrink-0 cursor-pointer rounded-full bg-[#141414] px-3.5 text-[13px] font-semibold text-white"
+                  >
+                    Voir comme mes clientes
+                  </button>
+                ) : null}
+                {published ? <LiveLink path={publicPath} /> : null}
+              </div>
 
               {view === "draft" && photoSlot === null ? (
                 <nav
@@ -553,6 +591,14 @@ export function Studio({
                   </motion.p>
                 ) : null}
               </AnimatePresence>
+
+              {view === "draft" && photoSlot === null ? (
+                <SuggestionsCard
+                  suggestions={suggestionsFor({ config, catalog, hasHours })}
+                  onTab={setTab}
+                  onLeave={onLeave}
+                />
+              ) : null}
 
               {view === "live" ? (
                 <div className="flex flex-col gap-3">
@@ -1841,7 +1887,7 @@ function LiveLink({ path }: { path: string }) {
   }
 
   return (
-    <div className="flex items-center gap-1 px-3 pb-2 text-[13px]">
+    <div className="flex min-w-0 items-center gap-1 text-[13px]">
       <a
         href={path}
         target="_blank"

@@ -43,6 +43,7 @@ import { practicalItems, type UsualHours } from "./practical";
 import { Intro } from "./scenes/intro";
 import { PracticalInfo } from "./scenes/practical-info";
 import { ReachLinks } from "./scenes/reach-links";
+import { SectionEdit } from "./scenes/section-edit";
 import { SiteIndex, SiteIndexButton } from "./site-index";
 import { sitePages, shownSections } from "./sections";
 import { Opening } from "./scenes/opening";
@@ -185,9 +186,10 @@ export function MiniSite({
                   data-site-section={kind}
                   id={link?.id}
                   tabIndex={link ? -1 : undefined}
-                  className="scroll-mt-16 outline-none"
+                  className={`scroll-mt-16 outline-none ${edit?.section ? "relative" : ""}`}
                 >
                   {content}
+                  <SectionEdit kind={kind} />
                 </div>
               );
             })}
