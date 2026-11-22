@@ -51,7 +51,13 @@ de l'établissement.
 - **Rejeu** par `requestId` : même contenu et même auteur, même réponse.
   Sinon `idempotency_conflict`.
 - Une occurrence est ensuite un rendez-vous ordinaire : l'annuler ou la
-  déplacer ne touche pas les autres.
+  déplacer depuis l'agenda (`agenda_set_appointment_status`,
+  `agenda_update_appointment`) ne touche pas les autres, et elle reste
+  rattachée à la série. Sa place libérée redevient disponible.
+- E-mails : chaque date reçoit son propre rappel, comme un rendez-vous saisi
+  par la professionnelle, et aucune confirmation groupée. Une date déplacée
+  reçoit un nouveau rappel ; une date annulée n'en reçoit plus.
+- Réservé au propriétaire et aux admins (`forbidden` pour une praticienne).
 
 ## Refus
 
