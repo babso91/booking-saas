@@ -236,6 +236,7 @@ function toDto(row: {
 export async function confirmSitePhoto(
   writer: SiteWriter,
   assetId: string,
+  purpose?: "logo",
 ): Promise<SitePhotoDto> {
   const { service, businessId } = writer;
   // Her membership first: nothing is read for someone else.
@@ -278,7 +279,10 @@ export async function confirmSitePhoto(
 
   let processed;
   try {
-    processed = await processSitePhoto(Buffer.from(await blob.arrayBuffer()));
+    processed = await processSitePhoto(
+      Buffer.from(await blob.arrayBuffer()),
+      purpose,
+    );
   } catch (error) {
     await discard(writer, assetId);
     throw error;

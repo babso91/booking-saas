@@ -9,6 +9,13 @@ import {
   bookingFormats,
   bookingFormatCopy,
 } from "@/features/public-booking/formats";
+import {
+  orderedKinds,
+  sectionNames,
+  type PageSectionKind,
+  type SitePresentation,
+  type SectionText,
+} from "@/features/sites/presentation";
 import { siteLimits } from "@/features/sites/config";
 
 import { startingAt, type ShowcaseGroup } from "../catalog/model";
@@ -101,24 +108,6 @@ const variants: {
   ],
 };
 
-const sceneNames: Record<Section["kind"], string> = {
-  opening: "Ouverture",
-  intro: "Manifeste",
-  work: "Réalisations",
-  portrait: "Portrait",
-  services: "Prestations",
-};
-
-/** What each scene brings, for the "Sections" switches. */
-const sceneRoles: Record<Section["kind"], string> = {
-  opening: "Ton nom et ta photo de couverture : toujours affichée.",
-  intro: "Ta présentation en quelques mots.",
-  work: "Tes photos de réalisations.",
-  portrait: "Toi, au travail, avec tes mots.",
-  services: "Tes prestations et la réservation : toujours affichée.",
-};
-const lockedScenes: Section["kind"][] = ["opening", "services"];
-
 const universeMoods: Record<UniverseId, string> = {
   mila: "Éditorial · noir et blanc, grandes lettres",
   alma: "Sensoriel · lent, doux, chaleureux",
@@ -188,7 +177,7 @@ export function Studio({
   onPreviewBooking?: () => void;
   /** Her photos already sent and ready (asset ids, latest first). */
   library: string[];
-  onUpload: (file: File) => Promise<UploadOutcome>;
+  onUpload: (file: File, purpose?: "logo") => Promise<UploadOutcome>;
   /** Out of her library: deleted, or `forGood` revoked everywhere. */
   onDeletePhoto: (
     id: string,
@@ -268,38 +257,74 @@ export function Studio({
     onPublish(safe, corrections);
   }
 
-  function moveSection(index: number, by: -1 | 1) {
-    const sections = [...config.sections];
+  const sectionOrder = orderedKinds(
+    [
+      ...(creative ? config : universe.config).sections.map(
+        (scene) => scene.kind,
+      ),
+      "practical",
+      "reviews",
+    ],
+    creative ? config.presentation?.order : undefined,
+  );
+
+  function setPresentation(patch: Partial<SitePresentation>, key?: string) {
+    set({ presentation: { ...config.presentation, ...patch } }, key);
+  }
+
+  function setSectionText(
+    kind: PageSectionKind,
+    patch: SectionText,
+    key?: string,
+  ) {
+    const labels = config.presentation?.labels;
+    setPresentation(
+      { labels: { ...labels, [kind]: { ...labels?.[kind], ...patch } } },
+      key,
+    );
+  }
+
+  function moveSection(kind: PageSectionKind, by: -1 | 1) {
+    const index = sectionOrder.indexOf(kind);
     const target = index + by;
-    if (target < 1 || target >= sections.length) return; // the opening stays first
-    [sections[index], sections[target]] = [sections[target]!, sections[index]!];
-    set({ sections });
+    if (!creative || index < 0 || target < 0 || target >= sectionOrder.length)
+      return;
+    const order = [...sectionOrder];
+    [order[index], order[target]] = [order[target]!, order[index]!];
+    const sections = order.flatMap((item) =>
+      config.sections.filter((scene) => scene.kind === item),
+    );
+    set({ sections, presentation: { ...config.presentation, order } });
   }
 
   /** Her photo in a place (null: none yet; a new work has none yet). */
   const slotPhoto = (slot: PhotoSlot): string | null =>
-    (slot === "cover"
-      ? config.content.cover
-      : slot === "portrait"
-        ? config.content.portrait.photo
-        : config.content.works[slot]?.photo) || null;
+    (slot === "logo"
+      ? config.content.logo
+      : slot === "cover"
+        ? config.content.cover
+        : slot === "portrait"
+          ? config.content.portrait.photo
+          : config.content.works[slot]?.photo) || null;
 
   /** Takes a photo out of its place; a work goes with its photo. */
   function removePhoto(slot: PhotoSlot) {
     const content =
-      slot === "cover"
-        ? { ...config.content, cover: null }
-        : slot === "portrait"
-          ? {
-              ...config.content,
-              portrait: { ...config.content.portrait, photo: null },
-            }
-          : {
-              ...config.content,
-              works: config.content.works.filter(
-                (_, position) => position !== slot,
-              ),
-            };
+      slot === "logo"
+        ? { ...config.content, logo: null }
+        : slot === "cover"
+          ? { ...config.content, cover: null }
+          : slot === "portrait"
+            ? {
+                ...config.content,
+                portrait: { ...config.content.portrait, photo: null },
+              }
+            : {
+                ...config.content,
+                works: config.content.works.filter(
+                  (_, position) => position !== slot,
+                ),
+              };
     set({ content });
     onPhotoSlot(null);
   }
@@ -558,7 +583,9 @@ export function Studio({
                   slot={photoSlot}
                   id={slotPhoto(photoSlot)}
                   library={library}
-                  onUpload={onUpload}
+                  onUpload={(file) =>
+                    onUpload(file, photoSlot === "logo" ? "logo" : undefined)
+                  }
                   onDelete={onDeletePhoto}
                   onRemove={() => removePhoto(photoSlot)}
                   focal={
@@ -698,57 +725,128 @@ export function Studio({
                       ))}
                     </>
                   ) : current === "sections" ? (
-                    <>
-                      <p className="text-[13.5px] text-black/60">
-                        Choisis ce que ton site montre. Masquer une section ne
-                        supprime rien : elle revient telle quelle.
-                        {creative
-                          ? " L’ordre et les variantes se règlent dans Composition."
-                          : ""}
-                      </p>
-                      {(creative ? config : universe.config).sections.map(
-                        (section, index) => {
-                          const locked = lockedScenes.includes(section.kind);
-                          const shown = !config.hidden?.includes(section.kind);
-                          return (
-                            <button
-                              key={`${section.kind}-${index}`}
-                              type="button"
-                              role="switch"
-                              aria-checked={shown}
-                              disabled={locked}
-                              onClick={() =>
-                                set({
-                                  hidden: shown
-                                    ? [...(config.hidden ?? []), section.kind]
-                                    : (config.hidden ?? []).filter(
-                                        (kind) => kind !== section.kind,
-                                      ),
-                                })
-                              }
-                              className="flex min-h-14 w-full cursor-pointer items-center gap-3 rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-left disabled:cursor-default"
-                            >
-                              <span className="min-w-0 flex-1">
-                                <span className="block text-[15px] font-medium">
-                                  {sceneNames[section.kind]}
-                                </span>
-                                <span className="block text-[12.5px] leading-snug text-black/55">
-                                  {sceneRoles[section.kind]}
-                                </span>
-                              </span>
-                              <span
-                                aria-hidden="true"
-                                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${shown ? (locked ? "bg-black/25" : "bg-[#2B3BFF]") : "bg-black/20"}`}
-                              >
-                                <span
-                                  className={`absolute top-0.5 size-6 rounded-full bg-white shadow transition-transform ${shown ? "translate-x-[22px]" : "translate-x-0.5"}`}
-                                />
-                              </span>
-                            </button>
-                          );
-                        },
+                    <div className="flex flex-col gap-2">
+                      {creative && (
+                        <p className="text-[13.5px] text-black/60">
+                          Les flèches changent l’ordre sur la page et dans le
+                          sommaire.
+                        </p>
                       )}
-                    </>
+                      {sectionOrder.map((kind, index) => {
+                        const text = config.presentation?.labels?.[kind];
+                        const switchable =
+                          kind === "intro" ||
+                          kind === "work" ||
+                          kind === "portrait";
+                        const name = sectionNames[kind];
+                        return (
+                          <div
+                            key={kind}
+                            className="rounded-2xl border border-black/10 bg-white p-3"
+                          >
+                            <div className="flex items-start justify-between gap-1">
+                              <details className="min-w-0 flex-1">
+                                <summary className="min-h-11 cursor-pointer content-center py-2 text-[15px] font-semibold">
+                                  {name}
+                                </summary>
+                                <div className="mt-2 flex flex-col gap-3">
+                                  <Text
+                                    label="Titre sur la page"
+                                    value={text?.title ?? ""}
+                                    placeholder={
+                                      kind === "opening"
+                                        ? config.brand.name
+                                        : "Titre de l’univers"
+                                    }
+                                    maxLength={siteLimits.sectionLabel}
+                                    onChange={(title) =>
+                                      setSectionText(
+                                        kind,
+                                        { title },
+                                        kind + ".title",
+                                      )
+                                    }
+                                  />
+                                  <label className="flex min-h-11 items-center gap-2 text-sm">
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(text?.hideTitle)}
+                                      onChange={(e) =>
+                                        setSectionText(kind, {
+                                          hideTitle: e.target.checked,
+                                        })
+                                      }
+                                    />
+                                    Masquer le titre sur la page
+                                  </label>
+                                  <Text
+                                    label="Nom dans le sommaire"
+                                    value={text?.menu ?? ""}
+                                    placeholder={
+                                      kind === "intro"
+                                        ? "À propos"
+                                        : kind === "opening"
+                                          ? "Ajouter un lien vers l’ouverture"
+                                          : kind === "reviews"
+                                            ? "Avis"
+                                            : name
+                                    }
+                                    maxLength={siteLimits.sectionLabel}
+                                    onChange={(menu) =>
+                                      setSectionText(
+                                        kind,
+                                        { menu },
+                                        kind + ".menu",
+                                      )
+                                    }
+                                  />
+                                  {switchable && (
+                                    <label className="flex min-h-11 items-center gap-2 text-sm">
+                                      <input
+                                        type="checkbox"
+                                        role="switch"
+                                        checked={!config.hidden?.includes(kind)}
+                                        onChange={(e) =>
+                                          set({
+                                            hidden: e.target.checked
+                                              ? (config.hidden ?? []).filter(
+                                                  (item) => item !== kind,
+                                                )
+                                              : [
+                                                  ...(config.hidden ?? []),
+                                                  kind,
+                                                ],
+                                          })
+                                        }
+                                      />
+                                      Afficher cette section
+                                    </label>
+                                  )}
+                                </div>
+                              </details>
+                              {creative && (
+                                <div className="flex shrink-0 gap-1">
+                                  <IconButton
+                                    label={`Monter ${name}`}
+                                    onClick={() => moveSection(kind, -1)}
+                                    disabled={index === 0}
+                                  >
+                                    ↑
+                                  </IconButton>
+                                  <IconButton
+                                    label={`Descendre ${name}`}
+                                    onClick={() => moveSection(kind, 1)}
+                                    disabled={index === sectionOrder.length - 1}
+                                  >
+                                    ↓
+                                  </IconButton>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : current === "photos" ? (
                     <>
                       <p className="text-[13.5px] text-black/60">
@@ -758,9 +856,60 @@ export function Studio({
                         réalisations. Les photos d’exemple de ton univers ne
                         sont jamais publiées.
                       </p>
+                      <label className="flex flex-col gap-1.5 text-sm">
+                        Présentation des réalisations
+                        <select
+                          className="min-h-12 rounded-xl border border-black/15 bg-white px-3"
+                          value={config.presentation?.gallery ?? ""}
+                          onChange={(e) =>
+                            setPresentation({
+                              gallery:
+                                (e.target
+                                  .value as SitePresentation["gallery"]) ||
+                                undefined,
+                            })
+                          }
+                        >
+                          <option value="">
+                            Suivre la composition du site
+                          </option>
+                          <option value="lookbook">
+                            Lookbook · photos décalées en hauteur
+                          </option>
+                          <option value="arches">
+                            Arches · défilement en profondeur
+                          </option>
+                          <option value="filmstrip">
+                            Pellicule · défilement horizontal
+                          </option>
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1.5 text-sm">
+                        Animation de la galerie
+                        <select
+                          className="min-h-12 rounded-xl border border-black/15 bg-white px-3"
+                          value={config.presentation?.galleryMotion ?? ""}
+                          onChange={(e) =>
+                            setPresentation({
+                              galleryMotion:
+                                (e.target
+                                  .value as SitePresentation["galleryMotion"]) ||
+                                undefined,
+                            })
+                          }
+                        >
+                          <option value="">Suivre le mouvement du site</option>
+                          <option value="cut">Découpe · Mila</option>
+                          <option value="settle">
+                            Apparition douce · Alma
+                          </option>
+                          <option value="snap">Rebond · Nail Lab</option>
+                        </select>
+                      </label>
                       <div className="grid grid-cols-3 gap-2">
                         {(
                           [
+                            "logo",
                             "cover",
                             "portrait",
                             ...config.content.works.map((_, index) => index),
@@ -784,7 +933,7 @@ export function Studio({
                                   <img
                                     src={photo(id, 480)}
                                     alt=""
-                                    className="absolute inset-0 h-full w-full object-cover"
+                                    className={`absolute inset-0 h-full w-full ${slot === "logo" ? "object-contain p-1" : "object-cover"}`}
                                     style={{
                                       objectPosition: `${focal.x}% ${focal.y}%`,
                                     }}
@@ -799,11 +948,13 @@ export function Studio({
                                 )}
                               </span>
                               <span className="text-[12.5px] text-black/60">
-                                {slot === "cover"
-                                  ? "Couverture"
-                                  : slot === "portrait"
-                                    ? "Ton portrait"
-                                    : `Réalisation ${slot + 1}`}
+                                {slot === "logo"
+                                  ? "Logo"
+                                  : slot === "cover"
+                                    ? "Couverture"
+                                    : slot === "portrait"
+                                      ? "Ton portrait"
+                                      : `Réalisation ${slot + 1}`}
                               </span>
                             </button>
                           );
@@ -825,6 +976,15 @@ export function Studio({
                             { brand: { ...config.brand, name } },
                             "brand.name",
                           )
+                        }
+                      />
+                      <Text
+                        label="Texte du bouton de réservation"
+                        placeholder="Réserver"
+                        value={config.presentation?.bookingLabel ?? ""}
+                        maxLength={siteLimits.bookingLabel}
+                        onChange={(bookingLabel) =>
+                          setPresentation({ bookingLabel }, "bookingLabel")
                         }
                       />
                       <Text
@@ -1033,44 +1193,35 @@ export function Studio({
                             >
                               <div className="flex items-center justify-between">
                                 <span className="text-[14px] font-semibold">
-                                  {sceneNames[section.kind]}
+                                  {sectionNames[section.kind]}
                                   {config.hidden?.includes(section.kind) ? (
                                     <span className="ml-1.5 font-normal text-black/60">
                                       · masquée
                                     </span>
                                   ) : null}
                                 </span>
-                                {index > 0 ? (
-                                  <span className="flex gap-1">
-                                    <IconButton
-                                      label={`Monter ${sceneNames[section.kind]}`}
-                                      onClick={() => moveSection(index, -1)}
-                                      disabled={index <= 1}
-                                    >
-                                      ↑
-                                    </IconButton>
-                                    <IconButton
-                                      label={`Descendre ${sceneNames[section.kind]}`}
-                                      onClick={() => moveSection(index, 1)}
-                                      disabled={
-                                        index >= config.sections.length - 1
-                                      }
-                                    >
-                                      ↓
-                                    </IconButton>
-                                  </span>
-                                ) : (
-                                  <span className="text-[12px] text-black/60">
-                                    toujours en premier
-                                  </span>
-                                )}
+                                <SmallButton onClick={() => setTab("sections")}>
+                                  Ordre et titres
+                                </SmallButton>
                               </div>
                               <div className="mt-2 flex flex-wrap gap-1.5">
                                 {variants[section.kind].map((variant) => (
                                   <Chip
                                     key={variant.id}
-                                    selected={section.variant === variant.id}
+                                    selected={
+                                      (section.kind === "work"
+                                        ? (config.presentation?.gallery ??
+                                          section.variant)
+                                        : section.variant) === variant.id
+                                    }
                                     onClick={() => {
+                                      if (section.kind === "work") {
+                                        setPresentation({
+                                          gallery:
+                                            variant.id as SitePresentation["gallery"],
+                                        });
+                                        return;
+                                      }
                                       set({
                                         sections: config.sections.map(
                                           (item, position) =>
@@ -1496,6 +1647,7 @@ function Text({
   multiline,
   maxLength,
   type = "text",
+  placeholder,
 }: {
   label: string;
   value: string;
@@ -1503,6 +1655,7 @@ function Text({
   multiline?: boolean;
   maxLength?: number;
   type?: "text" | "tel" | "email";
+  placeholder?: string;
 }) {
   const className =
     "w-full rounded-xl border border-black/10 bg-white px-3 text-[16px] outline-none focus:border-black/40";
@@ -1520,6 +1673,7 @@ function Text({
       ) : (
         <input
           type={type}
+          placeholder={placeholder}
           value={value}
           maxLength={maxLength}
           autoComplete="off"
@@ -1704,18 +1858,20 @@ export function withPhoto(
   id: string,
 ): SiteConfig {
   const content =
-    slot === "cover"
-      ? { ...config.content, cover: id }
-      : slot === "portrait"
-        ? {
-            ...config.content,
-            portrait: { ...config.content.portrait, photo: id },
-          }
-        : {
-            ...config.content,
-            works: config.content.works.map((work, position) =>
-              position === slot ? { ...work, photo: id } : work,
-            ),
-          };
+    slot === "logo"
+      ? { ...config.content, logo: id }
+      : slot === "cover"
+        ? { ...config.content, cover: id }
+        : slot === "portrait"
+          ? {
+              ...config.content,
+              portrait: { ...config.content.portrait, photo: id },
+            }
+          : {
+              ...config.content,
+              works: config.content.works.map((work, position) =>
+                position === slot ? { ...work, photo: id } : work,
+              ),
+            };
   return { ...config, content };
 }

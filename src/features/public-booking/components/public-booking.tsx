@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { Notice } from "@/components/ui/notice";
 
@@ -17,7 +24,8 @@ import { PendingNotice } from "./pending-notice";
 import type { BookingPlace } from "./booking-parts";
 import { ReviewStep } from "./review-step";
 import { ServiceStep } from "./service-step";
-import { SlotStep } from "./slot-step";
+import styles from "./booking-motion.module.css";
+import { SlotStep, type CalendarPosition } from "./slot-step";
 
 /**
  * The functional public booking page: the business, then the steps (with
@@ -32,8 +40,10 @@ export function PublicBooking({
   gallery,
   preview = false,
   initialServiceId,
+  backRef,
   place,
 }: {
+  backRef?: Ref<() => boolean>;
   business: PublicBusiness;
   format?: BookingFormat;
   gallery?: ReactNode;
@@ -54,6 +64,21 @@ export function PublicBooking({
   place?: BookingPlace;
 }) {
   const flow = useBookingFlow({ business, catalog, preview });
+  const initialView =
+    format === "calendar"
+      ? "month"
+      : format === "chronological"
+        ? "week"
+        : "day";
+  const [remembered, remember] = useState<
+    (CalendarPosition & { serviceId: string | undefined }) | null
+  >(null);
+  const position: CalendarPosition =
+    remembered && remembered.serviceId === flow.service?.id
+      ? remembered
+      : { view: initialView, anchor: flow.date, fromMonth: false };
+  const setPosition = (next: CalendarPosition) =>
+    remember({ ...next, serviceId: flow.service?.id });
   const heading = useRef<HTMLHeadingElement>(null);
   const opened = useRef(false);
   const onlyService =
@@ -78,14 +103,35 @@ export function PublicBooking({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
   }, []);
 
+  useImperativeHandle(backRef, () => () => {
+    if (flow.isSending) return true;
+    if (flow.gone || flow.step === "service" || flow.step === "done")
+      return false;
+    if (flow.step === "slot" && position.fromMonth) {
+      setPosition({ ...position, view: "month", fromMonth: false });
+      return true;
+    }
+    if (flow.step === "review") flow.actions.goTo("contact");
+    else if (flow.step === "contact") flow.actions.goTo("slot");
+    else if (flow.step === "slot" && flow.service?.options.length)
+      flow.actions.goTo("options");
+    else if (onlyService || initialServiceId) return false;
+    else flow.actions.goTo("service");
+    return true;
+  });
+
   // Each step change moves focus to its title (not on arrival).
   useEffect(() => {
     if (!opened.current) {
       opened.current = true;
       return;
     }
-    heading.current?.focus();
-    heading.current?.scrollIntoView?.({ block: "start" });
+    heading.current?.focus({ preventScroll: true });
+    const scroller = heading.current?.closest<HTMLElement>(
+      "[data-booking-scroll]",
+    );
+    if (scroller) scroller.scrollTop = 0;
+    else heading.current?.scrollIntoView?.({ block: "start" });
   }, [flow.step]);
 
   const Root = embedded ? "div" : "main";
@@ -130,47 +176,52 @@ export function PublicBooking({
             <GuidedProgress flow={flow} />
           ) : null}
           {flow.step !== "done" ? <PendingNotice flow={flow} /> : null}
-          {flow.step === "service" ? (
-            <ServiceStep
-              flow={flow}
-              headingRef={heading}
-              format={format}
-              gallery={gallery}
-            />
-          ) : flow.step === "options" ? (
-            <OptionsStep flow={flow} headingRef={heading} />
-          ) : flow.step === "slot" ? (
-            <SlotStep
-              flow={flow}
-              headingRef={heading}
-              initialView={
-                format === "calendar"
-                  ? "month"
-                  : format === "chronological"
-                    ? "week"
-                    : "day"
-              }
-            />
-          ) : flow.step === "contact" ? (
-            <ContactStep flow={flow} headingRef={heading} />
-          ) : flow.step === "review" ? (
-            <ReviewStep
-              flow={flow}
-              headingRef={heading}
-              preview={preview}
-              place={place}
-            />
-          ) : flow.booking ? (
-            <BookingConfirmation
-              booking={flow.booking}
-              local={flow.bookedLocal}
-              cancellationPolicy={business.cancellationPolicy}
-              place={place}
-              location={business.location}
-              onAnother={flow.actions.restart}
-              headingRef={heading}
-            />
-          ) : null}
+          <div
+            key={flow.step}
+            className={
+              format === "calendar" || format === "chronological"
+                ? styles.step
+                : undefined
+            }
+          >
+            {flow.step === "service" ? (
+              <ServiceStep
+                flow={flow}
+                headingRef={heading}
+                format={format}
+                gallery={gallery}
+              />
+            ) : flow.step === "options" ? (
+              <OptionsStep flow={flow} headingRef={heading} />
+            ) : flow.step === "slot" ? (
+              <SlotStep
+                flow={flow}
+                headingRef={heading}
+                position={position}
+                onPosition={setPosition}
+                format={format}
+              />
+            ) : flow.step === "contact" ? (
+              <ContactStep flow={flow} headingRef={heading} />
+            ) : flow.step === "review" ? (
+              <ReviewStep
+                flow={flow}
+                headingRef={heading}
+                preview={preview}
+                place={place}
+              />
+            ) : flow.booking ? (
+              <BookingConfirmation
+                booking={flow.booking}
+                local={flow.bookedLocal}
+                cancellationPolicy={business.cancellationPolicy}
+                place={place}
+                location={business.location}
+                onAnother={flow.actions.restart}
+                headingRef={heading}
+              />
+            ) : null}
+          </div>
         </>
       )}
     </Root>

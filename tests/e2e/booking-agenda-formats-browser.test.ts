@@ -121,8 +121,100 @@ it("publishes the chosen Core booking format, preserves it across universes and 
       for (const slot of day.slots)
         expect(Object.keys(slot).sort()).toEqual(["localStartsAt", "startsAt"]);
     }
+    const chosenTime = (await slots.first().getAttribute("aria-label"))!;
     await slots.first().click();
     await dialog.getByRole("heading", { name: "Vos coordonnées" }).waitFor();
+    await dialog.getByRole("button", { name: "Changer de créneau" }).click();
+    expect(
+      await dialog
+        .getByRole("button", { name: chosenTime, exact: true })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(await noSideScroll(page)).toBe(true);
+    expect(errors).toEqual([]);
+  } finally {
+    await page.context().close();
+  }
+});
+
+it("returns from contact to the same week or day and closes a Calendar preview back to the Studio", async () => {
+  const pro = await provider();
+  const { page, errors } = await signedInPage(pro.browser, {
+    width: 390,
+    phone: true,
+    appearance: null,
+  });
+  try {
+    await page.route("https://images.unsplash.com/**", (r) => r.abort());
+    await page.goto(APP + "/app/site");
+    await page
+      .getByRole("status")
+      .filter({ hasText: "Brouillon enregistré" })
+      .waitFor();
+    const studio = page.getByRole("dialog", { name: "Studio de création" });
+    await studio
+      .getByRole("button", { name: "Réservation", exact: true })
+      .click();
+    await studio.getByRole("radio", { name: /^Calendrier/ }).check();
+    const opener = studio.getByRole("button", { name: "Essayer ce parcours" });
+    await opener.click();
+    const dialog = page.getByRole("dialog", { name: /Réserver chez/ });
+    const button = (name: string) =>
+      dialog.getByRole("button", { name, exact: true });
+    const back = dialog.getByRole("button", { name: /Retour$/ });
+    await button("Semaine").click();
+    await button("Semaine suivante").click();
+    const slot = dialog
+      .getByRole("button", { name: / à \d{2}:\d{2}$/ })
+      .first();
+    await slot.waitFor();
+    const name = (await slot.getAttribute("aria-label"))!;
+    await slot.click();
+    await dialog.getByRole("heading", { name: "Vos coordonnées" }).waitFor();
+    await page.goBack();
+    await dialog
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+    expect(await button("Semaine").getAttribute("aria-pressed")).toBe("true");
+    expect(await button(name).getAttribute("aria-pressed")).toBe("true");
+    await button("Mois").click();
+    const day = dialog
+      .getByRole("button", { name: /, [1-9]\d* créneaux$/ })
+      .first();
+    await day.waitFor();
+    const period = await dialog.locator("header [aria-live]").innerText();
+    await day.click();
+    expect(await button("Jour").getAttribute("aria-pressed")).toBe("true");
+    const daySlot = dialog
+      .getByRole("button", { name: / à \d{2}:\d{2}$/ })
+      .first();
+    await daySlot.waitFor();
+    const chosenDay = (await daySlot.getAttribute("aria-label"))!;
+    await daySlot.click();
+    await dialog.getByRole("heading", { name: "Vos coordonnées" }).waitFor();
+    await dialog
+      .locator("[data-booking-scroll]")
+      .evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    const bounds = await back.boundingBox();
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y).toBeLessThan(190);
+    await back.click();
+    expect(await button("Jour").getAttribute("aria-pressed")).toBe("true");
+    await button(chosenDay).waitFor();
+    await back.click();
+    expect(await button("Mois").getAttribute("aria-pressed")).toBe("true");
+    expect(await dialog.locator("header [aria-live]").innerText()).toBe(period);
+    await back.click();
+    await dialog.waitFor({ state: "detached" });
+    expect(await page.url()).toBe(APP + "/app/site");
+    expect(
+      await studio
+        .getByRole("button", { name: "Réservation", exact: true })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    await opener.click();
+    await dialog.getByRole("button", { name: /Fermer l’aperçu/ }).click();
+    await dialog.waitFor({ state: "detached" });
     expect(await noSideScroll(page)).toBe(true);
     expect(errors).toEqual([]);
   } finally {

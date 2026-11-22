@@ -1,4 +1,7 @@
 "use client";
+import { ReviewsSection } from "@/features/reviews/reviews-section";
+import type { ReviewPage } from "@/features/reviews/model";
+import { sectionTitle } from "@/features/sites/presentation";
 
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -60,6 +63,7 @@ export function SiteStudio({
   businessId,
   actions: given,
   hours = null,
+  reviews = null,
 }: {
   /** Her site as read now (null: nothing saved yet). */
   site: SiteDto | null;
@@ -79,6 +83,7 @@ export function SiteStudio({
   actions?: StudioActions;
   /** Her usual weekly hours, shown in her infos as her clients see them. */
   hours?: UsualHours[] | null;
+  reviews?: ReviewPage | null;
 }) {
   const actions = useMemo(
     () => given ?? studioActionsFor(businessId),
@@ -193,10 +198,10 @@ export function SiteStudio({
     return { ok: true };
   }
 
-  async function upload(file: File): Promise<UploadOutcome> {
+  async function upload(file: File, purpose?: "logo"): Promise<UploadOutcome> {
     if (!UPLOAD_TYPES.includes(file.type))
       return { ok: false, code: "site_photo_unsupported" };
-    const sent = await actions.upload(file, file.type as UploadType);
+    const sent = await actions.upload(file, file.type as UploadType, purpose);
     if (!sent.ok) return { ok: false, code: sent.error.code };
     const { id } = sent.data;
     setPhotos((list) => [{ id, status: "ready" }, ...list]);
@@ -306,6 +311,18 @@ export function SiteStudio({
           openBookingPreviewRef={bookingPreview}
           fontClasses={fontClasses}
           hours={hours}
+          reviews={
+            <ReviewsSection
+              slug={slug}
+              initial={reviews}
+              readOnly
+              title={sectionTitle(
+                preview.presentation,
+                "reviews",
+                "Avis des clientes",
+              )}
+            />
+          }
           edit={
             view === "draft"
               ? {
@@ -344,6 +361,9 @@ export function SiteStudio({
             history.set({
               ...base,
               bookingFormat: draft.bookingFormat,
+              ...(draft.presentation
+                ? { presentation: draft.presentation }
+                : {}),
               brand: draft.brand,
               content: draft.content,
               hidden: draft.hidden,
@@ -402,6 +422,9 @@ function withoutRevoked(config: SiteConfig, revoked: string[]): SiteConfig {
     content: {
       ...config.content,
       cover: keep(config.content.cover),
+      ...(config.content.logo !== undefined
+        ? { logo: keep(config.content.logo) }
+        : {}),
       portrait: {
         ...config.content.portrait,
         photo: keep(config.content.portrait.photo),

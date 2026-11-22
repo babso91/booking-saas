@@ -322,6 +322,9 @@ export function coreLens(config: SiteConfig): SiteConfig {
         ),
       },
     },
+    ...(config.presentation?.order
+      ? { presentation: { ...config.presentation, order: undefined } }
+      : {}),
     sections: design.sections,
     booking: design.booking,
     quickBook: design.quickBook,

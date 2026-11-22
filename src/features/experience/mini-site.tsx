@@ -13,6 +13,7 @@ import {
   type RefObject,
 } from "react";
 
+import { bookingLabel } from "@/features/sites/presentation";
 import type { PublicCatalog } from "@/features/catalog/model";
 import type { PublicBusiness } from "@/features/public-booking/client/api";
 
@@ -39,12 +40,7 @@ import { practicalItems, type UsualHours } from "./practical";
 import { Intro } from "./scenes/intro";
 import { PracticalInfo } from "./scenes/practical-info";
 import { SiteIndex, SiteIndexButton } from "./site-index";
-import {
-  anchorOf,
-  destinations as destinationsOf,
-  practicalDestination,
-  shownSections,
-} from "./sections";
+import { sitePages, shownSections } from "./sections";
 import { Opening } from "./scenes/opening";
 import { Portrait } from "./scenes/portrait";
 import { Services } from "./scenes/services";
@@ -102,24 +98,20 @@ export function MiniSite({
   // Her choice of scenes (the opening and her services always show), the
   // empty ones left out of her public site (sections.ts).
   const sections = shownSections(config, { editing: Boolean(edit) });
-  // Her "Infos pratiques", after her scenes, when there is something.
+  // Publish the practical section only when it has something to show.
   const practical = practicalItems({
     practical: config.practical,
     hours,
     cancellationPolicy: bookable?.business.cancellationPolicy ?? null,
   });
-  const destinations = [
-    ...destinationsOf(sections),
-    ...(practical.length ? [practicalDestination] : []),
-  ];
-  // Where the index sends her client once it has closed.
-  const going = useRef<string | null>(null);
-  // Chapter numbers of the scenes after the opening: (01), (02)…
-  const chapters = sections.map(
-    (_, position) =>
-      sections.slice(0, position + 1).filter((item) => item.kind !== "opening")
-        .length,
+  const pages = sitePages(
+    config,
+    sections,
+    practical.length > 0,
+    Boolean(reviews),
   );
+  const destinations = pages.flatMap((page) => (page.link ? [page.link] : []));
+  const going = useRef<string | null>(null);
 
   return (
     <MotionConfig reducedMotion="user">
@@ -151,37 +143,31 @@ export function MiniSite({
             index={destinations.length > 1 ? () => setIndex(true) : undefined}
           />
           <main>
-            {sections.map((section, position) => {
-              const anchor = anchorOf(sections, position);
-              const scene = renderScene(section, chapters[position]!);
-              return anchor ? (
-                // Reached from the index: focus lands here, under the
-                // fixed header (scroll-margin), not on the page's top.
+            {pages.map(({ kind, link }, position) => {
+              const chapter = pages
+                .slice(0, position + 1)
+                .filter((page) => page.kind !== "opening").length;
+              const section = sections.find((item) => item.kind === kind);
+              const content =
+                kind === "practical" ? (
+                  <PracticalInfo items={practical} index={chapter} />
+                ) : kind === "reviews" ? (
+                  reviews
+                ) : section ? (
+                  renderScene(section, chapter)
+                ) : null;
+              return (
                 <div
-                  key={`${section.kind}-${position}`}
-                  id={anchor}
-                  tabIndex={-1}
+                  key={kind}
+                  data-site-section={kind}
+                  id={link?.id}
+                  tabIndex={link ? -1 : undefined}
                   className="scroll-mt-16 outline-none"
                 >
-                  {scene}
+                  {content}
                 </div>
-              ) : (
-                <div key={`${section.kind}-${position}`}>{scene}</div>
               );
             })}
-            {practical.length ? (
-              <div
-                id={practicalDestination.id}
-                tabIndex={-1}
-                className="scroll-mt-16 outline-none"
-              >
-                <PracticalInfo
-                  items={practical}
-                  index={(chapters.at(-1) ?? 0) + 1}
-                />
-              </div>
-            ) : null}
-            {reviews}
           </main>
           <Footer />
           <QuickBook />
@@ -243,12 +229,34 @@ function renderScene(section: Section, chapter: number) {
     case "intro":
       return <Intro variant={section.variant} index={chapter} />;
     case "work":
-      return <Work variant={section.variant} index={chapter} />;
+      return <Gallery variant={section.variant} chapter={chapter} />;
     case "portrait":
       return <Portrait variant={section.variant} index={chapter} />;
     case "services":
       return <Services variant={section.variant} index={chapter} />;
   }
+}
+
+function Gallery({
+  variant,
+  chapter,
+}: {
+  variant: Extract<Section, { kind: "work" }>["variant"];
+  chapter: number;
+}) {
+  const engine = useEngine();
+  const chosen = engine.config.presentation?.galleryMotion;
+  const work = <Work variant={variant} index={chapter} />;
+  if (!chosen) return work;
+  const config = {
+    ...engine.config,
+    tokens: { ...engine.config.tokens, motion: chosen },
+  };
+  return (
+    <EngineProvider value={{ ...engine, config }}>
+      <div style={revealVariables(motions[chosen])}>{work}</div>
+    </EngineProvider>
+  );
 }
 
 /**
@@ -259,7 +267,12 @@ function renderScene(section: Section, chapter: number) {
  * opaque chip in the site's night colours, its ink computed to read.
  */
 function Header({ index }: { index?: () => void }) {
-  const { config, catalog, book } = useEngine();
+  const { config, catalog, book, photos } = useEngine();
+  const [failedLogo, setFailedLogo] = useState<string | null>(null);
+  const logo =
+    config.content.logo && failedLogo !== config.content.logo
+      ? config.content.logo
+      : null;
   const { palette } = config.tokens;
   const chip = {
     background: palette.bg,
@@ -267,27 +280,42 @@ function Header({ index }: { index?: () => void }) {
     borderRadius: "min(var(--s-control), 999px)",
   };
   // The name's room: clear of the chips on its right.
-  const room = catalog.length
-    ? index
-      ? "pr-44"
-      : "pr-32"
-    : index
-      ? "pr-20"
-      : "pr-5";
+  const room =
+    config.presentation?.bookingLabel && catalog.length
+      ? index
+        ? "pr-[calc(min(36vw,14rem)+5rem)]"
+        : "pr-[calc(min(36vw,14rem)+2rem)]"
+      : catalog.length
+        ? index
+          ? "pr-44"
+          : "pr-32"
+        : index
+          ? "pr-20"
+          : "pr-5";
   return (
     <header>
       <div
         data-blend-logotype=""
-        className="pointer-events-none fixed inset-x-0 top-0 z-40 text-white mix-blend-difference"
+        className={`pointer-events-none fixed inset-x-0 top-0 z-40 text-white ${logo ? "" : "mix-blend-difference"}`}
       >
         {/* One line, clear of the "Réserver" chip: a long name ends in an
             ellipsis here (it is set whole on the opening, just below). */}
         <div
           className={`mx-auto flex max-w-[1100px] items-center pt-[max(env(safe-area-inset-top),14px)] pb-3 pl-5 ${room}`}
         >
-          <Display className="min-w-0 truncate py-2 text-[18px] leading-none">
-            {config.brand.name}
-          </Display>
+          {logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={photos(logo, 480)}
+              alt={config.brand.name}
+              onError={() => setFailedLogo(logo)}
+              className="block h-10 w-auto max-w-[min(31vw,10rem)] object-contain object-left"
+            />
+          ) : (
+            <Display className="min-w-0 truncate py-2 text-[18px] leading-none">
+              {config.brand.name}
+            </Display>
+          )}
         </div>
       </div>
       {catalog.length || index ? (
@@ -301,10 +329,10 @@ function Header({ index }: { index?: () => void }) {
               <button
                 type="button"
                 onClick={() => book(null)}
-                className="pointer-events-auto -mr-1 min-h-11 cursor-pointer px-3 leading-none"
+                className="pointer-events-auto -mr-1 min-h-11 max-w-[min(36vw,14rem)] cursor-pointer truncate px-3 leading-none"
                 style={chip}
               >
-                <Detail>Réserver</Detail>
+                <Detail>{bookingLabel(config.presentation)}</Detail>
               </button>
             ) : null}
           </div>
@@ -399,17 +427,21 @@ function QuickBook() {
             boxShadow: outline,
           }}
         >
-          <Detail>Réserver</Detail>
-          <Detail>{count > 1 ? `${count} soins →` : "1 soin →"}</Detail>
+          <Detail className="min-w-0 [overflow-wrap:anywhere]">
+            {bookingLabel(config.presentation)}
+          </Detail>
+          <Detail className="shrink-0">
+            {count > 1 ? `${count} soins →` : "1 soin →"}
+          </Detail>
         </button>
       ) : (
         <button
           type="button"
           onClick={() => book(null)}
-          className="pointer-events-auto flex h-14 cursor-pointer items-center gap-3 rounded-full px-7 text-[16px] font-semibold shadow-[0_18px_40px_-14px_rgba(0,0,0,.55)]"
+          className="pointer-events-auto flex min-h-14 max-w-[calc(100%-2rem)] cursor-pointer items-center gap-3 [overflow-wrap:anywhere] rounded-full px-7 text-[16px] font-semibold shadow-[0_18px_40px_-14px_rgba(0,0,0,.55)]"
           style={{ background: cta.fill, color: cta.text, boxShadow: outline }}
         >
-          Réserver
+          {bookingLabel(config.presentation)}
           <span aria-hidden="true">→</span>
         </button>
       )}

@@ -1,6 +1,7 @@
 "use client";
 
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
+import { bookingLabel } from "@/features/sites/presentation";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import type { PublicCatalog } from "@/features/catalog/model";
@@ -36,7 +37,53 @@ export function SiteBooking({
   const { config, motion: language } = useEngine();
   const root = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
-  useModal({ root, panel: dialog, onClose });
+  const backRef = useRef<() => boolean>(null);
+  const close = useRef(onClose);
+  const leaving = useRef(false);
+  const [session] = useState(() => crypto.randomUUID());
+  const reduced = useReducedMotion();
+  useEffect(() => {
+    close.current = onClose;
+  }, [onClose]);
+
+  function dismiss() {
+    if (leaving.current) return;
+    leaving.current = true;
+    if (window.history.state?.higaniBooking === session) window.history.back();
+    close.current();
+  }
+  function previous() {
+    if (!backRef.current?.()) dismiss();
+  }
+  // One same-page entry while the panel is open. Android Back and the
+  // browser arrow follow the same steps as the visible back button.
+  useEffect(() => {
+    const url = window.location.href;
+    const arm = () =>
+      window.history.pushState(
+        { ...window.history.state, higaniBooking: session },
+        "",
+        url,
+      );
+    if (window.history.state?.higaniBooking !== session) arm();
+    const back = () => {
+      if (
+        leaving.current ||
+        window.location.href !== url ||
+        window.history.state?.higaniBooking === session
+      )
+        return;
+      if (backRef.current?.()) arm();
+      else {
+        leaving.current = true;
+        close.current();
+      }
+    };
+    window.addEventListener("popstate", back);
+    return () => window.removeEventListener("popstate", back);
+  }, [session]);
+
+  useModal({ root, panel: dialog, onClose: dismiss });
   const sheet = config.booking === "sheet";
   const format = config.bookingFormat ?? "classic";
   const themed = format !== "classic";
@@ -74,7 +121,7 @@ export function SiteBooking({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={onClose}
+          onClick={dismiss}
         />
       ) : null}
       <motion.div
@@ -82,7 +129,7 @@ export function SiteBooking({
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label={`Réserver chez ${config.brand.name}`}
+        aria-label={`${bookingLabel(config.presentation)} chez ${config.brand.name}`}
         className={
           (themed ? styles.universe + " " : "") +
           (sheet
@@ -91,6 +138,9 @@ export function SiteBooking({
         }
         style={
           {
+            ...(sheet && (format === "calendar" || format === "chronological")
+              ? { height: "92dvh" }
+              : {}),
             "--booking-cta": cta.fill,
             "--booking-on-cta": cta.text,
             ...(sheet
@@ -104,22 +154,32 @@ export function SiteBooking({
         initial={sheet ? { y: "100%" } : { opacity: 0 }}
         animate={sheet ? { y: 0 } : { opacity: 1 }}
         exit={sheet ? { y: "100%" } : { opacity: 0 }}
-        transition={{ duration: 0.45, ease: language.ease }}
+        transition={{ duration: reduced ? 0 : 0.28, ease: language.ease }}
       >
         {/* Her site's colours on the sheet's head: still her place. */}
-        <div className="flex items-center justify-between gap-3 bg-[var(--u-paper)] px-5 pt-[max(env(safe-area-inset-top),16px)] pb-3 text-[var(--u-ink-on-paper)]">
-          <Display className="truncate text-[20px] leading-none">
+        <div className="flex shrink-0 items-center justify-between gap-3 bg-[var(--u-paper)] px-5 pt-[max(env(safe-area-inset-top),16px)] pb-3 text-[var(--u-ink-on-paper)]">
+          <button
+            type="button"
+            onClick={previous}
+            className="-ml-2 min-h-11 shrink-0 cursor-pointer px-2 text-sm font-semibold"
+          >
+            ← Retour
+          </button>
+          <Display className="min-w-0 truncate text-[20px] leading-none">
             {config.brand.name}
           </Display>
           <button
             type="button"
-            onClick={onClose}
+            onClick={dismiss}
             className="-mr-2 min-h-11 shrink-0 cursor-pointer px-2"
           >
-            <Detail>Fermer ✕</Detail>
+            <Detail>{previewSlug ? "Fermer l’aperçu" : "Fermer"} ✕</Detail>
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-4 pt-5 pb-[max(env(safe-area-inset-bottom),24px)] sm:px-6">
+        <div
+          data-booking-scroll=""
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-5 pb-[max(env(safe-area-inset-bottom),24px)] sm:px-6"
+        >
           <div className="mx-auto w-full max-w-xl">
             {previewSlug ? (
               <p className="mb-4 text-sm text-ink-muted">
@@ -135,6 +195,7 @@ export function SiteBooking({
                 gallery={
                   format === "showcase" ? <BookingShowcase /> : undefined
                 }
+                backRef={backRef}
                 embedded
                 initialServiceId={initialServiceId}
                 place={config.practical}

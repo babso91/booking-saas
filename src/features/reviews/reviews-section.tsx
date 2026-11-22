@@ -10,9 +10,13 @@ const starsText = (value: number) => "★".repeat(value) + "☆".repeat(5 - valu
 
 export function ReviewsSection({
   slug,
+  title = "Avis des clientes",
+  readOnly = false,
   initial,
 }: {
   slug: string;
+  title?: string;
+  readOnly?: boolean;
   initial: ReviewPage | null;
 }) {
   const [list, setList] = useState(initial);
@@ -109,10 +113,10 @@ export function ReviewsSection({
           <div>
             <h2
               id="avis-titre"
-              className="text-4xl tracking-tight"
+              className={title ? "text-4xl tracking-tight" : "sr-only"}
               style={{ fontFamily: "var(--t-display, inherit)" }}
             >
-              Avis des clientes
+              {title || "Avis des clientes"}
             </h2>
             {list && (
               <p className="mt-3">
@@ -127,7 +131,7 @@ export function ReviewsSection({
               </p>
             )}
           </div>
-          {stage !== "form" && (
+          {!readOnly && stage !== "form" && (
             <button
               type="button"
               disabled={busy}

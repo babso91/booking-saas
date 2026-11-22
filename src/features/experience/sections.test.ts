@@ -87,14 +87,17 @@ describe("destinations", () => {
     expect(list.map((item) => item.label)).toEqual(
       shown
         .map((section) => section.kind)
-        .filter((kind) => ["services", "work", "portrait"].includes(kind))
+        .filter((kind) =>
+          ["intro", "services", "work", "portrait"].includes(kind),
+        )
         .map(
           (kind) =>
             ({
+              intro: "À propos",
               services: "Prestations",
               work: "Réalisations",
               portrait: "Portrait",
-            })[kind as "services" | "work" | "portrait"],
+            })[kind as "intro" | "services" | "work" | "portrait"],
         ),
     );
   });
