@@ -37,6 +37,16 @@ export const claimedEmailSchema = z.object({
       html: z.string(),
     })
     .nullable(),
+  /**
+   * Why: an unexpected closure of the business (closure_commit), with the
+   * professional's optional words to her customers. Null for any other email.
+   */
+  notice: z
+    .object({
+      kind: z.literal("closure"),
+      message: z.string().max(500).nullable(),
+    })
+    .nullish(),
   business: z.object({
     name: z.string().min(1),
     slug: z.string().min(1),

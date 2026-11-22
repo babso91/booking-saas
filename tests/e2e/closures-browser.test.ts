@@ -63,9 +63,11 @@ it("closes one Monday and a separate week, preserving other dates and existing a
   await plan.click();
   await start.fill(fixture!.today);
   await save.click();
+  // Booked today: the appointments to decide on first (point 101), then back.
   await page
-    .getByText(/Il y a déjà un rendez-vous sur cette période/)
+    .getByRole("region", { name: "Rendez-vous sur ces dates" })
     .waitFor();
+  await page.getByRole("button", { name: "Retour" }).click();
   await start.fill(monday);
   expect(await end.inputValue()).toBe(monday);
   await save.click();

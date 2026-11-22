@@ -12,6 +12,14 @@ import {
   blockDaysSchema,
   deleteBlockSchema,
 } from "@/features/agenda/schemas/agenda";
+import {
+  commitClosure,
+  previewClosure,
+} from "@/features/availability/data/closure";
+import {
+  closureCommitSchema,
+  closurePreviewSchema,
+} from "@/features/availability/schemas/closure";
 import { runBusinessAction } from "@/features/businesses/actions/run-business-action";
 import { AppException } from "@/lib/errors";
 
@@ -73,6 +81,33 @@ export async function removeClosureAction(input: unknown) {
           throw error;
       }
       return null;
+    },
+  );
+  if (result.ok) refreshSchedule();
+  return result;
+}
+
+/** The appointments an unexpected closure of these dates would touch. */
+export async function previewClosureAction(input: unknown) {
+  return runBusinessAction(closurePreviewSchema, input, (context, data) => {
+    requireScope(context, data.businessId);
+    return previewClosure(
+      context.client,
+      data.businessId,
+      data.startDate,
+      data.endDate,
+    );
+  });
+}
+
+/** Closes the dates and cancels or moves each appointment, all or nothing. */
+export async function commitClosureAction(input: unknown) {
+  const result = await runBusinessAction(
+    closureCommitSchema,
+    input,
+    (context, data) => {
+      requireScope(context, data.businessId);
+      return commitClosure(context.client, data.businessId, data);
     },
   );
   if (result.ok) refreshSchedule();

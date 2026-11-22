@@ -223,3 +223,64 @@ describe("renderEmail", () => {
     expect(html).toContain(`${APP_URL}/b/a%2F..%2Fb%3Fc`);
   });
 });
+
+describe("unexpected closure (point 101)", () => {
+  const closure = (message: string | null) =>
+    ({ kind: "closure", message }) as const;
+
+  it("a cancellation says the business is exceptionally closed, with her words, and offers to book again", () => {
+    const { subject, text, html } = renderEmail(
+      email({
+        type: "appointment_cancelled",
+        notice: closure("Je suis malade, désolée !\nÀ très vite."),
+      }),
+      { appUrl: APP_URL },
+    );
+    expect(subject).toBe(
+      "Fermeture exceptionnelle : rendez-vous annulé – Studio Mila",
+    );
+    expect(text).toContain(
+      "Studio Mila est exceptionnellement fermé à la date prévue : votre rendez-vous a été annulé.",
+    );
+    expect(text).toContain(
+      "Message de Studio Mila :\nJe suis malade, désolée !\nÀ très vite.",
+    );
+    expect(text).toContain(
+      `Pour reprendre rendez-vous : ${APP_URL}/b/studio-mila`,
+    );
+    expect(html).toContain("Je suis malade, désolée !<br>À très vite.");
+  });
+
+  it("a change says why it moved; without words, no message block", () => {
+    const { subject, text } = renderEmail(
+      email({ type: "appointment_changed", notice: closure(null) }),
+      { appUrl: APP_URL },
+    );
+    expect(subject).toBe(
+      "Fermeture exceptionnelle : rendez-vous déplacé – Studio Mila",
+    );
+    expect(text).toContain("votre rendez-vous a été déplacé");
+    expect(text).not.toContain("Message de");
+    expect(text).toContain("Gérer ou annuler mon rendez-vous");
+  });
+
+  it("her words never inject markup, and a reminder ignores a notice", () => {
+    const { html } = renderEmail(
+      email({
+        type: "appointment_cancelled",
+        notice: closure('<a href="https://evil.test">Clique</a>\r\n\u0007ici'),
+      }),
+      { appUrl: APP_URL },
+    );
+    expect(html).not.toContain('<a href="https://evil.test">');
+    expect(html).toContain(
+      "&lt;a href=&quot;https://evil.test&quot;&gt;Clique&lt;/a&gt;<br>ici",
+    );
+    expect(
+      renderEmail(
+        email({ type: "appointment_reminder", notice: closure("x") }),
+        { appUrl: APP_URL },
+      ).subject,
+    ).toBe("Rappel de votre rendez-vous – Studio Mila");
+  });
+});

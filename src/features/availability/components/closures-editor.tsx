@@ -10,13 +10,19 @@ import { isAllDayBlock } from "@/features/agenda/client/layout";
 import type { AgendaBlockDto } from "@/features/agenda/data/agenda";
 import { callAction, type UiError } from "@/features/auth/client/call-action";
 import { describeError } from "@/features/auth/client/error-copy";
+import type {
+  ClosureDone,
+  ClosurePreview,
+} from "@/features/availability/data/closure";
 import { addDaysToLocalDate } from "@/lib/time/local-date";
 
 import {
   createClosureAction,
   listClosuresAction,
+  previewClosureAction,
   removeClosureAction,
 } from "../actions/closures";
+import { ClosurePlanner } from "./closure-planner";
 
 const dateLabel = new Intl.DateTimeFormat("fr-FR", {
   day: "numeric",
@@ -25,12 +31,28 @@ const dateLabel = new Intl.DateTimeFormat("fr-FR", {
   timeZone: "UTC",
 });
 
+/** "le 6 décembre", "du 6 au 8 décembre inclus", for chosen civil dates. */
+function periodOf(first: string, last: string) {
+  const display = (date: string) =>
+    dateLabel.format(new Date(`${date}T00:00:00Z`));
+  return first === last
+    ? `le ${display(first)}`
+    : `du ${display(first)} au ${display(last)} inclus`;
+}
+
 function labelOf(closure: AgendaBlockDto) {
   const display = (date: string) =>
     dateLabel.format(new Date(`${date}T00:00:00Z`));
   const start = closure.localStartsAt.slice(0, 10);
   const end = closure.localEndsAt.slice(0, 10);
   if (!isAllDayBlock(closure)) {
+    // Closed from now to the end of the day (an unexpected closure today).
+    if (
+      closure.localEndsAt.slice(11, 16) === "00:00" &&
+      addDaysToLocalDate(end, -1) === start
+    ) {
+      return `${display(start)}, à partir de ${closure.localStartsAt.slice(11, 16)}`;
+    }
     return `Du ${display(start)} à ${closure.localStartsAt.slice(11)} au ${display(end)} à ${closure.localEndsAt.slice(11)}`;
   }
   const last = addDaysToLocalDate(end, -1);
@@ -50,6 +72,12 @@ export function ClosuresEditor({ businessId }: { businessId: string }) {
   const [removing, setRemoving] = useState<AgendaBlockDto | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState<UiError | null>(null);
+  // Booked dates: the appointments to decide on before closing (point 101).
+  const [plan, setPlan] = useState<{
+    first: string;
+    last: string;
+    preview: ClosurePreview;
+  } | null>(null);
   const busy = useRef(false);
   const attempt = useRef<{ first: string; last: string; id: string } | null>(
     null,
@@ -88,6 +116,21 @@ export function ClosuresEditor({ businessId }: { businessId: string }) {
         }),
       );
       if (!result.ok) {
+        if (result.error.code === "schedule_conflict") {
+          const preview = await callAction(() =>
+            previewClosureAction({
+              businessId,
+              startDate: first,
+              endDate: last,
+            }),
+          );
+          if (preview.ok) {
+            setPlan({ first, last, preview: preview.data });
+            return;
+          }
+          setError(preview.error);
+          return;
+        }
         setError(result.error);
         return;
       }
@@ -101,6 +144,30 @@ export function ClosuresEditor({ businessId }: { businessId: string }) {
       busy.current = false;
       setPending(false);
     }
+  }
+
+  function closed(done: ClosureDone) {
+    setPlan(null);
+    attempt.current = null;
+    setFirst("");
+    setLast("");
+    setEditing(false);
+    const parts = [
+      done.cancelled.length
+        ? `${done.cancelled.length} annulé${done.cancelled.length > 1 ? "s" : ""}`
+        : null,
+      done.moved.length
+        ? `${done.moved.length} reporté${done.moved.length > 1 ? "s" : ""}`
+        : null,
+    ].filter(Boolean);
+    setNotice(
+      `Fermeture enregistrée.${parts.length ? ` Rendez-vous : ${parts.join(", ")}.` : ""}${
+        done.notified
+          ? ` ${done.notified} cliente${done.notified > 1 ? "s" : ""} prévenue${done.notified > 1 ? "s" : ""} par e-mail.`
+          : ""
+      }`,
+    );
+    refresh();
   }
 
   async function remove() {
@@ -144,7 +211,17 @@ export function ClosuresEditor({ businessId }: { businessId: string }) {
         Fais une pause dans les réservations pour une journée, une semaine ou
         une période de ton choix.
       </p>
-      {editing ? (
+      {plan ? (
+        <ClosurePlanner
+          businessId={businessId}
+          startDate={plan.first}
+          endDate={plan.last}
+          preview={plan.preview}
+          periodLabel={periodOf(plan.first, plan.last)}
+          onDone={closed}
+          onBack={() => setPlan(null)}
+        />
+      ) : editing ? (
         <form
           className="flex flex-col gap-3"
           onSubmit={(event) => {

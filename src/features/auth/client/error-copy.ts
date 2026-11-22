@@ -540,6 +540,21 @@ export const errorCopy: Record<
     title: "Aperçu périmé",
     message: "Recalcule l’aperçu avant de confirmer. Rien n’a été créé.",
   },
+  closure_stale: {
+    title: "L’agenda a changé",
+    message:
+      "Un rendez-vous a été pris ou modifié entre-temps. Vérifie la liste à jour : rien n’a été fait.",
+  },
+  closure_conflict: {
+    title: "Horaire déjà pris",
+    message:
+      "Le nouvel horaire d’un rendez-vous n’est pas libre. Choisis-en un autre : rien n’a été fait.",
+  },
+  too_many_appointments: {
+    title: "Trop de rendez-vous",
+    message:
+      "Plus de 100 rendez-vous sur ces dates. Ferme une période plus courte.",
+  },
   invitation_password_required: {
     title: "Mot de passe à choisir",
     message: "Choisis ton mot de passe pour rejoindre l’équipe.",

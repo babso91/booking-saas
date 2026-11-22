@@ -7,7 +7,8 @@ import type { ClaimedEmail, EmailType } from "../schemas/claimed-email";
 // Customer emails, in French, addressed with "vous" like the booking page.
 // Every value comes from the claimed email (the business's own data and
 // this appointment's snapshots): no CRM field (notes, other appointments,
-// loyalty) is ever read. Plain text is the reference; the HTML version
+// loyalty) is ever read. An unexpected closure adds its reason and the
+// professional's own words to her customers. Plain text is the reference; the HTML version
 // escapes every interpolated value. The management link resumes this exact
 // appointment after email-code verification. It never grants access by itself.
 
@@ -95,6 +96,29 @@ const HEADLINES: Record<EmailType, { subject: string; lead: string }> = {
   },
 };
 
+// An unexpected closure (closure_commit): the same email, saying why.
+const CLOSURE_HEADLINES: Partial<
+  Record<EmailType, (business: string) => { subject: string; lead: string }>
+> = {
+  appointment_changed: (business) => ({
+    subject: "Fermeture exceptionnelle : rendez-vous déplacé",
+    lead: `${business} est exceptionnellement fermé à la date prévue : votre rendez-vous a été déplacé. Voici ses nouvelles informations.`,
+  }),
+  appointment_cancelled: (business) => ({
+    subject: "Fermeture exceptionnelle : rendez-vous annulé",
+    lead: `${business} est exceptionnellement fermé à la date prévue : votre rendez-vous a été annulé.`,
+  }),
+};
+
+/** The professional's words, line by line, without control characters. */
+function messageLines(message: string) {
+  return message
+    .split(/\r\n|\r|\n/)
+    .map(singleLine)
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
 export function renderEmail(
   email: ClaimedEmail,
   options: { appUrl: string },
@@ -104,7 +128,13 @@ export function renderEmail(
   const firstName = email.appointment.clientFirstName
     ? singleLine(email.appointment.clientFirstName)
     : null;
-  const headline = HEADLINES[email.type];
+  const closure =
+    email.notice?.kind === "closure"
+      ? CLOSURE_HEADLINES[email.type]?.(business)
+      : undefined;
+  const headline = closure ?? HEADLINES[email.type];
+  const words =
+    closure && email.notice?.message ? messageLines(email.notice.message) : [];
   const when = `${formatLocalDate(email.appointment.localStartsAt)} à ${formatLocalTime(email.appointment.localStartsAt)}`;
   const publicUrl = new URL(
     `/b/${encodeURIComponent(email.business.slug)}`,
@@ -153,6 +183,7 @@ export function renderEmail(
     "",
     headline.lead,
     "",
+    ...(words.length ? [`Message de ${business} :`, ...words, ""] : []),
     ...details.map(([label, value]) => `${label} : ${value}`),
     "",
     timezoneNote,
@@ -175,7 +206,7 @@ export function renderEmail(
 <body style="font-family:Arial,Helvetica,sans-serif;color:#1f1f1f;line-height:1.5">
 <p>${escapeHtml(greeting)}</p>
 <p>${escapeHtml(headline.lead)}</p>
-<table role="presentation" cellpadding="4" cellspacing="0">
+${words.length ? `<p>${escapeHtml(`Message de ${business} :`)}<br>${words.map(escapeHtml).join("<br>")}</p>\n` : ""}<table role="presentation" cellpadding="4" cellspacing="0">
 ${details
   .map(
     ([label, value]) =>
