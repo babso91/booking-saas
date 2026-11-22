@@ -111,7 +111,7 @@ export function BookingConfirmation({
             : []),
           ["Prestation", booking.serviceName],
           // As booked: the answers and the totals the server recorded.
-          ...answerRows(booking.options ?? []),
+          ...answerRows(booking.options ?? [], booking.currency),
           ...(local
             ? ([
                 [

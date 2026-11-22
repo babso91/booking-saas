@@ -75,6 +75,24 @@ function renderScene(
   return book;
 }
 
+function renderSceneAndReturn(
+  variant: ServicesVariant,
+  catalog: PublicCatalog,
+) {
+  return render(
+    <EngineProvider
+      value={{
+        config: renderConfigOf(sampleSite("mila")),
+        photos: () => "",
+        catalog: showcaseOf(catalog),
+        book: vi.fn(),
+      }}
+    >
+      <Services variant={variant} index={3} />
+    </EngineProvider>,
+  );
+}
+
 const searchBox = () =>
   screen.getByRole("searchbox", { name: "Rechercher une prestation" });
 const search = (value: string) =>
@@ -189,3 +207,77 @@ describe.each(["index", "shelf", "tiles"] as const)(
     });
   },
 );
+
+// Higani point 33: her categories on a phone; those without one named.
+describe.each(["index", "shelf", "tiles"] as const)(
+  "her categories (point 33) — %s",
+  (variant) => {
+    it("shortcuts once her catalogue is long; « Autres prestations » named", () => {
+      renderScene(variant);
+      const nav = within(
+        screen.getByRole("navigation", { name: "Catégories" }),
+      );
+      expect(nav.getAllByRole("link").map((link) => link.textContent)).toEqual([
+        "Cils & regard",
+        "Ongles",
+        "Autres prestations",
+      ]);
+      expect(
+        nav
+          .getByRole("link", { name: "Autres prestations" })
+          .getAttribute("href"),
+      ).toBe("#categorie-autres");
+      expect(
+        screen.getByRole("heading", { name: /Autres prestations/ }),
+      ).toBeTruthy();
+    });
+
+    it("all without a category: no heading invented", () => {
+      renderScene(variant, {
+        currency: "EUR",
+        groups: [
+          { category: null, services: long.groups.flatMap((g) => g.services) },
+        ],
+      });
+      expect(screen.queryByText("Autres prestations")).toBeNull();
+      expect(
+        screen.queryByRole("navigation", { name: "Catégories" }),
+      ).toBeNull();
+    });
+  },
+);
+
+// Higani point 35: a detailed description that does not weigh on her page.
+describe("her descriptions (point 35)", () => {
+  const detailed =
+    "Inclus : dépose, soin et pose.\nRésultat : un regard ouvert six semaines.\nÀ prévoir : venir sans maquillage.\nRetouche conseillée à trois semaines.";
+  const withDetailed: PublicCatalog = {
+    currency: "EUR",
+    groups: [
+      { category: null, services: [item("d1", "Volume russe", detailed)] },
+    ],
+  };
+
+  it("shelf: a few lines first, « Lire la suite » for the rest", () => {
+    renderScene("shelf", withDetailed);
+    const text = screen.getByText(/Inclus : dépose/);
+    expect(text.className).toContain("line-clamp-5");
+    expect(text.className).toContain("whitespace-pre-line");
+    fireEvent.click(screen.getByRole("button", { name: "Lire la suite" }));
+    expect(text.className).not.toContain("line-clamp-5");
+    expect(screen.getByRole("button", { name: "Réduire" })).toBeTruthy();
+  });
+
+  it("tiles: a few lines (the whole tile books); index: in full, her line breaks kept", () => {
+    const { unmount } = renderSceneAndReturn("tiles", withDetailed);
+    expect(screen.getByText(/Inclus : dépose/).className).toContain(
+      "line-clamp-4",
+    );
+    unmount();
+    renderScene("index", withDetailed);
+    fireEvent.click(screen.getByRole("button", { name: /Volume russe/ }));
+    const text = screen.getByText(/Inclus : dépose/);
+    expect(text.className).toContain("whitespace-pre-line");
+    expect(text.className).not.toContain("line-clamp");
+  });
+});

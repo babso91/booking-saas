@@ -15,6 +15,11 @@ import {
   StepHeading,
   TimeZoneNote,
   whatsLeft,
+  answerRows,
+  conditionRows,
+  ConditionsPeek,
+  placeLine,
+  type BookingPlace,
 } from "./booking-parts";
 import { AvailabilityCalendar } from "./availability-calendar";
 import { NextOpeningNote } from "./next-opening";
@@ -35,7 +40,10 @@ export function SlotStep({
   position,
   onPosition,
   format,
+  place,
 }: {
+  /** Her published place and conditions, when booking from her site. */
+  place?: BookingPlace;
   flow: BookingFlow;
   position: CalendarPosition;
   onPosition: (next: CalendarPosition) => void;
@@ -43,6 +51,8 @@ export function SlotStep({
   headingRef: Ref<HTMLHeadingElement>;
 }) {
   const { service, days, date, slots, slot, notice, business } = flow;
+  const lieu = placeLine(place, business.location);
+  const conditions = conditionRows(business.cancellationPolicy, place);
   const index = Math.max(0, days.indexOf(date));
   const { view, anchor } = position;
   const daySlots = useRef<HTMLDivElement>(null);
@@ -100,17 +110,27 @@ export function SlotStep({
         </p>
         {slots.status === "ready" && slots.quote.options.length > 0 ? (
           <ul className="text-[14px] text-ink-soft">
-            {slots.quote.options.map((option) => (
-              <li key={option.optionId} className="wrap-anywhere">
-                {option.question} : {option.label}
-              </li>
-            ))}
+            {answerRows(slots.quote.options, slots.quote.currency).map(
+              ([question, answer], position) => (
+                <li key={position} className="wrap-anywhere">
+                  {question} : {answer}
+                </li>
+              ),
+            )}
           </ul>
         ) : null}
         {/* The server's quote for these answers; the slots are for it. */}
         <div aria-live="polite">
           <QuoteLine slots={slots} />
         </div>
+        {/* Higani point 56: where, and her conditions, before her details. */}
+        {lieu ? (
+          <p className="text-[14px] wrap-anywhere text-ink-soft">
+            <span className="text-ink-muted">Lieu : </span>
+            {lieu}
+          </p>
+        ) : null}
+        <ConditionsPeek conditions={conditions} />
         <div className="mt-1 flex flex-wrap gap-x-5 gap-y-2">
           {service.options.length > 0 ? (
             <button

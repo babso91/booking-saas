@@ -2,8 +2,9 @@
 import { bookingLabel, sectionTitle } from "@/features/sites/presentation";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
+import { longDescription } from "@/features/catalog/description";
 import {
   countServices,
   resultLine,
@@ -135,9 +136,27 @@ function SceneSearch({ search }: { search: Search }) {
 const long = (name: string) => name.length > 38;
 
 /** From four headings on, a row of shortcuts to jump to a category. */
+/**
+ * Her groups as shown (Higani point 33): once others have a name, those
+ * without one are « Autres prestations », not taken for the last category.
+ */
+function shownGroups<G extends ShowcaseGroup>(
+  groups: G[],
+  all: readonly ShowcaseGroup[],
+): G[] {
+  if (!all.some((group) => group.category)) return groups;
+  return groups.map((group) =>
+    group.category
+      ? group
+      : { ...group, category: { id: "autres", name: "Autres prestations" } },
+  );
+}
+
 function CategoryNav({ groups }: { groups: ShowcaseGroup[] }) {
   const named = groups.filter((group) => group.category);
-  if (named.length < 4) return null;
+  // Shortcuts once her catalogue is long enough to need them on a phone.
+  if (named.length < 4 && (named.length < 2 || countServices(groups) < 6))
+    return null;
   return (
     <nav aria-label="Catégories" className="-mx-5 mt-6 md:mx-0">
       <ul className="flex gap-2 overflow-x-auto px-5 pb-1 [scrollbar-width:none] md:flex-wrap md:px-0">
@@ -246,8 +265,10 @@ function PriceIndex({ index }: { index: number }) {
           <Detail>Prix TTC</Detail>
         </div>
         <SceneSearch search={search} />
-        {search.active ? null : <CategoryNav groups={catalog} />}
-        {search.groups.map((group) => (
+        {search.active ? null : (
+          <CategoryNav groups={shownGroups(catalog, catalog)} />
+        )}
+        {shownGroups(search.groups, catalog).map((group) => (
           <div
             key={group.category?.id ?? "sans-categorie"}
             id={group.category ? `categorie-${group.category.id}` : undefined}
@@ -310,7 +331,7 @@ function PriceIndex({ index }: { index: number }) {
                             <span />
                             <div className="flex flex-col gap-4">
                               {service.description ? (
-                                <p className="max-w-[40ch] text-[16px] leading-relaxed">
+                                <p className="max-w-[40ch] text-[16px] leading-relaxed whitespace-pre-line">
                                   {service.description}
                                 </p>
                               ) : null}
@@ -372,9 +393,11 @@ function Shelf() {
           Le temps indiqué est le vôtre : on ne le raccourcit pas.
         </p>
         <SceneSearch search={search} />
-        {search.active ? null : <CategoryNav groups={catalog} />}
+        {search.active ? null : (
+          <CategoryNav groups={shownGroups(catalog, catalog)} />
+        )}
       </div>
-      {search.groups.map((group) => (
+      {shownGroups(search.groups, catalog).map((group) => (
         <div
           key={group.category?.id ?? "sans-categorie"}
           id={group.category ? `categorie-${group.category.id}` : undefined}
@@ -420,11 +443,10 @@ function Shelf() {
                     >
                       {service.name}
                     </Display>
-                    {service.description ? (
-                      <p className="mt-4 text-[15px] leading-relaxed text-[var(--u-soft-card)]">
-                        {service.description}
-                      </p>
-                    ) : null}
+                    <FoldedDescription
+                      text={service.description}
+                      className="mt-4 text-[15px] leading-relaxed text-[var(--u-soft-card)]"
+                    />
                     {service.options.length ? (
                       <p className="mt-3">
                         <OptionsNote service={service} />
@@ -487,9 +509,11 @@ function Tiles() {
           </motion.h2>
         )}
         <SceneSearch search={search} />
-        {search.active ? null : <CategoryNav groups={catalog} />}
+        {search.active ? null : (
+          <CategoryNav groups={shownGroups(catalog, catalog)} />
+        )}
       </div>
-      {search.groups.map((group) => (
+      {shownGroups(search.groups, catalog).map((group) => (
         <div
           key={group.category?.id ?? "sans-categorie"}
           id={group.category ? `categorie-${group.category.id}` : undefined}
@@ -537,7 +561,11 @@ function Tiles() {
                         {service.name}
                       </Display>
                       {service.description ? (
-                        <span className="mt-3 block max-w-[34ch] text-[15px] leading-snug">
+                        // In a tile (a button), a few lines: read in full
+                        // in her booking (Higani point 35).
+                        <span
+                          className={`mt-3 block max-w-[34ch] text-[15px] leading-snug whitespace-pre-line ${longDescription(service.description) ? "line-clamp-4" : ""}`}
+                        >
                           {service.description}
                         </span>
                       ) : null}
@@ -600,5 +628,43 @@ function Empty({ variant }: { variant: ServicesVariant }) {
         </Note>
       </div>
     </section>
+  );
+}
+
+/**
+ * A description on her shelf: a few lines first, « Lire la suite » for the
+ * rest, her line breaks kept (Higani point 35).
+ */
+function FoldedDescription({
+  text,
+  className,
+}: {
+  text: string | null;
+  className: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  if (!text) return null;
+  const long = longDescription(text);
+  return (
+    <>
+      <p
+        id={id}
+        className={`${className} whitespace-pre-line ${long && !open ? "line-clamp-5" : ""}`}
+      >
+        {text}
+      </p>
+      {long ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={() => setOpen((value) => !value)}
+          className="mt-1 min-h-11 cursor-pointer underline underline-offset-4"
+        >
+          <Note>{open ? "Réduire" : "Lire la suite"}</Note>
+        </button>
+      ) : null}
+    </>
   );
 }

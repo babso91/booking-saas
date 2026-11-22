@@ -234,6 +234,7 @@ export function PublicBooking({
                 position={position}
                 onPosition={setPosition}
                 format={format}
+                place={place}
               />
             ) : flow.step === "contact" ? (
               <ContactStep flow={flow} headingRef={heading} />

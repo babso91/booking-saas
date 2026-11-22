@@ -12,8 +12,19 @@ import {
 } from "@/features/catalog/search";
 
 import type { BookingFormat } from "../formats";
-import type { BookingFlow } from "../client/use-booking-flow";
-import { serviceFromLine, StepHeading, whatsLeft } from "./booking-parts";
+import type { BookableService, BookingFlow } from "../client/use-booking-flow";
+import {
+  serviceFromLine,
+  StepHeading,
+  useFoldedText,
+  whatsLeft,
+} from "./booking-parts";
+
+type Group = { category: { id: string; name: string } | null };
+const anchorOf = (group: Group) =>
+  `reservation-categorie-${group.category?.id ?? "autres"}`;
+const groupName = (group: Group) =>
+  group.category?.name ?? "Autres prestations";
 
 /**
  * Step 1: one of her services, as her catalogue shows them: her visible
@@ -55,6 +66,16 @@ export function ServiceStep({
         )
       : catalog.groups;
   const count = countServices(found);
+  // Higani point 33: her categories as she named them; those without one,
+  // once others have a name, under « Autres prestations » (not taken for
+  // the last category). A long catalogue gets shortcuts that stay at hand.
+  const named = catalog.groups.some((group) => group.category);
+  const jump =
+    !grouped &&
+    !searching &&
+    catalog.groups.length >= 2 &&
+    named &&
+    countServices(catalog.groups) >= 6;
   return (
     <section aria-labelledby="booking-service" className="flex flex-col gap-4">
       <div id="booking-service">
@@ -146,6 +167,30 @@ export function ServiceStep({
           ))}
         </div>
       ) : null}
+      {jump ? (
+        <nav
+          aria-label="Catégories"
+          className="sticky top-0 z-10 -my-2 bg-paper py-2"
+        >
+          <ul className="flex gap-2 overflow-x-auto [scrollbar-width:none]">
+            {catalog.groups.map((group) => (
+              <li key={anchorOf(group)} className="shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const heading = document.getElementById(anchorOf(group));
+                    heading?.scrollIntoView?.({ block: "start" });
+                    heading?.focus({ preventScroll: true });
+                  }}
+                  className="flex h-10 cursor-pointer items-center rounded-full border border-line bg-paper-raised px-4 text-[14px] font-medium whitespace-nowrap text-ink hover:border-line-strong"
+                >
+                  {groupName(group)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      ) : null}
       {services.length === 0 ? (
         <Notice tone="info" title="Aucune prestation en ligne">
           Cet établissement ne propose pas encore de prestation à réserver en
@@ -157,9 +202,13 @@ export function ServiceStep({
             key={group.category?.id ?? "none"}
             className="flex flex-col gap-3"
           >
-            {group.category ? (
-              <h3 className="pt-2 font-display text-[22px] leading-tight wrap-anywhere text-ink">
-                {group.category.name}
+            {group.category || named ? (
+              <h3
+                id={anchorOf(group)}
+                tabIndex={-1}
+                className="scroll-mt-16 pt-2 font-display text-[22px] leading-tight wrap-anywhere text-ink outline-none"
+              >
+                {groupName(group)}
               </h3>
             ) : null}
             <ul
@@ -168,38 +217,17 @@ export function ServiceStep({
                   ? "grid gap-3 sm:grid-cols-2"
                   : "flex flex-col gap-3"
               }
-              aria-label={group.category?.name ?? "Prestations"}
+              aria-label={named ? groupName(group) : "Prestations"}
             >
               {group.services.map(({ id }) => {
                 const item = services.find((entry) => entry.id === id)!;
-                const selected = item.id === service?.id;
                 return (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => flow.actions.chooseService(item.id)}
-                      aria-pressed={selected}
-                      aria-describedby={`service-${item.id}-details`}
-                      className="flex w-full min-w-0 cursor-pointer flex-col gap-1 rounded-3xl border border-line bg-paper-raised px-4 py-4 text-left transition-colors hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink aria-pressed:border-ink sm:px-5"
-                    >
-                      <span className="text-[17px] font-semibold wrap-anywhere text-ink">
-                        {item.name}
-                      </span>
-                      <span
-                        id={`service-${item.id}-details`}
-                        className="flex flex-col gap-1"
-                      >
-                        <span className="text-[14.5px] text-ink-soft">
-                          {serviceFromLine(item)}
-                        </span>
-                        {item.description ? (
-                          <span className="text-[14px] leading-snug wrap-anywhere whitespace-pre-line text-ink-muted">
-                            {item.description}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  </li>
+                  <ServiceChoice
+                    key={item.id}
+                    item={item}
+                    selected={item.id === service?.id}
+                    onChoose={() => flow.actions.chooseService(item.id)}
+                  />
                 );
               })}
             </ul>
@@ -207,5 +235,50 @@ export function ServiceStep({
         ))
       )}
     </section>
+  );
+}
+
+/**
+ * One of her services: chosen by a tap; its description a few lines first,
+ * « Lire la suite » for the rest, her line breaks kept (Higani point 35).
+ */
+function ServiceChoice({
+  item,
+  selected,
+  onChoose,
+}: {
+  item: BookableService;
+  selected: boolean;
+  onChoose: () => void;
+}) {
+  const text = useFoldedText(item.description);
+  return (
+    <li className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={onChoose}
+        aria-pressed={selected}
+        aria-describedby={`service-${item.id}-details`}
+        className="flex w-full min-w-0 cursor-pointer flex-col gap-1 rounded-3xl border border-line bg-paper-raised px-4 py-4 text-left transition-colors hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink aria-pressed:border-ink sm:px-5"
+      >
+        <span className="text-[17px] font-semibold wrap-anywhere text-ink">
+          {item.name}
+        </span>
+        <span id={`service-${item.id}-details`} className="flex flex-col gap-1">
+          <span className="text-[14.5px] text-ink-soft">
+            {serviceFromLine(item)}
+          </span>
+          {item.description ? (
+            <span
+              id={text.id}
+              className={`text-[14px] leading-snug wrap-anywhere whitespace-pre-line text-ink-muted ${text.folded ? "line-clamp-3" : ""}`}
+            >
+              {item.description}
+            </span>
+          ) : null}
+        </span>
+      </button>
+      {text.toggle ? <span className="px-4 sm:px-5">{text.toggle}</span> : null}
+    </li>
   );
 }

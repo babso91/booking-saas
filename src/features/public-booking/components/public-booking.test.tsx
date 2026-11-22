@@ -548,6 +548,73 @@ describe("a long catalogue: find a service", () => {
       },
     ],
   };
+  it("point 33: shortcuts to her categories, those without one named; a shortcut leads to its heading", async () => {
+    render(<PublicBooking business={business} catalog={long} />);
+    const nav = within(screen.getByRole("navigation", { name: "Catégories" }));
+    expect(nav.getAllByRole("button").map((item) => item.textContent)).toEqual([
+      "Cils & regard",
+      "Ongles",
+      "Autres prestations",
+    ]);
+    fireEvent.click(nav.getByRole("button", { name: "Ongles" }));
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { level: 3, name: "Ongles" }),
+    );
+    // Searching, the shortcuts step aside.
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Rechercher une prestation" }),
+      { target: { value: "gel" } },
+    );
+    expect(screen.queryByRole("navigation", { name: "Catégories" })).toBeNull();
+  });
+
+  it("point 33: a short catalogue has no shortcuts", () => {
+    render(
+      <PublicBooking
+        business={business}
+        catalog={{ ...long, groups: long.groups.slice(0, 1) }}
+      />,
+    );
+    expect(screen.queryByRole("navigation", { name: "Catégories" })).toBeNull();
+  });
+
+  it("point 35: a long description, three lines first, read in full on demand; her line breaks kept", () => {
+    const description =
+      "Inclus : dépose, soin et pose.\nRésultat : un regard ouvert pendant six semaines.\nÀ prévoir : venir sans maquillage.\nRetouche conseillée à trois semaines.";
+    render(
+      <PublicBooking
+        business={business}
+        catalog={{
+          currency: "EUR",
+          groups: [
+            {
+              category: null,
+              services: [item(9, "Volume russe", description)],
+            },
+          ],
+        }}
+      />,
+    );
+    const text = screen.getByText(/Inclus : dépose/);
+    expect(text.className).toContain("line-clamp-3");
+    expect(text.className).toContain("whitespace-pre-line");
+    const more = screen.getByRole("button", { name: "Lire la suite" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(more);
+    expect(text.className).not.toContain("line-clamp-3");
+    expect(
+      screen
+        .getByRole("button", { name: "Réduire" })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+
+  it("point 35: a short description has no « Lire la suite »", () => {
+    render(<PublicBooking business={business} catalog={long} />);
+    expect(screen.getByText("Courbés et teintés.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Lire la suite" })).toBeNull();
+  });
+
   const searchBox = () =>
     screen.getByRole("searchbox", { name: "Rechercher une prestation" });
   const search = (value: string) =>
@@ -1509,6 +1576,56 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
     await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
   };
 
+  it("point 55: what each answer adds, line by line, then the total, before she goes on", async () => {
+    await toOptions();
+    fireEvent.click(screen.getByRole("radio", { name: /Large/ }));
+    await screen.findByText(/1 h 05 · 44,50\s€/);
+    const box = screen.getByText("Votre prestation").parentElement!;
+    const rows = within(box)
+      .getAllByRole("term")
+      .map((term) => term.textContent);
+    expect(rows[0]).toBe("Motif au henné");
+    expect(rows).toContain("Taille du motif : Large");
+    expect(rows.at(-1)).toBe("Total");
+    expect(within(box).getByText(/^\+/)).toBeTruthy();
+  });
+
+  it("point 56: where, and her conditions on demand, before she gives her details", async () => {
+    render(
+      <PublicBooking
+        business={{
+          ...business,
+          cancellationPolicy: "Gratuite jusqu’à 24 h avant.",
+        }}
+        catalog={catalog}
+        place={{
+          address: "12 rue Mercière, 69002 Lyon",
+          area: "",
+          instructions: "",
+          phone: "",
+          email: "",
+          lateness: "Au-delà de 15 minutes, la séance est écourtée.",
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Motif au henné/ }));
+    await screen.findByRole("heading", {
+      name: "Personnalisez votre prestation",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Choisir un créneau" }));
+    await screen.findByRole("heading", { name: "Choisissez un créneau" });
+    expect(screen.getByText("12 rue Mercière, 69002 Lyon")).toBeTruthy();
+    const peek = screen.getByRole("button", {
+      name: "Conditions : annulation, retard",
+    });
+    expect(screen.queryByText("Gratuite jusqu’à 24 h avant.")).toBeNull();
+    fireEvent.click(peek);
+    expect(screen.getByText("Gratuite jusqu’à 24 h avant.")).toBeTruthy();
+    expect(
+      screen.getByText("Au-delà de 15 minutes, la séance est écourtée."),
+    ).toBeTruthy();
+  });
+
   it("her categories in her order, those without one last; a price that options can raise says « dès »", () => {
     renderCatalog();
     expect(
@@ -1516,7 +1633,13 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
     ).toBeTruthy();
     const mains = within(screen.getByRole("list", { name: "Mains" }));
     expect(mains.getByText(/dès 45 min · 30,00\s€/)).toBeTruthy();
-    const rest = within(screen.getByRole("list", { name: "Prestations" }));
+    // Point 33: once others have a name, those without one say so.
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Autres prestations" }),
+    ).toBeTruthy();
+    const rest = within(
+      screen.getByRole("list", { name: "Autres prestations" }),
+    );
     expect(rest.getByText(/1 h 15 · 65,50\s€/)).toBeTruthy();
     expect(rest.queryByText(/dès/)).toBeNull();
   });
@@ -1557,7 +1680,8 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
   it("books her answers with the quote she saw; the review and the confirmation say them", async () => {
     await toReviewWithOptions();
     expect(screen.getByText("Taille du motif")).toBeTruthy();
-    expect(screen.getByText("Large")).toBeTruthy();
+    // Point 55: what her answer adds, said with it.
+    expect(screen.getByText(/^Large \(\+/)).toBeTruthy();
     expect(screen.getByText(/^44,50\s€$/)).toBeTruthy();
     api.booking.mockImplementationOnce(() =>
       ok(
@@ -1580,7 +1704,7 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
       expectedPriceCents: 4450,
       expectedDurationMinutes: 65,
     });
-    expect(screen.getByText("Large")).toBeTruthy();
+    expect(screen.getByText(/^Large \(\+/)).toBeTruthy();
   });
 
   it("quote_changed: nothing booked, the new quote shown on the same slot before she confirms again", async () => {
