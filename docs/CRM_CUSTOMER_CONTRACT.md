@@ -137,9 +137,25 @@ Les business restent indépendants : la même adresse dans un autre business n'e
 
 - **Changement d'email.** Une cliente qui change d'email devient une nouvelle fiche (doublon).
 - **Email partagé.** Plusieurs personnes qui partagent un email (une famille) forment une seule fiche.
-- **Pas de fusion par téléphone ou par nom.** Les fiches sans email ne sont jamais rapprochées.
+- **Pas de fusion par téléphone ou par nom.** Les fiches sans email ne sont jamais rapprochées automatiquement. Elles sont proposées à la vérification (voir « Doublons possibles »).
 - **Pas de fusion ou séparation manuelle.** Ce sera une étape ultérieure.
 - **Historique approximatif.** Pour les rendez-vous antérieurs à cette migration, l'instantané reflète la fiche à la date de la migration, pas forcément le contact soumis à l'époque.
+
+## Doublons possibles (point 147)
+
+Higani ne fusionne jamais deux fiches à la place de la pro. Il lui propose les fiches qui se ressemblent, pour qu'elle vérifie. Migration `20261122230000_client_duplicates.sql`.
+
+- **Ressemblances :**
+  - même téléphone, normalisé (chiffres seuls, « +33 6… », « 0033 6… » et « +33 (0)6… » valent « 06… », 8 chiffres au moins) ;
+  - ou même nom complet, sans tenir compte de la casse, des accents, des tirets et des espaces. Un prénom seul ne suffit pas.
+
+  La même adresse e-mail ne peut pas arriver : une seule fiche par adresse et par établissement. Les fiches effacées (point 205) ne sont jamais proposées.
+
+- **Lecture :** `crm_duplicate_candidates(p_business_id)` renvoie `{ pairs, total }` : au plus 50 paires, les plus fortes d'abord (téléphone et nom, puis téléphone, puis nom), puis les plus récentes. Chaque fiche vient avec ce qui aide à les distinguer : coordonnées, date de création, visites passées, dernière visite et rendez-vous à venir.
+- **« Ce n'est pas la même personne » :** `crm_set_duplicate_dismissed(p_business_id, p_client_id, p_other_id, p_dismissed)`, idempotente et annulable. La paire n'est plus proposée, dans un sens comme dans l'autre. Le choix est gardé dans `public.client_duplicate_dismissals` (RLS : membres de l’établissement), sans donnée personnelle, et disparaît avec les fiches.
+- **Accès :** propriétaire ou admin (`forbidden` sinon). Erreurs `client_not_found` (fiche d'un autre établissement) et `invalid_input` (la même fiche deux fois).
+- **Écran :** l'annuaire affiche « N doublons possibles à vérifier » quand il y en a, et rien sinon. La page `/app/clients/doublons` montre les deux fiches côte à côte, avec un lien vers chacune.
+- **Fusion :** pas encore. Elle déplacerait des registres qu'on ne réécrit pas (fidélité, consentements), ses règles restent à décider.
 
 ## Lecture de la relation
 

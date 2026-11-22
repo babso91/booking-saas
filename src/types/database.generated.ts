@@ -212,6 +212,31 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"client_duplicate_dismissals": {
+                  Row: {
+                    "business_id": string,"client_a": string,"client_b": string,"dismissed_at": string,"dismissed_by": string | null
+                  }
+                  Insert: {
+                    "business_id": string,"client_a": string,"client_b": string,"dismissed_at"?: string,"dismissed_by"?: string | null
+                  }
+                  Update: {
+                    "business_id"?: string,"client_a"?: string,"client_b"?: string,"dismissed_at"?: string,"dismissed_by"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "client_duplicate_dismissals_client_a_business_id_fkey"
+      columns: ["client_a","business_id"]
+isOneToOne: false
+      referencedRelation: "clients"
+      referencedColumns: ["id","business_id"]
+    },{
+      foreignKeyName: "client_duplicate_dismissals_client_b_business_id_fkey"
+      columns: ["client_b","business_id"]
+isOneToOne: false
+      referencedRelation: "clients"
+      referencedColumns: ["id","business_id"]
+    }
+                  ]
                 },"client_hub_access": {
                   Row: {
                     "business_id": string,"client_id": string,"email": string,"granted_at": string,"granted_by": string | null,"revocation": string | null,"revoked_at": string | null,"revoked_by": string | null
@@ -1311,11 +1336,23 @@ isOneToOne: false
               "note_id": string,"status": string
             }[]
                            },
+"crm_duplicate_candidates":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
 "crm_list_client_notes":
 { Args: { "p_before_at"?: string,"p_before_id"?: string,"p_business_id": string,"p_client_id": string,"p_limit"?: number }; Returns: Json
                            },
 "crm_list_clients":
 { Args: { "p_after_at"?: string,"p_after_count"?: number,"p_after_id"?: string,"p_after_text"?: string,"p_as_of"?: string,"p_business_id": string,"p_filter"?: string,"p_limit"?: number,"p_query"?: string,"p_sort"?: string }; Returns: Json
+                           },
+"crm_name_key":
+{ Args: { "p_first_name": string,"p_last_name": string }; Returns: string
+                           },
+"crm_phone_key":
+{ Args: { "p_phone": string }; Returns: string
+                           },
+"crm_set_duplicate_dismissed":
+{ Args: { "p_business_id": string,"p_client_id": string,"p_dismissed": boolean,"p_other_id": string }; Returns: Json
                            },
 "crm_update_client":
 { Args: { "p_business_id": string,"p_client_id": string,"p_email"?: string,"p_expected_version": number,"p_first_name": string,"p_last_name"?: string,"p_phone"?: string }; Returns: {
