@@ -223,6 +223,13 @@ const field = (label: RegExp) =>
   screen.getByLabelText(label) as HTMLInputElement;
 const type = (label: RegExp, value: string) =>
   fireEvent.change(field(label), { target: { value } });
+/** Her name and phone, one tap away (Higani point 66). */
+const openOptional = () =>
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Ajouter mon nom ou un téléphone (facultatif)",
+    }),
+  );
 const fillContact = () => {
   type(/^Prénom/, "  Inès ");
   type(/^Email/, " Ines.Benali@Exemple.FR ");
@@ -816,6 +823,7 @@ describe("contact details", () => {
     fireEvent.click(await slotButton("09:30"));
     await screen.findByRole("heading", { name: "Vos coordonnées" });
     type(/^Email/, "ines@exemple");
+    openOptional();
     type(/^Téléphone/, "abc");
     fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
     await flush();
@@ -939,6 +947,8 @@ describe("where, and how to reach her", () => {
       screen.queryByRole("region", { name: "À savoir avant de confirmer" }),
     ).toBeNull();
     unmount();
+    // Another visit, not this booking taken back (point 67).
+    window.sessionStorage.clear();
     render(
       <PublicBooking
         business={{ ...business, cancellationPolicy: "48 h avant." }}
@@ -1214,6 +1224,7 @@ describe("an answer that never arrives", () => {
       screen.getByRole("button", { name: "Modifier mes coordonnées" }),
     );
     await screen.findByRole("heading", { name: "Vos coordonnées" });
+    openOptional();
     type(/^Téléphone/, "06 12 34 56 78");
     fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
     await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
@@ -1847,5 +1858,209 @@ describe("her catalogue, with options (CATALOG_CONTRACT.md § 8, § 10)", () => 
       await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
       expect(screen.getByText(/Inès · ines.benali@exemple.fr/)).toBeTruthy();
     });
+  });
+});
+
+// Higani point 65: where she is, and what is left.
+describe("her progress, said at each step (point 65)", () => {
+  const stepLine = () =>
+    screen.getByText(/^Étape \d sur \d/).textContent?.replace(/\s+/g, " ");
+
+  it("each step says its place and what follows; the last says so", async () => {
+    renderPage();
+    expect(stepLine()).toBe(
+      "Étape 1 sur 4 · Ensuite : le créneau, vos coordonnées, puis la vérification",
+    );
+    await chooseService();
+    expect(stepLine()).toBe(
+      "Étape 2 sur 4 · Ensuite : vos coordonnées, puis la vérification",
+    );
+    fireEvent.click(await slotButton("09:30"));
+    await screen.findByRole("heading", { name: "Vos coordonnées" });
+    expect(stepLine()).toBe("Étape 3 sur 4 · Ensuite : la vérification");
+    fillContact();
+    fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
+    await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+    expect(stepLine()).toBe("Étape 4 sur 4 · Dernière étape");
+  });
+});
+
+// Higani point 66: her first name and email are enough.
+describe("the least to type (point 66)", () => {
+  it("first name and email only; her name and phone one tap away, sent only if given", async () => {
+    renderPage();
+    await chooseService();
+    fireEvent.click(await slotButton("09:30"));
+    await screen.findByRole("heading", { name: "Vos coordonnées" });
+    expect(screen.queryByLabelText(/^Nom/)).toBeNull();
+    expect(screen.queryByLabelText(/^Téléphone/)).toBeNull();
+    const more = screen.getByRole("button", {
+      name: "Ajouter mon nom ou un téléphone (facultatif)",
+    });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    fillContact();
+    fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
+    await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+    api.booking.mockImplementationOnce(() =>
+      ok({ booking: bookingFor() }, 201),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    expect(bookingBodies()[0]).not.toHaveProperty("lastName");
+    expect(bookingBodies()[0]).not.toHaveProperty("phone");
+  });
+
+  it("opened, her name comes first, focused; given once, it stays shown", async () => {
+    renderPage();
+    await chooseService();
+    fireEvent.click(await slotButton("09:30"));
+    await screen.findByRole("heading", { name: "Vos coordonnées" });
+    openOptional();
+    await waitFor(() => expect(document.activeElement).toBe(field(/^Nom/)));
+    type(/^Nom/, "Benali");
+    fillContact();
+    fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
+    await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Modifier mes coordonnées" }),
+    );
+    await screen.findByRole("heading", { name: "Vos coordonnées" });
+    expect(field(/^Nom/).value).toBe("Benali");
+  });
+});
+
+// Higani point 67: an accident never makes her start again.
+describe("her booking in progress, taken back (point 67)", () => {
+  const DRAFT = `public-booking-draft:${business.slug}`;
+
+  it("reloaded on the last step: back there, same slot read again, nothing booked until she confirms", async () => {
+    const first = renderPage();
+    await toReview();
+    first.unmount();
+    expect(api.booking).not.toHaveBeenCalled();
+
+    renderPage();
+    expect(
+      await screen.findByText(
+        "Votre réservation reprend là où vous l’aviez laissée",
+      ),
+    ).toBeTruthy();
+    await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+    expect(screen.getByText("Inès · ines.benali@exemple.fr")).toBeTruthy();
+    expect(api.booking).not.toHaveBeenCalled();
+    api.booking.mockImplementationOnce(() =>
+      ok({ booking: bookingFor() }, 201),
+    );
+    fireEvent.click(confirmButton());
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    expect(bookingBodies()).toHaveLength(1);
+    // Booked: nothing left to take back.
+    expect(window.sessionStorage.getItem(DRAFT)).toBeNull();
+  });
+
+  it("her slot taken meanwhile: that day's slots, her details kept", async () => {
+    const first = renderPage();
+    await toReview();
+    first.unmount();
+    api.availability.mockImplementation((serviceId, date) =>
+      ok({
+        date,
+        timezone: TZ,
+        slots: slotsFor(date).slice(1),
+        quote: quoteOf(serviceId),
+      }),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: "Choisissez un créneau" });
+    fireEvent.click(await slotButton("14:00"));
+    // Her details are still valid: straight to the review.
+    await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+    expect(screen.getByText("Inès · ines.benali@exemple.fr")).toBeTruthy();
+  });
+
+  it("another service asked from her site: that one opens, only her details kept", async () => {
+    const first = renderPage();
+    await toReview();
+    first.unmount();
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        initialServiceId={SERVICE_B}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Choisissez un créneau" });
+    expect(screen.queryByText(/reprend là où/)).toBeNull();
+    await waitFor(() =>
+      expect(api.availability).toHaveBeenLastCalledWith(SERVICE_B, today),
+    );
+    fireEvent.click(await slotButton("09:30"));
+    await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+    expect(screen.getByText("Inès · ines.benali@exemple.fr")).toBeTruthy();
+  });
+
+  it("« Recommencer »: back to her services, nothing kept of that booking", async () => {
+    const first = renderPage();
+    await toReview();
+    first.unmount();
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Recommencer" }));
+    expect(
+      await screen.findByRole("heading", { name: "Choisissez une prestation" }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/reprend là où/)).toBeNull();
+    expect(window.sessionStorage.getItem(DRAFT)).toBeNull();
+  });
+
+  it("the studio's preview keeps nothing", async () => {
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        preview
+      />,
+    );
+    await chooseService();
+    fireEvent.click(await slotButton("09:30"));
+    await screen.findByRole("heading", { name: "Vos coordonnées" });
+    expect(window.sessionStorage.getItem(DRAFT)).toBeNull();
+  });
+});
+
+// Higani point 70: a slot chosen, a request on its way, a booking made.
+describe("chosen, sending, booked: never confused (point 70)", () => {
+  it("says each state in words, from the choice to the answer", async () => {
+    renderPage();
+    await chooseService();
+    fireEvent.click(await slotButton("09:30"));
+    await screen.findByRole("heading", { name: "Vos coordonnées" });
+    expect(
+      screen.getByText("Créneau choisi, pas encore réservé."),
+    ).toBeTruthy();
+    fillContact();
+    fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
+    await screen.findByRole("heading", { name: "Vérifiez et confirmez" });
+    expect(
+      screen.getByText(
+        "Ce créneau n’est pas encore réservé : il le sera quand vous confirmerez.",
+      ),
+    ).toBeTruthy();
+    const answer = deferred();
+    api.booking.mockImplementationOnce(() => answer.promise);
+    fireEvent.click(confirmButton());
+    expect(
+      await screen.findByText(
+        "Envoi de votre réservation… Restez sur cette page, la réponse arrive.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/pas encore réservé/)).toBeNull();
+    answer.resolve(
+      new Response(JSON.stringify({ data: { booking: bookingFor() } }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await screen.findByRole("heading", { name: "Rendez-vous confirmé" });
+    expect(screen.queryByText(/Envoi de votre réservation/)).toBeNull();
   });
 });

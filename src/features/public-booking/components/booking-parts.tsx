@@ -144,14 +144,37 @@ const STATUS_LABELS: Record<string, string> = {
 export const statusLabel = (status: string) => STATUS_LABELS[status] ?? status;
 
 /** A step title, focused when its step opens (keyboard and screen readers). */
+const STEP_NAMES = {
+  service: "la prestation",
+  options: "vos options",
+  slot: "le créneau",
+  contact: "vos coordonnées",
+  review: "la vérification",
+} as const;
+
+/**
+ * What is left after this step, said with its place (Higani point 65):
+ * « Ensuite : vos coordonnées, puis la vérification », « Dernière étape ».
+ */
+export function whatsLeft(after: readonly (keyof typeof STEP_NAMES)[]) {
+  const names = after.map((step) => STEP_NAMES[step]);
+  if (!names.length) return "Dernière étape";
+  return names.length === 1
+    ? `Ensuite : ${names[0]}`
+    : `Ensuite : ${names.slice(0, -1).join(", ")}, puis ${names.at(-1)}`;
+}
+
 export function StepHeading({
   step,
   total,
+  left,
   children,
   headingRef,
 }: {
   step?: number;
   total?: number;
+  /** What is left (whatsLeft). */
+  left?: string;
   children: ReactNode;
   headingRef?: Ref<HTMLHeadingElement>;
 }) {
@@ -160,6 +183,7 @@ export function StepHeading({
       {step && total ? (
         <p className="text-[13px] font-medium text-ink-muted">
           Étape {step} sur {total}
+          {left ? <span className="font-normal"> · {left}</span> : null}
         </p>
       ) : null}
       <h2

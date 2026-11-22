@@ -13,7 +13,7 @@ import {
 
 import type { BookingFormat } from "../formats";
 import type { BookingFlow } from "../client/use-booking-flow";
-import { serviceFromLine, StepHeading } from "./booking-parts";
+import { serviceFromLine, StepHeading, whatsLeft } from "./booking-parts";
 
 /**
  * Step 1: one of her services, as her catalogue shows them: her visible
@@ -61,6 +61,7 @@ export function ServiceStep({
         <StepHeading
           step={flow.stepNumber("service")}
           total={flow.stepCount}
+          left={whatsLeft(flow.stepsAfter("service"))}
           headingRef={headingRef}
         >
           {grouped && !groups.length

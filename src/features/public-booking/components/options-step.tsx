@@ -12,6 +12,7 @@ import {
   linkAction,
   QuoteLine,
   StepHeading,
+  whatsLeft,
 } from "./booking-parts";
 
 /**
@@ -35,6 +36,7 @@ export function OptionsStep({
         <StepHeading
           step={flow.stepNumber("options")}
           total={flow.stepCount}
+          left={whatsLeft(flow.stepsAfter("options"))}
           headingRef={headingRef}
         >
           Personnalisez votre prestation

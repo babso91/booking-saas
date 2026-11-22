@@ -14,6 +14,7 @@ import { Notice } from "@/components/ui/notice";
 import type { PublicCatalog } from "@/features/catalog/model";
 
 import type { PublicBusiness } from "../client/api";
+import { readPendingBooking } from "../client/pending-booking";
 import { useBookingFlow } from "../client/use-booking-flow";
 import type { BookingFormat } from "../formats";
 import { GuidedProgress } from "./guided-progress";
@@ -21,7 +22,7 @@ import { BookingConfirmation } from "./booking-confirmation";
 import { ContactStep } from "./contact-step";
 import { OptionsStep } from "./options-step";
 import { PendingNotice } from "./pending-notice";
-import type { BookingPlace } from "./booking-parts";
+import { linkAction, type BookingPlace } from "./booking-parts";
 import { ReviewStep } from "./review-step";
 import { ServiceStep } from "./service-step";
 import styles from "./booking-motion.module.css";
@@ -95,10 +96,23 @@ export function PublicBooking({
   // is aborted if the flow unmounts; a remount (React's development check,
   // a preserved subtree shown again) asks it again rather than waiting on
   // a read that will never answer.
+  //
+  // Her booking in progress in this tab (point 67) comes first when it is
+  // the one she comes back to (no other service asked): taken back where
+  // she was. Otherwise only her details are, and the asked service opens.
+  // An unconfirmed request has its own way back (PendingNotice).
   useEffect(() => {
     const id = asked.current;
-    if (!id) return;
-    flow.actions.chooseService(id);
+    const draftId = flow.draftServiceId;
+    const whole =
+      draftId !== null &&
+      (initialServiceId ?? draftId) === draftId &&
+      (preview || !readPendingBooking(business.slug));
+    if (whole) flow.actions.resume(true);
+    else {
+      flow.actions.resume(false);
+      if (id) flow.actions.chooseService(id);
+    }
     asked.current = undefined;
     return () => {
       asked.current = id;
@@ -179,6 +193,23 @@ export function PublicBooking({
             <GuidedProgress flow={flow} />
           ) : null}
           {flow.step !== "done" ? <PendingNotice flow={flow} /> : null}
+          {flow.notice === "resumed" && flow.step !== "done" ? (
+            <Notice
+              tone="info"
+              title="Votre réservation reprend là où vous l’aviez laissée"
+              action={
+                <button
+                  type="button"
+                  className={linkAction}
+                  onClick={flow.actions.startOver}
+                >
+                  Recommencer
+                </button>
+              }
+            >
+              Rien n’est réservé tant que vous n’avez pas confirmé.
+            </Notice>
+          ) : null}
           <div
             key={flow.step}
             className={

@@ -243,6 +243,9 @@ it.each([
     });
     try {
       await page.context().clearCookies();
+      // Each format is a fresh visit: a booking in progress is kept in
+      // sessionStorage (point 67) and would resume the previous format's step.
+      await page.addInitScript(() => window.sessionStorage.clear());
       if (width === 320) await page.emulateMedia({ reducedMotion: "reduce" });
       let revision = 0;
       for (const format of bookingFormats) {

@@ -23,6 +23,7 @@ import {
   placeLine,
   StepHeading,
   type BookingPlace,
+  whatsLeft,
 } from "./booking-parts";
 
 /** Step 4: everything that will be booked, then the confirmation. */
@@ -61,6 +62,7 @@ export function ReviewStep({
         <StepHeading
           step={flow.stepNumber("review")}
           total={flow.stepCount}
+          left={whatsLeft(flow.stepsAfter("review"))}
           headingRef={headingRef}
         >
           Vérifiez et confirmez
@@ -161,6 +163,21 @@ export function ReviewStep({
       ) : null}
 
       {failure && !pending ? <Failure flow={flow} code={failure.code} /> : null}
+      {/* Higani point 70: chosen, being sent, booked: never confused. */}
+      {preview ? null : (
+        <p
+          role="status"
+          className={
+            isSending
+              ? "text-[14px] font-medium text-ink"
+              : "text-[14px] text-ink-soft"
+          }
+        >
+          {isSending
+            ? "Envoi de votre réservation… Restez sur cette page, la réponse arrive."
+            : "Ce créneau n’est pas encore réservé : il le sera quand vous confirmerez."}
+        </p>
+      )}
 
       <Button
         size="lg"

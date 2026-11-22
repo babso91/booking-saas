@@ -53,6 +53,7 @@ const VARIANTS = [
 
 async function publishedSiteWithOptions(
   universe: "mila" | "alma" | "nail-lab",
+  bookingFormat?: "calendar" | "chronological" | "guided",
 ) {
   const pro = await professionalWithVisit("Nour", "Lou");
   const actor = pro.browser.member!.userId;
@@ -131,6 +132,7 @@ async function publishedSiteWithOptions(
       actor,
       JSON.stringify({
         ...config,
+        ...(bookingFormat ? { bookingFormat } : {}),
         brand: { ...config.brand, name: "Studio Lumière" },
       }),
     ],
@@ -329,3 +331,120 @@ describe.each(VARIANTS)(
     });
   },
 );
+
+describe("her booking taken back (points 67, 70)", () => {
+  it("says the slot is not booked yet, then resumes at the review after a reload", async () => {
+    const pro = await publishedSiteWithOptions("mila");
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 390,
+      height: 860,
+      phone: true,
+    });
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await behindIngress(page.context(), "203.0.113.34");
+    const open = async () => {
+      await page
+        .locator("[data-header-action]")
+        .getByRole("button", { name: "Réserver" })
+        .click();
+      return page.getByRole("dialog", { name: "Réserver chez Studio Lumière" });
+    };
+
+    await page.goto(`${APP}/b/${pro.slug}`);
+    await page.getByText("Studio Lumière").first().waitFor();
+    const sheet = await open();
+    await sheet.getByRole("button", { name: /Rehaussement de cils/ }).click();
+    await sheet
+      .getByRole("heading", { name: "Personnalisez votre prestation" })
+      .waitFor();
+    await sheet.getByRole("button", { name: "Choisir un créneau" }).click();
+    await sheet
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+    const tomorrow = addDays(businessToday("Europe/Paris"), 1);
+    await sheet
+      .getByRole("button", { name: new RegExp(`, ${dayLabel(tomorrow)}$`) })
+      .click();
+    await sheet
+      .getByRole("list", { name: `Créneaux du ${dayLabel(tomorrow)}` })
+      .getByRole("button")
+      .first()
+      .click();
+
+    await sheet.getByRole("heading", { name: "Vos coordonnées" }).waitFor();
+    await sheet.getByText("Créneau choisi, pas encore réservé.").waitFor();
+    expect(await sheet.getByLabel(/^Téléphone/).isVisible()).toBe(false);
+    await sheet.getByLabel(/^Prénom/).fill("Inès");
+    await sheet.getByLabel(/^Email/).fill(`ines-${pro.slug}@client.test.local`);
+    await sheet.getByRole("button", { name: "Continuer" }).click();
+    await sheet
+      .getByRole("heading", { name: "Vérifiez et confirmez" })
+      .waitFor();
+    // Her service has options: service, options, slot, details, review.
+    await sheet.getByText("Étape 5 sur 5 · Dernière étape").waitFor();
+    await sheet
+      .getByText(/Ce créneau n’est pas encore réservé/)
+      .first()
+      .waitFor();
+
+    // Back to her site after a reload: the booking resumes, nothing is sent.
+    await page.reload();
+    await page.getByText("Studio Lumière").first().waitFor();
+    const resumed = await open();
+    await resumed
+      .getByRole("heading", { name: "Vérifiez et confirmez" })
+      .waitFor();
+    await resumed.getByText(/reprend là où/).waitFor();
+    await resumed.getByText("Inès").first().waitFor();
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "resumed review");
+    await capture(page, "p67-resumed-390");
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  // Her notice sits on a fill her soft colour was not measured against:
+  // in her own booking (themed), it must still read (axe found 4.35 and
+  // 3.64 here before the fix).
+  it("the notice reads well in her universe's own booking (alma, calendar, 320 px)", async () => {
+    const pro = await publishedSiteWithOptions("alma", "calendar");
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 320,
+      height: 700,
+      phone: true,
+    });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const open = async () => {
+      await page
+        .locator("[data-header-action]")
+        .getByRole("button", { name: "Réserver" })
+        .click();
+      return page.getByRole("dialog", { name: "Réserver chez Studio Lumière" });
+    };
+    await page.goto(`${APP}/b/${pro.slug}`);
+    await page.getByText("Studio Lumière").first().waitFor();
+    // Her only service opens by itself in the calendar format.
+    const sheet = await open();
+    await sheet
+      .getByRole("heading", { name: "Personnalisez votre prestation" })
+      .waitFor();
+
+    await page.reload();
+    await page.getByText("Studio Lumière").first().waitFor();
+    const resumed = await open();
+    await resumed
+      .getByRole("heading", { name: "Personnalisez votre prestation" })
+      .waitFor();
+    await resumed.getByText(/reprend là où/).waitFor();
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "alma resumed notice");
+    await capture(page, "p67-resumed-alma-320");
+    expect(errors).toEqual([]);
+  });
+});

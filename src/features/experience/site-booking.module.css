@@ -17,3 +17,10 @@
 .universe :global(button[data-state]) {
   border-radius: var(--s-control);
 }
+/* Her notes (a booking taken back, a read that failed) sit on a light fill
+   her soft colour was never measured against: in her ink there (axe, alma
+   at 320 px: 4.35 and 3.64 before; Higani point 67). */
+.universe :global(.bg-sand\/70),
+.universe :global(.bg-sand\/80) {
+  color: var(--ink);
+}

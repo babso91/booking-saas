@@ -14,6 +14,7 @@ import {
   QuoteLine,
   StepHeading,
   TimeZoneNote,
+  whatsLeft,
 } from "./booking-parts";
 import { AvailabilityCalendar } from "./availability-calendar";
 import { NextOpeningNote } from "./next-opening";
@@ -86,6 +87,7 @@ export function SlotStep({
         <StepHeading
           step={flow.stepNumber("slot")}
           total={flow.stepCount}
+          left={whatsLeft(flow.stepsAfter("slot"))}
           headingRef={headingRef}
         >
           Choisissez un créneau
