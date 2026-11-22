@@ -195,6 +195,12 @@ type OptionChoice = { id; label; priceDeltaCents; durationDeltaMinutes };
   - Ne figurent que les catégories visibles qui ont au moins une prestation réservable, dans son ordre ; une catégorie vide ou masquée n'apparaît jamais.
   - Sans catégorie : en dernier, sans titre.
   - Catalogue vide : `groups: []`.
+  - Recherche (Higani point 37) : à partir de 8 prestations réservables (`SEARCH_FROM`), le mini-site et l'étape « Choisissez une prestation » proposent un champ.
+    - Le filtre s'applique dans le navigateur, sur ce `catalog` déjà reçu (`src/features/catalog/search.ts`). Rien n'est relu, aucune route n'est ajoutée.
+    - Une prestation est trouvée par son nom, sa catégorie, un mot de sa description ou de ses questions et réponses d'options.
+    - Chaque mot tapé doit commencer un de ses mots, sans tenir compte des majuscules ni des accents : « cils » ne trouve pas « sourcils ».
+    - L'ordre et les groupes restent les siens.
+  - Comparaison (point 36) : dans la liste « Prix TTC » du mini-site, plusieurs prestations peuvent rester ouvertes ensemble. Ailleurs, description, prix et durée sont déjà visibles dans la liste.
 
 - **`GET /api/public/businesses/[slug]/availability?serviceId=…&date=YYYY-MM-DD&optionChoiceIds=a,b`** renvoie `{ date, timezone, slots, quote }`.
   - Les créneaux sont calculés pour la durée totale.
