@@ -24,6 +24,7 @@ import { formatPrice } from "../client/money";
 import { timeWithOccurrence } from "../client/occurrence";
 import type { Zone } from "../client/zone";
 import { AgendaError, TextAction } from "./agenda-error";
+import { AppointmentHistory } from "./appointment-history";
 import { StatusBadge } from "./status-badge";
 
 type Transition = "completed" | "no_show" | "confirmed" | "cancelled";
@@ -251,6 +252,11 @@ export function AppointmentDetails({
           </Button>
         ) : null}
       </div>
+
+      <AppointmentHistory
+        key={appointment.version}
+        appointmentId={appointment.id}
+      />
 
       <ConfirmDialog
         open={confirming !== null}
