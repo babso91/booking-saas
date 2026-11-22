@@ -1,6 +1,6 @@
 "use client";
 
-import { type Ref } from "react";
+import { useRef, type Ref } from "react";
 
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 
 import { dayLabel, dayParts, wallTime } from "../client/business-time";
 import type { BookingFlow } from "../client/use-booking-flow";
+import type { BookingFormat } from "../formats";
 import {
   linkAction,
   QuoteLine,
@@ -31,17 +32,19 @@ export function SlotStep({
   headingRef,
   position,
   onPosition,
-  chronological,
+  format,
 }: {
   flow: BookingFlow;
   position: CalendarPosition;
   onPosition: (next: CalendarPosition) => void;
-  chronological: boolean;
+  format: BookingFormat;
   headingRef: Ref<HTMLHeadingElement>;
 }) {
   const { service, days, date, slots, slot, notice, business } = flow;
   const index = Math.max(0, days.indexOf(date));
   const { view, anchor } = position;
+  const daySlots = useRef<HTMLDivElement>(null);
+  const inlineMonth = view === "month" && format !== "calendar";
   const clampDate = (day: string) =>
     day < days[0]! ? days[0]! : day > days.at(-1)! ? days.at(-1)! : day;
   const page = Math.floor(Math.max(0, days.indexOf(clampDate(anchor))) / WEEK);
@@ -58,6 +61,17 @@ export function SlotStep({
   function chooseDate(day: string) {
     flow.actions.chooseDate(day);
     onPosition({ ...position, anchor: day });
+  }
+
+  function selectMonthDay(day: string) {
+    if (format === "calendar") {
+      goToView("day", day, true);
+      return;
+    }
+    chooseDate(day);
+    requestAnimationFrame(() => {
+      daySlots.current?.scrollIntoView?.({ block: "start" });
+    });
   }
 
   const pages = Math.ceil(days.length / WEEK);
@@ -170,8 +184,8 @@ export function SlotStep({
           anchor={anchor}
           onAnchor={(next) => goToView(view, next)}
           flow={flow}
-          chronological={chronological}
-          onSelectDate={(day) => goToView("day", day, true)}
+          chronological={format === "chronological"}
+          onSelectDate={selectMonthDay}
         />
       ) : (
         <fieldset className="flex min-w-0 flex-col gap-3">
@@ -245,8 +259,9 @@ export function SlotStep({
           Sélectionnez à nouveau l’heure pour réessayer.
         </Notice>
       ) : null}
-      {view === "day" ? (
-        <div className="flex min-h-36 flex-col gap-3">
+      {view === "day" ||
+      (inlineMonth && anchor.slice(0, 7) === date.slice(0, 7)) ? (
+        <div ref={daySlots} className="flex min-h-36 flex-col gap-3">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <h3 className="text-[15px] font-medium text-ink first-letter:uppercase">
               {dayLabel(date)}

@@ -195,7 +195,7 @@ export function PublicBooking({
                 headingRef={heading}
                 position={position}
                 onPosition={setPosition}
-                chronological={format === "chronological"}
+                format={format}
               />
             ) : flow.step === "contact" ? (
               <ContactStep flow={flow} headingRef={heading} />
