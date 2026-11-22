@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { sampleSite } from "@/features/experience/fixtures/sample-sites";
+import { fromLabel, nextLabel } from "@/features/experience/next-slot";
 
 import { capture } from "./support/capture";
 import { expectAccessible, noSideScroll, signedInPage } from "./support/ecrin";
@@ -370,6 +371,96 @@ describe("her long catalogue", () => {
     await expectAccessible(page, "booking long catalogue");
     await sheet.getByRole("button", { name: /Brow lift/ }).click();
     await sheet
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+});
+
+// Higani point 2: her next availability on her site, read from her real
+// schedule by get_public_next_slots (Cloud, #127); the booking opens on
+// that day.
+describe("her next availability", () => {
+  it("phone 390: said on her service and in the booking bar; the booking opens on that day", async () => {
+    const pro = await professionalWithVisit("Mila", "Lou");
+    const actor = pro.browser.member!.userId;
+    const { rows } = await db.query<{ slug: string }>(
+      "select slug from public.businesses where id = $1",
+      [pro.businessId],
+    );
+    const slug = rows[0]!.slug;
+    await db.query("delete from public.business_hours where business_id = $1", [
+      pro.businessId,
+    ]);
+    for (const weekday of [1, 2, 3, 4, 5, 6]) {
+      await db.query(
+        `insert into public.business_hours (business_id, weekday, starts_at, ends_at)
+         values ($1, $2, '09:00', '19:00')`,
+        [pro.businessId, weekday],
+      );
+    }
+    const revision = await saveDraft(
+      pro.businessId,
+      actor,
+      0,
+      "Studio Lumière",
+      "mila",
+    );
+    await db.query("select * from public.publish_site($1, $2, $3)", [
+      pro.businessId,
+      actor,
+      revision,
+    ]);
+    // What her schedule really offers next, and her today (Europe/Paris).
+    const { rows: next } = await db.query<{ local: string; today: string }>(
+      `select local_starts_at as local,
+              (now() at time zone 'Europe/Paris')::date::text as today
+         from public.get_public_next_slots($1)
+        where local_starts_at is not null
+        order by starts_at
+        limit 1`,
+      [slug],
+    );
+    const { local, today } = next[0]!;
+
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 390,
+      height: 844,
+      phone: true,
+    });
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`${APP}/b/${slug}`);
+    await page.getByText("Studio Lumière").first().waitFor();
+
+    // Her booking bar: her next availability, whatever the service.
+    await page.getByText(fromLabel(local, today)).waitFor();
+    // Her service, once open: its own next slot.
+    const scene = page.locator("[data-booking-scene]");
+    await scene.getByRole("button", { name: /Rehaussement de cils/ }).click();
+    await scene
+      .getByText(`Prochaine dispo · ${nextLabel(local, today)}`)
+      .waitFor();
+    await expectAccessible(page, "mini-site next availability");
+    await capture(page, "mini-site next availability 390");
+
+    // Booked from there: the slots of that day are the ones read.
+    const day = local.slice(0, 10);
+    const read = page.waitForRequest(
+      (request) =>
+        request.url().includes("/availability") &&
+        new URL(request.url()).searchParams.get("date") === day,
+    );
+    await scene.getByRole("button", { name: /Réserver ce soin/ }).click();
+    await read;
+    await page
+      .getByRole("dialog", { name: "Réserver chez Studio Lumière" })
       .getByRole("heading", { name: "Choisissez un créneau" })
       .waitFor();
 

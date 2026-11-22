@@ -25,12 +25,15 @@ import { SitePortal, useModal } from "./engine/modal";
 export function SiteBooking({
   booking,
   initialServiceId,
+  initialDate,
   previewSlug,
   onClose,
 }: {
   /** null: a design preview, where no booking is ever taken. */
   booking: { business: PublicBusiness; catalog: PublicCatalog } | null;
   initialServiceId?: string;
+  /** The day of that service's next slot, when her site showed one. */
+  initialDate?: string;
   previewSlug?: string;
   onClose: () => void;
 }) {
@@ -198,6 +201,7 @@ export function SiteBooking({
                 backRef={backRef}
                 embedded
                 initialServiceId={initialServiceId}
+                initialDate={initialDate}
               />
             ) : previewSlug ? (
               loaded ? (

@@ -166,6 +166,12 @@ Le parcours `/b/[slug]` utilise ce contrat tel quel, sans aucun changement backe
   - affichés avec `localStartsAt` ;
   - les jours vont d'aujourd'hui (date civile du business) jusqu'à `maximumBookingAdvanceDays` ;
   - une lecture qui n'est plus la dernière (autre jour ou autre prestation choisis entre-temps) est abandonnée.
+- **Prochaine disponibilité** (Higani point 2, `get_public_next_slots` de Cloud) :
+  - lue une fois avec la page d'un site publié ;
+  - sur le site : « Prochaine dispo · Demain à 09:00 » sur chaque prestation qui en a une, et « Dès demain à 09:00 » sur la barre ou la pastille Réserver (la plus proche, toutes prestations confondues) ;
+  - c'est une indication : réserver depuis une prestation ouvre la réservation sur **ce jour** (`initialDate`, gardé seulement entre aujourd'hui et l'horizon), dont les créneaux sont relus ;
+  - lecture en échec ou aucun créneau : rien n'est affiché, la page reste entière ;
+  - l'aperçu du Studio ne l'affiche pas (pas de lecture faite côté Studio).
 - **Fuseau :** les heures sont toujours celles de l'établissement. Si l'appareil est réglé sur un autre fuseau, l'écran le précise.
 - **`requestId` :**
   - un par contenu (prestation, créneau, coordonnées) ;

@@ -282,6 +282,45 @@ describe("from her mini-site", () => {
     ).toBe(true);
   });
 
+  // Higani point 2: her site said « Prochaine dispo · jeu. 26 nov. »; the
+  // booking opens on that day, not on today.
+  it("a service tapped with its next slot opens on that day", async () => {
+    const day = addDays(today, 3);
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        embedded
+        initialServiceId={SERVICE_B}
+        initialDate={day}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Choisissez un créneau" });
+    await waitFor(() =>
+      expect(api.availability).toHaveBeenCalledWith(SERVICE_B, day),
+    );
+    expect(api.availability).not.toHaveBeenCalledWith(SERVICE_B, today);
+  });
+
+  it.each([
+    ["in the past", -1],
+    ["past her booking horizon", business.maximumBookingAdvanceDays + 1],
+  ])("a day %s is not kept: today instead", async (_, offset) => {
+    render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        embedded
+        initialServiceId={SERVICE_B}
+        initialDate={addDays(today, offset)}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Choisissez un créneau" });
+    await waitFor(() =>
+      expect(api.availability).toHaveBeenCalledWith(SERVICE_B, today),
+    );
+  });
+
   it("a service tapped there opens on its required options, never straight on slots", async () => {
     const catalog = catalogOf(services);
     catalog.groups[0]!.services[0]!.options = [
