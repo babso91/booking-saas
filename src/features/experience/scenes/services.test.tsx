@@ -9,6 +9,7 @@ import type { ServicesVariant } from "../engine/config";
 import { EngineProvider } from "../engine/engine";
 import { renderConfigOf } from "../engine/from-site";
 import { sampleCatalog, sampleSite } from "../fixtures/sample-sites";
+import type { NextSlots } from "../next-slot";
 import { Services } from "./services";
 
 // Her services on her site, in the three compositions: two close services
@@ -52,7 +53,11 @@ const long: PublicCatalog = {
   ],
 };
 
-function renderScene(variant: ServicesVariant, catalog = long) {
+function renderScene(
+  variant: ServicesVariant,
+  catalog = long,
+  extra: { next?: NextSlots; today?: string } = {},
+) {
   const book = vi.fn();
   render(
     <EngineProvider
@@ -61,6 +66,7 @@ function renderScene(variant: ServicesVariant, catalog = long) {
         photos: () => "",
         catalog: showcaseOf(catalog),
         book,
+        ...extra,
       }}
     >
       <Services variant={variant} index={3} />
@@ -152,3 +158,34 @@ it("shelf: a found service is booked as itself", () => {
   fireEvent.click(within(card as HTMLElement).getByRole("button"));
   expect(book).toHaveBeenCalledWith(expect.objectContaining({ id: "s4" }));
 });
+
+// Higani point 2: her next slot, by service, read with her page.
+describe.each(["index", "shelf", "tiles"] as const)(
+  "her next slot by service — %s",
+  (variant) => {
+    const next: NextSlots = {
+      s2: {
+        startsAt: "2026-11-23T09:00:00.000Z",
+        endsAt: "2026-11-23T11:00:00.000Z",
+        localStartsAt: "2026-11-23T10:00",
+        localEndsAt: "2026-11-23T12:00",
+      },
+    };
+
+    it("said for the service that has one, by her calendar; never invented", () => {
+      renderScene(variant, long, { next, today: "2026-11-22" });
+      // The price index says it once the service is open.
+      if (variant === "index")
+        fireEvent.click(screen.getByRole("button", { name: /Volume mixte/ }));
+      expect(screen.getByText("Prochaine dispo · Demain à 10:00")).toBeTruthy();
+      expect(screen.getAllByText(/Prochaine dispo/)).toHaveLength(1);
+    });
+
+    it("nothing said without a read (her studio, a failed read)", () => {
+      renderScene(variant, long);
+      if (variant === "index")
+        fireEvent.click(screen.getByRole("button", { name: /Volume mixte/ }));
+      expect(screen.queryByText(/Prochaine dispo/)).toBeNull();
+    });
+  },
+);

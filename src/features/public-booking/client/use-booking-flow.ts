@@ -165,9 +165,15 @@ export function useBookingFlow({
   business,
   catalog: initialCatalog,
   preview = false,
+  initialDate,
 }: {
   business: PublicBusiness;
   preview?: boolean;
+  /**
+   * The day to open on (her next slot, shown on her site): kept only
+   * between today and her booking horizon, otherwise today.
+   */
+  initialDate?: string;
   /** As get_public_catalog projects it: the only source of what is offered. */
   catalog: PublicCatalog;
 }) {
@@ -182,7 +188,13 @@ export function useBookingFlow({
   const [today] = useState(
     () => business.today ?? businessToday(business.timezone),
   );
-  const [date, setDate] = useState(today);
+  const [date, setDate] = useState(() =>
+    initialDate &&
+    initialDate >= today &&
+    initialDate <= addDays(today, business.maximumBookingAdvanceDays)
+      ? initialDate
+      : today,
+  );
   const [slots, setSlots] = useState<SlotsState>({ status: "idle" });
   const [slot, setSlot] = useState<Slot | null>(null);
   /** The quote shown with the chosen slot: what she agrees to. */

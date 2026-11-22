@@ -13,9 +13,11 @@ import {
   type RefObject,
 } from "react";
 
+import type { NextSlotDto } from "@/features/availability/data/slots";
 import { bookingLabel } from "@/features/sites/presentation";
 import type { PublicCatalog } from "@/features/catalog/model";
 import type { PublicBusiness } from "@/features/public-booking/client/api";
+import { wallDate } from "@/features/public-booking/client/business-time";
 
 import type { ShowcaseGroup } from "./catalog/model";
 import type { Section, SiteConfig } from "./engine/config";
@@ -36,6 +38,7 @@ import {
   inkOn,
   motions,
 } from "./engine/tokens";
+import { earliestOf, fromLabel, nextSlotsOf } from "./next-slot";
 import { practicalItems, type UsualHours } from "./practical";
 import { Intro } from "./scenes/intro";
 import { PracticalInfo } from "./scenes/practical-info";
@@ -65,6 +68,7 @@ export function MiniSite({
   edit,
   hours = null,
   reviews,
+  nextSlots = null,
 }: {
   reviews?: ReactNode;
   config: SiteConfig;
@@ -89,8 +93,14 @@ export function MiniSite({
   fontClasses: string;
   /** Her usual weekly hours (get_public_business_hours), for her infos. */
   hours?: UsualHours[] | null;
+  /** Her next slot by service (get_public_next_slots), read with the page. */
+  nextSlots?: NextSlotDto[] | null;
 }) {
-  const [booking, setBooking] = useState<{ serviceId?: string } | null>(null);
+  const [booking, setBooking] = useState<{
+    serviceId?: string;
+    date?: string;
+  } | null>(null);
+  const next = nextSlotsOf(nextSlots);
   useImperativeHandle(openBookingPreviewRef, () => () => setBooking({}), []);
   const siteRoot = useRef<HTMLDivElement>(null);
   const armed = useRevealArming(siteRoot);
@@ -135,8 +145,20 @@ export function MiniSite({
               photoSource ??
               ((asset, width) => `${photoBase}/${asset}/${width}`),
             edit,
-            book: (service) =>
-              setBooking(service ? { serviceId: service.id } : {}),
+            book: (service) => {
+              // A service with a next slot opens on that day.
+              const slot = service ? next[service.id] : undefined;
+              setBooking(
+                service
+                  ? {
+                      serviceId: service.id,
+                      date: slot ? wallDate(slot.localStartsAt) : undefined,
+                    }
+                  : {},
+              );
+            },
+            next,
+            today: bookable?.business.today,
           }}
         >
           <Header
@@ -211,6 +233,7 @@ export function MiniSite({
                 booking={bookable}
                 previewSlug={previewSlug}
                 initialServiceId={booking.serviceId}
+                initialDate={booking.date}
                 onClose={() => setBooking(null)}
               />
             ) : null}
@@ -364,8 +387,11 @@ function Footer() {
 
 /** Always one tap from booking, as a bar or a pill (mobile first). */
 function QuickBook() {
-  const { config, catalog, book, motion: language } = useEngine();
+  const { config, catalog, book, next, today, motion: language } = useEngine();
   const count = catalog.reduce((sum, group) => sum + group.services.length, 0);
+  // Her next availability, whatever the service (Higani point 2).
+  const first = next ? earliestOf(next) : null;
+  const soon = first && today ? fromLabel(first.localStartsAt, today) : null;
   // Her colour, or the universe's: the accent bar, the white pill.
   const cta = ctaColors(
     config.tokens,
@@ -431,7 +457,7 @@ function QuickBook() {
             {bookingLabel(config.presentation)}
           </Detail>
           <Detail className="shrink-0">
-            {count > 1 ? `${count} soins →` : "1 soin →"}
+            {soon ? `${soon} →` : count > 1 ? `${count} soins →` : "1 soin →"}
           </Detail>
         </button>
       ) : (
@@ -441,7 +467,12 @@ function QuickBook() {
           className="pointer-events-auto flex min-h-14 max-w-[calc(100%-2rem)] cursor-pointer items-center gap-3 [overflow-wrap:anywhere] rounded-full px-7 text-[16px] font-semibold shadow-[0_18px_40px_-14px_rgba(0,0,0,.55)]"
           style={{ background: cta.fill, color: cta.text, boxShadow: outline }}
         >
-          {bookingLabel(config.presentation)}
+          <span className="flex flex-col items-start leading-tight">
+            {bookingLabel(config.presentation)}
+            {soon ? (
+              <span className="text-[12px] font-normal opacity-80">{soon}</span>
+            ) : null}
+          </span>
           <span aria-hidden="true">→</span>
         </button>
       )}

@@ -14,6 +14,9 @@ vi.mock("@/features/catalog/data/catalog", () => catalog);
 vi.mock("@/features/reviews/data", () => ({
   publicReviews: async () => ({ average: null, count: 0, reviews: [] }),
 }));
+vi.mock("@/features/availability/data/slots", () => ({
+  getNextSlots: vi.fn().mockResolvedValue([]),
+}));
 // next/font runs at build time only.
 vi.mock("@/features/experience/fonts", () => ({ siteFontClasses: "fonts" }));
 vi.mock("@/lib/supabase/public", () => ({

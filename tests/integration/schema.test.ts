@@ -103,6 +103,10 @@ describe("migrated schema", () => {
       "get_public_business_hours",
       "get_public_business_reviews",
       "get_public_catalog",
+      // The next bookable slot of each service, for the mini-site's « next
+      // availability »: service ids and public slot times only
+      // (public_next_slots).
+      "get_public_next_slots",
       "get_public_services",
       // The published version of a mini-site (site_publishing migration).
       "get_public_site",
