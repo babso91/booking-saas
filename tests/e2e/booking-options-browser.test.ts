@@ -162,7 +162,8 @@ describe.each(VARIANTS)(
       await page
         .getByRole("heading", { name: "Vérifiez et confirmez" })
         .waitFor();
-      await page.getByText("Volume", { exact: true }).waitFor();
+      // Point 55: her answer is followed by what it adds.
+      await page.getByText(/^Volume \(\+15,00\s€ · \+30 min\)$/).waitFor();
       await page.getByText(/^85,00\s€$/).waitFor();
       await check("review");
 
@@ -213,7 +214,7 @@ describe.each(VARIANTS)(
       await main
         .getByRole("heading", { name: "Rendez-vous confirmé" })
         .waitFor();
-      await main.getByText("Volume", { exact: true }).waitFor();
+      await main.getByText(/^Volume \(\+15,00\s€ · \+30 min\)$/).waitFor();
       await main.getByText(/^85,00\s€$/).waitFor();
       await check("confirmed");
 

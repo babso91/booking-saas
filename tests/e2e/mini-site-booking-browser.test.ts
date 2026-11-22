@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import type { Practical } from "@/features/experience/engine/config";
 import { sampleSite } from "@/features/experience/fixtures/sample-sites";
+import { emptyPractical } from "@/features/experience/practical";
 import {
   addDays,
   businessToday,
@@ -54,6 +56,7 @@ const VARIANTS = [
 async function publishedSiteWithOptions(
   universe: "mila" | "alma" | "nail-lab",
   bookingFormat?: "calendar" | "chronological" | "guided",
+  practical?: Partial<Practical>,
 ) {
   const pro = await professionalWithVisit("Nour", "Lou");
   const actor = pro.browser.member!.userId;
@@ -133,6 +136,9 @@ async function publishedSiteWithOptions(
       JSON.stringify({
         ...config,
         ...(bookingFormat ? { bookingFormat } : {}),
+        ...(practical
+          ? { practical: { ...emptyPractical, ...practical } }
+          : {}),
         brand: { ...config.brand, name: "Studio Lumière" },
       }),
     ],
@@ -225,7 +231,8 @@ describe.each(VARIANTS)(
       await sheet
         .getByRole("heading", { name: "Vérifiez et confirmez" })
         .waitFor();
-      await sheet.getByText("Volume", { exact: true }).waitFor();
+      // Point 55: her answer is followed by what it adds.
+      await sheet.getByText(/^Volume \(\+15,00\s€ · \+30 min\)$/).waitFor();
       await sheet.getByText(/^85,00\s€$/).waitFor();
       await check("review");
 
@@ -446,5 +453,156 @@ describe("her booking taken back (points 67, 70)", () => {
     await expectAccessible(page, "alma resumed notice");
     await capture(page, "p67-resumed-alma-320");
     expect(errors).toEqual([]);
+  });
+});
+
+describe("her catalogue read clearly (points 33, 35, 55, 56)", () => {
+  it("categories, a long description folded, options costed, place and conditions, at 390", async () => {
+    const address = "12 rue Mercière, 69002 Lyon";
+    const policy = "Annulation gratuite jusqu’à 24 h avant le rendez-vous.";
+    const pro = await publishedSiteWithOptions("mila", undefined, {
+      address,
+      lateness:
+        "Au-delà de 15 minutes de retard, la prestation est raccourcie.",
+    });
+    await db.query(
+      "update public.businesses set cancellation_policy = $2 where id = $1",
+      [pro.businessId, policy],
+    );
+    const categories: Record<string, string> = {};
+    for (const name of ["Cils", "Sourcils"]) {
+      const { rows } = await db.query<{ id: string }>(
+        `insert into public.service_categories (business_id, name)
+         values ($1, $2) returning id`,
+        [pro.businessId, name],
+      );
+      categories[name] = rows[0]!.id;
+    }
+    // With the seed's uncategorised "Rehaussement de cils" (options): seven.
+    const longDescription = [
+      "Une pose pensée pour votre regard, réalisée cil à cil avec des fibres légères.",
+      "",
+      "Comptez un temps d’échange avant la pose pour choisir la courbe et la longueur.",
+      "Évitez l’eau chaude et le maquillage des yeux dans les 24 heures qui suivent.",
+      "Un rappel est conseillé après trois semaines.",
+    ].join("\n");
+    for (const [order, name, description, category] of [
+      [1, "Volume russe", longDescription, "Cils"],
+      [2, "Volume mixte", "Entre naturel et dense.", "Cils"],
+      [3, "Brow lift", "Tenue 6 à 8 semaines.", "Sourcils"],
+      [4, "Teinture des sourcils", null, "Sourcils"],
+      [5, "Soin hydratant", null, null],
+      [6, "Soin anti-âge", null, null],
+    ] as const) {
+      await db.query(
+        `insert into public.services
+           (business_id, name, description, duration_minutes, price_cents,
+            display_order, category_id)
+         values ($1, $2, $3, 60, 5000, $4, $5)`,
+        [
+          pro.businessId,
+          name,
+          description,
+          order,
+          category ? categories[category]! : null,
+        ],
+      );
+    }
+
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 390,
+      height: 860,
+      phone: true,
+    });
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await behindIngress(page.context(), "203.0.113.35");
+    await page.goto(`${APP}/b/${pro.slug}`);
+    await page.getByText("Studio Lumière").first().waitFor();
+
+    // Point 33, on her site: shortcuts, and the group without a category.
+    const scene = page.locator("[data-booking-scene]");
+    await scene.getByText("Soin anti-âge").waitFor();
+    const nav = page.getByRole("navigation", { name: "Catégories" });
+    await nav.waitFor();
+    expect(
+      await nav
+        .getByRole("link")
+        .allTextContents()
+        .then((names) => names.map((name) => name.trim())),
+    ).toEqual(["Cils", "Sourcils", "Autres prestations"]);
+    await page
+      .getByRole("heading", { name: "Autres prestations" })
+      .first()
+      .waitFor();
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "p33 site categories");
+    await capture(page, "p33-categories-390");
+
+    // The booking: sticky shortcuts that bring her to a category's heading.
+    await page
+      .locator("[data-header-action]")
+      .getByRole("button", { name: "Réserver" })
+      .click();
+    const sheet = page.getByRole("dialog", {
+      name: "Réserver chez Studio Lumière",
+    });
+    await sheet
+      .getByRole("heading", { name: "Choisissez une prestation" })
+      .waitFor();
+    const jump = sheet.getByRole("navigation", { name: "Catégories" });
+    await jump.waitFor();
+    await jump.getByRole("button", { name: "Sourcils" }).click();
+    const focused = await page.evaluate(() => ({
+      tag: document.activeElement?.tagName,
+      text: document.activeElement?.textContent,
+    }));
+    expect(focused).toEqual({ tag: "H3", text: "Sourcils" });
+
+    // Point 35: the long description folded, her line breaks kept.
+    const more = sheet.getByRole("button", { name: "Lire la suite" });
+    await more.waitFor();
+    expect(await more.count()).toBe(1);
+    await more.click();
+    await sheet.getByRole("button", { name: "Réduire" }).waitFor();
+    expect(
+      await sheet
+        .getByText(/Évitez l’eau chaude/)
+        .evaluate((element) => getComputedStyle(element).whiteSpace),
+    ).toMatch(/pre/);
+
+    // Point 55: the service with its options, each cost said, the total.
+    await sheet.getByRole("button", { name: /Rehaussement de cils/ }).click();
+    await sheet
+      .getByRole("heading", { name: "Personnalisez votre prestation" })
+      .waitFor();
+    await sheet.getByRole("radio", { name: /Volume/ }).check();
+    const box = sheet.locator("dl").filter({ hasText: "Total" });
+    await box.getByText("Total", { exact: true }).waitFor();
+    await box.getByText("Longueur : Volume").waitFor();
+    await box.getByText(/\+15,00\s€ · \+30 min/).waitFor();
+    expect(await noSideScroll(page)).toBe(true);
+    await capture(page, "p55-options-390");
+
+    // Point 56: where, and her conditions, before her details.
+    await sheet.getByRole("button", { name: "Choisir un créneau" }).click();
+    await sheet
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+    await sheet.getByText("Lieu :").waitFor();
+    await sheet.getByText(address).waitFor();
+    await sheet
+      .getByRole("button", { name: /^Conditions : annulation, retard/ })
+      .click();
+    await sheet.getByText(policy).waitFor();
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "p56 slot step conditions");
+    await capture(page, "p56-conditions-390");
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
   });
 });
