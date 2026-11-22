@@ -17,6 +17,7 @@ import { canonicalContact } from "../client/contact";
 import type { BookingFlow } from "../client/use-booking-flow";
 import {
   answerRows,
+  conditionRows,
   Facts,
   linkAction,
   placeLine,
@@ -51,6 +52,7 @@ export function ReviewStep({
   if (!service || !slot || !quote) return null;
   const details = canonicalContact(contact);
   const lieu = placeLine(place, business.location);
+  const conditions = conditionRows(business.cancellationPolicy, place);
   const failure = submit.status === "failed" ? submit.error : null;
 
   return (
@@ -134,13 +136,28 @@ export function ReviewStep({
         </button>
       </div>
 
-      {business.cancellationPolicy ? (
-        <div className="flex flex-col gap-1 text-[14px] text-ink-soft">
-          <p className="font-medium text-ink">Conditions d’annulation</p>
-          <p className="whitespace-pre-line wrap-anywhere">
-            {business.cancellationPolicy}
-          </p>
-        </div>
+      {conditions.length ? (
+        <section
+          aria-labelledby="booking-conditions"
+          className="flex flex-col gap-3 rounded-2xl border border-line bg-paper-raised px-4 py-4"
+        >
+          <h3
+            id="booking-conditions"
+            className="text-[15px] font-semibold text-ink"
+          >
+            À savoir avant de confirmer
+          </h3>
+          <dl className="flex flex-col gap-3 text-[14px]">
+            {conditions.map(([label, text]) => (
+              <div key={label} className="flex flex-col gap-0.5">
+                <dt className="font-medium text-ink">{label}</dt>
+                <dd className="whitespace-pre-line wrap-anywhere text-ink-soft">
+                  {text}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
       ) : null}
 
       {failure && !pending ? <Failure flow={flow} code={failure.code} /> : null}

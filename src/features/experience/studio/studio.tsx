@@ -1549,7 +1549,7 @@ function PracticalFields({
   onChange: (value: Practical, key: keyof Practical) => void;
 }) {
   const field = (key: Exclude<keyof Practical, "showHours">) => ({
-    value: value[key],
+    value: value[key] ?? "",
     onChange: (text: string) => onChange({ ...value, [key]: text }, key),
   });
   return (
@@ -1618,6 +1618,33 @@ function PracticalFields({
         {...field("accessibility")}
       />
       <p className="mt-2 border-t border-black/10 pt-4 text-[13px] font-semibold">
+        Conditions
+      </p>
+      <p className="text-[12.5px] leading-snug text-black/55">
+        Lues par tes clientes avant de confirmer. Tes conditions d’annulation,
+        saisies à ton inscription, s’affichent aussi.
+      </p>
+      <Text
+        label="Retard"
+        multiline
+        maxLength={siteLimits.practicalLateness}
+        placeholder="Ex. : au-delà de 15 minutes, la prestation peut être écourtée."
+        {...field("lateness")}
+      />
+      <Text
+        label="Rendez-vous manqué"
+        multiline
+        maxLength={siteLimits.practicalNoShow}
+        placeholder="Ex. : prévenez-moi au plus tôt si vous ne pouvez pas venir."
+        {...field("noShow")}
+      />
+      <Text
+        label="Accompagnants (enfants, proches)"
+        multiline
+        maxLength={siteLimits.practicalCompanions}
+        {...field("companions")}
+      />
+      <p className="mt-2 border-t border-black/10 pt-4 text-[13px] font-semibold">
         Contact
       </p>
       <p className="text-[12.5px] leading-snug text-black/55">
@@ -1665,6 +1692,7 @@ function Text({
       {multiline ? (
         <textarea
           value={value}
+          placeholder={placeholder}
           maxLength={maxLength}
           onChange={(event) => onChange(event.target.value)}
           rows={3}

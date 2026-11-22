@@ -887,6 +887,76 @@ describe("where, and how to reach her", () => {
     ).toBe("mailto:contact@exemple.fr");
   });
 
+  it("her conditions are read before she commits (point 6)", async () => {
+    render(
+      <PublicBooking
+        business={{
+          ...business,
+          cancellationPolicy: "Annulation gratuite jusqu’à 24 h avant.",
+        }}
+        catalog={catalogOf(services)}
+        embedded
+        place={{
+          ...place,
+          lateness: "Au-delà de 15 minutes, la prestation peut être écourtée.",
+          noShow: "",
+          companions: "Les enfants ne peuvent pas être accueillis.",
+        }}
+      />,
+    );
+    await book();
+    const block = screen.getByRole("region", {
+      name: "À savoir avant de confirmer",
+    });
+    expect(
+      within(block)
+        .getAllByRole("term")
+        .map((term) => term.textContent),
+    ).toEqual(["Annulation", "Retard", "Accompagnants", "Avant de venir"]);
+    expect(
+      within(block).getByText(
+        "Au-delà de 15 minutes, la prestation peut être écourtée.",
+      ),
+    ).toBeTruthy();
+    // Read before the button that commits her.
+    expect(
+      block.compareDocumentPosition(confirmButton()) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(api.booking).not.toHaveBeenCalled();
+  });
+
+  it("without a site or terms, no conditions block; her terms alone when she has some", async () => {
+    const { unmount } = render(
+      <PublicBooking
+        business={business}
+        catalog={catalogOf(services)}
+        embedded
+      />,
+    );
+    await book();
+    expect(
+      screen.queryByRole("region", { name: "À savoir avant de confirmer" }),
+    ).toBeNull();
+    unmount();
+    render(
+      <PublicBooking
+        business={{ ...business, cancellationPolicy: "48 h avant." }}
+        catalog={catalogOf(services)}
+        embedded
+      />,
+    );
+    await book();
+    const block = screen.getByRole("region", {
+      name: "À savoir avant de confirmer",
+    });
+    expect(
+      within(block)
+        .getAllByRole("term")
+        .map((term) => term.textContent),
+    ).toEqual(["Annulation"]);
+  });
+
   it("without a site: her general location, no directions, no contact she did not publish", async () => {
     render(
       <PublicBooking

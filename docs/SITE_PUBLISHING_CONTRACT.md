@@ -69,6 +69,10 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
   - les horaires ne sont **pas** dans la configuration. Ils sont lus depuis son planning (`get_public_business_hours`, horaires hebdomadaires habituels), affichés comme « Horaires habituels » si `showHours` est vrai. Les exceptions par date restent portées par les créneaux, donc la page ne dit jamais « ouvert aujourd'hui » ;
   - le bloc est rendu après les scènes, sous Core comme sous Signature (ce n'est pas une scène de la composition), avec son entrée « Infos pratiques » dans le sommaire ;
   - **anciennes publications** (sans `practical`) : rien de nouveau, sauf la politique d'annulation que l'établissement publie déjà sur sa page de réservation (`cancellation_policy`), affichée sous « Annulation ». Les horaires n'apparaissent pas tant que la pro n'a pas enregistré son bloc.
+  - **conditions (Higani point 6)** : `lateness` (« Retard »), `noShow` (« Rendez-vous manqué ») et `companions` (« Accompagnants »), 300 caractères chacun, texte brut, **facultatifs** : une publication antérieure n'a pas ces clés et reste valide, rien n'est affiché pour elles. Saisies dans l'onglet « Infos » du Studio, section « Conditions » ;
+  - elles s'affichent dans « Infos pratiques » après « Annulation », et au récapitulatif de la réservation **avant** « Confirmer la réservation », dans « À savoir avant de confirmer » : Annulation (`cancellation_policy` de l'établissement), Retard, Rendez-vous manqué, Accompagnants, Avant de venir (`instructions`). Sans site publié, seule l'annulation y figure ;
+  - ce sont des textes affichés, pas des règles appliquées par la réservation. **Pas d'acompte** tant qu'aucun acompte n'est réellement demandé (Cloud, points 74 et 163) ;
+  - la politique d'annulation reste celle saisie à l'inscription : aucun écran ne permet encore de la modifier ensuite.
 - **Taille :** 256 Kio au plus pour le document.
 - **Évolution :** `schema_version` est stocké avec chaque brouillon et chaque version. Une version 2 viendra avec des fonctions de migration pures (1 → 2) appliquées à la lecture, sans réécrire l'historique.
 

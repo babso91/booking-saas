@@ -48,6 +48,9 @@ export const siteLimits = {
   practicalAccessibility: 300,
   practicalPhone: 30,
   practicalEmail: 120,
+  practicalLateness: 300,
+  practicalNoShow: 300,
+  practicalCompanions: 300,
 } as const;
 
 /**
@@ -144,6 +147,11 @@ const practical = z
       "Adresse e-mail invalide.",
     ),
     showHours: z.boolean(),
+    // Her conditions before booking (Higani point 6). Absent from sites
+    // published before: nothing is shown for them.
+    lateness: plainText(siteLimits.practicalLateness).optional(),
+    noShow: plainText(siteLimits.practicalNoShow).optional(),
+    companions: plainText(siteLimits.practicalCompanions).optional(),
   })
   .strict();
 

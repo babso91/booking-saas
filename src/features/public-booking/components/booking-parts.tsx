@@ -22,7 +22,34 @@ export type BookingPlace = {
   instructions: string;
   phone: string;
   email: string;
+  /** Her conditions (Higani point 6); absent from older publications. */
+  lateness?: string;
+  noShow?: string;
+  companions?: string;
 };
+
+/**
+ * Her conditions, read before she commits (Higani point 6): her
+ * cancellation terms (her business), then what her site says about being
+ * late, a missed visit, companions and what to do before coming. Only what
+ * she wrote; no deposit until one is really taken.
+ */
+export function conditionRows(
+  cancellationPolicy: string | null,
+  place: BookingPlace | undefined,
+): [string, string][] {
+  return (
+    [
+      ["Annulation", cancellationPolicy],
+      ["Retard", place?.lateness],
+      ["Rendez-vous manqué", place?.noShow],
+      ["Accompagnants", place?.companions],
+      ["Avant de venir", place?.instructions],
+    ] as const
+  ).flatMap(([label, text]) =>
+    text?.trim() ? [[label, text.trim()] as [string, string]] : [],
+  );
+}
 
 /** Her address, else her area, else her general location. */
 export const placeLine = (
