@@ -146,17 +146,32 @@ export function PhotoEditor({
           ← Réglages
         </button>
         <span className="text-[14px] font-semibold">
-          {slot === "cover"
-            ? "Photo de couverture"
-            : slot === "portrait"
-              ? "Ton portrait"
-              : `Réalisation ${slot + 1}`}
+          {slot === "logo"
+            ? "Logo"
+            : slot === "cover"
+              ? "Photo de couverture"
+              : slot === "portrait"
+                ? "Ton portrait"
+                : `Réalisation ${slot + 1}`}
         </span>
       </div>
 
       {children}
 
-      {id ? (
+      {slot === "logo" ? (
+        id ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={photo(id, 480)}
+            alt="Aperçu du logo"
+            className="mx-auto h-24 max-w-full object-contain"
+          />
+        ) : (
+          <p className="text-sm text-black/60">
+            Ton nom apparaît en haut du site quand tu n’ajoutes aucun logo.
+          </p>
+        )
+      ) : id ? (
         <p className="text-[13.5px] leading-snug text-black/60">
           Glisse la cible sur ce qui doit toujours rester visible : l’œil,
           l’ongle, le regard.
@@ -168,7 +183,7 @@ export function PhotoEditor({
         </p>
       )}
 
-      {id ? (
+      {id && slot !== "logo" ? (
         <div className="flex justify-center rounded-2xl bg-[#ECECE8] p-2">
           <div
             ref={pad}
@@ -229,7 +244,7 @@ export function PhotoEditor({
         </div>
       ) : null}
 
-      {id ? (
+      {id && slot !== "logo" ? (
         <div>
           <p className="text-[13px] text-black/55">Dans tes compositions</p>
           <div className="mt-2 grid grid-cols-[1fr_1fr_1.6fr] items-end gap-2">
@@ -281,7 +296,7 @@ export function PhotoEditor({
             Mes photos
           </button>
         ) : null}
-        {id ? (
+        {id && slot !== "logo" ? (
           <button
             type="button"
             onClick={() => onFocal({ x: 50, y: 50 })}
@@ -296,9 +311,11 @@ export function PhotoEditor({
             onClick={onRemove}
             className="h-11 cursor-pointer rounded-full bg-black/5 px-4 text-[14px] font-medium text-[#7A1F17]"
           >
-            {typeof slot === "number"
-              ? "Retirer cette réalisation"
-              : "Retirer la photo"}
+            {slot === "logo"
+              ? "Retirer le logo"
+              : typeof slot === "number"
+                ? "Retirer cette réalisation"
+                : "Retirer la photo"}
           </button>
         ) : null}
         <input
@@ -307,7 +324,7 @@ export function PhotoEditor({
           // Not HEIC: iOS then gives a JPEG (the server cannot decode HEIC).
           accept={PHOTO_ACCEPT}
           className="hidden"
-          aria-label="Choisir une photo"
+          aria-label={slot === "logo" ? "Choisir un logo" : "Choisir une photo"}
           onChange={(event) => {
             const picked = event.target.files?.[0];
             if (picked) void send(picked);

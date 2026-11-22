@@ -10,6 +10,7 @@ import {
 import { showcaseOf } from "@/features/experience/catalog/model";
 import { siteFontClasses } from "@/features/experience/fonts";
 import { SiteStudio } from "@/features/experience/studio/site-studio";
+import { publicReviews } from "@/features/reviews/data";
 import { listSitePhotos } from "@/features/sites/data/photos";
 import { getSite, getSiteVersion } from "@/features/sites/data/sites";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -26,12 +27,13 @@ export default async function SiteStudioPage() {
   // rendered into the payload of its redirect response.
   const { user, business } = await requireReadyBusiness();
   const client = await createServerSupabaseClient();
-  const [site, catalog, photos, hours] = await Promise.all([
+  const [site, catalog, photos, hours, reviews] = await Promise.all([
     getSite(client, business.id),
     getPublicCatalog(client, business.slug),
     listSitePhotos(client, business.id),
     // Her usual hours, as her clients will read them in her infos.
     getPublicBusinessHours(client, business.slug),
+    publicReviews(client, business.slug).catch(() => null),
   ]);
   const online = site?.published
     ? await getSiteVersion(client, business.id, site.published.versionId)
@@ -61,6 +63,7 @@ export default async function SiteStudioPage() {
       photos={photos.map((photo) => ({ id: photo.id, status: photo.status }))}
       fontClasses={siteFontClasses}
       hours={hours}
+      reviews={reviews}
     />
   );
 }

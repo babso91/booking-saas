@@ -128,8 +128,11 @@ export async function studioCreatePhotoUploadAction(input: unknown) {
 }
 
 export async function studioConfirmPhotoAction(input: unknown) {
-  return bound(sitePhotoSchema, input, (context, data) =>
-    confirmSitePhoto(writer(context), data.assetId),
+  return bound(
+    sitePhotoSchema.extend({ purpose: z.literal("logo").optional() }),
+    input,
+    (context, data) =>
+      confirmSitePhoto(writer(context), data.assetId, data.purpose),
   );
 }
 

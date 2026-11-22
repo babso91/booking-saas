@@ -6,6 +6,7 @@
 // the engine composes them and feeds them tokens and content, so a new
 // universe is configuration while each scene keeps its own art.
 
+import type { SitePresentation } from "@/features/sites/presentation";
 import type { BookingFormat } from "@/features/public-booking/formats";
 
 export type Work = { id: string; photo: string; title: string; note: string };
@@ -18,7 +19,7 @@ export type Work = { id: string; photo: string; title: string; note: string };
 export type Focal = { x: number; y: number };
 
 /** A photo spot of the site: the cover, her portrait, or a work by position. */
-export type PhotoSlot = "cover" | "portrait" | number;
+export type PhotoSlot = "cover" | "portrait" | "logo" | number;
 
 /** Who she is: the person behind the work. */
 export type Portrait = {
@@ -96,6 +97,7 @@ export type SiteConfig = {
   content: {
     /** null: no photo (none chosen yet, or withdrawn): drawn without one. */
     cover: string | null;
+    logo?: string | null;
     works: Work[];
     portrait: Portrait;
     /** Focal point of each photo, by photo id (centre when absent). */
@@ -115,6 +117,7 @@ export type SiteConfig = {
     cta?: string;
   };
   sections: Section[];
+  presentation?: SitePresentation;
   /**
    * Scenes she chose not to show (her content, so every plan keeps it):
    * no portrait yet, no manifesto. The opening and her services always

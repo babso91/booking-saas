@@ -56,6 +56,10 @@ export function AvailabilityCalendar({
     ? choiceIdsOf(flow.service, flow.answers).join(",")
     : "";
   const [revision, setRevision] = useState(0);
+  const [checking, setChecking] = useState<{
+    key: string;
+    start: string;
+  } | null>(null);
   const stale = flow.notice === "slot_unavailable";
   const key = `${slug}:${serviceId}:${from}:${through}:${choices}:${revision}:${stale}`;
   const [loaded, setLoaded] = useState<{
@@ -83,6 +87,14 @@ export function AvailabilityCalendar({
   const listedDays = chronological
     ? result?.days?.filter((day) => day.slots.length > 0)
     : result?.days;
+  const pendingStart =
+    checking?.key === key && flow.slots.status === "loading"
+      ? checking.start
+      : undefined;
+  function chooseTime(day: string, start: string) {
+    setChecking({ key, start });
+    flow.actions.chooseCalendarSlot(day, start);
+  }
   const navClass =
     "min-h-11 min-w-11 rounded-xl border border-line bg-paper-raised text-ink disabled:opacity-40";
   return (
@@ -125,11 +137,17 @@ export function AvailabilityCalendar({
           ›
         </button>
       </header>
-      {!result ? (
-        <p role="status" className="text-sm text-ink-muted">
-          Recherche des créneaux disponibles…
-        </p>
-      ) : null}
+      <p role="status" className="min-h-5 text-xs text-ink-muted">
+        {!result
+          ? "Recherche des créneaux disponibles…"
+          : pendingStart
+            ? "Vérification de l’horaire…"
+            : result.days
+              ? view === "month"
+                ? "Choisissez un jour pour voir ses horaires."
+                : "Choisissez un horaire."
+              : ""}
+      </p>
       {result?.days === null ? (
         <p role="alert" className="text-sm text-ink">
           Calendrier indisponible.{" "}
@@ -174,10 +192,28 @@ export function AvailabilityCalendar({
               );
             }}
           </CalendarGrid>
-          <p className="text-xs text-ink-muted">
-            Touchez un jour pour voir toutes ses heures.
-          </p>
         </>
+      ) : !result ? (
+        <div aria-hidden="true" className="grid gap-3">
+          {days.map((day) => (
+            <div
+              key={day}
+              className="min-h-24 rounded-xl border border-line bg-paper-raised p-3"
+            >
+              <p className="mb-3 text-sm font-semibold capitalize">
+                {dayLabel(day)}
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {[0, 1, 2].map((i) => (
+                  <span
+                    key={i}
+                    className="h-9 rounded-lg bg-sand motion-safe:animate-pulse"
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : chronological && listedDays?.length === 0 ? (
         <p role="status" className="text-sm text-ink-muted">
           Aucun créneau disponible sur cette période.
@@ -194,9 +230,11 @@ export function AvailabilityCalendar({
             {slots.length ? (
               <div>
                 <SlotTimes
+                  selected={flow.slot?.startsAt}
                   date={date}
                   slots={chronological ? slots.slice(0, 6) : slots}
-                  onChoose={flow.actions.chooseCalendarSlot}
+                  onChoose={chooseTime}
+                  pending={pendingStart}
                 />
                 {chronological && slots.length > 6 ? (
                   <details>
@@ -204,9 +242,11 @@ export function AvailabilityCalendar({
                       Voir les {slots.length - 6} autres horaires
                     </summary>
                     <SlotTimes
+                      selected={flow.slot?.startsAt}
                       date={date}
                       slots={slots.slice(6)}
-                      onChoose={flow.actions.chooseCalendarSlot}
+                      onChoose={chooseTime}
+                      pending={pendingStart}
                     />
                   </details>
                 ) : null}
@@ -260,10 +300,14 @@ function SlotTimes({
   date,
   slots,
   onChoose,
+  selected,
+  pending,
 }: {
   date: string;
   slots: CalendarAvailabilityDay["slots"];
   onChoose: (date: string, startsAt: string) => void;
+  selected?: string;
+  pending?: string;
 }) {
   return (
     <ul className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
@@ -272,8 +316,12 @@ function SlotTimes({
           <button
             type="button"
             aria-label={`${dayLabel(date)} à ${wallTime(slot.localStartsAt)}`}
+            aria-pressed={Boolean(
+              selected && Date.parse(slot.startsAt) === Date.parse(selected),
+            )}
+            aria-busy={slot.startsAt === pending || undefined}
             onClick={() => onChoose(date, slot.startsAt)}
-            className="min-h-11 w-full rounded-lg border border-line text-sm font-medium text-ink"
+            className="min-h-11 w-full rounded-lg border border-line text-sm font-medium text-ink aria-busy:bg-sand aria-pressed:border-ink aria-pressed:bg-sand"
           >
             {wallTime(slot.localStartsAt)}
           </button>

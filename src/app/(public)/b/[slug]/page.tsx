@@ -15,6 +15,7 @@ import { publicPhotoBase, publicView } from "@/features/experience/published";
 import { PublicBooking } from "@/features/public-booking/components/public-booking";
 import { getPublishedSite } from "@/features/sites/data/sites";
 import { publicReviews } from "@/features/reviews/data";
+import { sectionTitle } from "@/features/sites/presentation";
 import { ReviewsSection } from "@/features/reviews/reviews-section";
 import { AppException } from "@/lib/errors";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
@@ -71,19 +72,21 @@ export default async function PublicBookingPage({
     createPublicSupabaseClient(),
     page.business.slug,
   ).catch(() => null);
+  const config = page.site ? publicView(page.site) : null;
   const reviews = (
     <ReviewsSection
       key={page.business.slug}
       slug={page.business.slug}
+      title={sectionTitle(config?.presentation, "reviews", "Avis des clientes")}
       initial={reviewPage}
     />
   );
 
-  if (page.site)
+  if (config)
     return (
       <MiniSite
         reviews={reviews}
-        config={publicView(page.site)}
+        config={config}
         catalog={showcaseOf(page.catalog)}
         photoBase={publicPhotoBase(page.business.slug)}
         // The same booking as her booking page: her catalogue, options

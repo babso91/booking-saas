@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { pageSectionKinds } from "./presentation";
 
 import { bookingFormats } from "@/features/public-booking/formats";
 
@@ -32,6 +33,8 @@ export const siteLimits = {
   location: 80,
   intro: 600,
   workTitle: 80,
+  sectionLabel: 48,
+  bookingLabel: 32,
   workNote: 300,
   portraitName: 80,
   portraitRole: 80,
@@ -146,6 +149,32 @@ const practical = z
 
 const sceneKind = z.enum(["opening", "intro", "work", "portrait", "services"]);
 
+const pageKind = z.enum(pageSectionKinds);
+const presentation = z
+  .object({
+    order: z
+      .array(pageKind)
+      .max(pageSectionKinds.length)
+      .refine((items) => new Set(items).size === items.length)
+      .optional(),
+    labels: z
+      .partialRecord(
+        pageKind,
+        z
+          .object({
+            title: plainText(siteLimits.sectionLabel).optional(),
+            hideTitle: z.boolean().optional(),
+            menu: plainText(siteLimits.sectionLabel).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    bookingLabel: plainText(siteLimits.bookingLabel).optional(),
+    gallery: z.enum(siteRegistry.variants.work).optional(),
+    galleryMotion: z.enum(siteRegistry.motions).optional(),
+  })
+  .strict();
+
 export const siteConfigSchema = z
   .object({
     universe: z.enum(siteRegistry.universes),
@@ -160,6 +189,7 @@ export const siteConfigSchema = z
     content: z
       .object({
         cover: photo.nullable(),
+        logo: photo.nullable().optional(),
         works: z
           .array(
             z
@@ -218,6 +248,7 @@ export const siteConfigSchema = z
           sections.some((item) => item.kind === "services"),
         "L’ouverture et les prestations sont toujours présentes.",
       ),
+    presentation: presentation.optional(),
     hidden: z
       .array(sceneKind)
       .max(5)
@@ -240,6 +271,7 @@ export type SitePalette = SiteConfig["tokens"]["palette"];
 /** Every asset id a configuration refers to (photos and focal keys). */
 export function siteAssetIds(config: SiteConfig): string[] {
   const ids = new Set<string>(Object.keys(config.content.focals));
+  if (config.content.logo) ids.add(config.content.logo.asset);
   if (config.content.cover) ids.add(config.content.cover.asset);
   if (config.content.portrait.photo)
     ids.add(config.content.portrait.photo.asset);

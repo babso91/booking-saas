@@ -16,10 +16,12 @@ export function renderConfigOf(
   const gone = new Set(unavailable);
   const shown = (photo: { asset: string } | null) =>
     photo && !gone.has(photo.asset) ? photo.asset : null;
+  const { logo, ...content } = saved.content;
   return {
     ...saved,
     content: {
-      ...saved.content,
+      ...content,
+      ...(logo !== undefined ? { logo: shown(logo) } : {}),
       cover: shown(saved.content.cover),
       portrait: {
         ...saved.content.portrait,

@@ -18,31 +18,31 @@
 }
 
 /* Cut: a hard-edged wipe from the top (a mask: the box stays observable). */
-.armed[data-reveal-kind="cut"] [data-reveal] {
+.armed [data-reveal="cut"] {
   mask-image: linear-gradient(#000, #000);
   mask-repeat: no-repeat;
   mask-position: top;
   mask-size: 100% 100%;
   transition-property: mask-size;
 }
-.armed[data-reveal-kind="cut"] [data-reveal]:not([data-revealed]) {
+.armed [data-reveal="cut"]:not([data-revealed]) {
   mask-size: 100% 0%;
 }
 
 /* Snap: a springy pop. */
-.armed[data-reveal-kind="snap"] [data-reveal] {
+.armed [data-reveal="snap"] {
   transition-property: opacity, transform;
 }
-.armed[data-reveal-kind="snap"] [data-reveal]:not([data-revealed]) {
+.armed [data-reveal="snap"]:not([data-revealed]) {
   opacity: 0;
   transform: translateY(30px) scale(0.86);
 }
 
 /* Bloom: a slow rise out of blur. */
-.armed[data-reveal-kind="bloom"] [data-reveal] {
+.armed [data-reveal="bloom"] {
   transition-property: opacity, transform, filter;
 }
-.armed[data-reveal-kind="bloom"] [data-reveal]:not([data-revealed]) {
+.armed [data-reveal="bloom"]:not([data-revealed]) {
   opacity: 0;
   transform: translateY(26px);
   filter: blur(6px);
