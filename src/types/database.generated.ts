@@ -920,6 +920,9 @@ isOneToOne: false
 "agenda_update_appointment":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_internal_notes"?: string,"p_option_choice_ids"?: (string)[],"p_service_id": string,"p_starts_at"?: string }; Returns: string
                            },
+"appointment_history":
+{ Args: { "p_appointment_id": string,"p_business_id": string }; Returns: Json
+                           },
 "assign_visit_form":
 { Args: { "p_appointment_id": string,"p_business_id": string,"p_request_id": string,"p_template_version_id": string }; Returns: Json
                            },

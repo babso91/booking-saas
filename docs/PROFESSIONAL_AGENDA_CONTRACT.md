@@ -238,6 +238,23 @@ type AppointmentClient =
 - **Occupation.** Seule l'annulation libère le créneau : la contrainte `appointments_no_overlap` ignore les lignes `cancelled`. `completed` et `no_show` continuent d'occuper leur créneau.
 - **Annulation.** Elle ne supprime jamais la ligne. `cancellationReason` est enregistré.
 
+## Historique (point 100)
+
+Chaque rendez-vous garde qui l'a modifié et ce qui a changé. Migration `20261122200000_appointment_history.sql`.
+
+- **Écriture :** un déclencheur sur `appointments` ajoute une entrée dans `private.appointment_changes`, dans la transaction de l'écriture. Aucun chemin d'écriture ne peut l'oublier : agenda, réservation en ligne, espace cliente, séries, fermeture imprévue. Une entrée par version, avec la liste des changements visibles dans l'agenda : création, déplacement, durée, prestation, options, prix, cliente, praticienne, statut, note interne. Une écriture qui ne change rien de visible n'ajoute rien.
+- **Auteur :**
+  - un compte connecté est une personne de l'équipe, affichée sous son nom du jour, ou sous celui gardé à l'écriture si elle a quitté l'équipe ;
+  - sans compte, le rôle de service correspond aux parcours de la cliente (réservation en ligne, espace cliente, liste d'attente) ;
+  - le reste (script en base) est « Higani ».
+
+  Le test `tests/integration/appointment-history.test.ts` fige la liste des fonctions qui écrivent des rendez-vous. Une nouvelle fonction le fait échouer jusqu'à ce que son auteur soit vérifié.
+
+- **Données gardées :** les champs changés seulement. Jamais le texte de la note, jamais les coordonnées de la cliente : seul son identifiant est gardé, et son nom est relu à l'affichage. Un effacement (point 205) ne laisse donc rien ici. L'historique disparaît avec le rendez-vous.
+- **Lecture :** `public.appointment_history(p_business_id, p_appointment_id)` renvoie `{ timeZone, entries, truncated }`, les 100 dernières entrées, de la plus récente à la plus ancienne. Les heures sont en heure locale de l'établissement (`localAt`, `localStartsAt`). La lit qui peut lire le rendez-vous : propriétaire ou admin, ou la praticienne à qui il est attribué. Erreurs : `forbidden`, puis `appointment_not_found` (y compris pour un rendez-vous d'une autre praticienne). Action serveur : `getAppointmentHistoryAction({ appointmentId })`.
+- **Rendez-vous antérieurs :** la migration leur donne leur création, avec ses détails s'ils n'ont jamais changé, attribuée à la cliente pour une réservation en ligne. Pour ceux déjà modifiés, une entrée dit que les modifications antérieures n'ont pas été enregistrées. Aucun rendez-vous n'est réécrit (`tests/upgrade/appointment-history.test.ts`).
+- **Écran :** une section « Historique des modifications », repliée, dans le détail du rendez-vous (`AppointmentHistory`). Elle est lue à l'ouverture et relue après une modification.
+
 ## Blocs d'indisponibilité
 
 | Action                     | Entrée                                            | Succès (`data`)  |
