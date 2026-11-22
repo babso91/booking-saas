@@ -32,6 +32,7 @@ import {
 } from "../client/directory-state";
 import { dateWithYear, dayAndTime } from "../client/format";
 import { CreateClientSheet } from "./create-client";
+import { DuplicateHint } from "./duplicate-hint";
 import { CrmError } from "./crm-error";
 import { Monogram } from "./monogram";
 
@@ -246,6 +247,7 @@ export function ClientDirectory({
                   ? null
                   : "Chargement des clientes…"}
             </p>
+            <DuplicateHint />
           </div>
           <Button
             size="md"
