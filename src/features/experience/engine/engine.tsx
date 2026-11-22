@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from "react";
 
+import type { PageSectionKind } from "@/features/sites/presentation";
+
 import type { CatalogService, ShowcaseGroup } from "../catalog/model";
 import type { NextSlots } from "../next-slot";
 import type { PhotoSlot, SiteConfig } from "./config";
@@ -27,6 +29,11 @@ export type EngineEdit = {
   /** Opens a service in the catalogue editor. */
   service: (id: string) => void;
   selectedService: string | null;
+  /**
+   * Opens her studio where a section is edited (Higani point 120): each
+   * section of the preview says « Modifier » and leads there.
+   */
+  section?: (kind: PageSectionKind) => void;
 };
 
 /** The widths every photo exists in (docs/SITE_PUBLISHING_CONTRACT.md § 8). */

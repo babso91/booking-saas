@@ -352,6 +352,20 @@ Validées le 5 novembre 2026 :
 - **Cache public :** CDN 5 minutes au plus, `max-age=0`, pas de `stale-while-revalidate`, aucun cache partagé des aperçus, des refus ni des 404, vérification serveur à chaque absence du cache. Pas d'allongement avant une étude de purge testée (§ 8).
 - **Révocation :** mécanisme explicite, définitif, sans réécrire l'historique ; une version restaurée affiche un état sans photo (§ 8).
 
+## 10 bis. Studio : trouver, garder, vérifier (Higani points 120 à 124)
+
+- **Modifier depuis la page (120)** : dans le studio, en brouillon, chaque section de l'aperçu porte « ✎ Modifier ». Le bouton ouvre le studio sur son réglage : Textes (ouverture, présentation, portrait), Photos (réalisations), Prestations, Infos. Pas sur les avis, écrits par ses clientes, ni sur le site public. Le bouton « ✎ Photo » existant reste.
+- **Contenu et apparence séparés (121)** : changer d'univers reprend la mise en forme du nouvel univers (`tokens`, `sections`, `booking`, `quickBook`, `universe`). Il garde tout son contenu : `brand`, `content`, `presentation`, `hidden`, `bookingFormat`, `practical`, `links`. Chaque clé de la configuration est classée dans `studio/universe-switch.ts`, et TypeScript refuse une clé ajoutée sans classement. Ses prestations, horaires et avis ne sont pas dans la configuration. Corrigé au passage : ses liens (point 3) étaient perdus au changement d'univers.
+- **« Comme mes clientes » (122, 123)** : le bouton « Voir comme mes clientes » ouvre sa page en plein écran.
+  - On choisit **Téléphone** (390 × 844) ou **Ordinateur** (1280 × 800). C'est un vrai cadre (`/app/site/apercu`) à cette largeur, réduit à l'écran, avec sa propre mise en page.
+  - La page montre ses vraies prestations, horaires, photos et avis, et suit ses modifications en direct.
+  - Elle peut tout parcourir, jusqu'au récapitulatif de la réservation. La confirmation est désactivée : rien n'est réservé.
+  - Le studio et le cadre échangent des messages entre fenêtres du **même site** seulement. Le cadre ne lit rien côté serveur et n'affiche que ce que le studio lui envoie. Ouvert seul, il renvoie vers le studio.
+- **Informations manquantes (124)** : la carte « Pour une page plus utile · n idées » reste pliée par défaut.
+  - Elle liste ce qui manque vraiment, le plus utile d'abord : prestations, couverture, présentation, réalisations, portrait, descriptions, lieu, contact, horaires, réseaux.
+  - Chaque idée mène à l'onglet du réglage, ou à « Mes horaires ». Une scène qu'elle a masquée n'est pas demandée.
+  - « Rien n'est obligatoire : ta page se publie telle quelle. » Rien ne bloque la publication.
+
 ## 11. Validation du contrat par Claude UI
 
 **État : validé des deux côtés (5 novembre 2026)**, après deux ajustements demandés par Claude UI. La décision produit sur les photos de démonstration est prise (§ 10).

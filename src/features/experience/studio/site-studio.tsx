@@ -31,7 +31,9 @@ import type { UploadOutcome } from "./photo-editor";
 import { effective } from "./plans";
 import { StudioPhotos, studioPhoto } from "./photos";
 import { firstDraft, savedConfigOf, withDemoPhotos } from "./saved";
-import { Studio, type Online } from "./studio";
+import { sectionTabs, Studio, type Online, type Tab } from "./studio";
+import { ClientView } from "./client-view";
+import { inUniverse } from "./universe-switch";
 import { universes, type UniverseId } from "./universes";
 
 // Her studio, on her real site (docs/SITE_PUBLISHING_CONTRACT.md): her
@@ -130,6 +132,11 @@ export function SiteStudio({
   );
   const [photos, setPhotos] = useState(initialPhotos);
   const [open, setOpen] = useState(true);
+  const [clientView, setClientView] = useState(false);
+  const [tabRequest, setTabRequest] = useState<{
+    tab: Tab;
+    at: number;
+  } | null>(null);
   const bookingPreview = useRef<() => void>(null);
   const [view, setView] = useState<"draft" | "live">("draft");
   const [photoSlot, setPhotoSlot] = useState<PhotoSlot | null>(null);
@@ -333,6 +340,16 @@ export function SiteStudio({
                   selected: photoSlot,
                   service: () => undefined,
                   selectedService: null,
+                  section: (kind) => {
+                    const tab =
+                      kind in sectionTabs
+                        ? sectionTabs[kind as keyof typeof sectionTabs]
+                        : null;
+                    if (!tab) return;
+                    setPhotoSlot(null);
+                    setOpen(true);
+                    setTabRequest({ tab, at: Date.now() });
+                  },
                 }
               : undefined
           }
@@ -345,6 +362,16 @@ export function SiteStudio({
           </p>
         </div>
       )}
+      {clientView && preview ? (
+        <ClientView
+          config={preview}
+          catalog={catalog}
+          hours={hours}
+          reviews={reviews}
+          what={view === "live" ? "Ta page en ligne" : "Ton brouillon"}
+          onClose={() => setClientView(false)}
+        />
+      ) : null}
       <StudioPhotos.Provider value={photoSource}>
         <Studio
           open={open}
@@ -355,20 +382,10 @@ export function SiteStudio({
           catalog={catalog}
           plan={plan}
           onDesign={(next) => {
-            // Another universe: her name, texts, photos and practical
-            // infos follow; her catalogue is not part of the design at all.
-            const base = universes[next].config;
-            history.set({
-              ...base,
-              bookingFormat: draft.bookingFormat,
-              ...(draft.presentation
-                ? { presentation: draft.presentation }
-                : {}),
-              brand: draft.brand,
-              content: draft.content,
-              hidden: draft.hidden,
-              ...(draft.practical ? { practical: draft.practical } : {}),
-            });
+            // Another universe: all of her content follows (her name,
+            // texts, photos, infos, links…: universe-switch.ts); her
+            // catalogue is not part of the design at all.
+            history.set(inUniverse(draft, universes[next].config));
             setReplay((value) => value + 1);
           }}
           published={online}
@@ -388,6 +405,9 @@ export function SiteStudio({
           flash={flash}
           publicPath={`/b/${slug}`}
           onLeave={leave}
+          hasHours={hours ? hours.length > 0 : null}
+          tabRequest={tabRequest}
+          onClientView={preview ? () => setClientView(true) : undefined}
           status={
             <DraftState
               status={sync.status}
