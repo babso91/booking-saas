@@ -8,6 +8,7 @@ import { ReviewsSection } from "@/features/reviews/reviews-section";
 
 import { MiniSite } from "../mini-site";
 import {
+  FRAME_ESCAPE,
   FRAME_READY,
   FRAME_SHOW,
   fromOwnWindow,
@@ -42,9 +43,20 @@ export function SiteFrame({
       if (fromOwnWindow(event, window.parent, FRAME_SHOW))
         setShown(event.data as FrameShow);
     };
+    // Escape with nothing of its own open (her booking, her menu close
+    // themselves first): her studio closes this view.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || document.querySelector('[role="dialog"]'))
+        return;
+      window.parent.postMessage({ type: FRAME_ESCAPE }, window.location.origin);
+    };
     window.addEventListener("message", onMessage);
+    document.addEventListener("keydown", onKey);
     window.parent.postMessage({ type: FRAME_READY }, window.location.origin);
-    return () => window.removeEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      document.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   if (alone)

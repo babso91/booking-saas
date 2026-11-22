@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { showcaseOf } from "../catalog/model";
 import { renderConfigOf } from "../engine/from-site";
 import { sampleCatalog, sampleSite } from "../fixtures/sample-sites";
-import { FRAME_READY, FRAME_SHOW } from "./client-view-protocol";
+import { FRAME_ESCAPE, FRAME_READY, FRAME_SHOW } from "./client-view-protocol";
 import { SiteFrame } from "./site-frame";
 
 // Higani points 122, 123: the frame shows only what her own studio sends.
@@ -88,5 +88,11 @@ describe("SiteFrame", () => {
     expect(screen.getAllByText("Studio Inès").length).toBeGreaterThan(0);
     // Her clients' view: no edit marks.
     expect(screen.queryByRole("button", { name: /^Modifier/ })).toBeNull();
+    // Escape, nothing of its own open: her studio is told.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(studio.postMessage).toHaveBeenCalledWith(
+      { type: FRAME_ESCAPE },
+      window.location.origin,
+    );
   });
 });

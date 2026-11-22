@@ -11,6 +11,8 @@ import type { UsualHours } from "../practical";
 export const CLIENT_VIEW_PATH = "/app/site/apercu";
 export const FRAME_READY = "higani:client-view-ready";
 export const FRAME_SHOW = "higani:client-view-show";
+/** Escape pressed inside the page, with nothing of its own to close. */
+export const FRAME_ESCAPE = "higani:client-view-escape";
 
 export type FrameShow = {
   type: typeof FRAME_SHOW;

@@ -9,6 +9,7 @@ import type { ReviewPage } from "@/features/reviews/model";
 
 import {
   CLIENT_VIEW_PATH,
+  FRAME_ESCAPE,
   FRAME_READY,
   FRAME_SHOW,
   fromOwnWindow,
@@ -72,13 +73,22 @@ export function ClientView({
     return () => window.removeEventListener("message", onMessage);
   }, [send]);
 
+  // Escape closes it, here or from inside her page (which says so).
   useEffect(() => {
     close.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
+    const onMessage = (event: MessageEvent) => {
+      if (fromOwnWindow(event, frame.current?.contentWindow, FRAME_ESCAPE))
+        onClose();
+    };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    window.addEventListener("message", onMessage);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("message", onMessage);
+    };
   }, [onClose]);
 
   useEffect(() => {
@@ -111,7 +121,8 @@ export function ClientView({
       style={{ fontFamily: "var(--font-lab-sans)" }}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-[max(env(safe-area-inset-top),12px)] pb-3">
-        <div className="min-w-0 flex-1">
+        {/* Its own line on a phone, beside the controls on a computer. */}
+        <div className="min-w-0 basis-full md:basis-0 md:flex-1">
           <p className="text-[15px] font-semibold">Comme mes clientes</p>
           <p className="text-[12.5px] leading-snug text-white/65">
             {what}, avec tes vraies prestations. Tu peux tout essayer : rien
@@ -121,7 +132,7 @@ export function ClientView({
         <div
           role="group"
           aria-label="Appareil"
-          className="flex rounded-full bg-white/10 p-1"
+          className="flex flex-1 rounded-full bg-white/10 p-1 md:flex-none"
         >
           {(Object.keys(DEVICES) as Device[]).map((id) => (
             <button
@@ -129,7 +140,7 @@ export function ClientView({
               type="button"
               aria-pressed={device === id}
               onClick={() => setDevice(id)}
-              className={`h-9 cursor-pointer rounded-full px-3 text-[13px] font-semibold ${device === id ? "bg-white text-[#141414]" : "text-white/75"}`}
+              className={`h-9 flex-1 cursor-pointer rounded-full px-3 text-[13px] font-semibold md:flex-none ${device === id ? "bg-white text-[#141414]" : "text-white/75"}`}
             >
               {DEVICES[id].label}
             </button>

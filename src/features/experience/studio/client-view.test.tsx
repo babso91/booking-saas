@@ -6,7 +6,7 @@ import { showcaseOf } from "../catalog/model";
 import { renderConfigOf } from "../engine/from-site";
 import { sampleCatalog, sampleSite } from "../fixtures/sample-sites";
 import { ClientView } from "./client-view";
-import { FRAME_READY, FRAME_SHOW } from "./client-view-protocol";
+import { FRAME_ESCAPE, FRAME_READY, FRAME_SHOW } from "./client-view-protocol";
 
 // Higani points 122, 123: her page as her clients see it, phone or computer.
 
@@ -76,10 +76,27 @@ describe("ClientView", () => {
     );
   });
 
-  it("Escape or « Fermer » closes it", () => {
-    const { onClose } = renderView();
+  it("Escape here or inside her page, or « Fermer », closes it", () => {
+    const { frame, onClose } = renderView();
     fireEvent.keyDown(document, { key: "Escape" });
     fireEvent.click(screen.getByRole("button", { name: "Fermer" }));
-    expect(onClose).toHaveBeenCalledTimes(2);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: FRAME_ESCAPE },
+          origin: window.location.origin,
+          source: frame.contentWindow,
+        }),
+      );
+      // Not from her page: ignored.
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: FRAME_ESCAPE },
+          origin: window.location.origin,
+          source: window,
+        }),
+      );
+    });
+    expect(onClose).toHaveBeenCalledTimes(3);
   });
 });

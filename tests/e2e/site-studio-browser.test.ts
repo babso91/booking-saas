@@ -1,4 +1,4 @@
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
@@ -549,5 +549,223 @@ describe("her studio — her photos and her plan", () => {
     } finally {
       await visitor.close();
     }
+  });
+});
+
+// Higani points 120 to 124: find what to edit from her preview, keep her
+// content through a change of universe, check her page as her clients see it.
+describe("Studio: find, keep, check (points 120 to 124)", () => {
+  const attr = (locator: Locator, name: string) => () =>
+    locator.getAttribute(name);
+
+  async function withHours(name: string, client: string) {
+    const pro = await professionalWithVisit(name, client);
+    await db.query(
+      `insert into public.business_hours (business_id, weekday, starts_at, ends_at)
+       select $1, weekday, '08:00', '20:00' from generate_series(0, 6) weekday`,
+      [pro.businessId],
+    );
+    return pro;
+  }
+
+  it("phone 390: Modifier chips open their tab, ideas lead to theirs", async () => {
+    const pro = await withHours("Cléo", "Eva");
+    const { page, errors, consoleErrors } = await studioPage(
+      pro,
+      390,
+      true,
+      true,
+    );
+    await page.goto(`${APP}/app/site`);
+    await saved(page);
+    const pressed = (name: string) =>
+      page
+        .getByRole("navigation", { name: "Réglages" })
+        .getByRole("button", { name, exact: true });
+
+    // Her page shows "infos pratiques" (so its Modifier) once it has some.
+    await page.getByRole("button", { name: "Infos", exact: true }).click();
+    await page
+      .getByLabel("Adresse", { exact: true })
+      .fill("12 rue des Lilas, Lyon");
+    await saved(page);
+    // On a phone the studio's sheet covers her preview: she closes it, then
+    // taps a section; the studio comes back on that section's tab.
+    await page.getByRole("button", { name: "Fermer le studio" }).click();
+    await page
+      .getByRole("button", { name: "Modifier tes prestations" })
+      .click();
+    await expect
+      .poll(attr(pressed("Prestations"), "aria-pressed"))
+      .toBe("true");
+    await page.getByRole("button", { name: "Fermer le studio" }).click();
+    await page
+      .getByRole("button", { name: "Modifier tes infos pratiques" })
+      .click();
+    await expect.poll(attr(pressed("Infos"), "aria-pressed")).toBe("true");
+
+    // Folded by default; opened, never mandatory, each idea leads somewhere.
+    const card = page.getByRole("button", { name: /Pour une page plus utile/ });
+    expect(await card.getAttribute("aria-expanded")).toBe("false");
+    await card.click();
+    await page
+      .getByText("Rien n’est obligatoire : ta page se publie telle quelle.")
+      .waitFor();
+    // Hours are set: no hours idea.
+    expect(await page.getByRole("link", { name: "Mes horaires" }).count()).toBe(
+      0,
+    );
+    await page
+      .getByRole("button", { name: /^Compléter : Choisis une photo/ })
+      .click();
+    await expect.poll(attr(pressed("Photos"), "aria-pressed")).toBe("true");
+
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "studio ideas");
+
+    // « Comme mes clientes » on a phone: its title on its own line, and
+    // Escape from inside her page closes it.
+    await page.getByRole("button", { name: "Voir comme mes clientes" }).click();
+    const view = page.getByRole("dialog", { name: "Comme mes clientes" });
+    const title = view.getByText("Comme mes clientes", { exact: true });
+    expect((await title.boundingBox())!.width).toBeGreaterThan(300);
+    const inside = page.frameLocator('iframe[title^="Ta page"]');
+    await inside
+      .getByRole("button", { name: /Réserver/ })
+      .first()
+      .waitFor();
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "client view on a phone");
+    await capture(page, "p122-clientes-390");
+    await inside.locator("body").click({ position: { x: 10, y: 400 } });
+    await inside.locator("body").press("Escape");
+    await view.waitFor({ state: "detached" });
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  it("the hours idea is a link to her hours while none are set", async () => {
+    const pro = await professionalWithVisit("Dora", "Eva");
+    const { page } = await studioPage(pro, 1280, false, true);
+    await page.goto(`${APP}/app/site`);
+    await saved(page);
+    await page
+      .getByRole("button", { name: /Pour une page plus utile/ })
+      .click();
+    expect(
+      await page
+        .getByRole("link", { name: "Mes horaires" })
+        .getAttribute("href"),
+    ).toBe("/app/settings/hours");
+  });
+
+  it("point 121: her links survive a change of universe", async () => {
+    const pro = await withHours("Lisa", "Eva");
+    const { page, errors } = await studioPage(pro, 390, true, true);
+    await page.goto(`${APP}/app/site`);
+    await saved(page);
+    await page.getByRole("button", { name: "Infos", exact: true }).click();
+    await page.getByRole("button", { name: "Ajouter un lien" }).click();
+    await page.getByLabel("Adresse du lien 1").fill("@studio.test");
+    await saved(page);
+    expect(JSON.stringify((await draftOf(pro.businessId)).config)).toContain(
+      "@studio.test",
+    );
+
+    await chooseUniverse(page, /Maison Alma/);
+    await saved(page);
+    expect((await draftOf(pro.businessId)).config).toMatchObject({
+      universe: "alma",
+    });
+    await page.getByRole("button", { name: "Infos", exact: true }).click();
+    expect(await page.getByLabel("Adresse du lien 1").inputValue()).toBe(
+      "@studio.test",
+    );
+    expect(JSON.stringify((await draftOf(pro.businessId)).config)).toContain(
+      "@studio.test",
+    );
+    expect(errors).toEqual([]);
+  });
+
+  it("desktop 1280: her page as her clients see it, booking walked, never taken", async () => {
+    const pro = await withHours("Maya", "Eva");
+    const { page, errors, consoleErrors } = await studioPage(
+      pro,
+      1280,
+      false,
+      true,
+    );
+    await page.goto(`${APP}/app/site`);
+    await saved(page);
+    await page.getByRole("button", { name: "Voir comme mes clientes" }).click();
+    const dialog = page.getByRole("dialog", { name: "Comme mes clientes" });
+    await dialog.waitFor();
+    const iframe = page.locator('iframe[title^="Ta page"]');
+    await expect.poll(attr(iframe, "style")).toMatch(/width: 390px/);
+    const frame = page.frameLocator('iframe[title^="Ta page"]');
+    await frame.getByText(`Atelier Maya`).first().waitFor();
+    expect(await frame.getByRole("button", { name: /^Modifier/ }).count()).toBe(
+      0,
+    );
+
+    await dialog.getByRole("button", { name: "Ordinateur" }).click();
+    await expect
+      .poll(
+        attr(
+          dialog.getByRole("button", { name: "Ordinateur" }),
+          "aria-pressed",
+        ),
+      )
+      .toBe("true");
+    await expect.poll(attr(iframe, "style")).toMatch(/width: 1280px/);
+    await frame.getByText("Atelier Maya").first().waitFor();
+
+    // Her booking, walked to the review.
+    await frame
+      .locator("[data-header-action]")
+      .getByRole("button", { name: "Réserver" })
+      .click();
+    const sheet = frame.getByRole("dialog", { name: /Réserver chez/ });
+    await sheet.waitFor();
+    await sheet.getByRole("button", { name: /Rehaussement de cils/ }).click();
+    await sheet
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+    // Her real slots: today may be over (past 20:00), then her next one
+    // is offered, which leads to that day's slots.
+    const slots = sheet.getByRole("list", { name: /^Créneaux du / });
+    const next = sheet.getByRole("button", { name: /^Prochain créneau/ });
+    await slots.or(next).first().waitFor();
+    if (await next.isVisible()) await next.click();
+    await slots.waitFor();
+    await slots.getByRole("button").first().click();
+    await sheet.getByRole("heading", { name: "Vos coordonnées" }).waitFor();
+    await sheet.getByLabel(/^Prénom/).fill("Inès");
+    await sheet.getByLabel(/^Email/).fill("ines@client.test.local");
+    await sheet.getByRole("button", { name: "Continuer" }).click();
+    await sheet
+      .getByRole("heading", { name: "Vérifiez et confirmez" })
+      .waitFor();
+    const confirm = sheet.getByRole("button", {
+      name: "Confirmation désactivée dans l’aperçu",
+    });
+    expect(await confirm.isDisabled()).toBe(true);
+    // Never taken: no client of that name was created.
+    const { rows } = await db.query(
+      "select 1 from public.clients where business_id = $1 and first_name = 'Inès'",
+      [pro.businessId],
+    );
+    expect(rows).toHaveLength(0);
+
+    await expectAccessible(page, "client view");
+    // Escape goes to the document that holds the focus: the frame's own
+    // page after she walked its booking. Back on the dialog, it closes it.
+    await dialog
+      .getByText("Ton brouillon, avec tes vraies prestations.")
+      .click();
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
   });
 });
