@@ -172,6 +172,15 @@ Le parcours `/b/[slug]` utilise ce contrat tel quel, sans aucun changement backe
   - c'est une indication : réserver depuis une prestation ouvre la réservation sur **ce jour** (`initialDate`, gardé seulement entre aujourd'hui et l'horizon), dont les créneaux sont relus ;
   - lecture en échec ou aucun créneau : rien n'est affiché, la page reste entière ;
   - l'aperçu du Studio ne l'affiche pas (pas de lecture faite côté Studio).
+- **Jour ou période sans créneau** (Higani point 60) :
+  - le texte le dit d'abord (« Aucun créneau disponible ce jour-là. », « … sur cette période. », « … ce mois-ci. ») ;
+  - puis le prochain créneau **après** ce qui est affiché est cherché avec la lecture du calendrier (`GET …/availability?serviceId&date&through`, mêmes règles, options choisies comprises) ;
+  - la recherche avance par tranches de 31 jours (la limite de la route), jusqu'à l'horizon, sans dépasser environ quatre mois ;
+  - trouvé : « Prochain créneau : mardi 24 novembre à 10:00 », qui ouvre ce jour (vue Jour) ou y déplace la période (Semaine, Mois) ;
+  - rien jusqu'à l'horizon : « Les réservations en ligne sont ouvertes jusqu'au … : aucun créneau d'ici là. », avec « Choisir une autre prestation » s'il y en a d'autres ; rien dans les quatre mois : « Aucun créneau en ligne d'ici le … » ;
+  - recherche en échec : le lien « Voir le {jour suivant} » d'avant reste proposé ;
+  - mois au-dessus des créneaux du jour (format classique) : seul le jour fait la proposition, pour ne pas la dire deux fois ;
+  - **pas encore** : une autre personne (la réservation publique ne choisit pas de membre de l'équipe) et la liste d'attente (écran prêt dans la PR #97, à brancher à cet endroit une fois fusionnée).
 - **Fuseau :** les heures sont toujours celles de l'établissement. Si l'appareil est réglé sur un autre fuseau, l'écran le précise.
 - **`requestId` :**
   - un par contenu (prestation, créneau, coordonnées) ;
