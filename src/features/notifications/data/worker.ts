@@ -5,7 +5,9 @@ import type { AppSupabaseClient } from "@/lib/supabase/types";
 import {
   claimedEmailSchema,
   claimIdentitySchema,
+  type ClaimedEmail,
 } from "../schemas/claimed-email";
+import type { EmailPractical } from "../templates/practical";
 import { renderEmail } from "../templates/render";
 import {
   EmailTransportError,
@@ -20,6 +22,7 @@ import {
   prepareEmail,
   releaseEmail,
 } from "./outbox";
+import { readEmailPractical } from "./practical";
 
 // Outbox consumer. Each run claims a bounded batch (PostgreSQL decides what
 // is due and still applies, and hands each email to one worker at a time),
@@ -51,6 +54,8 @@ export type EmailWorkerDeps = {
   appUrl: string;
   /** The template (tests replace it to simulate a rendering failure). */
   render?: typeof renderEmail;
+  /** Her published "Infos pratiques" (tests replace it to simulate a failure). */
+  practical?: typeof readEmailPractical;
 };
 
 export type EmailWorkerOptions = {
@@ -109,6 +114,8 @@ export async function runEmailOutbox(
     businessId: options.businessId,
   });
   result.claimed = items.length;
+  // Her published "Infos pratiques", read once per business and run.
+  const practicals = new Map<string, Promise<EmailPractical | null>>();
 
   for (const raw of items) {
     const identity = claimIdentitySchema.safeParse(raw);
@@ -118,7 +125,7 @@ export async function runEmailOutbox(
       continue;
     }
     try {
-      await deliver(deps, raw, identity.data, result, {
+      await deliver(deps, raw, identity.data, result, practicals, {
         startedAt,
         budgetMs,
         sendTimeoutMs,
@@ -142,6 +149,7 @@ async function deliver(
   raw: unknown,
   claim: { id: string; claimId: string },
   result: EmailWorkerResult,
+  practicals: Map<string, Promise<EmailPractical | null>>,
   timing: { startedAt: number; budgetMs: number; sendTimeoutMs: number },
 ) {
   const { startedAt, budgetMs, sendTimeoutMs } = timing;
@@ -171,9 +179,11 @@ async function deliver(
   // email up at once (a stable code, nothing about the customer logged).
   let message: EmailMessage | null = email.message;
   if (!message) {
+    const practical = await practicalFor(deps, practicals, email, fields);
     try {
       const rendered = (deps.render ?? renderEmail)(email, {
         appUrl: deps.appUrl,
+        practical,
       });
       message = {
         to: email.recipient,
@@ -279,4 +289,29 @@ async function giveUp(
   if (status) result.failed += 1;
   else result.stale += 1;
   logEmail("email_failed", { emailEventId: claim.id, code }, "warn");
+}
+
+/**
+ * Her published "Infos pratiques" for this email (point 153), or null. They
+ * add to the email and never hold it back: an unreadable site sends the
+ * email without them (a stable code logged, nothing about her customer).
+ */
+async function practicalFor(
+  deps: EmailWorkerDeps,
+  practicals: Map<string, Promise<EmailPractical | null>>,
+  email: ClaimedEmail,
+  fields: Parameters<typeof logEmail>[1],
+) {
+  if (email.type === "appointment_cancelled") return null;
+  const slug = email.business.slug;
+  if (!practicals.has(slug)) {
+    practicals.set(
+      slug,
+      (deps.practical ?? readEmailPractical)(deps.admin, slug).catch(() => {
+        logEmail("practical_unavailable", fields, "warn");
+        return null;
+      }),
+    );
+  }
+  return practicals.get(slug)!;
 }
