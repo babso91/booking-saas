@@ -162,11 +162,12 @@ Un trigger sur `appointments` (`private.queue_appointment_notifications`) s'appl
   - date et heure (heure murale fournie par PostgreSQL) ;
   - durée ;
   - prix (sauf pour une annulation) ;
-  - adresse de l'établissement si elle est renseignée ;
+  - adresse de l'établissement si elle est renseignée (l'adresse précise de ses « Infos pratiques » publiées en priorité) ;
   - mention du fuseau ;
   - lien vers la page publique `/b/<slug>`.
 - **Gestion du rendez-vous :** confirmation, rappel et modification comportent un bouton « Gérer ou annuler mon rendez-vous ». Il mène à la connexion du Client Hub puis au détail exact du rendez-vous après vérification par code e-mail. Une session déjà valide reprend directement le détail. Le lien ne contient ni code ni adresse e-mail et ne donne aucun droit par lui-même : autorisation de la fiche et conditions du rendez-vous restent vérifiées par le serveur. La page publique pour réserver reste un lien distinct.
 - **Réponses :** `Reply-To` reste l'adresse de contact de l'établissement, pour les demandes qui ne sont pas disponibles en ligne. L'e-mail d'annulation utilise une formulation neutre, que l'annulation provienne de la cliente ou de la professionnelle.
+- **Infos pratiques (point 153) :** confirmation, rappel et modification reprennent les « Infos pratiques » de son **site publié** : Accès, Avant de venir, Paiement, Accessibilité, plus l'adresse précise. Ce sont les mots qu'elle a écrits une fois dans son Studio, jamais son brouillon, et seulement ce qu'elle a rempli. Ils sont découpés ligne par ligne (8 lignes au plus par rubrique, sans caractère de contrôle) et échappés en HTML. Rien dans une annulation. Le worker les lit une fois par établissement et par passage (`get_public_site`, comme un visiteur), au rendu seulement : un message déjà figé repart tel quel. Un site illisible n'empêche jamais l'envoi : l'e-mail part sans ces infos (`practical_unavailable` journalisé, rien sur la cliente).
 - **Données exclues :** les notes internes, les notes CRM, les autres rendez-vous et les données des autres clientes ne sont jamais lues par le claim (testé).
 
 ## 6. Sécurité

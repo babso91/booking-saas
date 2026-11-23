@@ -3,6 +3,7 @@ import { hubAppointmentPath, hubSignInHref } from "@/features/client-hub/links";
 import { weekdayOfLocalDate } from "@/lib/time/local-date";
 
 import type { ClaimedEmail, EmailType } from "../schemas/claimed-email";
+import type { EmailPractical } from "./practical";
 
 // Customer emails, in French, addressed with "vous" like the booking page.
 // Every value comes from the claimed email (the business's own data and
@@ -97,7 +98,11 @@ const HEADLINES: Record<EmailType, { subject: string; lead: string }> = {
 
 export function renderEmail(
   email: ClaimedEmail,
-  options: { appUrl: string },
+  options: {
+    appUrl: string;
+    /** Her published "Infos pratiques" (point 153), never in a cancellation. */
+    practical?: EmailPractical | null;
+  },
 ): RenderedEmail {
   const business = singleLine(email.business.name);
   const service = singleLine(email.appointment.serviceName);
@@ -128,9 +133,34 @@ export function renderEmail(
       formatPrice(email.appointment.priceCents, email.appointment.currency),
     ]);
   }
-  if (email.business.location && !cancelled) {
-    details.push(["Adresse", singleLine(email.business.location)]);
+  const practical = cancelled ? null : (options.practical ?? null);
+  const address = practical?.address ?? email.business.location;
+  if (address && !cancelled) {
+    details.push(["Adresse", singleLine(address)]);
   }
+  const practicalText = practical?.items.length
+    ? [
+        "",
+        "Infos pratiques",
+        ...practical.items.flatMap(({ label, lines }) =>
+          lines.length === 1
+            ? [`${label} : ${lines[0]}`]
+            : [`${label} :`, ...lines],
+        ),
+      ]
+    : [];
+  const practicalHtml = practical?.items.length
+    ? `<p style="margin-bottom:4px"><strong>Infos pratiques</strong></p>
+<table role="presentation" cellpadding="4" cellspacing="0">
+${practical.items
+  .map(
+    ({ label, lines }) =>
+      `<tr><td style="color:#666;vertical-align:top">${escapeHtml(label)}</td><td>${lines.map(escapeHtml).join("<br>")}</td></tr>`,
+  )
+  .join("\n")}
+</table>
+`
+    : "";
 
   const contact = [
     email.business.phone
@@ -154,6 +184,7 @@ export function renderEmail(
     headline.lead,
     "",
     ...details.map(([label, value]) => `${label} : ${value}`),
+    ...practicalText,
     "",
     timezoneNote,
     "",
@@ -183,7 +214,7 @@ ${details
   )
   .join("\n")}
 </table>
-<p style="color:#666;font-size:13px">${escapeHtml(timezoneNote)}</p>
+${practicalHtml}<p style="color:#666;font-size:13px">${escapeHtml(timezoneNote)}</p>
 ${cancelled ? "" : `<p><a href="${escapeHtml(managementUrl)}" style="display:inline-block;padding:12px 18px;background:#97493a;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:bold">Gérer ou annuler mon rendez-vous</a></p><p style="color:#666;font-size:13px">Utilisez l’adresse e-mail de votre réservation. Un code pourra vous être demandé. L’annulation dépend des conditions du rendez-vous.</p>`}
 <p>${escapeHtml(cancelled ? "Pour reprendre rendez-vous :" : closing)}${
     cancelled
