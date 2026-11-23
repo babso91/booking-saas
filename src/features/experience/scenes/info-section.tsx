@@ -27,7 +27,9 @@ export function InfoSection({ info, index }: { info: Info; index: number }) {
             className="text-[clamp(34px,9vw,64px)] leading-[0.95] [overflow-wrap:break-word] md:col-span-5"
             {...reveal()}
           >
-            <Display>{title || (edit ? "Section sans titre" : "")}</Display>
+            <Display>
+              {title ? whole(title) : edit ? "Section sans titre" : ""}
+            </Display>
           </h2>
           <div
             className="mt-6 flex max-w-[60ch] flex-col md:col-span-7 md:mt-2"
@@ -50,5 +52,22 @@ export function InfoSection({ info, index }: { info: Info; index: number }) {
         </div>
       </div>
     </section>
+  );
+}
+
+/**
+ * Her title, its short hyphenated words kept whole: « rendez-vous » is
+ * never split at its hyphen in her display size (« rendez- / vous »). A
+ * long one may still break, rather than run off a phone.
+ */
+function whole(title: string) {
+  return title.split(/(\s+)/).map((word, index) =>
+    /\S-\S/.test(word) && word.length <= 14 ? (
+      <span key={index} className="whitespace-nowrap">
+        {word}
+      </span>
+    ) : (
+      word
+    ),
   );
 }

@@ -18,12 +18,20 @@ describe("inUniverse", () => {
     hidden: ["portrait" as const],
     practical: { ...emptyPractical, address: "12 rue Mercière, Lyon" },
     links: [{ network: "instagram" as const, url: "@studio.ines" }],
+    infoSections: [
+      { id: "avant", title: "Avant votre rendez-vous", text: "Venez à jeun." },
+    ],
   };
 
   it("keeps all of her content: name, texts, photos, infos, links, labels, format", () => {
     const next = inUniverse(hers, alma);
     for (const key of herKeys) expect(next[key]).toEqual(hers[key]);
     expect(next.links).toEqual([{ network: "instagram", url: "@studio.ines" }]);
+  });
+
+  it("keeps her informative sections (point 16) in another universe", () => {
+    expect(herKeys).toContain("infoSections");
+    expect(inUniverse(hers, alma).infoSections).toEqual(hers.infoSections);
   });
 
   it("takes the new universe's design", () => {

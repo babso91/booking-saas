@@ -769,3 +769,127 @@ describe("Studio: find, keep, check (points 120 to 124)", () => {
     expect(consoleErrors).toEqual([]);
   });
 });
+
+// Higani point 16: her informative sections, written in Sections, shown in
+// her preview at once, placed by the arrows under Signature.
+describe("Studio: her informative sections (point 16)", () => {
+  it("desktop 1280: added, written, saved, placed, withdrawn", async () => {
+    const pro = await professionalWithVisit("Opale", "Eva");
+    await db.query("select public.set_site_plan($1, 'signature')", [
+      pro.businessId,
+    ]);
+    const { page, errors, consoleErrors } = await studioPage(
+      pro,
+      1280,
+      false,
+      true,
+    );
+    const studio = page.getByRole("dialog", { name: "Studio de création" });
+    await page.goto(`${APP}/app/site`);
+    await saved(page);
+    await studio.getByRole("button", { name: "Sections", exact: true }).click();
+
+    const kinds = () =>
+      page
+        .locator("[data-site-section]")
+        .evaluateAll((nodes) =>
+          nodes.map((node) => node.getAttribute("data-site-section")),
+        );
+    expect(await kinds()).not.toContain("info");
+
+    const group = studio.getByRole("group", {
+      name: "Ajouter une section d’information",
+    });
+    for (const idea of [
+      "Avant votre rendez-vous",
+      "Déroulé d’une séance",
+      "Questions fréquentes",
+      "Mes engagements",
+      "Autre titre",
+    ])
+      await group.getByRole("button", { name: idea }).waitFor();
+    await group
+      .getByRole("button", { name: "Avant votre rendez-vous" })
+      .click();
+
+    // Her text field is ready to type in.
+    const text = studio.getByLabel("Texte", { exact: true });
+    await text.waitFor();
+    await page.waitForFunction(
+      () => document.activeElement?.tagName === "TEXTAREA",
+    );
+    await page.keyboard.type("Venez les ongles nus.");
+    await saved(page);
+    expect(await studio.getByLabel("Titre", { exact: true }).inputValue()).toBe(
+      "Avant votre rendez-vous",
+    );
+
+    // Her preview shows it, with her title and her text.
+    const preview = page.locator('[data-site-section="info"]');
+    await preview.waitFor();
+    await preview
+      .getByRole("heading", { name: "Avant votre rendez-vous" })
+      .waitFor();
+    await preview.getByText("Venez les ongles nus.").waitFor();
+    let draft = (await draftOf(pro.businessId)).config as {
+      infoSections: { id: string; title: string; text: string }[];
+      presentation?: { order?: string[] };
+    };
+    expect(draft.infoSections).toEqual([
+      expect.objectContaining({
+        title: "Avant votre rendez-vous",
+        text: "Venez les ongles nus.",
+      }),
+    ]);
+    const key = `info:${draft.infoSections[0]!.id}`;
+    // By default: after her scenes, before her practical infos.
+    const placed = await kinds();
+    expect(placed.indexOf("info")).toBeGreaterThan(placed.indexOf("services"));
+
+    // Signature: the arrows move it, in her preview and in her draft.
+    const at = placed.indexOf("info");
+    await studio
+      .getByRole("button", { name: "Monter Avant votre rendez-vous" })
+      .click();
+    await saved(page);
+    await expect.poll(async () => (await kinds()).indexOf("info")).toBe(at - 1);
+    draft = (await draftOf(pro.businessId)).config as typeof draft;
+    expect(draft.presentation?.order).toContain(key);
+    expect(draft.presentation!.order!.indexOf(key)).toBe(at - 1);
+    await capture(page, "p16-studio-1280");
+
+    // Withdrawn: gone from her preview, her draft and her order.
+    await studio
+      .getByRole("button", {
+        name: "Retirer cette section : Avant votre rendez-vous",
+      })
+      .click();
+    await saved(page);
+    await expect.poll(kinds).not.toContain("info");
+    draft = (await draftOf(pro.businessId)).config as typeof draft;
+    expect(draft.infoSections ?? []).toEqual([]);
+    expect(JSON.stringify(draft.presentation?.order ?? [])).not.toContain(
+      "info:",
+    );
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  // WCAG 2.5.3 (label in name), as axe checks it on the open card.
+  it("desktop 1280: her section's card is accessible, its Retirer button included", async () => {
+    const pro = await professionalWithVisit("Opale", "Eva");
+    const { page } = await studioPage(pro, 1280, false, true);
+    const studio = page.getByRole("dialog", { name: "Studio de création" });
+    await page.goto(`${APP}/app/site`);
+    await saved(page);
+    await studio.getByRole("button", { name: "Sections", exact: true }).click();
+    await studio
+      .getByRole("group", { name: "Ajouter une section d’information" })
+      .getByRole("button", { name: "Avant votre rendez-vous" })
+      .click();
+    await studio.getByLabel("Texte", { exact: true }).fill("Venez à jeun.");
+    await saved(page);
+    await expectAccessible(page, "studio, her informative section");
+  });
+});

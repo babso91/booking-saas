@@ -945,7 +945,8 @@ export function Studio({
                                     <button
                                       type="button"
                                       onClick={() => removeInfoSection(info.id)}
-                                      aria-label={`Retirer la section « ${name} »`}
+                                      // Its visible words first (WCAG 2.5.3), then which one.
+                                      aria-label={`Retirer cette section : ${name}`}
                                       className="min-h-11 cursor-pointer self-start text-[13px] font-medium text-[#B3261E] underline underline-offset-4"
                                     >
                                       Retirer cette section

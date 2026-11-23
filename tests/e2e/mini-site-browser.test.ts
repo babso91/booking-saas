@@ -821,3 +821,311 @@ describe("her links and contact (points 3, 4)", () => {
     expect(consoleErrors).toEqual([]);
   });
 });
+
+// Higani points 16, 18 and 19: her informative sections, her long texts
+// folded, the booking bar that never breaks its words nor hides what a
+// keyboard reaches, and a booking left in progress offered back.
+describe("her page, the essentials first (points 16, 18, 19)", () => {
+  const practical = {
+    address: "12 rue Mercière, 69002 Lyon",
+    area: "",
+    access: "Code 4B12, 2e étage.",
+    instructions: "Venir démaquillée.",
+    payment: "CB, espèces",
+    accessibility: "",
+    phone: "04 78 00 00 00",
+    email: "",
+    showHours: false,
+  };
+
+  /** A published site of hers, over her whole week open. */
+  async function publishedSite(extra: Record<string, unknown> = {}) {
+    const pro = await professionalWithVisit("Mila", "Lou");
+    const actor = pro.browser.member!.userId;
+    const { rows } = await db.query<{ slug: string }>(
+      "select slug from public.businesses where id = $1",
+      [pro.businessId],
+    );
+    const slug = rows[0]!.slug;
+    await db.query("delete from public.business_hours where business_id = $1", [
+      pro.businessId,
+    ]);
+    for (let weekday = 0; weekday < 7; weekday += 1)
+      await db.query(
+        `insert into public.business_hours (business_id, weekday, starts_at, ends_at)
+         values ($1, $2, '09:00', '19:00')`,
+        [pro.businessId, weekday],
+      );
+    const config = sampleSite("mila");
+    const { rows: saved } = await db.query<{ revision: number }>(
+      "select public.save_site_draft($1, $2, 0, 1, $3::jsonb) as revision",
+      [
+        pro.businessId,
+        actor,
+        JSON.stringify({
+          ...config,
+          brand: { ...config.brand, name: "Studio Lumière" },
+          practical,
+          ...extra,
+        }),
+      ],
+    );
+    await db.query("select * from public.publish_site($1, $2, $3)", [
+      pro.businessId,
+      actor,
+      saved[0]!.revision,
+    ]);
+    return { pro, slug };
+  }
+
+  async function open(slug: string, width: number, height = 844) {
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width,
+      height,
+      phone: true,
+    });
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`${APP}/b/${slug}`);
+    await page.getByText("Studio Lumière").first().waitFor();
+    return { page, errors, consoleErrors };
+  }
+
+  const longText = Array.from(
+    { length: 9 },
+    (_, line) =>
+      `Étape ${line + 1} : une consigne assez détaillée pour occuper la ligne.`,
+  ).join("\n");
+
+  it("phone 390 and 320: her complete section, folded and menu-reachable; the empty one absent; Contact before Accès", async () => {
+    const { slug } = await publishedSite({
+      infoSections: [
+        { id: "avant", title: "Avant votre rendez-vous", text: longText },
+        { id: "vide", title: "Questions fréquentes", text: "" },
+      ],
+    });
+    const { page, errors, consoleErrors } = await open(slug, 390);
+
+    const section = page.locator("#section-avant");
+    await section.waitFor();
+    await section
+      .getByRole("heading", { level: 2, name: "Avant votre rendez-vous" })
+      .waitFor();
+    // The empty one never reaches her clients, nor her menu.
+    expect(await page.getByText("Questions fréquentes").count()).toBe(0);
+    expect(await page.locator("#section-vide").count()).toBe(0);
+
+    // Her line breaks are kept, the whole text stays in the page.
+    const paragraph = section.locator("p").filter({ hasText: "Étape 1" });
+    expect(
+      await paragraph.evaluate((node) => getComputedStyle(node).whiteSpace),
+    ).toBe("pre-line");
+    expect(await paragraph.textContent()).toBe(longText);
+
+    // Point 18: folded, then read whole, then folded again.
+    const more = section.getByRole("button", { name: "Lire la suite" });
+    await more.scrollIntoViewIfNeeded();
+    expect(await more.getAttribute("aria-expanded")).toBe("false");
+    expect(await more.getAttribute("aria-controls")).toBe(
+      await paragraph.getAttribute("id"),
+    );
+    const folded = (await paragraph.boundingBox())!.height;
+    await more.click();
+    const less = section.getByRole("button", { name: "Réduire" });
+    expect(await less.getAttribute("aria-expanded")).toBe("true");
+    expect((await paragraph.boundingBox())!.height).toBeGreaterThan(folded);
+    await less.click();
+    await section.getByRole("button", { name: "Lire la suite" }).waitFor();
+    expect(
+      await section
+        .getByRole("button", { name: "Lire la suite" })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+    expect((await paragraph.boundingBox())!.height).toBe(folded);
+
+    // The menu lists it, and going there lands on it.
+    await page.getByRole("button", { name: "Sommaire" }).click();
+    const index = page.getByRole("dialog", { name: "Sommaire" });
+    await index
+      .getByRole("button", { name: "Avant votre rendez-vous" })
+      .click();
+    await index.waitFor({ state: "detached" });
+    await page.waitForFunction(
+      () => document.activeElement?.id === "section-avant",
+    );
+    expect(
+      await section.evaluate((node) => node.getBoundingClientRect().top),
+    ).toBeLessThan(200);
+
+    // Point 18: where, when and how to reach her first; Contact before Accès.
+    const labels = await page.locator("#infos dt").allInnerTexts();
+    expect(labels.map((label) => label.trim().toLowerCase())).toEqual([
+      "adresse",
+      "contact",
+      "accès",
+      "avant de venir",
+      "paiement",
+    ]);
+    // Her section comes after her scenes and before her practical infos.
+    const kinds = await page
+      .locator("main > [data-site-section]")
+      .evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-site-section")),
+      );
+    expect(kinds.indexOf("info")).toBeGreaterThan(kinds.indexOf("services"));
+    expect(kinds.indexOf("info")).toBe(kinds.indexOf("practical") - 1);
+
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "her informative section");
+    await capture(page, "p16-section-390");
+
+    // 320: no horizontal scroll, still accessible.
+    await page.setViewportSize({ width: 320, height: 760 });
+    await section.scrollIntoViewIfNeeded();
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "her informative section 320");
+    await capture(page, "p16-section-320");
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  it("phone 390 and 320, Mila's bar: « Réserver » on one line; a link the keyboard reaches is never under it", async () => {
+    const { pro, slug } = await publishedSite();
+    const { rows: next } = await db.query<{ local: string; today: string }>(
+      `select local_starts_at as local,
+              (now() at time zone 'Europe/Paris')::date::text as today
+         from public.get_public_next_slots($1)
+        where local_starts_at is not null
+        order by starts_at
+        limit 1`,
+      [slug],
+    );
+    expect(pro.businessId).toBeTruthy();
+    const { page, errors, consoleErrors } = await open(slug, 390);
+    const bar = page.locator("[data-quick-book] button");
+    await bar.waitFor();
+    // The next availability is said in the bar.
+    const soon = fromLabel(next[0]!.local, next[0]!.today);
+    await bar.getByText(soon).waitFor();
+
+    const lines = (text: string) =>
+      bar
+        .getByText(text, { exact: true })
+        .first()
+        .evaluate((node) => {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          // One rectangle per line of text: a word broken in two has two.
+          const tops = new Set(
+            [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+          );
+          return tops.size;
+        });
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      expect(await lines("Réserver"), `at ${width}`).toBe(1);
+      expect(await noSideScroll(page)).toBe(true);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await capture(page, "p19-bar-390");
+
+    // Focus not obscured (WCAG 2.4.11): a footer link scrolled under the
+    // bar is brought clear of it by the Tab that reaches it.
+    const call = page.locator("footer").getByRole("link", { name: /Appeler/ });
+    await call.waitFor();
+    await page.evaluate(() => {
+      const link = document.querySelector<HTMLElement>("footer a")!;
+      const bottom = link.getBoundingClientRect().bottom + window.scrollY;
+      window.scrollTo(0, bottom - window.innerHeight + 20);
+    });
+    await bar.waitFor();
+    // The link sits under the bar, visible only through it.
+    const hiddenBefore = await page.evaluate(() => {
+      const link = document.querySelector("footer a")!.getBoundingClientRect();
+      const barTop = document
+        .querySelector("[data-quick-book] button")!
+        .getBoundingClientRect().top;
+      return link.bottom > barTop;
+    });
+    expect(hiddenBefore).toBe(true);
+    await page.evaluate(() => {
+      const tabbable = [
+        ...document.querySelectorAll<HTMLElement>(
+          "a[href], button:not([disabled]), [tabindex]:not([tabindex='-1'])",
+        ),
+      ];
+      const link = document.querySelector("footer a")!;
+      tabbable[tabbable.indexOf(link as HTMLElement) - 1]!.focus({
+        preventScroll: true,
+      });
+    });
+    await page.keyboard.press("Tab");
+    await page.waitForFunction(
+      () => document.activeElement === document.querySelector("footer a"),
+    );
+    // Let the focus scroll settle.
+    await page.waitForTimeout(300);
+    const clear = await page.evaluate(() => {
+      const link = document.activeElement!.getBoundingClientRect();
+      const barTop = document
+        .querySelector("[data-quick-book] button")!
+        .getBoundingClientRect().top;
+      return { linkBottom: link.bottom, barTop };
+    });
+    expect(clear.linkBottom).toBeLessThanOrEqual(clear.barTop);
+    await capture(page, "p19-focus-390");
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  it("phone 390: a booking left in progress is offered back, and reopens where she was", async () => {
+    const { slug } = await publishedSite();
+    const { page, errors, consoleErrors } = await open(slug, 390);
+    const bar = page.locator("[data-quick-book] button");
+    await bar.waitFor();
+    await bar.getByText("Réserver", { exact: true }).waitFor();
+
+    await page
+      .locator("[data-header-action]")
+      .getByRole("button", { name: "Réserver" })
+      .click();
+    const sheet = page.getByRole("dialog", {
+      name: "Réserver chez Studio Lumière",
+    });
+    await sheet
+      .getByRole("heading", { name: "Choisissez une prestation" })
+      .waitFor();
+    await sheet.getByRole("button", { name: /Rehaussement de cils/ }).click();
+    await sheet
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+    await page.keyboard.press("Escape");
+    await sheet.waitFor({ state: "detached" });
+
+    // Offered back, with the service's name.
+    await bar.getByText("Reprendre ma réservation").waitFor();
+    await bar.getByText("Rehaussement de cils").waitFor();
+    // The header's chip is unchanged.
+    await page
+      .locator("[data-header-action]")
+      .getByRole("button", { name: "Réserver", exact: true })
+      .waitFor();
+    await capture(page, "p19-resume-390");
+
+    await bar.click();
+    await sheet.waitFor();
+    await sheet
+      .getByRole("heading", { name: "Choisissez un créneau" })
+      .waitFor();
+    expect(await noSideScroll(page)).toBe(true);
+
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+});

@@ -119,6 +119,66 @@ describe("siteConfigSchema", () => {
     }
   });
 
+  // Higani point 16: her informative sections.
+  it("her informative sections (point 16): bounded, unique, plain; old versions still read", () => {
+    const base = sampleSiteConfig();
+    const section = (id: string) => ({
+      id,
+      title: "Avant votre rendez-vous",
+      text: "Venez les ongles nus.\nMerci.",
+    });
+    const parse = (infoSections: unknown) =>
+      siteConfigSchema.safeParse({ ...base, infoSections });
+    expect(parse([section("avant"), section("faq")]).success).toBe(true);
+    expect(parse([]).success).toBe(true);
+    expect(parse([{ id: "a", title: "", text: "" }]).success).toBe(true);
+    expect(parse(["a", "b", "c", "d"].map((id) => section(id))).success).toBe(
+      true,
+    );
+    // A version published before them still reads.
+    expect(siteConfigSchema.parse(base).infoSections).toBeUndefined();
+    for (const bad of [
+      ["a", "b", "c", "d", "e"].map((id) => section(id)),
+      [section("a"), section("a")],
+      [section("A")],
+      [section("a b")],
+      [section("")],
+      [section("x".repeat(41))],
+      [{ ...section("a"), title: "<b>Titre</b>" }],
+      [{ ...section("a"), text: "<b>gras</b>" }],
+      [{ ...section("a"), title: "x".repeat(49) }],
+      [{ ...section("a"), text: "x".repeat(1501) }],
+      [{ ...section("a"), extra: true }],
+    ])
+      expect(parse(bad).success).toBe(false);
+    // The limits themselves are accepted.
+    expect(
+      parse([
+        {
+          ...section("a"),
+          title: "x".repeat(48),
+          text: "y".repeat(1500),
+        },
+      ]).success,
+    ).toBe(true);
+  });
+
+  it("her page's order accepts « info:<id> » next to the section kinds", () => {
+    const base = sampleSiteConfig();
+    const order = (value: unknown) =>
+      siteConfigSchema.safeParse({
+        ...base,
+        presentation: { order: value },
+      }).success;
+    expect(order(["services", "info:abc", "practical"])).toBe(true);
+    expect(order(["info:abc-1", "info:def"])).toBe(true);
+    expect(order(["info:ABC"])).toBe(false);
+    expect(order(["info:"])).toBe(false);
+    expect(order(["info:a b"])).toBe(false);
+    expect(order(["unknown"])).toBe(false);
+    expect(order(["info:abc", "info:abc"])).toBe(false);
+  });
+
   it("refuses practical infos that are not plain, or not a contact", () => {
     for (const bad of [
       { access: "<b>Code</b>" },
