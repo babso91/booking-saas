@@ -55,7 +55,11 @@ export function assertSameOrigin(request: Request, body: boolean) {
 // client_hub_unauthenticated.
 export async function withClientHubSession<T>(
   request: Request,
-  handler: (admin: AppSupabaseClient, token: string) => Promise<T>,
+  handler: (
+    admin: AppSupabaseClient,
+    token: string,
+    accountId: string,
+  ) => Promise<T>,
 ): Promise<Response> {
   const presented = presentedSessions(request);
   // Names whose sessions are known to be over; null: nothing is known.
@@ -76,7 +80,7 @@ export async function withClientHubSession<T>(
     const kept = sessionCookieName(resolved.sessionId);
     over = presented.names.filter((name) => name !== kept);
     account = resolved.accountId;
-    response = jsonOk(await handler(admin, resolved.token));
+    response = jsonOk(await handler(admin, resolved.token, resolved.accountId));
   } catch (error) {
     if (
       error instanceof AppException &&

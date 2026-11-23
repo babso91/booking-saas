@@ -11,6 +11,9 @@ const { data, sites, catalog } = vi.hoisted(() => ({
 vi.mock("@/features/businesses/data/public-business", () => data);
 vi.mock("@/features/sites/data/sites", () => sites);
 vi.mock("@/features/catalog/data/catalog", () => catalog);
+vi.mock("@/features/reviews/data", () => ({
+  publicReviews: async () => ({ average: null, count: 0, reviews: [] }),
+}));
 // next/font runs at build time only.
 vi.mock("@/features/experience/fonts", () => ({ siteFontClasses: "fonts" }));
 vi.mock("@/lib/supabase/public", () => ({
@@ -65,11 +68,16 @@ describe("/b/[slug]", () => {
     const metadata = await generateMetadata(params("studio-mila") as never);
     expect(metadata.title).toBe("Réserver chez Studio Mila");
     const page = await PublicBookingPage(params("studio-mila") as never);
-    expect(page.props).toMatchObject({
+    const [booking, reviews] = page.props.children;
+    expect(reviews.props).toMatchObject({
+      slug: "studio-mila",
+      initial: { count: 0, reviews: [] },
+    });
+    expect(booking.props).toMatchObject({
       business: { slug: "studio-mila" },
       catalog: emptyCatalog,
     });
-    expect(page.props).not.toHaveProperty("config");
+    expect(booking.props).not.toHaveProperty("config");
     // Her hours serve her site's infos only: not read without one.
     expect(data.getPublicBusinessHours).not.toHaveBeenCalled();
   });

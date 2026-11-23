@@ -14,9 +14,11 @@ export function hubAppointmentPath(businessId: string, appointmentId: string) {
   );
 }
 
-/** Only our exact appointment route can be resumed after a code check. */
+/** The two exact same-origin destinations supported after an email check. */
 export function safeHubReturnPath(value: unknown): string {
-  if (typeof value !== "string" || /[\s\\?#%]/.test(value)) return HOME;
+  if (typeof value !== "string" || /[\s\\?%]/.test(value)) return HOME;
+  if (value.length <= 71 && /^\/b\/[a-z0-9]+(?:-[a-z0-9]+)*#avis$/.test(value))
+    return value;
   return value === HOME || APPOINTMENT.test(value) ? value : HOME;
 }
 

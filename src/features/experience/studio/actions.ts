@@ -48,7 +48,11 @@ export type StudioActions = {
     expectedRevision: number,
   ) => Promise<UiResult<{ revision: number }>>;
   /** Sends a photo: created, uploaded, then verified by the server. */
-  upload: (file: File, type: UploadType) => Promise<UiResult<{ id: string }>>;
+  upload: (
+    file: File,
+    type: UploadType,
+    purpose?: "logo",
+  ) => Promise<UiResult<{ id: string }>>;
   /**
    * Out of her library: deleted if nothing uses it (`site_asset_in_use`
    * otherwise), or `forGood`: revoked everywhere, published versions too.
@@ -83,7 +87,7 @@ export const studioActionsFor = (businessId: string): StudioActions => ({
     callAction(() =>
       studioRestoreVersionAction({ businessId, versionId, expectedRevision }),
     ),
-  async upload(file, type) {
+  async upload(file, type, purpose) {
     const created = await callAction(() =>
       studioCreatePhotoUploadAction({
         businessId,
@@ -105,7 +109,7 @@ export const studioActionsFor = (businessId: string): StudioActions => ({
       return { ok: false, error: { code: "network" } };
     }
     const confirmed = await callAction(() =>
-      studioConfirmPhotoAction({ businessId, assetId }),
+      studioConfirmPhotoAction({ businessId, assetId, purpose }),
     );
     return confirmed.ok ? { ok: true, data: { id: assetId } } : confirmed;
   },

@@ -1,5 +1,7 @@
 "use client";
 
+import { bookingLabel } from "@/features/sites/presentation";
+
 import { motion } from "motion/react";
 import { useRef, type CSSProperties } from "react";
 
@@ -54,7 +56,7 @@ export function SiteIndex({
   onBook: () => void;
   onClose: () => void;
 }) {
-  const { catalog, motion: language } = useEngine();
+  const { config, catalog, motion: language } = useEngine();
   const root = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const first = useRef<HTMLButtonElement>(null);
@@ -108,7 +110,7 @@ export function SiteIndex({
                   <span className="w-8 shrink-0 text-[var(--u-muted)]">
                     <Detail>{String(position + 1).padStart(2, "0")}</Detail>
                   </span>
-                  <Display className="text-[clamp(34px,9vw,64px)] leading-none">
+                  <Display className="min-w-0 text-[clamp(34px,9vw,64px)] leading-none [overflow-wrap:anywhere]">
                     {destination.label}
                   </Display>
                 </button>
@@ -133,8 +135,8 @@ export function SiteIndex({
                   <span className="w-8 shrink-0" aria-hidden="true">
                     <Detail>→</Detail>
                   </span>
-                  <Display className="text-[clamp(34px,9vw,64px)] leading-none">
-                    Réserver
+                  <Display className="min-w-0 text-[clamp(34px,9vw,64px)] leading-none [overflow-wrap:anywhere]">
+                    {bookingLabel(config.presentation)}
                   </Display>
                 </button>
               </motion.li>

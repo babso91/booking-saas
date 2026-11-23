@@ -1,3 +1,7 @@
+import {
+  orderedKinds,
+  type PageSectionKind,
+} from "@/features/sites/presentation";
 import type { SceneKind, Section, SiteConfig } from "./engine/config";
 
 // Which of her scenes her clients see, and where the site's index leads.
@@ -36,25 +40,32 @@ export function shownSections(
   config: SiteConfig,
   { editing }: { editing: boolean },
 ): Section[] {
-  return config.sections.filter(
-    (section) =>
-      section.kind === "opening" ||
-      section.kind === "services" ||
-      (!config.hidden?.includes(section.kind) &&
-        (editing || !isEmpty(section, config))),
-  );
+  return config.sections
+    .map((section): Section =>
+      section.kind === "work" && config.presentation?.gallery
+        ? { ...section, variant: config.presentation.gallery }
+        : section,
+    )
+    .filter(
+      (section) =>
+        section.kind === "opening" ||
+        section.kind === "services" ||
+        (!config.hidden?.includes(section.kind) &&
+          (editing || !isEmpty(section, config))),
+    );
 }
 
 /** The anchor of each scene a client may want to reach directly. */
 const DESTINATIONS: Partial<Record<SceneKind, { id: string; label: string }>> =
   {
+    intro: { id: "presentation", label: "À propos" },
     services: { id: "prestations", label: "Prestations" },
     work: { id: "realisations", label: "Réalisations" },
     portrait: { id: "portrait", label: "Portrait" },
   };
 
 export type Destination = {
-  kind: SceneKind | "practical";
+  kind: PageSectionKind;
   id: string;
   label: string;
 };
@@ -77,6 +88,34 @@ export function destinations(sections: readonly Section[]): Destination[] {
     list.push({ kind: section.kind, ...destination });
   }
   return list;
+}
+
+/** One order for the page and its menu. Anchors survive renaming. */
+export function sitePages(
+  config: SiteConfig,
+  sections: Section[],
+  practical: boolean,
+  reviews: boolean,
+) {
+  const kinds: PageSectionKind[] = sections.map((section) => section.kind);
+  if (practical) kinds.push("practical");
+  if (reviews) kinds.push("reviews");
+  const available = destinations(sections);
+  available.push(practicalDestination, {
+    kind: "reviews",
+    id: "avis-clientes",
+    label: "Avis",
+  });
+  if (config.presentation?.labels?.opening?.menu?.trim())
+    available.push({ kind: "opening", id: "accueil", label: "Accueil" });
+  return orderedKinds(kinds, config.presentation?.order).map((kind) => {
+    const link = available.find((item) => item.kind === kind);
+    const label = config.presentation?.labels?.[kind]?.menu?.trim();
+    return {
+      kind,
+      link: link ? { ...link, label: label || link.label } : undefined,
+    };
+  });
 }
 
 /** The anchor a shown scene carries (the first of its kind only). */

@@ -23,6 +23,31 @@ describe("siteConfigSchema", () => {
     expect(siteConfigSchema.safeParse(sampleSiteConfig()).success).toBe(true);
   });
 
+  it("accepts section labels as plain text and refuses duplicate sections or unknown gallery styles", () => {
+    const base = sampleSiteConfig();
+    expect(
+      siteConfigSchema.parse({
+        ...base,
+        presentation: {
+          labels: {
+            intro: { title: "Mon histoire", menu: "À propos", hideTitle: true },
+          },
+          gallery: "arches",
+        },
+      }).presentation?.gallery,
+    ).toBe("arches");
+    for (const presentation of [
+      { order: ["reviews", "reviews"] },
+      { gallery: "other" },
+      { labels: { intro: { title: "<b>html</b>" } } },
+      { labels: { other: { menu: "Autre" } } },
+    ]) {
+      expect(
+        siteConfigSchema.safeParse({ ...base, presentation }).success,
+      ).toBe(false);
+    }
+  });
+
   it("accepts her practical infos, and a version without them", () => {
     expect(
       siteConfigSchema.safeParse(sampleSiteConfig({ practical })).success,

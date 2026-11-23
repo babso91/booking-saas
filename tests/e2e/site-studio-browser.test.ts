@@ -413,4 +413,141 @@ describe("her studio — her photos and her plan", () => {
 
     expect(errors).toEqual([]);
   });
+  it("publishes independent titles, gallery, optional logo and Signature section order", async () => {
+    const pro = await professionalWithVisit("Rosa", "Léa");
+    await db.query("select public.set_site_plan($1, 'signature')", [
+      pro.businessId,
+    ]);
+    const { page, errors } = await studioPage(pro, 390, true, true);
+    const studio = page.getByRole("dialog", { name: "Studio de création" });
+    const tab = (name: string) =>
+      studio.getByRole("button", { name, exact: true }).click();
+    await page.goto(APP + "/app/site");
+    await saved(page);
+    await tab("Sections");
+    await tab("Descendre Ouverture");
+    const intro = studio
+      .locator("details")
+      .filter({ has: page.locator("summary", { hasText: "Manifeste" }) });
+    await studio.locator("summary", { hasText: "Manifeste" }).click();
+    await intro
+      .getByLabel("Titre sur la page", { exact: true })
+      .fill("Les mots de Rosa");
+    await intro.getByLabel("Masquer le titre").check();
+    await intro.getByLabel("Nom dans le sommaire").fill("Mon histoire");
+    await tab("Textes");
+    await studio
+      .getByRole("textbox", { name: /^Présentation/ })
+      .fill("Je réalise chaque pose dans mon atelier de Lyon.");
+    await studio
+      .getByLabel("Texte du bouton de réservation")
+      .fill("Prendre rendez-vous");
+    await tab("Photos");
+    await studio
+      .getByLabel("Présentation des réalisations")
+      .selectOption("filmstrip");
+    await studio.getByLabel("Animation de la galerie").selectOption("snap");
+    await tab("Logo");
+    const logo = await sharp({
+      create: { width: 300, height: 54, channels: 4, background: "#73531480" },
+    })
+      .png()
+      .toBuffer();
+    await studio
+      .getByLabel("Choisir un logo")
+      .setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: logo });
+    await studio.getByAltText("Aperçu du logo").waitFor();
+    await tab("← Réglages");
+    await tab("Ajouter une réalisation");
+    await tab("Mes photos");
+    await tab("Utiliser la photo 1");
+    await studio.getByLabel("Titre sous la photo").fill("Volume mixte");
+    await tab("← Réglages");
+    await saved(page);
+    await tab("Publier");
+    await studio.getByText("En ligne · version 1").waitFor();
+    const visitor = await page
+      .context()
+      .browser()!
+      .newPage({
+        viewport: { width: 390, height: 844 },
+        reducedMotion: "reduce",
+      });
+    try {
+      await visitor.goto(APP + "/b/" + (await slugOf(pro.businessId)));
+      const kinds = () =>
+        visitor
+          .locator("main > [data-site-section]")
+          .evaluateAll((nodes) =>
+            nodes.map((node) => node.getAttribute("data-site-section")),
+          );
+      expect((await kinds())[0]).toBe("intro");
+      expect(await visitor.locator("#presentation").innerText()).toContain(
+        "chaque pose",
+      );
+      expect(await visitor.locator("#presentation").innerText()).not.toContain(
+        "Les mots de Rosa",
+      );
+      expect(
+        await visitor
+          .locator("[data-blend-logotype] img")
+          .evaluate((el: HTMLImageElement) =>
+            el.decode().then(() => el.naturalWidth),
+          ),
+      ).toBeGreaterThan(0);
+      await visitor
+        .locator("[data-header-action]")
+        .getByRole("button", { name: "Prendre rendez-vous" })
+        .waitFor();
+      expect(await visitor.locator("#realisations .snap-x").count()).toBe(1);
+      expect(
+        await visitor.locator('#realisations [data-reveal="snap"]').count(),
+      ).toBeGreaterThan(0);
+      await visitor
+        .locator("#realisations")
+        .getByText("Volume mixte")
+        .waitFor();
+      await visitor.getByRole("button", { name: "Sommaire" }).click();
+      await visitor.getByRole("button", { name: "Mon histoire" }).click();
+      await visitor.waitForFunction(
+        () => document.activeElement?.id === "presentation",
+      );
+      expect(await noSideScroll(visitor)).toBe(true);
+      await db.query("select public.set_site_plan($1, 'core')", [
+        pro.businessId,
+      ]);
+      await visitor.reload();
+      expect((await kinds())[0]).toBe("opening");
+      expect(await visitor.locator("#realisations .snap-x").count()).toBe(1);
+      await page.reload();
+      await saved(page);
+      await tab("Sections");
+      expect(
+        await studio
+          .getByRole("button", { name: "Descendre Ouverture" })
+          .count(),
+      ).toBe(0);
+      await tab("Photos");
+      await tab("Logo");
+      await tab("Retirer le logo");
+      await saved(page);
+      await visitor.reload();
+      expect(await visitor.locator("[data-blend-logotype] img").count()).toBe(
+        1,
+      );
+      await tab("Publier");
+      await studio.getByText("En ligne · version 2").waitFor();
+      await visitor.reload();
+      expect(await visitor.locator("[data-blend-logotype] img").count()).toBe(
+        0,
+      );
+      expect(
+        (await visitor.locator("[data-blend-logotype]").innerText()).trim()
+          .length,
+      ).toBeGreaterThan(0);
+      expect(errors).toEqual([]);
+    } finally {
+      await visitor.close();
+    }
+  });
 });

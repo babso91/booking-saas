@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
 import { Sheet } from "@/components/ui/sheet";
+import { SharePlanning } from "@/features/agenda/share/share-planning";
 import {
   getAgendaAction,
   getAgendaAppointmentAction,
@@ -118,7 +119,9 @@ export function AgendaView({
   initialAppointmentId,
   initialCreate,
   formatSettings,
+  shareSlug,
 }: {
+  shareSlug?: string;
   formatSettings?: {
     membershipId: string;
     preferred: AgendaFormat;
@@ -607,6 +610,7 @@ export function AgendaView({
           {label}
         </Button>
       ))}
+      {shareSlug && <SharePlanning slug={shareSlug} anchor={anchor} />}
       {formatSettings ? (
         <label className="ml-auto flex min-w-0 items-center gap-2 text-sm text-ink-soft">
           <span className="sr-only lg:not-sr-only">Format d’agenda</span>

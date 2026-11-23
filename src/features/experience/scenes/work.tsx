@@ -1,4 +1,5 @@
 "use client";
+import { sectionTitle } from "@/features/sites/presentation";
 
 import { AnimatePresence, motion, useScroll, useTransform } from "motion/react";
 import { useRef, useState } from "react";
@@ -26,12 +27,13 @@ export function Work({
   variant: WorkVariant;
   index: number;
 }) {
-  const { edit } = useEngine();
+  const { config, edit } = useEngine();
   const [open, setOpen] = useState<WorkItem | null>(null);
   // In the studio a photo opens in the photo editor, not full screen.
   const show = (work: WorkItem, position: number) =>
     edit ? edit.photo(position) : setOpen(work);
-  const label = `(${String(index).padStart(2, "0")}) Réalisations`;
+  const title = sectionTitle(config.presentation, "work", "Réalisations");
+  const label = title ? `(${String(index).padStart(2, "0")}) ${title}` : "";
   return (
     <>
       {variant === "arches" ? (
@@ -126,7 +128,9 @@ function Arches({
     <section className="bg-[var(--u-bg)] text-[var(--u-ink)]">
       <div className="mx-auto max-w-[1100px] px-6 pb-32">
         <p className="text-center text-[var(--u-muted)]">
-          <Detail>Ce que nous faisons</Detail>
+          <Detail>
+            {sectionTitle(config.presentation, "work", "Ce que nous faisons")}
+          </Detail>
         </p>
         <ul className="mt-12 flex flex-col gap-20 md:grid md:grid-cols-2 md:gap-x-10 md:gap-y-28">
           {config.content.works.map((work, position) => (
@@ -214,12 +218,16 @@ function Filmstrip({
   return (
     <section className="overflow-hidden bg-[var(--u-bg)] py-20 text-[var(--u-ink)]">
       <div className="mx-auto flex max-w-[1100px] items-end justify-between gap-4 px-5">
-        <motion.h2
-          className="text-[clamp(48px,15vw,140px)] leading-[0.85]"
-          {...reveal()}
-        >
-          <Display>Réalisations</Display>
-        </motion.h2>
+        {!config.presentation?.labels?.work?.hideTitle && (
+          <motion.h2
+            className="min-w-0 text-[clamp(48px,15vw,140px)] leading-[0.85] [overflow-wrap:anywhere]"
+            {...reveal()}
+          >
+            <Display>
+              {sectionTitle(config.presentation, "work", "Réalisations")}
+            </Display>
+          </motion.h2>
+        )}
         <Detail className="pb-2 text-[var(--u-muted)]">
           {String(works.length).padStart(2, "0")} pièces
         </Detail>

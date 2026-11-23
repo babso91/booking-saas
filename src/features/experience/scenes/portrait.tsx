@@ -1,4 +1,5 @@
 "use client";
+import { sectionTitle } from "@/features/sites/presentation";
 
 import { motion, useScroll, useTransform } from "motion/react";
 import { useRef } from "react";
@@ -39,7 +40,12 @@ function Editorial({ index }: { index: number }) {
     <section className="bg-[var(--u-bg)] text-[var(--u-ink)]">
       <div className="mx-auto max-w-[1100px] px-5 pt-6 pb-28 md:pb-36">
         <div className="flex items-baseline justify-between border-t border-[var(--u-line)] pt-4 text-[var(--u-muted)]">
-          <Detail>({String(index).padStart(2, "0")}) Portrait</Detail>
+          {sectionTitle(config.presentation, "portrait", "Portrait") && (
+            <Detail>
+              ({String(index).padStart(2, "0")}){" "}
+              {sectionTitle(config.presentation, "portrait", "Portrait")}
+            </Detail>
+          )}
         </div>
         <div className="mt-10 md:grid md:grid-cols-12 md:items-end md:gap-10">
           <motion.div
@@ -92,6 +98,11 @@ function Arch() {
   return (
     <section className="bg-[var(--u-bg)] text-[var(--u-ink)]">
       <div className="mx-auto flex max-w-[640px] flex-col items-center px-6 pt-8 pb-32 text-center">
+        {sectionTitle(config.presentation, "portrait") && (
+          <p className="mb-5">
+            <Detail>{sectionTitle(config.presentation, "portrait")}</Detail>
+          </p>
+        )}
         <motion.div
           ref={frame}
           className="relative aspect-[3/4] w-[74%] max-w-[360px] overflow-hidden"

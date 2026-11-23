@@ -14,6 +14,17 @@ describe("appointment email return route", () => {
     expect(safeHubReturnPath(url.searchParams.get("next"))).toBe(target);
     expect([...url.searchParams.keys()]).toEqual(["next"]);
   });
+  it("returns from email verification to the same public review section", () => {
+    const target = "/b/atelier-paris#avis";
+    expect(
+      new URL(hubSignInHref(target), "https://example.test").searchParams.get(
+        "next",
+      ),
+    ).toBe(target);
+    expect(safeHubReturnPath("/b/atelier#avis?next=//other.test")).toBe(
+      "/espace",
+    );
+  });
   it.each([
     undefined,
     [target],

@@ -1,5 +1,7 @@
 "use client";
 
+import { bookingLabel, sectionTitle } from "@/features/sites/presentation";
+
 import { motion, useScroll, useTransform } from "motion/react";
 import { useRef, type CSSProperties } from "react";
 
@@ -103,7 +105,7 @@ function DidoneCutOpening() {
     "0%",
   );
   const wait = language.entrance === "bloom" ? 1.2 : 0.7;
-  const name = config.brand.name;
+  const name = sectionTitle(config.presentation, "opening", config.brand.name);
   const uppercase = typePairs[config.tokens.type].displayCase === "uppercase";
   const fitOf = (text: string) =>
     `calc((100vw - 2rem) / ${displayWidthEm(text, uppercase).toFixed(2)})`;
@@ -149,7 +151,8 @@ function DidoneCutOpening() {
             <Detail>Nº 01 — {config.brand.kind}</Detail>
             <Detail>{config.brand.location}</Detail>
           </p>
-          <h1 className="mt-3 overflow-hidden">
+          <h1 className={name ? "mt-3 overflow-hidden" : "sr-only"}>
+            {!name && config.brand.name}
             <span
               className={`block ${nameLine.className}`}
               style={nameLine.style}
@@ -195,7 +198,11 @@ function BloomOpening() {
   // The photo blooms first, then her name surfaces: soon enough that her
   // name is read within the first seconds, even on a slow phone.
   const wait = language.entrance === "bloom" ? 0.6 : 0.45;
-  const words = config.brand.name.split(" ");
+  const words = sectionTitle(
+    config.presentation,
+    "opening",
+    config.brand.name,
+  ).split(" ");
   const kindLine = enter(
     "rise",
     { duration: 1.4, delay: wait + 0.8, ease: language.ease },
@@ -236,7 +243,14 @@ function BloomOpening() {
           style={{ y: titleY }}
           className="absolute inset-x-0 bottom-[14svh] px-6 text-center"
         >
-          <h1 className="text-[clamp(52px,16vw,120px)] leading-[0.95]">
+          <h1
+            className={
+              words[0]
+                ? "text-[clamp(52px,16vw,120px)] leading-[0.95]"
+                : "sr-only"
+            }
+          >
+            {!words[0] && config.brand.name}
             {words.map((word, index) => {
               const rise = enter(
                 "rise",
@@ -292,8 +306,8 @@ function BloomOpening() {
 function KineticOpening() {
   const { config, motion: language, book } = useEngine();
   const entrance = useCoverEntrance();
-  const name = config.brand.name;
-  const band = `${name} ✶ ${config.brand.kind} ✶ `.repeat(4);
+  const name = sectionTitle(config.presentation, "opening", config.brand.name);
+  const band = name ? `${name} ✶ ${config.brand.kind} ✶ `.repeat(4) : "";
   const line = enter(
     "rise",
     { duration: language.duration, delay: 0.5, ease: language.ease },
@@ -361,7 +375,7 @@ function KineticOpening() {
           <button
             type="button"
             onClick={() => book(null)}
-            aria-label={`Réserver chez ${name}`}
+            aria-label={`${bookingLabel(config.presentation)} chez ${config.brand.name}`}
             className="absolute inset-0 cursor-pointer rounded-full bg-[var(--u-bg)] text-[var(--u-ink)]"
           >
             <span className="text-[26px]" aria-hidden="true">
@@ -388,7 +402,10 @@ function KineticOpening() {
               style={{ fontFamily: "var(--t-detail)" }}
             >
               <textPath href="#seal" textLength="224" lengthAdjust="spacing">
-                RÉSERVER ✶ RÉSERVER ✶
+                {(
+                  bookingLabel(config.presentation).toLocaleUpperCase("fr-FR") +
+                  " ✶ "
+                ).repeat(2)}
               </textPath>
             </text>
           </motion.svg>
