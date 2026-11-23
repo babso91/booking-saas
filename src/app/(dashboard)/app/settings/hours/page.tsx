@@ -4,6 +4,7 @@ import { requireReadyBusiness } from "@/features/auth/data/guards";
 import { areaIdentityOf } from "@/features/dashboard/area-identity";
 import { AppShell } from "@/features/agenda/components/app-shell";
 import { BookingHorizonEditor } from "@/features/availability/components/booking-horizon-editor";
+import { BookingNoticeEditor } from "@/features/availability/components/booking-notice-editor";
 import { BusinessHoursEditor } from "@/features/availability/components/business-hours-editor";
 import { ClosuresEditor } from "@/features/availability/components/closures-editor";
 import { DateHoursEditor } from "@/features/availability/components/date-hours-editor";
@@ -26,7 +27,9 @@ export default async function BusinessHoursPage() {
         await createServerSupabaseClient()
       )
         .from("business_settings")
-        .select("cancellation_lead_minutes, maximum_booking_advance_days")
+        .select(
+          "cancellation_lead_minutes, minimum_booking_notice_minutes, maximum_booking_advance_days",
+        )
         .eq("business_id", business.id)
         .single()
     : null;
@@ -51,6 +54,10 @@ export default async function BusinessHoursPage() {
               />
               <DateHoursEditor businessId={business.id} />
               <ClosuresEditor businessId={business.id} />
+              <BookingNoticeEditor
+                businessId={business.id}
+                initialMinutes={settings.data.minimum_booking_notice_minutes}
+              />
               <BookingHorizonEditor
                 businessId={business.id}
                 initialDays={settings.data.maximum_booking_advance_days}
