@@ -2,6 +2,7 @@
 import { sectionTitle } from "@/features/sites/presentation";
 
 import { Detail, useEngine, useReveal } from "../engine/engine";
+import { FoldedText } from "../engine/folded-text";
 import {
   directionsHref,
   telHref,
@@ -67,7 +68,12 @@ const link =
 function ItemBody({ item }: { item: PracticalItem }) {
   switch (item.kind) {
     case "text":
-      return <p className="whitespace-pre-line">{item.text}</p>;
+      // A long detail shows its first lines, the rest at hand (point 18).
+      return (
+        <div className="flex flex-col">
+          <FoldedText text={item.text} lines={4} perLine={40} />
+        </div>
+      );
     case "address":
       return (
         <>

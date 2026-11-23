@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 
-import type { PageSectionKind } from "@/features/sites/presentation";
+import type { PageKey } from "@/features/sites/presentation";
 
 import type { CatalogService, ShowcaseGroup } from "../catalog/model";
 import type { NextSlots } from "../next-slot";
@@ -33,7 +33,7 @@ export type EngineEdit = {
    * Opens her studio where a section is edited (Higani point 120): each
    * section of the preview says « Modifier » and leads there.
    */
-  section?: (kind: PageSectionKind) => void;
+  section?: (kind: PageKey) => void;
 };
 
 /** The widths every photo exists in (docs/SITE_PUBLISHING_CONTRACT.md § 8). */

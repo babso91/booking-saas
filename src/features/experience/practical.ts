@@ -116,6 +116,15 @@ export function practicalItems({
       label: "Horaires habituels",
       days: usualWeek(hours),
     });
+  // Higani point 18: what a client needs first (where, when, how to reach
+  // her), then how to come, then her conditions, each still on the page.
+  const phone = practical?.phone.trim() || null;
+  const email = practical?.email.trim() || null;
+  const whatsapp = whatsappHref(practical?.whatsapp)
+    ? practical!.whatsapp!.trim()
+    : null;
+  if (phone || email || whatsapp)
+    items.push({ kind: "contact", label: "Contact", phone, email, whatsapp });
   text("Accès", practical?.access);
   text("Avant de venir", practical?.instructions);
   text("Paiement", practical?.payment);
@@ -124,13 +133,6 @@ export function practicalItems({
   text("Retard", practical?.lateness);
   text("Rendez-vous manqué", practical?.noShow);
   text("Accompagnants", practical?.companions);
-  const phone = practical?.phone.trim() || null;
-  const email = practical?.email.trim() || null;
-  const whatsapp = whatsappHref(practical?.whatsapp)
-    ? practical!.whatsapp!.trim()
-    : null;
-  if (phone || email || whatsapp)
-    items.push({ kind: "contact", label: "Contact", phone, email, whatsapp });
   return items;
 }
 

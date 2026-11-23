@@ -82,6 +82,22 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
   - `url` est gardée **telle que saisie** (une adresse ou son @nom). Le site ne lie que ce qui se lit comme une adresse http(s) avec un vrai nom de domaine (`experience/reach.ts`) : un @nom devient l'adresse du réseau, `www.…` reçoit `https://`. Tout autre schéma (`javascript:`, `data:`, `mailto:`…) n'est jamais lié. Un lien illisible est gardé dans le brouillon, signalé dans le Studio et absent du site ;
   - rendu en liens texte, dans la typographie de l'univers (pas de logos de marque), ouverts dans un nouvel onglet (`noopener noreferrer`), en bas du site et dans le menu ;
   - **anciennes publications** (sans `links` ni `whatsapp`) : rien de nouveau.
+- **Sections d'information (`infoSections`, facultatif, Higani point 16) :**
+  - jusqu'à 4 sections `{ id, title, text }` : `id` en `[a-z0-9-]{1,40}`, unique ; `title` 48 caractères, `text` 1 500, en texte brut (ses retours à la ligne sont gardés). Elles complètent ses scènes sans les remplacer : « Avant votre rendez-vous », « Déroulé d'une séance », « Questions fréquentes », « Mes engagements », ou le titre qu'elle veut ;
+  - publiée **seulement avec un titre et un texte**. Le brouillon garde une section inachevée, et l'aperçu du Studio la montre avec ce qui lui manque ;
+  - place : après ses scènes, avant « Infos pratiques ». En Signature, elle la déplace avec les flèches comme les autres sections (`presentation.order` accepte `info:<id>` à côté des noms de section, 11 entrées au plus). En Core, l'ordre reste celui de l'univers et ses sections suivent ses scènes ;
+  - chacune a son ancre (`#section-<id>`, stable si elle change de titre) et une entrée dans le sommaire, à son titre ;
+  - classée « à elle » au changement d'univers (`studio/universe-switch.ts`) ;
+  - **anciennes publications** (sans `infoSections`) : rien de nouveau.
+- **Hiérarchie (Higani point 18) :** l'essentiel d'abord, le détail à portée.
+  - Un texte long (portrait, détail pratique, section d'information, description de prestation) montre ses premières lignes, puis « Lire la suite » et « Réduire » (`aria-expanded`). Le repli est seulement visuel : tout le texte reste dans la page, lu en entier par un lecteur d'écran et trouvé par la recherche du navigateur.
+  - « Infos pratiques » commence par où, quand et comment la joindre : Adresse, Zone, Horaires, Contact. Viennent ensuite Accès, Avant de venir, Paiement, Accessibilité, puis ses conditions.
+  - Le texte du portrait garde ses retours à la ligne.
+- **Bouton Réserver flottant (Higani point 19) :**
+  - Il s'efface au-dessus de ses prestations, où chaque prestation mène déjà à la réservation (comportement existant). Il ne s'affiche pas sans prestation.
+  - Tant qu'il flotte, la page lui réserve de la place (`scroll-padding-bottom`) : un lien atteint au clavier défile au-dessus de lui (WCAG 2.4.11). Avant, « Appeler » en bas de l'écran restait caché dessous.
+  - Ses mots ne se coupent plus (« RÉSER / VER » à 390 px) : la prochaine disponibilité passe à la ligne à côté.
+  - Quand une réservation est en cours dans l'onglet (point 65), il propose « Reprendre ma réservation » avec la prestation choisie, si elle est toujours proposée. Rien n'est lu côté serveur. Le bouton Réserver de l'en-tête ne change pas.
 - **Taille :** 256 Kio au plus pour le document.
 - **Évolution :** `schema_version` est stocké avec chaque brouillon et chaque version. Une version 2 viendra avec des fonctions de migration pures (1 → 2) appliquées à la lecture, sans réécrire l'historique.
 
@@ -355,7 +371,7 @@ Validées le 5 novembre 2026 :
 ## 10 bis. Studio : trouver, garder, vérifier (Higani points 120 à 124)
 
 - **Modifier depuis la page (120)** : dans le studio, en brouillon, chaque section de l'aperçu porte « ✎ Modifier ». Le bouton ouvre le studio sur son réglage : Textes (ouverture, présentation, portrait), Photos (réalisations), Prestations, Infos. Pas sur les avis, écrits par ses clientes, ni sur le site public. Le bouton « ✎ Photo » existant reste.
-- **Contenu et apparence séparés (121)** : changer d'univers reprend la mise en forme du nouvel univers (`tokens`, `sections`, `booking`, `quickBook`, `universe`). Il garde tout son contenu : `brand`, `content`, `presentation`, `hidden`, `bookingFormat`, `practical`, `links`. Chaque clé de la configuration est classée dans `studio/universe-switch.ts`, et TypeScript refuse une clé ajoutée sans classement. Ses prestations, horaires et avis ne sont pas dans la configuration. Corrigé au passage : ses liens (point 3) étaient perdus au changement d'univers.
+- **Contenu et apparence séparés (121)** : changer d'univers reprend la mise en forme du nouvel univers (`tokens`, `sections`, `booking`, `quickBook`, `universe`). Il garde tout son contenu : `brand`, `content`, `presentation`, `hidden`, `bookingFormat`, `practical`, `links`, `infoSections`. Chaque clé de la configuration est classée dans `studio/universe-switch.ts`, et TypeScript refuse une clé ajoutée sans classement. Ses prestations, horaires et avis ne sont pas dans la configuration. Corrigé au passage : ses liens (point 3) étaient perdus au changement d'univers.
 - **« Comme mes clientes » (122, 123)** : le bouton « Voir comme mes clientes » ouvre sa page en plein écran.
   - On choisit **Téléphone** (390 × 844) ou **Ordinateur** (1280 × 800). C'est un vrai cadre (`/app/site/apercu`) à cette largeur, réduit à l'écran, avec sa propre mise en page.
   - La page montre ses vraies prestations, horaires, photos et avis, et suit ses modifications en direct.

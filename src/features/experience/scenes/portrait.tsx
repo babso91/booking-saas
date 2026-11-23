@@ -15,6 +15,7 @@ import {
   useReveal,
   useLessMotion,
 } from "../engine/engine";
+import { FoldedText } from "../engine/folded-text";
 
 // The person behind the work. Customers book a hand they trust: her name,
 // her craft in her own words, a photo of her at work. Two compositions:
@@ -70,12 +71,19 @@ function Editorial({ index }: { index: number }) {
             <span className="mt-3 block text-[var(--u-muted)]">
               <Detail>{portrait.role}</Detail>
             </span>
-            <motion.p
-              className="mt-6 max-w-[34ch] text-[18px] leading-relaxed md:text-[20px]"
-              {...reveal(2)}
-            >
-              {portrait.text}
-            </motion.p>
+            {portrait.text.trim() ? (
+              <motion.div
+                className="mt-6 flex max-w-[34ch] flex-col"
+                {...reveal(2)}
+              >
+                <FoldedText
+                  text={portrait.text.trim()}
+                  lines={6}
+                  perLine={32}
+                  className="text-[18px] leading-relaxed md:text-[20px]"
+                />
+              </motion.div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -129,12 +137,22 @@ function Arch() {
         <span className="mt-3 text-[var(--u-muted)]">
           <Note>{portrait.role}</Note>
         </span>
-        <motion.p
-          className="mt-8 max-w-[32ch] text-[19px] leading-relaxed md:text-[21px]"
-          {...reveal(2)}
-        >
-          <Display>{portrait.text}</Display>
-        </motion.p>
+        {portrait.text.trim() ? (
+          <motion.div
+            className="mt-8 flex max-w-[32ch] flex-col items-center"
+            {...reveal(2)}
+          >
+            <FoldedText
+              text={portrait.text.trim()}
+              lines={6}
+              perLine={28}
+              align="center"
+              className="text-[19px] leading-relaxed md:text-[21px]"
+            >
+              <Display>{portrait.text.trim()}</Display>
+            </FoldedText>
+          </motion.div>
+        ) : null}
       </div>
     </section>
   );

@@ -56,6 +56,9 @@ export const siteLimits = {
   links: 8,
   linkUrl: 300,
   linkLabel: 40,
+  infoSections: 4,
+  infoSectionTitle: 48,
+  infoSectionText: 1500,
 } as const;
 
 /**
@@ -181,14 +184,41 @@ const links = z
   )
   .max(siteLimits.links);
 
+/**
+ * Her informative sections (Higani point 16): a title and her text each,
+ * added to her scenes. Only those with both are published (sections.ts).
+ */
+const infoId = z.string().regex(/^[a-z0-9-]{1,40}$/);
+const infoSections = z
+  .array(
+    z
+      .object({
+        id: infoId,
+        title: plainText(siteLimits.infoSectionTitle),
+        text: plainText(siteLimits.infoSectionText),
+      })
+      .strict(),
+  )
+  .max(siteLimits.infoSections)
+  .refine(
+    (sections) =>
+      new Set(sections.map((item) => item.id)).size === sections.length,
+    "Une section apparaît deux fois.",
+  );
+
 const sceneKind = z.enum(["opening", "intro", "work", "portrait", "services"]);
 
 const pageKind = z.enum(pageSectionKinds);
+/** A place in her page's order: a section kind, or `info:<id>`. */
+const pageKey = z.union([
+  pageKind,
+  z.string().regex(/^info:[a-z0-9-]{1,40}$/) as z.ZodType<`info:${string}`>,
+]);
 const presentation = z
   .object({
     order: z
-      .array(pageKind)
-      .max(pageSectionKinds.length)
+      .array(pageKey)
+      .max(pageSectionKinds.length + siteLimits.infoSections)
       .refine((items) => new Set(items).size === items.length)
       .optional(),
     labels: z
@@ -297,6 +327,7 @@ export const siteConfigSchema = z
     /** Absent on versions published before it: no block of hers. */
     practical: practical.optional(),
     links: links.optional(),
+    infoSections: infoSections.optional(),
   })
   .strict();
 
