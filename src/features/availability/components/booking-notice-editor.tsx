@@ -74,8 +74,11 @@ export function BookingNoticeEditor({
       </h2>
       <p className="text-sm text-ink-muted">
         Le temps qu’il te faut entre une réservation en ligne et le rendez-vous.
-        Avec 2 h, une cliente peut réserver 14 h jusqu’à 12 h. Les rendez-vous
-        déjà pris ne changent pas.
+        {/* Times kept on one line (non-breaking spaces). */}
+        {
+          " Avec 2\u00a0h, un rendez-vous de 14\u00a0h se réserve en ligne jusqu’à 12\u00a0h. "
+        }
+        Les rendez-vous déjà pris ne changent pas.
       </p>
       <form
         className="flex flex-col items-start gap-3"
