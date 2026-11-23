@@ -305,6 +305,31 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"crm_export_jobs": {
+                  Row: {
+                    "business_id": string,"download_count": number,"expires_at": string | null,"id": string,"last_downloaded_at": string | null,"request_id": string,"requested_at": string,"requested_by": string | null,"revoked_at": string | null,"row_count": number | null,"scope": string,"status": string
+                  }
+                  Insert: {
+                    "business_id": string,"download_count"?: number,"expires_at"?: string | null,"id"?: string,"last_downloaded_at"?: string | null,"request_id": string,"requested_at"?: string,"requested_by"?: string | null,"revoked_at"?: string | null,"row_count"?: number | null,"scope": string,"status"?: string
+                  }
+                  Update: {
+                    "business_id"?: string,"download_count"?: number,"expires_at"?: string | null,"id"?: string,"last_downloaded_at"?: string | null,"request_id"?: string,"requested_at"?: string,"requested_by"?: string | null,"revoked_at"?: string | null,"row_count"?: number | null,"scope"?: string,"status"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "crm_export_jobs_business_id_fkey"
+      columns: ["business_id"]
+isOneToOne: false
+      referencedRelation: "businesses"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "crm_export_jobs_requested_by_fkey"
+      columns: ["requested_by"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"email_delivery_attempts": {
                   Row: {
                     "attempt_number": number,"business_id": string,"claim_id": string,"email_event_id": string,"error_code": string | null,"finished_at": string | null,"id": number,"outcome": string | null,"provider_message_id": string | null,"started_at": string
@@ -1310,6 +1335,27 @@ isOneToOne: false
 { Args: { "p_business_id": string,"p_client_id": string,"p_expected_version": number,"p_note_id": string }; Returns: {
               "note_id": string,"status": string
             }[]
+                           },
+"crm_export_assert_owner":
+{ Args: { "p_business_id": string }; Returns: undefined
+                           },
+"crm_export_count":
+{ Args: { "p_business_id": string,"p_scope": string }; Returns: number
+                           },
+"crm_export_job_json":
+{ Args: { "p_job": Database["public"]['Tables']["crm_export_jobs"]['Row'],"p_now": string }; Returns: Json
+                           },
+"crm_export_list":
+{ Args: { "p_business_id": string }; Returns: Json
+                           },
+"crm_export_request":
+{ Args: { "p_business_id": string,"p_request_id": string,"p_scope": string }; Returns: Json
+                           },
+"crm_export_revoke":
+{ Args: { "p_business_id": string,"p_job_id": string }; Returns: Json
+                           },
+"crm_export_rows":
+{ Args: { "p_business_id": string,"p_job_id": string }; Returns: Json
                            },
 "crm_list_client_notes":
 { Args: { "p_before_at"?: string,"p_before_id"?: string,"p_business_id": string,"p_client_id": string,"p_limit"?: number }; Returns: Json

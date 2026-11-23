@@ -547,6 +547,15 @@ export const errorCopy: Record<
     title: "Série trop longue",
     message: "Une série compte au plus 12 rendez-vous.",
   },
+  export_expired: {
+    title: "Export plus disponible",
+    message:
+      "Cet export a expiré ou a été retiré. Prépare-en un nouveau si besoin.",
+  },
+  export_in_progress: {
+    title: "Export en préparation",
+    message: "Un export est déjà en préparation. Attends qu’il soit prêt.",
+  },
   calendar_conflict: {
     title: "Dates prises",
     message: "Une ou plusieurs dates ne sont plus libres. Rien n’a été créé.",
