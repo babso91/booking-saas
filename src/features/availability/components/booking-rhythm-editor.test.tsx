@@ -11,7 +11,7 @@ import {
 } from "../client/booking-rhythm";
 import { BookingRhythmEditor } from "./booking-rhythm-editor";
 
-// Points 220 and 222: the rhythm of her online bookings, from what she sees
+// Point 220: the rhythm of her online bookings, from what she sees
 // and does. The Server Action is mocked at its module boundary.
 
 const { actions } = vi.hoisted(() => ({
@@ -24,11 +24,7 @@ vi.mock("@/features/availability/actions/schedule", () => ({
 }));
 
 const BUSINESS = "10000000-0000-4000-8000-000000000001";
-const initial = {
-  slotIntervalMinutes: 15,
-  minimumBookingNoticeMinutes: 120,
-  bufferMinutes: 10,
-};
+const initial = { slotIntervalMinutes: 15, bufferMinutes: 10 };
 const select = (name: string) =>
   screen.getByRole("combobox", { name }) as HTMLSelectElement;
 /** Her copy keeps "9 h 00" on one line: compared with plain spaces. */
@@ -78,29 +74,25 @@ describe("BookingRhythmEditor", () => {
   it("shows her current rhythm and saves nothing until she changes it", () => {
     render(<BookingRhythmEditor businessId={BUSINESS} initial={initial} />);
     expect(select("Créneaux proposés").value).toBe("15");
-    expect(select("Préavis minimum").value).toBe("120");
     expect(select("Pause après chaque rendez-vous").value).toBe("10");
     expect(
       hasText("Si tu ouvres à 9 h : 9 h 00, 9 h 15, 9 h 30…"),
     ).toBeTruthy();
     expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+    // The notice keeps its own editor (point 222, BookingNoticeEditor).
+    expect(screen.getAllByRole("combobox")).toHaveLength(2);
   });
 
-  it("saves the three choices together and confirms what it changes", async () => {
+  it("saves both choices together and confirms what it changes", async () => {
     actions.setBookingRhythmAction.mockResolvedValue({
       ok: true,
-      data: {
-        slotIntervalMinutes: 5,
-        minimumBookingNoticeMinutes: 0,
-        bufferMinutes: 0,
-      },
+      data: { slotIntervalMinutes: 5, bufferMinutes: 0 },
     });
     render(<BookingRhythmEditor businessId={BUSINESS} initial={initial} />);
     fireEvent.change(select("Créneaux proposés"), { target: { value: "5" } });
     expect(
       hasText("Si tu ouvres à 9 h : 9 h 00, 9 h 05, 9 h 10…"),
     ).toBeTruthy();
-    fireEvent.change(select("Préavis minimum"), { target: { value: "0" } });
     fireEvent.change(select("Pause après chaque rendez-vous"), {
       target: { value: "0" },
     });
@@ -111,7 +103,6 @@ describe("BookingRhythmEditor", () => {
     expect(actions.setBookingRhythmAction).toHaveBeenCalledWith({
       businessId: BUSINESS,
       slotIntervalMinutes: 5,
-      minimumBookingNoticeMinutes: 0,
       bufferMinutes: 0,
     });
     expect(

@@ -84,14 +84,16 @@ export const replaceBusinessHoursSchema = z
 
 export const bookingHorizonDaysSchema = z.number().int().min(1).max(365);
 
+/** Minimum notice before an online booking, in minutes (7 days at most). */
+export const bookingNoticeMinutesSchema = z.number().int().min(0).max(10_080);
+
 /**
- * The rhythm of her online bookings (points 220 and 222): how far apart the
- * proposed slots start, how long before a slot booking closes, and the time
- * kept free after each appointment. Within the `business_settings` checks.
+ * The rhythm of her online bookings (point 220): how far apart the proposed
+ * slots start and the time kept free after each appointment. Within the
+ * `business_settings` checks. The notice has its own editor (point 222).
  */
 export const bookingRhythmSchema = z.object({
   slotIntervalMinutes: z.number().int().min(5).max(120),
-  minimumBookingNoticeMinutes: z.number().int().min(0).max(10_080),
   bufferMinutes: z.number().int().min(0).max(240),
 });
 export type BookingRhythm = z.output<typeof bookingRhythmSchema>;
@@ -100,7 +102,7 @@ export const updateBookingSettingsSchema = z
   .object({
     slotIntervalMinutes: z.number().int().min(5).max(120).optional(),
     bufferMinutes: z.number().int().min(0).max(240).optional(),
-    minimumBookingNoticeMinutes: z.number().int().min(0).max(10_080).optional(),
+    minimumBookingNoticeMinutes: bookingNoticeMinutesSchema.optional(),
     maximumBookingAdvanceDays: bookingHorizonDaysSchema.optional(),
   })
   .refine((changes) => Object.values(changes).some((v) => v !== undefined), {

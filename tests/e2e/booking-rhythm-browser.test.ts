@@ -3,9 +3,9 @@ import { expect, it } from "vitest";
 import { hydrated, noSideScroll, signedInPage } from "./support/ecrin";
 import { APP, db, professionalWithVisit } from "./support/studio";
 
-// Points 220–222 in a real browser, on a phone: she opens her Mondays at
-// 9:05, offers a slot every 5 minutes without notice, and her public
-// calendar follows at once.
+// Points 220 and 221 in a real browser, on a phone: she opens her Mondays
+// at 9:05, offers a slot every 5 minutes, and her public calendar follows
+// at once.
 
 const SCREENSHOT = process.env.RHYTHM_SCREENSHOT;
 
@@ -74,16 +74,13 @@ it("opens at 9:05 and offers a slot every 5 minutes from the hours page", async 
   await page.getByRole("button", { name: "Enregistrer les horaires" }).click();
   await page.getByText("Horaires enregistrés.").waitFor();
 
-  // Points 220 and 222: her rhythm.
+  // Point 220: her rhythm.
   const interval = page.getByLabel("Créneaux proposés", { exact: true });
   expect(await interval.inputValue()).toBe("15");
   await interval.selectOption({ label: "Toutes les 5 min" });
   await page
     .getByText("Si tu ouvres à 9 h : 9 h 00, 9 h 05, 9 h 10…")
     .waitFor();
-  await page
-    .getByLabel("Préavis minimum", { exact: true })
-    .selectOption({ label: "Aucun : jusqu’à la dernière minute" });
   await page.getByRole("button", { name: "Enregistrer le rythme" }).click();
   const saved = page.getByText(/^Rythme enregistré\./);
   await saved.waitFor();
@@ -111,9 +108,6 @@ it("opens at 9:05 and offers a slot every 5 minutes from the hours page", async 
       await hydrated(page.getByLabel("Créneaux proposés", { exact: true }))
     ).inputValue(),
   ).toBe("5");
-  expect(
-    await page.getByLabel("Préavis minimum", { exact: true }).inputValue(),
-  ).toBe("0");
   expect(
     await page
       .getByLabel("Début de la plage 1, Lundi", { exact: true })

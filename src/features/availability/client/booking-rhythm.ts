@@ -1,13 +1,9 @@
-// The rhythm of her online bookings (points 220, 221 and 222), in human
+// The rhythm of her online bookings (points 220 and 221), in human
 // terms. Values map 1:1 to `business_settings` and stay within its checks;
 // a value stored outside the usual choices (set at signup, imported) is
 // kept as a choice of its own, never silently replaced.
 
-import {
-  bufferOptions,
-  noticeOptions,
-  type Option,
-} from "@/features/onboarding/settings";
+import { bufferOptions, type Option } from "@/features/onboarding/settings";
 
 /** "5 min", "1 h", "1 h 30", "2 jours". */
 export function minutesLabel(minutes: number) {
@@ -29,13 +25,6 @@ export const intervalOptions: Option<number>[] = [
   label:
     value === 60 ? "Toutes les heures" : `Toutes les ${minutesLabel(value)}`,
 }));
-
-// minimum_booking_notice_minutes (0–10080)
-export const rhythmNoticeOptions: Option<number>[] = [
-  { value: 0, label: "Aucun : jusqu’à la dernière minute" },
-  ...noticeOptions,
-  { value: 10_080, label: "1 semaine" },
-];
 
 // buffer_minutes (0–240)
 export const rhythmBufferOptions: Option<number>[] = [

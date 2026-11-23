@@ -13,7 +13,6 @@ import {
   choicesWith,
   intervalOptions,
   rhythmBufferOptions,
-  rhythmNoticeOptions,
   slotExample,
 } from "../client/booking-rhythm";
 import type { BookingRhythm } from "../schemas/availability";
@@ -22,9 +21,9 @@ const fieldClass =
   "min-h-11 w-full max-w-sm rounded-xl border border-line bg-paper px-3 text-base text-ink";
 
 /**
- * The rhythm of her online bookings (points 220 and 222): how far apart the
- * proposed slots start, the notice before a slot, the time kept free after
- * each appointment. Saved together; what is already booked does not move.
+ * The rhythm of her online bookings (point 220): how far apart the proposed
+ * slots start and the time kept free after each appointment. Saved together;
+ * what is already booked does not move. The notice has its own editor.
  */
 export function BookingRhythmEditor({
   businessId,
@@ -94,17 +93,6 @@ export function BookingRhythmEditor({
           value={draft.slotIntervalMinutes}
           disabled={pending}
           onChange={(value) => pick("slotIntervalMinutes", value)}
-        />
-        <Choice
-          label="Préavis minimum"
-          hint="Le temps minimum entre la réservation et le rendez-vous."
-          options={choicesWith(
-            rhythmNoticeOptions,
-            draft.minimumBookingNoticeMinutes,
-          )}
-          value={draft.minimumBookingNoticeMinutes}
-          disabled={pending}
-          onChange={(value) => pick("minimumBookingNoticeMinutes", value)}
         />
         <Choice
           label="Pause après chaque rendez-vous"

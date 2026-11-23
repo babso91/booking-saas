@@ -15,6 +15,7 @@ import {
 } from "@/features/availability/data/schedule";
 import {
   bookingHorizonDaysSchema,
+  bookingNoticeMinutesSchema,
   bookingRhythmSchema,
   createAvailabilityExceptionSchema,
   deleteAvailabilityExceptionSchema,
@@ -83,7 +84,26 @@ export async function setBookingHorizonAction(input: unknown) {
   return result;
 }
 
-/** Points 220 and 222: the rhythm of her online bookings, owner or admin. */
+/** The minimum notice of online bookings (owner or admin of this business). */
+export async function setBookingNoticeAction(input: unknown) {
+  const result = await runBusinessAction(
+    z.object({ businessId: z.uuid(), minutes: bookingNoticeMinutesSchema }),
+    input,
+    async ({ client, businessId, role }, data) => {
+      if (businessId !== data.businessId || role === "practitioner") {
+        throw new AppException("forbidden");
+      }
+      const settings = await updateBookingSettings(client, businessId, {
+        minimumBookingNoticeMinutes: data.minutes,
+      });
+      return settings.minimumBookingNoticeMinutes;
+    },
+  );
+  if (result.ok) revalidatePath("/b/[slug]", "page");
+  return result;
+}
+
+/** Point 220: the rhythm of her online bookings, owner or admin. */
 export async function setBookingRhythmAction(input: unknown) {
   const result = await runBusinessAction(
     bookingRhythmSchema.extend({ businessId: z.uuid() }),
@@ -95,7 +115,6 @@ export async function setBookingRhythmAction(input: unknown) {
       const settings = await updateBookingSettings(client, businessId, rhythm);
       return {
         slotIntervalMinutes: settings.slotIntervalMinutes,
-        minimumBookingNoticeMinutes: settings.minimumBookingNoticeMinutes,
         bufferMinutes: settings.bufferMinutes,
       };
     },
