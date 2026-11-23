@@ -16,6 +16,7 @@ import {
 import {
   bookingHorizonDaysSchema,
   bookingNoticeMinutesSchema,
+  bookingRhythmSchema,
   createAvailabilityExceptionSchema,
   deleteAvailabilityExceptionSchema,
   listAvailabilityExceptionsSchema,
@@ -99,6 +100,26 @@ export async function setBookingNoticeAction(input: unknown) {
     },
   );
   if (result.ok) revalidatePath("/b/[slug]", "page");
+  return result;
+}
+
+/** Point 220: the rhythm of her online bookings, owner or admin. */
+export async function setBookingRhythmAction(input: unknown) {
+  const result = await runBusinessAction(
+    bookingRhythmSchema.extend({ businessId: z.uuid() }),
+    input,
+    async ({ client, businessId, role }, { businessId: target, ...rhythm }) => {
+      if (businessId !== target || role === "practitioner") {
+        throw new AppException("forbidden");
+      }
+      const settings = await updateBookingSettings(client, businessId, rhythm);
+      return {
+        slotIntervalMinutes: settings.slotIntervalMinutes,
+        bufferMinutes: settings.bufferMinutes,
+      };
+    },
+  );
+  if (result.ok) revalidateSchedulePages();
   return result;
 }
 

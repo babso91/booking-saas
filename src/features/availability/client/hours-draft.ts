@@ -62,13 +62,16 @@ export function nextRange(
   };
 }
 
-/** Choices every 15 minutes, 00:00 to 24:00 (closing at midnight). */
-export const TIME_OPTIONS = Array.from({ length: 97 }, (_, index) => {
-  const minutes = index * 15;
+/**
+ * Choices every 5 minutes, 00:00 to 24:00 (closing at midnight): she can
+ * open at 9:05 (point 221), and her slots then start from there.
+ */
+export const TIME_OPTIONS = Array.from({ length: 289 }, (_, index) => {
+  const minutes = index * 5;
   return `${String(Math.trunc(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 });
 
-/** The choices for a select, keeping a stored value off the 15 min grid. */
+/** The choices for a select, keeping a stored value off the 5 min grid. */
 export function timeOptions(current: string) {
   return TIME_OPTIONS.includes(current)
     ? TIME_OPTIONS
