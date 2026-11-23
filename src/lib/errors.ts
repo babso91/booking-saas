@@ -198,6 +198,8 @@ export const appErrorMessages = {
   form_limit_reached:
     "Vous avez atteint le nombre maximal de modèles de formulaire.",
   too_many_occurrences: "Une série compte au plus 12 rendez-vous.",
+  export_expired: "Cet export n’est plus disponible : préparez-en un nouveau.",
+  export_in_progress: "Un export est déjà en préparation.",
   calendar_conflict:
     "Une ou plusieurs dates ne sont plus libres : rien n’a été créé.",
   series_stale: "Cet aperçu n’est plus valable : rien n’a été créé.",
@@ -419,6 +421,8 @@ export const httpStatusByErrorCode: Record<AppErrorCode, number> = {
   form_already_assigned: 409,
   form_limit_reached: 409,
   too_many_occurrences: 422,
+  export_expired: 410,
+  export_in_progress: 409,
   calendar_conflict: 409,
   series_stale: 409,
   invitation_password_required: 403,
