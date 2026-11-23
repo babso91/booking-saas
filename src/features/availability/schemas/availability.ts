@@ -84,6 +84,18 @@ export const replaceBusinessHoursSchema = z
 
 export const bookingHorizonDaysSchema = z.number().int().min(1).max(365);
 
+/**
+ * The rhythm of her online bookings (points 220 and 222): how far apart the
+ * proposed slots start, how long before a slot booking closes, and the time
+ * kept free after each appointment. Within the `business_settings` checks.
+ */
+export const bookingRhythmSchema = z.object({
+  slotIntervalMinutes: z.number().int().min(5).max(120),
+  minimumBookingNoticeMinutes: z.number().int().min(0).max(10_080),
+  bufferMinutes: z.number().int().min(0).max(240),
+});
+export type BookingRhythm = z.output<typeof bookingRhythmSchema>;
+
 export const updateBookingSettingsSchema = z
   .object({
     slotIntervalMinutes: z.number().int().min(5).max(120).optional(),

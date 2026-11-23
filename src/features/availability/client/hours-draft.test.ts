@@ -66,12 +66,20 @@ describe("weekly hours draft", () => {
     });
   });
 
-  it("offers 15-minute choices up to midnight and keeps a stored value off that grid", () => {
+  it("offers 5-minute choices up to midnight and keeps a stored value off that grid", () => {
     expect(TIME_OPTIONS[0]).toBe("00:00");
     expect(TIME_OPTIONS.at(-1)).toBe("24:00");
-    expect(TIME_OPTIONS).toHaveLength(97);
-    const options = timeOptions("10:05");
-    expect(options.indexOf("10:05")).toBe(options.indexOf("10:00") + 1);
+    expect(TIME_OPTIONS).toHaveLength(289);
+    // Point 221: precise openings such as 9:05 or 9:10.
+    expect(TIME_OPTIONS.slice(108, 112)).toEqual([
+      "09:00",
+      "09:05",
+      "09:10",
+      "09:15",
+    ]);
+    expect(timeOptions("09:05")).toBe(TIME_OPTIONS);
+    const options = timeOptions("10:07");
+    expect(options.indexOf("10:07")).toBe(options.indexOf("10:05") + 1);
   });
 
   it("proposes a next range after the last one, within the day", () => {
