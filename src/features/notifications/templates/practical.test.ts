@@ -89,7 +89,7 @@ describe("practicalOf", () => {
   });
 
   it("drops control characters and keeps 8 lines at most", () => {
-    expect(practicalLines("a\u0007b c")).toEqual(["a b c"]);
+    expect(practicalLines("a\u0007b\u2028c")).toEqual(["a b c"]);
     expect(
       practicalLines(Array.from({ length: 12 }, (_, i) => `l${i}`).join("\n")),
     ).toHaveLength(8);
