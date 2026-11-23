@@ -14,9 +14,10 @@ import {
 } from "react";
 
 import type { NextSlotDto } from "@/features/availability/data/slots";
-import { bookingLabel } from "@/features/sites/presentation";
+import { bookingLabel, isInfoKey } from "@/features/sites/presentation";
 import type { PublicCatalog } from "@/features/catalog/model";
 import type { PublicBusiness } from "@/features/public-booking/client/api";
+import { readBookingDraft } from "@/features/public-booking/client/booking-draft";
 import { wallDate } from "@/features/public-booking/client/business-time";
 
 import type { ShowcaseGroup } from "./catalog/model";
@@ -40,12 +41,18 @@ import {
 } from "./engine/tokens";
 import { earliestOf, fromLabel, nextSlotsOf } from "./next-slot";
 import { practicalItems, type UsualHours } from "./practical";
+import { InfoSection } from "./scenes/info-section";
 import { Intro } from "./scenes/intro";
 import { PracticalInfo } from "./scenes/practical-info";
 import { ReachLinks } from "./scenes/reach-links";
 import { SectionEdit } from "./scenes/section-edit";
 import { SiteIndex, SiteIndexButton } from "./site-index";
-import { sitePages, shownSections } from "./sections";
+import {
+  infoAnchor,
+  shownInfoSections,
+  sitePages,
+  shownSections,
+} from "./sections";
 import { Opening } from "./scenes/opening";
 import { Portrait } from "./scenes/portrait";
 import { Services } from "./scenes/services";
@@ -110,6 +117,8 @@ export function MiniSite({
   // Her choice of scenes (the opening and her services always show), the
   // empty ones left out of her public site (sections.ts).
   const sections = shownSections(config, { editing: Boolean(edit) });
+  // Her informative sections (point 16), after her scenes unless placed.
+  const infos = shownInfoSections(config, { editing: Boolean(edit) });
   // Publish the practical section only when it has something to show.
   const practical = practicalItems({
     practical: config.practical,
@@ -121,7 +130,11 @@ export function MiniSite({
     sections,
     practical.length > 0,
     Boolean(reviews),
+    infos,
   );
+  // Her booking left in progress in this tab (point 65): the floating
+  // button offers it back (point 19).
+  const waiting = useWaitingDraft(bookable?.business.slug, booking !== null);
   const destinations = pages.flatMap((page) => (page.link ? [page.link] : []));
   const going = useRef<string | null>(null);
 
@@ -172,19 +185,23 @@ export function MiniSite({
                 .slice(0, position + 1)
                 .filter((page) => page.kind !== "opening").length;
               const section = sections.find((item) => item.kind === kind);
-              const content =
-                kind === "practical" ? (
-                  <PracticalInfo items={practical} index={chapter} />
-                ) : kind === "reviews" ? (
-                  reviews
-                ) : section ? (
-                  renderScene(section, chapter)
-                ) : null;
+              const info = isInfoKey(kind)
+                ? infos.find((item) => `info:${item.id}` === kind)
+                : undefined;
+              const content = info ? (
+                <InfoSection info={info} index={chapter} />
+              ) : kind === "practical" ? (
+                <PracticalInfo items={practical} index={chapter} />
+              ) : kind === "reviews" ? (
+                reviews
+              ) : section ? (
+                renderScene(section, chapter)
+              ) : null;
               return (
                 <div
                   key={kind}
-                  data-site-section={kind}
-                  id={link?.id}
+                  data-site-section={info ? "info" : kind}
+                  id={link?.id ?? (info ? infoAnchor(info.id) : undefined)}
                   tabIndex={link ? -1 : undefined}
                   className={`scroll-mt-16 outline-none ${edit?.section ? "relative" : ""}`}
                 >
@@ -195,7 +212,7 @@ export function MiniSite({
             })}
           </main>
           <Footer />
-          <QuickBook />
+          <QuickBook waiting={waiting} />
           <AnimatePresence
             onExitComplete={() => {
               const target = going.current
@@ -389,13 +406,43 @@ function Footer() {
   );
 }
 
-/** Always one tap from booking, as a bar or a pill (mobile first). */
-function QuickBook() {
-  const { config, catalog, book, next, today, motion: language } = useEngine();
+/**
+ * Always one tap from booking, as a bar or a pill (mobile first), and at
+ * the right moment (Higani point 19): it steps aside where every service
+ * is already a way into booking, never hides the control a keyboard
+ * reaches (the page keeps room for it), never breaks its words, and
+ * offers back a booking she left in progress in this tab.
+ */
+function QuickBook({ waiting }: { waiting: string | null }) {
+  const {
+    config,
+    catalog,
+    book,
+    next,
+    today,
+    edit,
+    motion: language,
+  } = useEngine();
   const count = catalog.reduce((sum, group) => sum + group.services.length, 0);
   // Her next availability, whatever the service (Higani point 2).
   const first = next ? earliestOf(next) : null;
   const soon = first && today ? fromLabel(first.localStartsAt, today) : null;
+  // Her booking in progress, for a service still offered (point 65).
+  const resumed = waiting
+    ? catalog
+        .flatMap((group) => group.services)
+        .find((service) => service.id === waiting)
+    : undefined;
+  const label = resumed
+    ? "Reprendre ma réservation"
+    : bookingLabel(config.presentation);
+  const aside = resumed
+    ? resumed.name
+    : soon
+      ? soon
+      : count > 1
+        ? `${count} soins`
+        : "1 soin";
   // Her colour, or the universe's: the accent bar, the white pill.
   const cta = ctaColors(
     config.tokens,
@@ -428,6 +475,19 @@ function QuickBook() {
     scenes.forEach((scene) => observer.observe(scene));
     return () => observer.disconnect();
   }, [config.sections]);
+
+  // While it floats, what the keyboard reaches is scrolled clear of it
+  // (WCAG 2.4.11): a link at the bottom of the screen was under it.
+  useEffect(() => {
+    if (hidden || edit) return;
+    const root = document.documentElement;
+    const before = root.style.scrollPaddingBottom;
+    root.style.scrollPaddingBottom = "calc(7rem + env(safe-area-inset-bottom))";
+    return () => {
+      root.style.scrollPaddingBottom = before;
+    };
+  }, [hidden, edit]);
+
   return (
     <motion.div
       initial={{ y: 120 }}
@@ -439,6 +499,7 @@ function QuickBook() {
         delay: hidden ? 0 : 0.2,
         ease: language.ease,
       }}
+      data-quick-book=""
       className={
         config.quickBook === "bar"
           ? "fixed inset-x-0 bottom-0 z-30 px-4 pb-[max(env(safe-area-inset-bottom),14px)]"
@@ -449,7 +510,7 @@ function QuickBook() {
         <button
           type="button"
           onClick={() => book(null)}
-          className="mx-auto flex h-14 w-full max-w-[520px] cursor-pointer items-center justify-between px-5"
+          className="mx-auto flex min-h-14 w-full max-w-[520px] cursor-pointer items-center justify-between gap-3 px-5 py-2 text-left"
           style={{
             borderRadius: "min(var(--s-control), 18px)",
             background: cta.fill,
@@ -457,30 +518,47 @@ function QuickBook() {
             boxShadow: outline,
           }}
         >
-          <Detail className="min-w-0 [overflow-wrap:anywhere]">
-            {bookingLabel(config.presentation)}
-          </Detail>
-          <Detail className="shrink-0">
-            {soon ? `${soon} →` : count > 1 ? `${count} soins →` : "1 soin →"}
+          {/* Its words whole: what follows wraps, never « RÉSER / VER ». */}
+          <Detail className="[overflow-wrap:break-word]">{label}</Detail>
+          <Detail className="min-w-0 text-right [overflow-wrap:break-word]">
+            {aside}
+            <span aria-hidden="true">&nbsp;→</span>
           </Detail>
         </button>
       ) : (
         <button
           type="button"
           onClick={() => book(null)}
-          className="pointer-events-auto flex min-h-14 max-w-[calc(100%-2rem)] cursor-pointer items-center gap-3 [overflow-wrap:anywhere] rounded-full px-7 text-[16px] font-semibold shadow-[0_18px_40px_-14px_rgba(0,0,0,.55)]"
+          className="pointer-events-auto flex min-h-14 max-w-[calc(100%-2rem)] cursor-pointer items-center gap-3 rounded-full px-7 py-2 text-[16px] font-semibold [overflow-wrap:break-word] shadow-[0_18px_40px_-14px_rgba(0,0,0,.55)]"
           style={{ background: cta.fill, color: cta.text, boxShadow: outline }}
         >
-          <span className="flex flex-col items-start leading-tight">
-            {bookingLabel(config.presentation)}
-            {soon ? (
-              <span className="text-[12px] font-normal opacity-80">{soon}</span>
+          <span className="flex min-w-0 flex-col items-start leading-tight">
+            {label}
+            {resumed || soon ? (
+              <span className="text-[12px] font-normal opacity-80">
+                {resumed ? resumed.name : soon}
+              </span>
             ) : null}
           </span>
           <span aria-hidden="true">→</span>
         </button>
       )}
     </motion.div>
+  );
+}
+
+const unsubscribed = () => () => {};
+
+/**
+ * The service of her booking left in progress in this tab (Higani point
+ * 65), read again each time the page renders without the booking open;
+ * nothing on the server, nor before the page runs.
+ */
+function useWaitingDraft(slug: string | undefined, open: boolean) {
+  return useSyncExternalStore(
+    unsubscribed,
+    () => (slug && !open ? (readBookingDraft(slug)?.serviceId ?? null) : null),
+    () => null,
   );
 }
 

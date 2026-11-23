@@ -2,7 +2,7 @@
 import { bookingLabel, sectionTitle } from "@/features/sites/presentation";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useId, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { longDescription } from "@/features/catalog/description";
 import {
@@ -19,6 +19,7 @@ import {
   type ShowcaseGroup,
 } from "../catalog/model";
 import type { ServicesVariant } from "../engine/config";
+import { FoldedText } from "../engine/folded-text";
 import { nextLabel } from "../next-slot";
 import {
   Detail,
@@ -443,10 +444,14 @@ function Shelf() {
                     >
                       {service.name}
                     </Display>
-                    <FoldedDescription
-                      text={service.description}
-                      className="mt-4 text-[15px] leading-relaxed text-[var(--u-soft-card)]"
-                    />
+                    {service.description ? (
+                      <FoldedText
+                        text={service.description}
+                        lines={5}
+                        long={longDescription(service.description)}
+                        className="mt-4 text-[15px] leading-relaxed text-[var(--u-soft-card)]"
+                      />
+                    ) : null}
                     {service.options.length ? (
                       <p className="mt-3">
                         <OptionsNote service={service} />
@@ -628,43 +633,5 @@ function Empty({ variant }: { variant: ServicesVariant }) {
         </Note>
       </div>
     </section>
-  );
-}
-
-/**
- * A description on her shelf: a few lines first, « Lire la suite » for the
- * rest, her line breaks kept (Higani point 35).
- */
-function FoldedDescription({
-  text,
-  className,
-}: {
-  text: string | null;
-  className: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  if (!text) return null;
-  const long = longDescription(text);
-  return (
-    <>
-      <p
-        id={id}
-        className={`${className} whitespace-pre-line ${long && !open ? "line-clamp-5" : ""}`}
-      >
-        {text}
-      </p>
-      {long ? (
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={id}
-          onClick={() => setOpen((value) => !value)}
-          className="mt-1 min-h-11 cursor-pointer underline underline-offset-4"
-        >
-          <Note>{open ? "Réduire" : "Lire la suite"}</Note>
-        </button>
-      ) : null}
-    </>
   );
 }

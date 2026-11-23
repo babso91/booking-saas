@@ -16,8 +16,11 @@ import {
   bookingFormatCopy,
 } from "@/features/public-booking/formats";
 import {
+  infoKey,
+  isInfoKey,
   orderedKinds,
   sectionNames,
+  type PageKey,
   type PageSectionKind,
   type SitePresentation,
   type SectionText,
@@ -27,6 +30,7 @@ import { siteLimits } from "@/features/sites/config";
 import { startingAt, type ShowcaseGroup } from "../catalog/model";
 import type {
   GradeId,
+  InfoSection,
   MotionId,
   Palette,
   PhotoSlot,
@@ -122,6 +126,17 @@ const universeMoods: Record<UniverseId, string> = {
   alma: "Sensoriel · lent, doux, chaleureux",
   "nail-lab": "Expressif · couleur franche, mouvement vif",
 };
+
+/**
+ * Titles offered for a new informative section (Higani point 16): common
+ * to appointments of every trade; she writes the text, and may retitle.
+ */
+const INFO_IDEAS = [
+  "Avant votre rendez-vous",
+  "Déroulé d’une séance",
+  "Questions fréquentes",
+  "Mes engagements",
+];
 
 /** Where each section of her page is edited (Higani point 120). */
 export const sectionTabs = {
@@ -291,16 +306,79 @@ export function Studio({
     onPublish(safe, corrections);
   }
 
-  const sectionOrder = orderedKinds(
+  // Her informative sections (point 16) after her scenes, as on her page.
+  const sectionOrder = orderedKinds<PageKey>(
     [
       ...(creative ? config : universe.config).sections.map(
         (scene) => scene.kind,
       ),
+      ...(config.infoSections ?? []).map((info) => infoKey(info.id)),
       "practical",
       "reviews",
     ],
     creative ? config.presentation?.order : undefined,
   );
+  // The section she just added: opened, its text field ready.
+  const [added, setAdded] = useState<string | null>(null);
+
+  function addInfoSection(title: string) {
+    const taken = new Set((config.infoSections ?? []).map((item) => item.id));
+    let id = crypto.randomUUID().slice(0, 8);
+    while (taken.has(id)) id = crypto.randomUUID().slice(0, 8);
+    // Once she placed her sections (Signature), a new one still comes
+    // after her scenes, before her practical infos, not after her reviews.
+    const order = config.presentation?.order;
+    const at = order?.findIndex(
+      (item) => item === "practical" || item === "reviews",
+    );
+    set({
+      infoSections: [...(config.infoSections ?? []), { id, title, text: "" }],
+      ...(order
+        ? {
+            presentation: {
+              ...config.presentation,
+              order:
+                at === undefined || at < 0
+                  ? [...order, infoKey(id)]
+                  : [...order.slice(0, at), infoKey(id), ...order.slice(at)],
+            },
+          }
+        : {}),
+    });
+    setAdded(id);
+  }
+
+  function setInfoSection(
+    id: string,
+    patch: Partial<Omit<InfoSection, "id">>,
+    key: string,
+  ) {
+    set(
+      {
+        infoSections: (config.infoSections ?? []).map((item) =>
+          item.id === id ? { ...item, ...patch } : item,
+        ),
+      },
+      key,
+    );
+  }
+
+  function removeInfoSection(id: string) {
+    const order = config.presentation?.order;
+    set({
+      infoSections: (config.infoSections ?? []).filter(
+        (item) => item.id !== id,
+      ),
+      ...(order
+        ? {
+            presentation: {
+              ...config.presentation,
+              order: order.filter((item) => item !== infoKey(id)),
+            },
+          }
+        : {}),
+    });
+  }
 
   function setPresentation(patch: Partial<SitePresentation>, key?: string) {
     set({ presentation: { ...config.presentation, ...patch } }, key);
@@ -318,7 +396,7 @@ export function Studio({
     );
   }
 
-  function moveSection(kind: PageSectionKind, by: -1 | 1) {
+  function moveSection(kind: PageKey, by: -1 | 1) {
     const index = sectionOrder.indexOf(kind);
     const target = index + by;
     if (!creative || index < 0 || target < 0 || target >= sectionOrder.length)
@@ -786,6 +864,100 @@ export function Studio({
                         </p>
                       )}
                       {sectionOrder.map((kind, index) => {
+                        const arrows = (name: string) =>
+                          creative && (
+                            <div className="flex shrink-0 gap-1">
+                              <IconButton
+                                label={`Monter ${name}`}
+                                onClick={() => moveSection(kind, -1)}
+                                disabled={index === 0}
+                              >
+                                ↑
+                              </IconButton>
+                              <IconButton
+                                label={`Descendre ${name}`}
+                                onClick={() => moveSection(kind, 1)}
+                                disabled={index === sectionOrder.length - 1}
+                              >
+                                ↓
+                              </IconButton>
+                            </div>
+                          );
+                        if (isInfoKey(kind)) {
+                          const info = config.infoSections?.find(
+                            (item) => infoKey(item.id) === kind,
+                          );
+                          if (!info) return null;
+                          const name =
+                            info.title.trim() || "Section sans titre";
+                          return (
+                            <div
+                              key={kind}
+                              className="rounded-2xl border border-black/10 bg-white p-3"
+                            >
+                              <div className="flex items-start justify-between gap-1">
+                                <details
+                                  className="min-w-0 flex-1"
+                                  open={info.id === added || undefined}
+                                >
+                                  <summary className="min-h-11 cursor-pointer content-center py-2 text-[15px] font-semibold wrap-anywhere">
+                                    {name}{" "}
+                                    <span className="block text-[12.5px] font-normal text-black/55">
+                                      Section d’information
+                                    </span>
+                                  </summary>
+                                  <div className="mt-2 flex flex-col gap-3">
+                                    <Text
+                                      label="Titre"
+                                      value={info.title}
+                                      placeholder="Avant votre rendez-vous"
+                                      maxLength={siteLimits.infoSectionTitle}
+                                      onChange={(title) =>
+                                        setInfoSection(
+                                          info.id,
+                                          { title },
+                                          `info.${info.id}.title`,
+                                        )
+                                      }
+                                    />
+                                    <Text
+                                      label="Texte"
+                                      multiline
+                                      rows={6}
+                                      autoFocus={info.id === added}
+                                      value={info.text}
+                                      placeholder="Ce que tes clientes doivent savoir, avec tes mots. Tes retours à la ligne sont gardés."
+                                      maxLength={siteLimits.infoSectionText}
+                                      onChange={(text) =>
+                                        setInfoSection(
+                                          info.id,
+                                          { text },
+                                          `info.${info.id}.text`,
+                                        )
+                                      }
+                                    />
+                                    {!info.title.trim() || !info.text.trim() ? (
+                                      <p className="text-[12.5px] text-black/55">
+                                        Publiée sur ta page dès qu’elle a un
+                                        titre et un texte.
+                                      </p>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      onClick={() => removeInfoSection(info.id)}
+                                      // Its visible words first (WCAG 2.5.3), then which one.
+                                      aria-label={`Retirer cette section : ${name}`}
+                                      className="min-h-11 cursor-pointer self-start text-[13px] font-medium text-[#B3261E] underline underline-offset-4"
+                                    >
+                                      Retirer cette section
+                                    </button>
+                                  </div>
+                                </details>
+                                {arrows(name)}
+                              </div>
+                            </div>
+                          );
+                        }
                         const text = config.presentation?.labels?.[kind];
                         const switchable =
                           kind === "intro" ||
@@ -877,28 +1049,59 @@ export function Studio({
                                   )}
                                 </div>
                               </details>
-                              {creative && (
-                                <div className="flex shrink-0 gap-1">
-                                  <IconButton
-                                    label={`Monter ${name}`}
-                                    onClick={() => moveSection(kind, -1)}
-                                    disabled={index === 0}
-                                  >
-                                    ↑
-                                  </IconButton>
-                                  <IconButton
-                                    label={`Descendre ${name}`}
-                                    onClick={() => moveSection(kind, 1)}
-                                    disabled={index === sectionOrder.length - 1}
-                                  >
-                                    ↓
-                                  </IconButton>
-                                </div>
-                              )}
+                              {arrows(name)}
                             </div>
                           </div>
                         );
                       })}
+                      {(config.infoSections?.length ?? 0) <
+                      siteLimits.infoSections ? (
+                        <div
+                          role="group"
+                          aria-labelledby="add-info-section"
+                          className="mt-1 flex flex-col gap-2 rounded-2xl border border-dashed border-black/20 p-3"
+                        >
+                          <p
+                            id="add-info-section"
+                            className="text-[15px] font-semibold"
+                          >
+                            Ajouter une section d’information
+                          </p>
+                          <p className="text-[13px] text-black/60">
+                            Un titre et ton texte, ajoutés après tes scènes
+                            {creative
+                              ? " ; les flèches la placent où tu veux."
+                              : "."}{" "}
+                            Choisis un titre ou écris le tien.
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {INFO_IDEAS.map((idea) => (
+                              <button
+                                key={idea}
+                                type="button"
+                                onClick={() => addInfoSection(idea)}
+                                className="min-h-11 cursor-pointer rounded-full bg-black/5 px-4 text-[13px] font-medium hover:bg-black/10"
+                              >
+                                <span aria-hidden="true">+&nbsp;</span>
+                                {idea}
+                              </button>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => addInfoSection("")}
+                              className="min-h-11 cursor-pointer rounded-full bg-black/5 px-4 text-[13px] font-medium hover:bg-black/10"
+                            >
+                              <span aria-hidden="true">+&nbsp;</span>
+                              Autre titre
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-[13px] text-black/55">
+                          {siteLimits.infoSections} sections d’information au
+                          plus : retire-en une pour en ajouter une autre.
+                        </p>
+                      )}
                     </div>
                   ) : current === "photos" ? (
                     <>
@@ -1746,11 +1949,16 @@ function Text({
   type = "text",
   placeholder,
   hint,
+  rows = 3,
+  autoFocus,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   multiline?: boolean;
+  rows?: number;
+  /** Ready to type in, right after she asked for it (a new section). */
+  autoFocus?: boolean;
   maxLength?: number;
   type?: "text" | "tel" | "email";
   placeholder?: string;
@@ -1769,7 +1977,8 @@ function Text({
           placeholder={placeholder}
           maxLength={maxLength}
           onChange={(event) => onChange(event.target.value)}
-          rows={3}
+          rows={rows}
+          autoFocus={autoFocus}
           className={`${className} resize-none py-2.5`}
         />
       ) : (

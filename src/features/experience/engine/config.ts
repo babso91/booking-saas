@@ -140,4 +140,12 @@ export type SiteConfig = {
   practical?: Practical;
   /** Her links elsewhere (Higani point 3), as she typed them. */
   links?: SiteLink[];
+  /**
+   * Her informative sections (Higani point 16), added to her scenes: a
+   * title and her text each. Absent on versions published before them.
+   */
+  infoSections?: InfoSection[];
 };
+
+/** One of her informative sections: « Avant votre rendez-vous »… */
+export type InfoSection = { id: string; title: string; text: string };

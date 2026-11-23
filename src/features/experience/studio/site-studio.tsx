@@ -1,7 +1,7 @@
 "use client";
 import { ReviewsSection } from "@/features/reviews/reviews-section";
 import type { ReviewPage } from "@/features/reviews/model";
-import { sectionTitle } from "@/features/sites/presentation";
+import { isInfoKey, sectionTitle } from "@/features/sites/presentation";
 
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -341,8 +341,10 @@ export function SiteStudio({
                   service: () => undefined,
                   selectedService: null,
                   section: (kind) => {
-                    const tab =
-                      kind in sectionTabs
+                    // Her informative sections are written in Sections.
+                    const tab = isInfoKey(kind)
+                      ? "sections"
+                      : kind in sectionTabs
                         ? sectionTabs[kind as keyof typeof sectionTabs]
                         : null;
                     if (!tab) return;

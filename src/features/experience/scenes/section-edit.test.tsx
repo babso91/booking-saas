@@ -13,11 +13,12 @@ import { SectionEdit } from "./section-edit";
 function renderChip(
   kind: Parameters<typeof SectionEdit>[0]["kind"],
   edit?: Partial<EngineEdit>,
+  infoSections?: { id: string; title: string; text: string }[],
 ) {
   return render(
     <EngineProvider
       value={{
-        config: renderConfigOf(sampleSite("mila")),
+        config: { ...renderConfigOf(sampleSite("mila")), infoSections },
         photos: () => "",
         catalog: showcaseOf(sampleCatalog),
         book: () => {},
@@ -50,6 +51,32 @@ describe("SectionEdit", () => {
     renderChip(kind, { section });
     fireEvent.click(screen.getByRole("button", { name }));
     expect(section).toHaveBeenCalledWith(kind);
+  });
+
+  it("an informative section (point 16): « Modifier ta section « title » » opens Sections with its key", () => {
+    const section = vi.fn();
+    renderChip("info:avant", { section }, [
+      { id: "avant", title: "Avant votre rendez-vous", text: "Texte" },
+    ]);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Modifier ta section « Avant votre rendez-vous »",
+      }),
+    );
+    expect(section).toHaveBeenCalledWith("info:avant");
+  });
+
+  it("an untitled section says « sans titre »; an unknown one has no chip", () => {
+    renderChip("info:a", { section: vi.fn() }, [
+      { id: "a", title: "  ", text: "" },
+    ]);
+    expect(
+      screen.getByRole("button", {
+        name: "Modifier ta section « sans titre »",
+      }),
+    ).toBeTruthy();
+    const { container } = renderChip("info:zzz", { section: vi.fn() }, []);
+    expect(container.querySelectorAll("button")).toHaveLength(0);
   });
 
   it("not on her reviews, not on her public site", () => {

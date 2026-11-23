@@ -1,6 +1,10 @@
 "use client";
 
-import type { PageSectionKind } from "@/features/sites/presentation";
+import {
+  isInfoKey,
+  type PageKey,
+  type PageSectionKind,
+} from "@/features/sites/presentation";
 
 import { useEngine } from "../engine/engine";
 
@@ -19,9 +23,15 @@ const EDITED: Partial<Record<PageSectionKind, string>> = {
  * opens her studio where that section is edited (Higani point 120). Not
  * on her reviews (written by her clients), nor on her public site.
  */
-export function SectionEdit({ kind }: { kind: PageSectionKind }) {
-  const { edit } = useEngine();
-  const what = EDITED[kind];
+export function SectionEdit({ kind }: { kind: PageKey }) {
+  const { edit, config } = useEngine();
+  // One of her informative sections (point 16): edited in « Sections ».
+  const info = isInfoKey(kind)
+    ? config.infoSections?.find((item) => `info:${item.id}` === kind)
+    : undefined;
+  const what = isInfoKey(kind)
+    ? info && `ta section « ${info.title.trim() || "sans titre"} »`
+    : EDITED[kind];
   if (!edit?.section || !what) return null;
   return (
     <button

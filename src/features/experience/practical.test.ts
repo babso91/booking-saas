@@ -89,7 +89,9 @@ describe("practicalItems", () => {
     ]);
   });
 
-  it("shows only what she filled in, in a client's order", () => {
+  // Higani point 18: where, when and how to reach her first; then how to
+  // come; her conditions last.
+  it("shows only what she filled in, the essentials first", () => {
     const items = practicalItems({
       practical: {
         ...emptyPractical,
@@ -104,10 +106,10 @@ describe("practicalItems", () => {
     expect(items.map((item) => item.label)).toEqual([
       "Adresse",
       "Horaires habituels",
-      "Avant de venir",
       "Contact",
+      "Avant de venir",
     ]);
-    expect(items.at(-1)).toEqual({
+    expect(items.find((item) => item.kind === "contact")).toEqual({
       kind: "contact",
       label: "Contact",
       phone: "06 12 34 56 78",

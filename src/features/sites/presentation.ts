@@ -9,13 +9,22 @@ export const pageSectionKinds = [
   "reviews",
 ] as const;
 export type PageSectionKind = (typeof pageSectionKinds)[number];
+/**
+ * One of her informative sections in her page's order (Higani point 16):
+ * `info:<id>`, beside the kinds above.
+ */
+export type InfoKey = `info:${string}`;
+export type PageKey = PageSectionKind | InfoKey;
+export const infoKey = (id: string): InfoKey => `info:${id}`;
+export const isInfoKey = (key: string): key is InfoKey =>
+  key.startsWith("info:");
 export type SectionText = {
   title?: string;
   hideTitle?: boolean;
   menu?: string;
 };
 export type SitePresentation = {
-  order?: PageSectionKind[];
+  order?: PageKey[];
   labels?: Partial<Record<PageSectionKind, SectionText>>;
   bookingLabel?: string;
   gallery?: "lookbook" | "arches" | "filmstrip";
@@ -32,13 +41,16 @@ export const sectionNames: Record<PageSectionKind, string> = {
   reviews: "Avis des clientes",
 };
 
-export function orderedKinds(
-  kinds: PageSectionKind[],
-  order?: PageSectionKind[],
-): PageSectionKind[] {
+export function orderedKinds<Kind extends string>(
+  kinds: Kind[],
+  order?: readonly string[],
+): Kind[] {
   if (!order) return kinds;
   return [
-    ...new Set([...order.filter((kind) => kinds.includes(kind)), ...kinds]),
+    ...new Set([
+      ...order.filter((kind): kind is Kind => kinds.includes(kind as Kind)),
+      ...kinds,
+    ]),
   ];
 }
 

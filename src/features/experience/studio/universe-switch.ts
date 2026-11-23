@@ -19,6 +19,7 @@ const KIND: { [Key in keyof SiteConfig]-?: "hers" | "universe" } = {
   bookingFormat: "hers",
   practical: "hers",
   links: "hers",
+  infoSections: "hers",
 };
 
 /** Her keys (what she wrote and chose), as listed above. */

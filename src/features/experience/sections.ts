@@ -1,8 +1,15 @@
 import {
+  infoKey,
+  isInfoKey,
   orderedKinds,
-  type PageSectionKind,
+  type PageKey,
 } from "@/features/sites/presentation";
-import type { SceneKind, Section, SiteConfig } from "./engine/config";
+import type {
+  InfoSection,
+  SceneKind,
+  Section,
+  SiteConfig,
+} from "./engine/config";
 
 // Which of her scenes her clients see, and where the site's index leads.
 // A scene with nothing in it (no work published yet, no portrait, no
@@ -65,10 +72,27 @@ const DESTINATIONS: Partial<Record<SceneKind, { id: string; label: string }>> =
   };
 
 export type Destination = {
-  kind: PageSectionKind;
+  kind: PageKey;
   id: string;
   label: string;
 };
+
+/**
+ * Her informative sections (Higani point 16) her clients see: those with
+ * a title and a text. In her studio, every one, as the place where she
+ * writes what it lacks.
+ */
+export function shownInfoSections(
+  config: SiteConfig,
+  { editing }: { editing: boolean },
+): InfoSection[] {
+  return (config.infoSections ?? []).filter(
+    (section) => editing || (section.title.trim() && section.text.trim()),
+  );
+}
+
+/** The anchor of one of her informative sections (stable when renamed). */
+export const infoAnchor = (id: string) => `section-${id}`;
 
 /** Her "Infos pratiques", after her scenes (practical-info.tsx). */
 export const practicalDestination: Destination = {
@@ -90,17 +114,30 @@ export function destinations(sections: readonly Section[]): Destination[] {
   return list;
 }
 
-/** One order for the page and its menu. Anchors survive renaming. */
+/**
+ * One order for the page and its menu. Anchors survive renaming. Her
+ * informative sections come after her scenes, before her practical
+ * infos, unless she placed them elsewhere (Signature).
+ */
 export function sitePages(
   config: SiteConfig,
   sections: Section[],
   practical: boolean,
   reviews: boolean,
+  infos: readonly InfoSection[] = [],
 ) {
-  const kinds: PageSectionKind[] = sections.map((section) => section.kind);
+  const kinds: PageKey[] = sections.map((section) => section.kind);
+  for (const info of infos) kinds.push(infoKey(info.id));
   if (practical) kinds.push("practical");
   if (reviews) kinds.push("reviews");
   const available = destinations(sections);
+  for (const info of infos)
+    if (info.title.trim())
+      available.push({
+        kind: infoKey(info.id),
+        id: infoAnchor(info.id),
+        label: info.title.trim(),
+      });
   available.push(practicalDestination, {
     kind: "reviews",
     id: "avis-clientes",
@@ -110,7 +147,9 @@ export function sitePages(
     available.push({ kind: "opening", id: "accueil", label: "Accueil" });
   return orderedKinds(kinds, config.presentation?.order).map((kind) => {
     const link = available.find((item) => item.kind === kind);
-    const label = config.presentation?.labels?.[kind]?.menu?.trim();
+    const label = isInfoKey(kind)
+      ? undefined
+      : config.presentation?.labels?.[kind]?.menu?.trim();
     return {
       kind,
       link: link ? { ...link, label: label || link.label } : undefined,
