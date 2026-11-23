@@ -325,8 +325,25 @@ export function Studio({
     const taken = new Set((config.infoSections ?? []).map((item) => item.id));
     let id = crypto.randomUUID().slice(0, 8);
     while (taken.has(id)) id = crypto.randomUUID().slice(0, 8);
+    // Once she placed her sections (Signature), a new one still comes
+    // after her scenes, before her practical infos, not after her reviews.
+    const order = config.presentation?.order;
+    const at = order?.findIndex(
+      (item) => item === "practical" || item === "reviews",
+    );
     set({
       infoSections: [...(config.infoSections ?? []), { id, title, text: "" }],
+      ...(order
+        ? {
+            presentation: {
+              ...config.presentation,
+              order:
+                at === undefined || at < 0
+                  ? [...order, infoKey(id)]
+                  : [...order.slice(0, at), infoKey(id), ...order.slice(at)],
+            },
+          }
+        : {}),
     });
     setAdded(id);
   }
