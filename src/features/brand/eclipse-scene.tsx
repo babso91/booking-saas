@@ -628,7 +628,7 @@ export function EclipseScene({ className = "" }: { className?: string }) {
           ))}
         </div>
       </div>
-      <div className={styles.rain} data-depth={1}>
+      <div className={styles.rain} data-depth={1} data-fracture-skip="">
         {rain.map((drop, i) => (
           <div
             key={i}

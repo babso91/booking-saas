@@ -422,3 +422,10 @@
     animation: none !important;
   }
 }
+
+/* Held by the fracture (fracture-link.tsx): the scene stops while the
+   page is captured and cracked, and moves on when it heals. */
+:global(main[data-fracture]) .host,
+:global(main[data-fracture]) .host * {
+  animation-play-state: paused !important;
+}

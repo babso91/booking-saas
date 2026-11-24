@@ -1,0 +1,26 @@
+/* The fracture's stage, above the page (fracture-link.tsx): the shards
+   and two inverted frames; the next page renders under it. It never
+   takes a click. */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.invert {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  mix-blend-mode: difference;
+  opacity: 0;
+}
