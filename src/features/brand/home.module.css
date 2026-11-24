@@ -1,0 +1,35 @@
+/* Higani's home (src/app/page.tsx): words set in the dark sky, over the
+   eclipse scene, readable whatever passes behind them. */
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(
+    52% 50% at 22% 50%,
+    rgb(4 4 6 / 0.82) 0%,
+    rgb(4 4 6 / 0.55) 55%,
+    transparent 100%
+  );
+}
+
+@media (max-width: 720px) {
+  .scrim {
+    background: linear-gradient(
+      0deg,
+      rgb(4 4 6 / 0.96) 0%,
+      rgb(4 4 6 / 0.82) 40%,
+      rgb(4 4 6 / 0.1) 68%
+    );
+  }
+}
+
+.words {
+  text-shadow: 0 2px 24px rgb(0 0 0 / 0.85);
+}
+
+.wide {
+  font-family: var(--font-studio), ui-sans-serif, system-ui, sans-serif;
+  font-stretch: 125%;
+}

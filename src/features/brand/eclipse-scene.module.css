@@ -1,0 +1,424 @@
+/* Higani « Éclipse » (eclipse-scene.tsx): a black hole on the horizon of a
+   mirror. The stage is a 1600 × 900 scene that covers its box; on a
+   portrait screen it is framed again on the whole ring. Moving parts are
+   transforms and opacity only. */
+
+.host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  container-type: size;
+  background: linear-gradient(#060608 0 45%, #050506 55%);
+}
+
+.defs {
+  position: absolute;
+}
+
+.stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100cqw, calc(100cqh * 16 / 9));
+  aspect-ratio: 16 / 9;
+  transform: translate(-50%, -50%);
+}
+
+/* Portrait: the whole ring, its centre a little above the middle. */
+@container (orientation: portrait) {
+  .stage {
+    width: 210cqw;
+    left: -97cqw;
+    top: calc(30cqh - 73.5cqw);
+    transform: none;
+    mask-image: linear-gradient(#000 82%, transparent);
+  }
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+}
+
+.layer > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── The ring ──────────────────────────────────────────────────── */
+
+.ring {
+  animation: breathe-soft 6s ease-in-out infinite alternate;
+}
+
+@keyframes breathe-soft {
+  from {
+    opacity: 0.88;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.swirl > svg {
+  transform-origin: 70% 62.22%;
+  animation: spin 80s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* A glint going round the ring, above the horizon only. */
+.sweepLayer {
+  mask-image: linear-gradient(#000 62.2%, transparent 62.2%);
+}
+
+.sweep {
+  position: absolute;
+  left: calc((1120 - 353) / 1600 * 100%);
+  top: calc((560 - 353) / 900 * 100%);
+  width: calc(706 / 1600 * 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0 80%,
+    rgb(255 255 255 / 0.95) 88%,
+    rgb(255 255 255 / 0) 93%,
+    transparent 100%
+  );
+  mask: radial-gradient(
+    circle closest-side,
+    transparent 96.4%,
+    #000 98%,
+    #000 100.4%,
+    transparent 102%
+  );
+  filter: blur(1.5px);
+  animation: spin 16s linear infinite;
+}
+
+.twinkle {
+  animation: twinkle 3.6s ease-in-out infinite alternate;
+}
+
+@keyframes twinkle {
+  from {
+    opacity: 0.2;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ── The mirror ────────────────────────────────────────────────── */
+
+/* The ring turned over about the horizon (62.22 % of the stage): its
+   mask is set before the turn, so « near the horizon » is its bottom. */
+.reflection {
+  transform-origin: 50% 62.22%;
+  transform: scaleY(-1);
+  opacity: 0.72;
+  filter: blur(2.5px);
+  mask-image:
+    linear-gradient(rgb(0 0 0 / 0.3) 0%, #000 62%, transparent 62.3%),
+    repeating-linear-gradient(#000 0 3px, rgb(0 0 0 / 0.45) 3px 5px);
+  mask-composite: intersect;
+  animation: mirror 5.2s ease-in-out infinite alternate;
+}
+
+@keyframes mirror {
+  from {
+    transform: scaleY(-1) translateX(0);
+  }
+  to {
+    transform: scaleY(-1.025) translateX(-0.4%);
+  }
+}
+
+.streaks > svg {
+  animation: drift 9s ease-in-out infinite alternate;
+}
+
+@keyframes drift {
+  from {
+    transform: translateX(-1.2%);
+    opacity: 0.85;
+  }
+  to {
+    transform: translateX(1.2%);
+    opacity: 1;
+  }
+}
+
+.flare {
+  position: absolute;
+  top: calc(560 / 900 * 100%);
+  width: calc(300 / 1600 * 100%);
+  aspect-ratio: 5 / 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse,
+    rgb(255 255 255 / 0.95) 0,
+    rgb(255 255 255 / 0.5) 12%,
+    rgb(233 237 245 / 0.12) 40%,
+    transparent 70%
+  );
+  animation: flare 4.6s ease-in-out infinite alternate;
+}
+
+.flareLeft {
+  left: calc(770 / 1600 * 100%);
+}
+
+.flareRight {
+  left: calc(1470 / 1600 * 100%);
+  animation-delay: -2.3s;
+}
+
+@keyframes flare {
+  from {
+    opacity: 0.7;
+    scale: 0.9 1;
+  }
+  to {
+    opacity: 1;
+    scale: 1.12 1.05;
+  }
+}
+
+.pulsePath {
+  stroke-dashoffset: 1070;
+  animation: crack 6.5s cubic-bezier(0.7, 0, 0.2, 1) infinite;
+}
+
+@keyframes crack {
+  0% {
+    stroke-dashoffset: 1070;
+  }
+  55%,
+  100% {
+    stroke-dashoffset: -100;
+  }
+}
+
+/* ── The rain of petals ────────────────────────────────────────── */
+
+.rain {
+  position: absolute;
+  inset: 0;
+}
+
+.drop {
+  position: absolute;
+  top: 0;
+}
+
+.fall {
+  width: 100%;
+  height: 100%;
+  animation: fall var(--dur) linear var(--delay) infinite;
+}
+
+@keyframes fall {
+  from {
+    transform: translate3d(0, -180px, 0);
+  }
+  to {
+    transform: translate3d(var(--wind), calc(100cqh + 220px), 0);
+  }
+}
+
+.sway {
+  width: 100%;
+  height: 100%;
+  animation: sway var(--swayd) ease-in-out var(--delay) infinite alternate;
+}
+
+@keyframes sway {
+  from {
+    transform: translateX(calc(var(--sway) * -1)) rotate(-14deg);
+  }
+  to {
+    transform: translateX(var(--sway)) rotate(14deg);
+  }
+}
+
+.turn {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: blur(var(--blur));
+  animation: turn var(--turn) linear var(--delay) infinite;
+  animation-direction: var(--dir);
+}
+
+@keyframes turn {
+  0% {
+    transform: rotate(0) scaleY(1);
+  }
+  25% {
+    transform: rotate(90deg) scaleY(0.55);
+  }
+  50% {
+    transform: rotate(180deg) scaleY(1);
+  }
+  75% {
+    transform: rotate(270deg) scaleY(0.6);
+  }
+  100% {
+    transform: rotate(360deg) scaleY(1);
+  }
+}
+
+/* A phone: fewer petals, sized for its screen. */
+@container (max-width: 720px) {
+  .drop:nth-child(n + 35) {
+    display: none;
+  }
+  .tier0 {
+    width: 22px !important;
+    height: 22px !important;
+  }
+  .tier1 {
+    width: 42px !important;
+    height: 42px !important;
+  }
+  .tier2 {
+    width: 66px !important;
+    height: 66px !important;
+  }
+}
+
+/* Petals at rest, only when motion is reduced. */
+.resting {
+  display: none;
+}
+
+.rest {
+  position: absolute;
+  translate: -50% -50%;
+}
+
+/* ── Flowers on the water ──────────────────────────────────────── */
+
+.floating {
+  position: absolute;
+  translate: -50% -60%;
+  animation: bob var(--bob) ease-in-out infinite alternate;
+}
+
+.floating img {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+@keyframes bob {
+  from {
+    transform: translateY(0) rotate(-2deg);
+  }
+  to {
+    transform: translateY(6%) rotate(2deg);
+  }
+}
+
+.ring1,
+.ring2 {
+  position: absolute;
+  left: 50%;
+  top: 72%;
+  width: 120%;
+  aspect-ratio: 4 / 1;
+  border: 1.5px solid rgb(233 237 245 / 0.5);
+  border-radius: 50%;
+  translate: -50% -50%;
+  animation: spread 3.8s ease-out infinite;
+}
+
+.ring2 {
+  animation-delay: -1.9s;
+}
+
+@keyframes spread {
+  from {
+    transform: scale(0.45);
+    opacity: 0.8;
+  }
+  to {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+
+/* ── The scene lights up: the ring, then the mirror, then the rain ── */
+
+@media (prefers-reduced-motion: no-preference) {
+  .sky {
+    animation: in-fade 1.2s ease-out both;
+  }
+  .twinkle {
+    animation:
+      in-fade 1.2s ease-out both,
+      twinkle 3.6s ease-in-out 1.2s infinite alternate;
+  }
+  .ring {
+    animation:
+      in-ring 2.2s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both,
+      breathe-soft 6s ease-in-out 2.35s infinite alternate;
+  }
+  .reflection {
+    animation:
+      in-fade 1.6s ease-out 0.8s both,
+      mirror 5.2s ease-in-out 2.4s infinite alternate;
+  }
+  .floor,
+  .streaks,
+  .horizon,
+  .flareLayer {
+    animation: in-fade 1.6s ease-out 0.8s both;
+  }
+  .swirl,
+  .sweepLayer,
+  .crack,
+  .pond {
+    animation: in-fade 1.4s ease-out 1.5s both;
+  }
+  .rain {
+    animation: in-fade 1.6s ease-out 1.2s both;
+  }
+}
+
+@keyframes in-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes in-ring {
+  from {
+    opacity: 0;
+    transform: scale(1.03);
+  }
+}
+
+/* Reduced motion: still, a few petals at rest, no rain. */
+@media (prefers-reduced-motion: reduce) {
+  .rain {
+    display: none;
+  }
+  .resting {
+    display: block;
+  }
+  .host * {
+    animation: none !important;
+  }
+}
