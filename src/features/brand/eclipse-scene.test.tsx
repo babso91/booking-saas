@@ -27,11 +27,11 @@ describe("EclipseScene (Higani « Éclipse lunaire »)", () => {
     const { container } = render(<EclipseScene />);
     const svgs = [...container.querySelectorAll("svg")];
     // One hidden definitions element, the scene's layers, 44 falling
-    // petals and 8 resting ones, each drawn with the shared gradient.
+    // petals and 7 resting ones, each drawn with the shared gradient.
     const leaves = svgs.filter((svg) =>
       svg.querySelector('path[fill="url(#eclipse-petal)"]'),
     );
-    expect(leaves).toHaveLength(44 + 8);
+    expect(leaves).toHaveLength(44 + 7);
     expect(container.querySelector("#eclipse-petal")).not.toBeNull();
   });
 });

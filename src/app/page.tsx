@@ -14,9 +14,9 @@ export const viewport: Viewport = {
   themeColor: "#050507",
 };
 
-// Higani's home, in its own universe « Éclipse lunaire » (brand direction
-// V2.2), until the full landing page. During the private beta its one
-// action is to sign in; joining is by invitation, said plainly.
+// Higani's home, in its own universe « Éclipse » (brand direction V2.2),
+// until the full landing page. During the private beta its one action is
+// to sign in; joining is by invitation, said plainly.
 export default function HomePage() {
   return (
     <main className="relative isolate flex min-h-svh flex-col overflow-hidden bg-[#050507] text-[#E9EDF5]">
@@ -33,7 +33,7 @@ export default function HomePage() {
         className={`${styles.words} relative z-10 mt-auto flex max-w-[56rem] flex-col gap-6 px-6 pb-[max(env(safe-area-inset-bottom),40px)] sm:my-auto sm:px-12 sm:pb-0`}
       >
         <h1
-          className={`${styles.wide} text-[clamp(30px,9.4vw,52px)] sm:text-[clamp(44px,5.6vw,78px)] leading-[0.94] font-medium tracking-[-0.04em] text-balance`}
+          className={`${styles.wide} text-[clamp(30px,9.4vw,52px)] sm:text-[clamp(44px,4.8vw,68px)] leading-[0.94] font-medium tracking-[-0.04em] text-balance`}
         >
           <span className="block">Ton lien.</span>{" "}
           <span className="block">Ton univers.</span>{" "}

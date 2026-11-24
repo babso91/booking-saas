@@ -4,26 +4,26 @@ import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 
 import styles from "./eclipse-scene.module.css";
 
-// Higani's own universe « Éclipse lunaire » (brand direction V2.2): a huge
-// black disc set on the horizon, its rim lit from the left; a liquid black
-// sea with its column of silver reflections and its scarlet fractures;
-// rocky mountains and lit clouds; and a rain of petals. It is Higani's,
-// for the app: never a professional's page.
+// Higani's own universe « Éclipse » (brand direction V2.2): a black hole
+// set on the horizon of a mirror. Its ring of light, thick and intense,
+// glows on every side; its lower half is its reflection, smeared and
+// rippled by the floor, so that together they close the circle. Two
+// flares where the ring meets the horizon; a grey mist; a single scarlet
+// fracture on the floor; and a rain of petals. It is Higani's, for the
+// app: never a professional's page.
 //
 // Built as stacked layers on a 1600 × 900 stage that covers its box (CSS
-// only, art-directed again on a portrait screen). What moves is its own
-// layer, moved by the GPU (transform, opacity), never repainted; the heavy
-// painting (clouds, blur, rock) is done once. Everything is drawn from a
-// fixed seed, so the server and the browser draw the same scene. With
-// reduced motion, a few petals rest and nothing moves.
+// only, framed again on a portrait screen). What moves is its own layer,
+// moved by the GPU (transform, opacity), never repainted; the heavy
+// painting (blur, ripples) is done once. Everything is drawn from a fixed
+// seed, so the server and the browser draw the same scene. With reduced
+// motion, a few petals rest and nothing moves.
 
-const H = 654; // the horizon
-const CX = 1150;
-const CY = 500;
-const R = 490; // the disc
-const LX = 690; // the light on the horizon
+const H = 560; // the horizon, where the ring is centred
+const CX = 1120;
+const R = 350; // the ring
 const CRACK =
-  "M610 742 L760 770 L905 796 L1060 820 L1230 846 L1420 874 L1600 892";
+  "M560 690 L700 712 L850 740 L1000 766 L1180 800 L1390 842 L1600 880";
 
 /** A small deterministic generator (mulberry32). */
 function seeded(seed: number) {
@@ -40,14 +40,7 @@ const f = (value: number, digits = 1) => Number(value.toFixed(digits));
 
 type Dot = { x: number; y: number; r: number; o: number };
 type Line = { x: number; y: number; w: number; h: number; o: number };
-type Spark = {
-  x: number;
-  y: number;
-  rx: number;
-  ry: number;
-  a: number;
-  o: number;
-};
+type Arc = { r: number; w: number; o: number; dash: string; offset: number };
 type Drop = {
   left: number;
   size: number;
@@ -57,63 +50,52 @@ type Drop = {
 
 function draw(seed: number) {
   const rnd = seeded(seed);
-  const gauss = () => (rnd() + rnd() + rnd() - 1.5) / 1.5;
   const stars: Dot[] = [];
   const twinkle: Dot[] = [];
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < 80; i++) {
     const x = rnd() * 1600;
-    const y = rnd() * (H - 40);
+    const y = rnd() * (H - 60);
     const dot = {
       x: f(x, 0),
       y: f(y, 0),
-      r: f(rnd() * 1.3 + 0.3, 2),
-      o: f(rnd() * 0.45 + 0.08, 2),
+      r: f(rnd() * 1.1 + 0.3, 2),
+      o: f(rnd() * 0.35 + 0.06, 2),
     };
-    if (Math.hypot(x - CX, y - CY) < R + 20) continue;
+    if (Math.hypot(x - CX, y - H) < R + 60) continue;
     (i % 4 ? stars : twinkle).push(dot);
   }
-  const silver: Line[] = [];
+  // Light streaks on the floor: denser and brighter under the ring.
+  const gauss = () => (rnd() + rnd() + rnd() - 1.5) / 1.5;
+  const streaks: Line[] = [];
   for (let i = 0; i < 170; i++) {
-    const near = i < 110;
-    const x = near ? LX + gauss() * 70 : rnd() * 1600;
-    const y = H + 4 + Math.pow(rnd(), 1.6) * (900 - H);
-    const w = (near ? 30 : 12) + rnd() * (near ? 120 : 70);
-    const o = near
-      ? (0.75 - Math.abs(x - LX) / 260) * (1 - (y - H) / 360)
-      : rnd() * 0.18;
-    const h = rnd() * 1.6 + 0.6;
-    if (o > 0.03)
-      silver.push({
-        x: f(x - w / 2, 0),
-        y: f(y),
-        w: f(w, 0),
-        h: f(h),
-        o: f(o, 2),
-      });
+    const under = i < 80;
+    const x = under ? CX + gauss() * R * 1.5 : rnd() * 1600;
+    const y = H + 3 + Math.pow(rnd(), 1.4) * (900 - H);
+    const w = 20 + rnd() * (under ? 160 : 90);
+    const o = under
+      ? (0.08 + rnd() * 0.28) *
+        (1 - Math.min(1, Math.abs(x - CX) / (R * 1.6)) * 0.6)
+      : rnd() * 0.14;
+    streaks.push({
+      x: f(x - w / 2, 0),
+      y: f(y),
+      w: f(w, 0),
+      h: f(rnd() * 1.4 + 0.5),
+      o: f(o, 2),
+    });
   }
-  const scarlet: Line[] = [];
-  for (const at of [70, 250, 470, 760, 1190, 1330, 1480]) {
-    for (let i = 0; i < 6; i++) {
-      const y = H + 3 + Math.pow(rnd(), 1.8) * 90;
-      const w = 4 + rnd() * 18;
-      scarlet.push({
-        x: f(at + gauss() * 16 - w / 2, 0),
-        y: f(y),
-        w: f(w, 0),
-        h: 1.4,
-        o: f(0.85 - (y - H) / 160, 2),
-      });
-    }
-  }
-  const sparks: [Spark[], Spark[]] = [[], []];
-  for (let i = 0; i < 46; i++) {
-    (i % 2 ? sparks[1] : sparks[0]).push({
-      x: f(rnd() * 1600, 0),
-      y: f(80 + rnd() * (H - 100), 0),
-      rx: f(rnd() * 5 + 1.5),
-      ry: f(rnd() * 1.4 + 0.6),
-      a: f(-30 - rnd() * 30, 0),
-      o: f(rnd() * 0.7 + 0.3, 2),
+  // Fine arcs around the ring, turning slowly.
+  const arcs: Arc[] = [];
+  for (let i = 0; i < 9; i++) {
+    const r = R + 14 + rnd() * 70;
+    const length = 2 * Math.PI * r;
+    const seen = 0.08 + rnd() * 0.22;
+    arcs.push({
+      r: f(r, 0),
+      w: f(0.6 + rnd() * 1.6),
+      o: f(0.12 + rnd() * 0.3, 2),
+      dash: `${f(length * seen, 0)} ${f(length * (1 - seen), 0)}`,
+      offset: f(rnd() * length, 0),
     });
   }
   // The rain: far, middle and near petals.
@@ -146,19 +128,18 @@ function draw(seed: number) {
       } as CSSProperties,
     });
   }
-  return { stars, twinkle, silver, scarlet, sparks, rain };
+  return { stars, twinkle, streaks, arcs, rain };
 }
 
 /** Petals at rest, where motion is reduced: [x, y, scale, angle, blur]. */
 const RESTING = [
-  [985, 430, 1.35, 10, 0],
-  [1260, 170, 0.5, -34, 0],
-  [880, 200, 0.3, 28, 0],
-  [840, 560, 0.36, 22, 0],
-  [1385, 300, 0.34, -30, 1],
-  [1520, 470, 0.3, -34, 0],
+  [960, 300, 0.9, 10, 0],
+  [1290, 200, 0.42, -34, 0],
+  [760, 430, 0.3, 28, 0],
+  [1420, 470, 0.34, -30, 1],
+  [1180, 640, 0.36, 22, 0],
   [60, 150, 0.8, 34, 3],
-  [1480, 760, 1.1, -12, 3],
+  [1500, 790, 1.1, -12, 3],
 ] as const;
 
 const SCENE = draw(7);
@@ -209,7 +190,7 @@ function Layer({
   );
 }
 
-const blur = (id: string, deviation: number, pad = 30) => (
+const blur = (id: string, deviation: number | string, pad = 30) => (
   <filter
     id={id}
     x={`-${pad}%`}
@@ -221,70 +202,58 @@ const blur = (id: string, deviation: number, pad = 30) => (
   </filter>
 );
 
-const cloudFilter = (id: string) => (
-  <filter id={id} x="-30%" y="-60%" width="160%" height="220%">
-    <feTurbulence
-      type="fractalNoise"
-      baseFrequency=".011 .02"
-      numOctaves={4}
-      seed={7}
-      result="n"
-    />
-    <feDisplacementMap
-      in="SourceGraphic"
-      in2="n"
-      scale={90}
-      xChannelSelector="R"
-      yChannelSelector="G"
-    />
-    <feGaussianBlur stdDeviation={5} />
-  </filter>
-);
-
-const rimMask = (id: string) => (
-  <>
-    <linearGradient
-      id={`${id}-fade`}
-      x1={CX - R}
-      y1="0"
-      x2="1600"
-      y2="0"
-      gradientUnits="userSpaceOnUse"
-    >
-      <stop offset="0" stopColor="#fff" />
-      <stop offset=".42" stopColor="#fff" stopOpacity=".9" />
-      <stop offset=".72" stopColor="#fff" stopOpacity=".28" />
-      <stop offset="1" stopColor="#fff" stopOpacity=".12" />
-    </linearGradient>
-    <mask
-      id={id}
-      maskUnits="userSpaceOnUse"
-      x="0"
-      y="-200"
-      width="1600"
-      height="1200"
-    >
-      <rect
-        x="0"
-        y="-200"
-        width="1600"
-        height="1200"
-        fill={`url(#${id}-fade)`}
+/** The ring of light: its haze, its glow and its bright core. */
+function Ring({ prefix }: { prefix: string }) {
+  return (
+    <>
+      <circle
+        cx={CX}
+        cy={H}
+        r={R + 8}
+        fill="none"
+        stroke="#fff"
+        strokeWidth="150"
+        opacity=".34"
+        filter={`url(#${prefix}-haze)`}
       />
-    </mask>
-  </>
-);
+      <circle
+        cx={CX}
+        cy={H}
+        r={R + 6}
+        fill="none"
+        stroke="#fff"
+        strokeWidth="54"
+        opacity=".6"
+        filter={`url(#${prefix}-glow)`}
+      />
+      <circle cx={CX} cy={H} r={R} fill="url(#eclipse-disc)" />
+      <circle
+        cx={CX}
+        cy={H}
+        r={R + 4}
+        fill="none"
+        stroke="#fff"
+        strokeWidth="22"
+        filter={`url(#${prefix}-soft)`}
+      />
+      <circle
+        cx={CX}
+        cy={H}
+        r={R + 3}
+        fill="none"
+        stroke="#fff"
+        strokeWidth="9"
+      />
+    </>
+  );
+}
 
-const cloud = (x: number, y: number, rx: number, ry: number, o: number) => (
-  <ellipse
-    key={`${x}-${y}`}
-    cx={x}
-    cy={y}
-    rx={rx}
-    ry={ry}
-    fill="#e6e9f0"
-    opacity={o}
-  />
+const ringFilters = (prefix: string) => (
+  <>
+    {blur(`${prefix}-haze`, 60, 50)}
+    {blur(`${prefix}-glow`, 18, 30)}
+    {blur(`${prefix}-soft`, 3, 10)}
+  </>
 );
 
 export function EclipseScene({ className = "" }: { className?: string }) {
@@ -334,7 +303,7 @@ export function EclipseScene({ className = "" }: { className?: string }) {
     };
   }, []);
 
-  const { stars, twinkle, silver, scarlet, sparks, rain } = SCENE;
+  const { stars, twinkle, streaks, arcs, rain } = SCENE;
   return (
     <div
       ref={host}
@@ -348,6 +317,13 @@ export function EclipseScene({ className = "" }: { className?: string }) {
             <stop offset=".35" stopColor="#f01d43" />
             <stop offset=".75" stopColor="#a80a27" />
             <stop offset="1" stopColor="#4c0313" />
+          </radialGradient>
+          {/* The hole is not flat: dark grey where the light bleeds in. */}
+          <radialGradient id="eclipse-disc" cx="50%" cy="50%" r="50%">
+            <stop offset="0" stopColor="#020203" />
+            <stop offset=".78" stopColor="#060608" />
+            <stop offset=".93" stopColor="#18181b" />
+            <stop offset="1" stopColor="#3b3b40" />
           </radialGradient>
         </defs>
       </svg>
@@ -365,11 +341,34 @@ export function EclipseScene({ className = "" }: { className?: string }) {
                 y2={H}
                 gradientUnits="userSpaceOnUse"
               >
-                <stop offset="0" stopColor="#050507" />
-                <stop offset=".8" stopColor="#0b0b0e" />
-                <stop offset="1" stopColor="#2b2c32" />
+                <stop offset="0" stopColor="#060608" />
+                <stop offset=".7" stopColor="#101013" />
+                <stop offset="1" stopColor="#26272b" />
               </linearGradient>
-              {blur("eclipse-haze", 48, 40)}
+              {blur("eclipse-mist", 50, 40)}
+              <filter
+                id="eclipse-fog"
+                x="-30%"
+                y="-60%"
+                width="160%"
+                height="220%"
+              >
+                <feTurbulence
+                  type="fractalNoise"
+                  baseFrequency=".008 .018"
+                  numOctaves={4}
+                  seed={7}
+                  result="n"
+                />
+                <feDisplacementMap
+                  in="SourceGraphic"
+                  in2="n"
+                  scale={120}
+                  xChannelSelector="R"
+                  yChannelSelector="G"
+                />
+                <feGaussianBlur stdDeviation={14} />
+              </filter>
             </>
           }
         >
@@ -384,14 +383,19 @@ export function EclipseScene({ className = "" }: { className?: string }) {
               opacity={s.o}
             />
           ))}
+          <g filter="url(#eclipse-fog)" fill="#c9ccd3">
+            <ellipse cx="220" cy="150" rx="300" ry="80" opacity=".16" />
+            <ellipse cx="460" cy="300" rx="260" ry="60" opacity=".1" />
+            <ellipse cx="200" cy={H - 40} rx="420" ry="50" opacity=".14" />
+          </g>
           <ellipse
-            cx="820"
-            cy={H - 10}
-            rx="980"
-            ry="70"
-            fill="#9aa0ab"
+            cx="800"
+            cy={H - 6}
+            rx="1000"
+            ry="60"
+            fill="#a7abb5"
             opacity=".16"
-            filter="url(#eclipse-haze)"
+            filter="url(#eclipse-mist)"
           />
         </Layer>
         <Layer name="twinkle" depth={0.04}>
@@ -406,314 +410,181 @@ export function EclipseScene({ className = "" }: { className?: string }) {
             />
           ))}
         </Layer>
+        {/* The floor: a black mirror, streaked with light. */}
         <Layer
-          name="rimglow"
-          depth={0.1}
-          defs={
-            <>
-              {rimMask("eclipse-rim-a")}
-              {blur("eclipse-glow-x", 48, 40)}
-              {blur("eclipse-glow-l", 22)}
-            </>
-          }
-        >
-          <g mask="url(#eclipse-rim-a)">
-            <circle
-              cx={CX}
-              cy={CY}
-              r={R + 6}
-              fill="none"
-              stroke="#fff"
-              strokeWidth="90"
-              opacity=".32"
-              filter="url(#eclipse-glow-x)"
-            />
-            <circle
-              cx={CX}
-              cy={CY}
-              r={R + 4}
-              fill="none"
-              stroke="#fff"
-              strokeWidth="26"
-              opacity=".75"
-              filter="url(#eclipse-glow-l)"
-            />
-          </g>
-        </Layer>
-        <Layer name="clouds" depth={0.18} defs={cloudFilter("eclipse-cloud-a")}>
-          <g filter="url(#eclipse-cloud-a)">
-            {[
-              cloud(300, 300, 190, 46, 0.42),
-              cloud(470, 420, 170, 40, 0.5),
-              cloud(640, 520, 80, 30, 0.3),
-            ]}
-          </g>
-        </Layer>
-        <Layer
-          name="world"
-          depth={0.1}
-          defs={
-            <>
-              <radialGradient id="eclipse-disc" cx="50%" cy="50%" r="50%">
-                <stop offset=".9" stopColor="#000" />
-                <stop offset="1" stopColor="#08080a" />
-              </radialGradient>
-              {rimMask("eclipse-rim-b")}
-              {blur("eclipse-b2", 4)}
-            </>
-          }
-        >
-          <circle cx={CX} cy={CY} r={R} fill="url(#eclipse-disc)" />
-          <g mask="url(#eclipse-rim-b)">
-            <circle
-              cx={CX}
-              cy={CY}
-              r={R}
-              fill="none"
-              stroke="#fff"
-              strokeWidth="9"
-              filter="url(#eclipse-b2)"
-            />
-            <circle
-              cx={CX}
-              cy={CY}
-              r={R - 1}
-              fill="none"
-              stroke="#fff"
-              strokeWidth="3.5"
-            />
-          </g>
-          <circle
-            cx={CX}
-            cy={CY}
-            r={R}
-            fill="none"
-            stroke="#c9ced8"
-            strokeOpacity=".35"
-            strokeWidth="1.2"
-          />
-        </Layer>
-        <div
-          className={`${styles.layer} ${styles.sweepLayer}`}
-          data-depth={0.1}
-        >
-          <div className={styles.sweepMask}>
-            <div className={styles.sweep} />
-          </div>
-        </div>
-        <Layer
-          name="land"
+          name="floor"
           depth={0.3}
           defs={
             <>
-              {blur("eclipse-b1", 1.6)}
-              {blur("eclipse-gm", 7, 20)}
-              {blur("eclipse-gl", 22)}
-              {cloudFilter("eclipse-cloud-b")}
-              <filter id="eclipse-rock" x="0" y="0" width="100%" height="100%">
-                <feTurbulence
-                  type="fractalNoise"
-                  baseFrequency=".035"
-                  numOctaves={3}
-                  seed={10}
-                  result="n"
-                />
-                <feColorMatrix
-                  in="n"
-                  type="matrix"
-                  values="0 0 0 0 .55  0 0 0 0 .55  0 0 0 0 .6  0 0 0 .07 0"
-                  result="t"
-                />
-                <feComposite
-                  in="t"
-                  in2="SourceGraphic"
-                  operator="in"
-                  result="tex"
-                />
-                <feMerge>
-                  <feMergeNode in="SourceGraphic" />
-                  <feMergeNode in="tex" />
-                </feMerge>
-              </filter>
+              {blur("eclipse-floor-glow", 50, 40)}
               <linearGradient
-                id="eclipse-sea"
+                id="eclipse-floor"
                 x1="0"
                 y1={H}
                 x2="0"
                 y2="900"
                 gradientUnits="userSpaceOnUse"
               >
-                <stop offset="0" stopColor="#2a2b31" />
-                <stop offset=".12" stopColor="#121216" />
-                <stop offset="1" stopColor="#030304" />
-              </linearGradient>
-              <linearGradient
-                id="eclipse-rock-l"
-                x1="0"
-                y1="300"
-                x2="520"
-                y2={H}
-                gradientUnits="userSpaceOnUse"
-              >
-                <stop offset="0" stopColor="#1d1e22" />
-                <stop offset=".5" stopColor="#0f0f12" />
-                <stop offset="1" stopColor="#070708" />
-              </linearGradient>
-              <linearGradient
-                id="eclipse-rock-r"
-                x1="1600"
-                y1="380"
-                x2="1150"
-                y2={H}
-                gradientUnits="userSpaceOnUse"
-              >
-                <stop offset="0" stopColor="#1b1c20" />
-                <stop offset="1" stopColor="#08080a" />
+                <stop offset="0" stopColor="#2c2d32" />
+                <stop offset=".1" stopColor="#141417" />
+                <stop offset="1" stopColor="#050506" />
               </linearGradient>
             </>
           }
         >
-          <path
-            d={`M0 ${H} L0 330 L48 300 L90 344 L150 292 L196 360 L250 330 L300 420 L350 452 L392 500 L446 548 L500 600 L560 ${H}Z`}
-            fill="url(#eclipse-rock-l)"
-            filter="url(#eclipse-rock)"
-          />
-          <path
-            d="M150 292 L196 360 L250 330 L300 420"
-            fill="none"
-            stroke="#dfe3ea"
-            strokeOpacity=".22"
-            strokeWidth="2"
-            filter="url(#eclipse-b1)"
-          />
-          <path
-            d={`M0 ${H} L0 520 L80 498 L150 540 L230 560 L300 600 L360 ${H}Z`}
-            fill="#070709"
-          />
-          <path
-            d={`M500 ${H} L540 628 L585 634 L626 610 L668 626 L720 ${H}Z M760 ${H} L800 642 L860 646 L900 ${H}Z`}
-            fill="#101014"
-          />
-          <path
-            d={`M1600 ${H} L1600 410 L1555 440 L1520 418 L1470 470 L1430 456 L1380 520 L1330 548 L1290 590 L1240 620 L1200 ${H}Z`}
-            fill="url(#eclipse-rock-r)"
-            filter="url(#eclipse-rock)"
-          />
-          <path
-            d="M1555 440 L1520 418 L1470 470 L1430 456 L1380 520"
-            fill="none"
-            stroke="#dfe3ea"
-            strokeOpacity=".16"
-            strokeWidth="2"
-            filter="url(#eclipse-b1)"
-          />
-          <g filter="url(#eclipse-cloud-b)">
-            {[
-              cloud(330, 600, 230, 30, 0.55),
-              cloud(520, 625, 150, 18, 0.6),
-              cloud(1320, 610, 200, 26, 0.45),
-              cloud(120, 560, 140, 26, 0.3),
-            ]}
-          </g>
           <rect
             x="0"
             y={H}
             width="1600"
             height={900 - H}
-            fill="url(#eclipse-sea)"
+            fill="url(#eclipse-floor)"
           />
           <ellipse
-            cx={LX}
-            cy={H + 110}
-            rx="34"
-            ry="130"
-            fill="#fff"
-            opacity=".28"
-            filter="url(#eclipse-gl)"
+            cx={CX}
+            cy={H + 40}
+            rx={R * 2.2}
+            ry="120"
+            fill="#9ea3ae"
+            opacity=".07"
+            filter="url(#eclipse-floor-glow)"
           />
-          <line
-            x1="0"
-            y1={H}
-            x2="1600"
-            y2={H}
-            stroke="#ff3159"
-            strokeWidth="5"
-            opacity=".55"
-            filter="url(#eclipse-gm)"
-          />
-          <line
-            x1="0"
-            y1={H}
-            x2="1600"
-            y2={H}
-            stroke="#ffd0d8"
-            strokeWidth=".8"
-            opacity=".55"
-          />
-          <g stroke="#ff3159" fill="none" strokeLinecap="round">
-            <path
-              d={CRACK}
-              strokeWidth="7"
-              opacity=".5"
-              filter="url(#eclipse-gm)"
-            />
-            <path d={CRACK} strokeWidth="1.8" />
-            <path
-              d="M905 796 L960 838 L1010 900 M1230 846 L1290 900 M760 770 L700 812"
-              strokeWidth="1.1"
-              opacity=".75"
-            />
-            <path
-              d="M330 690 L420 716 L520 735"
-              strokeWidth="1.2"
-              opacity=".6"
-            />
-          </g>
         </Layer>
+        {/* The reflection: the ring itself, turned over under the horizon,
+            softened and banded by the mirror's ripples (CSS: no filter
+            region to cut its glow). */}
         <Layer
-          name="shimmer"
+          name="reflection"
           depth={0.3}
           defs={
             <>
-              {blur("eclipse-s1", 1.6)}
-              {blur("eclipse-s2", 4)}
+              {ringFilters("eclipse-mirror")}
+              <clipPath id="eclipse-mirror-above">
+                <rect x="0" y="-200" width="1600" height={H + 200} />
+              </clipPath>
             </>
           }
         >
-          <g filter="url(#eclipse-s1)">
-            {silver.map((l, i) => (
-              <rect
-                key={i}
-                x={l.x}
-                y={l.y}
-                width={l.w}
-                height={l.h}
-                fill="#f2f4f8"
-                opacity={l.o}
-              />
-            ))}
+          <g clipPath="url(#eclipse-mirror-above)">
+            <Ring prefix="eclipse-mirror" />
           </g>
-          <g filter="url(#eclipse-s2)">
-            {scarlet.map((l, i) => (
-              <rect
+        </Layer>
+        <Layer name="streaks" depth={0.3}>
+          {streaks.map((l, i) => (
+            <rect
+              key={i}
+              x={l.x}
+              y={l.y}
+              width={l.w}
+              height={l.h}
+              fill="#f2f4f8"
+              opacity={l.o}
+            />
+          ))}
+        </Layer>
+        {/* The ring itself, above the horizon. */}
+        <Layer
+          name="ring"
+          depth={0.1}
+          defs={
+            <>
+              {ringFilters("eclipse-ring")}
+              <clipPath id="eclipse-above">
+                <rect x="0" y="-200" width="1600" height={H + 200} />
+              </clipPath>
+            </>
+          }
+        >
+          <g clipPath="url(#eclipse-above)">
+            <Ring prefix="eclipse-ring" />
+          </g>
+        </Layer>
+        <Layer
+          name="swirl"
+          depth={0.1}
+          defs={
+            <clipPath id="eclipse-swirl-above">
+              <rect x="0" y="-200" width="1600" height={H + 200} />
+            </clipPath>
+          }
+        >
+          <g clipPath="url(#eclipse-swirl-above)">
+            {arcs.map((a, i) => (
+              <circle
                 key={i}
-                x={l.x}
-                y={l.y}
-                width={l.w}
-                height={l.h}
-                fill="#ff3159"
-                opacity={l.o}
+                cx={CX}
+                cy={H}
+                r={a.r}
+                fill="none"
+                stroke="#fff"
+                strokeWidth={a.w}
+                opacity={a.o}
+                strokeDasharray={a.dash}
+                strokeDashoffset={a.offset}
               />
             ))}
           </g>
         </Layer>
         <div
-          className={`${styles.layer} ${styles.sourceLayer}`}
-          data-depth={0.3}
+          className={`${styles.layer} ${styles.sweepLayer}`}
+          data-depth={0.1}
         >
-          <div className={styles.source} />
+          <div className={styles.sweep} />
         </div>
-        <Layer name="pulse" depth={0.3}>
+        {/* Where the ring meets the horizon: two flares and a white line. */}
+        <Layer
+          name="horizon"
+          depth={0.2}
+          defs={
+            <>
+              {blur("eclipse-line", 3, 10)}
+              <linearGradient id="eclipse-line-fade" x1="0" x2="1">
+                <stop offset="0" stopColor="#fff" stopOpacity="0" />
+                <stop offset=".3" stopColor="#fff" stopOpacity=".55" />
+                <stop offset=".62" stopColor="#fff" stopOpacity=".9" />
+                <stop offset="1" stopColor="#fff" stopOpacity=".25" />
+              </linearGradient>
+            </>
+          }
+        >
+          <rect
+            x="0"
+            y={H - 1.5}
+            width="1600"
+            height="3"
+            fill="url(#eclipse-line-fade)"
+            filter="url(#eclipse-line)"
+          />
+          <rect
+            x="0"
+            y={H - 0.4}
+            width="1600"
+            height=".8"
+            fill="url(#eclipse-line-fade)"
+          />
+        </Layer>
+        <div
+          className={`${styles.layer} ${styles.flareLayer}`}
+          data-depth={0.2}
+        >
+          <div className={`${styles.flare} ${styles.flareLeft}`} />
+          <div className={`${styles.flare} ${styles.flareRight}`} />
+        </div>
+        {/* Fracture écarlate: one crack on the mirror, a pulse along it. */}
+        <Layer name="crack" depth={0.3} defs={blur("eclipse-crack", 6, 20)}>
+          <g stroke="#ff3159" fill="none" strokeLinecap="round">
+            <path
+              d={CRACK}
+              strokeWidth="7"
+              opacity=".45"
+              filter="url(#eclipse-crack)"
+            />
+            <path d={CRACK} strokeWidth="1.6" />
+            <path
+              d="M850 740 L905 784 L950 850 M1180 800 L1240 860 M700 712 L640 756"
+              strokeWidth="1"
+              opacity=".7"
+            />
+          </g>
           <path
             d={CRACK}
             fill="none"
@@ -724,38 +595,7 @@ export function EclipseScene({ className = "" }: { className?: string }) {
             strokeDasharray="70 1000"
             className={styles.pulsePath}
           />
-          <path
-            d={CRACK}
-            fill="none"
-            stroke="#ff3159"
-            strokeWidth="10"
-            strokeLinecap="round"
-            opacity=".5"
-            pathLength={1000}
-            strokeDasharray="90 1000"
-            className={styles.pulsePath}
-          />
         </Layer>
-        {sparks.map((group, n) => (
-          <Layer
-            key={n}
-            name={n ? "sparksB" : "sparksA"}
-            depth={n ? 0.7 : 0.55}
-          >
-            {group.map((s, i) => (
-              <ellipse
-                key={i}
-                cx={s.x}
-                cy={s.y}
-                rx={s.rx}
-                ry={s.ry}
-                transform={`rotate(${s.a} ${s.x} ${s.y})`}
-                fill="#ff3d5f"
-                opacity={s.o}
-              />
-            ))}
-          </Layer>
-        ))}
         <div className={`${styles.layer} ${styles.resting}`}>
           {RESTING.map(([x, y, scale, angle, softness], i) => (
             <svg

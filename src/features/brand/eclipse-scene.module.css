@@ -1,6 +1,6 @@
-/* Higani « Éclipse lunaire » (eclipse-scene.tsx). The stage is a 1600 × 900
-   scene that covers its box; on a portrait screen it is framed again on
-   the lit rim, the light on the horizon and the petals. Moving parts are
+/* Higani « Éclipse » (eclipse-scene.tsx): a black hole on the horizon of a
+   mirror. The stage is a 1600 × 900 scene that covers its box; on a
+   portrait screen it is framed again on the whole ring. Moving parts are
    transforms and opacity only. */
 
 .host {
@@ -8,7 +8,7 @@
   inset: 0;
   overflow: hidden;
   container-type: size;
-  background: #050507;
+  background: linear-gradient(#060608 0 45%, #050506 55%);
 }
 
 .defs {
@@ -24,13 +24,14 @@
   transform: translate(-50%, -50%);
 }
 
-/* Portrait: 780 units of height from y 120, centred on x 780. */
+/* Portrait: the whole ring, its centre a little above the middle. */
 @container (orientation: portrait) {
   .stage {
-    width: calc(100cqh * 900 / 780 * 16 / 9);
-    left: calc(50cqw - 100cqh);
-    top: calc(-100cqh * 120 / 780);
+    width: 210cqw;
+    left: -97cqw;
+    top: calc(30cqh - 73.5cqw);
     transform: none;
+    mask-image: linear-gradient(#000 82%, transparent);
   }
 }
 
@@ -46,19 +47,60 @@
   height: 100%;
 }
 
-/* ── Light ─────────────────────────────────────────────────────── */
+/* ── The ring ──────────────────────────────────────────────────── */
 
-.rimglow {
-  animation: glow 7s ease-in-out infinite alternate;
+.ring {
+  animation: breathe-soft 6s ease-in-out infinite alternate;
 }
 
-@keyframes glow {
+@keyframes breathe-soft {
   from {
-    opacity: 0.7;
+    opacity: 0.88;
   }
   to {
     opacity: 1;
   }
+}
+
+.swirl > svg {
+  transform-origin: 70% 62.22%;
+  animation: spin 80s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* A glint going round the ring, above the horizon only. */
+.sweepLayer {
+  mask-image: linear-gradient(#000 62.2%, transparent 62.2%);
+}
+
+.sweep {
+  position: absolute;
+  left: calc((1120 - 353) / 1600 * 100%);
+  top: calc((560 - 353) / 900 * 100%);
+  width: calc(706 / 1600 * 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0 80%,
+    rgb(255 255 255 / 0.95) 88%,
+    rgb(255 255 255 / 0) 93%,
+    transparent 100%
+  );
+  mask: radial-gradient(
+    circle closest-side,
+    transparent 96.4%,
+    #000 98%,
+    #000 100.4%,
+    transparent 102%
+  );
+  filter: blur(1.5px);
+  animation: spin 16s linear infinite;
 }
 
 .twinkle {
@@ -74,102 +116,80 @@
   }
 }
 
-/* A glint going round the rim, brighter on its lit side. */
-.sweepMask {
-  position: absolute;
-  inset: 0;
-  mask-image: linear-gradient(90deg, #000 0, #000 45%, transparent 80%);
+/* ── The mirror ────────────────────────────────────────────────── */
+
+/* The ring turned over about the horizon (62.22 % of the stage): its
+   mask is set before the turn, so « near the horizon » is its bottom. */
+.reflection {
+  transform-origin: 50% 62.22%;
+  transform: scaleY(-1);
+  opacity: 0.72;
+  filter: blur(2.5px);
+  mask-image:
+    linear-gradient(rgb(0 0 0 / 0.3) 0%, #000 62%, transparent 62.3%),
+    repeating-linear-gradient(#000 0 3px, rgb(0 0 0 / 0.45) 3px 5px);
+  mask-composite: intersect;
+  animation: mirror 5.2s ease-in-out infinite alternate;
 }
 
-.sweep {
-  position: absolute;
-  left: calc((1150 - 490) / 1600 * 100%);
-  top: calc((500 - 490) / 900 * 100%);
-  width: calc(980 / 1600 * 100%);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0 80%,
-    rgb(255 255 255 / 0.95) 88%,
-    rgb(255 255 255 / 0) 93%,
-    transparent 100%
-  );
-  mask: radial-gradient(
-    circle closest-side,
-    transparent calc(100% - 7px),
-    #000 calc(100% - 3px),
-    #000 calc(100% + 1px),
-    transparent calc(100% + 4px)
-  );
-  filter: blur(1.5px);
-  animation: sweep 14s linear infinite;
-}
-
-@keyframes sweep {
-  to {
-    transform: rotate(1turn);
-  }
-}
-
-.source {
-  position: absolute;
-  left: calc(690 / 1600 * 100%);
-  top: calc(654 / 900 * 100%);
-  width: calc(220 / 1600 * 100%);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  translate: -50% -50%;
-  background: radial-gradient(
-    circle,
-    rgb(255 255 255 / 0.95) 0,
-    rgb(255 255 255 / 0.55) 14%,
-    rgb(233 237 245 / 0.16) 38%,
-    transparent 66%
-  );
-  animation: breathe 5.5s ease-in-out infinite alternate;
-}
-
-@keyframes breathe {
+@keyframes mirror {
   from {
-    opacity: 0.75;
-    scale: 0.9;
+    transform: scaleY(-1) translateX(0);
   }
   to {
-    opacity: 1;
-    scale: 1.08;
+    transform: scaleY(-1.025) translateX(-0.4%);
   }
 }
 
-/* ── Clouds, sea, fracture, sparks ─────────────────────────────── */
-
-.clouds > svg {
-  animation: clouds 38s ease-in-out infinite alternate;
+.streaks > svg {
+  animation: drift 9s ease-in-out infinite alternate;
 }
 
-@keyframes clouds {
-  to {
-    transform: translateX(2.5%);
-  }
-}
-
-.shimmer > svg {
-  transform-origin: 43% 80%;
-  animation: shimmer 4.2s ease-in-out infinite alternate;
-}
-
-@keyframes shimmer {
-  0% {
-    transform: scaleX(1) translateY(0);
+@keyframes drift {
+  from {
+    transform: translateX(-1.2%);
     opacity: 0.85;
   }
-  50% {
-    transform: scaleX(1.05) translateY(0.15%);
+  to {
+    transform: translateX(1.2%);
     opacity: 1;
   }
-  100% {
-    transform: scaleX(0.97) translateY(-0.1%);
-    opacity: 0.8;
+}
+
+.flare {
+  position: absolute;
+  top: calc(560 / 900 * 100%);
+  width: calc(300 / 1600 * 100%);
+  aspect-ratio: 5 / 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse,
+    rgb(255 255 255 / 0.95) 0,
+    rgb(255 255 255 / 0.5) 12%,
+    rgb(233 237 245 / 0.12) 40%,
+    transparent 70%
+  );
+  animation: flare 4.6s ease-in-out infinite alternate;
+}
+
+.flareLeft {
+  left: calc(770 / 1600 * 100%);
+}
+
+.flareRight {
+  left: calc(1470 / 1600 * 100%);
+  animation-delay: -2.3s;
+}
+
+@keyframes flare {
+  from {
+    opacity: 0.7;
+    scale: 0.9 1;
+  }
+  to {
+    opacity: 1;
+    scale: 1.12 1.05;
   }
 }
 
@@ -185,29 +205,6 @@
   55%,
   100% {
     stroke-dashoffset: -100;
-  }
-}
-
-.sparksA > svg {
-  animation: rise 16s linear infinite;
-}
-
-.sparksB > svg {
-  animation: rise 11s linear -5s infinite;
-}
-
-@keyframes rise {
-  0% {
-    transform: translateY(3%);
-    opacity: 0;
-  }
-  15%,
-  85% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(-10%);
-    opacity: 0;
   }
 }
 
@@ -310,7 +307,7 @@
   translate: -50% -50%;
 }
 
-/* ── The scene lights up: the rim, then the land, then the rain ── */
+/* ── The scene lights up: the ring, then the mirror, then the rain ── */
 
 @media (prefers-reduced-motion: no-preference) {
   .sky {
@@ -321,25 +318,26 @@
       in-fade 1.2s ease-out both,
       twinkle 3.6s ease-in-out 1.2s infinite alternate;
   }
-  .rimglow {
+  .ring {
     animation:
-      in-rim 2.2s cubic-bezier(0.16, 1, 0.3, 1) 0.25s both,
-      glow 7s ease-in-out 2.45s infinite alternate;
+      in-ring 2.2s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both,
+      breathe-soft 6s ease-in-out 2.35s infinite alternate;
   }
-  .world {
-    animation: in-rim 2s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+  .reflection {
+    animation:
+      in-fade 1.6s ease-out 0.8s both,
+      mirror 5.2s ease-in-out 2.4s infinite alternate;
   }
-  .clouds,
-  .land,
-  .shimmer,
-  .sourceLayer {
-    animation: in-fade 1.6s ease-out 0.7s both;
+  .floor,
+  .streaks,
+  .horizon,
+  .flareLayer {
+    animation: in-fade 1.6s ease-out 0.8s both;
   }
+  .swirl,
   .sweepLayer,
-  .pulse,
-  .sparksA,
-  .sparksB {
-    animation: in-fade 1.2s ease-out 1.6s both;
+  .crack {
+    animation: in-fade 1.4s ease-out 1.5s both;
   }
   .rain {
     animation: in-fade 1.6s ease-out 1.2s both;
@@ -352,10 +350,10 @@
   }
 }
 
-@keyframes in-rim {
+@keyframes in-ring {
   from {
     opacity: 0;
-    transform: scale(1.04);
+    transform: scale(1.03);
   }
 }
 
