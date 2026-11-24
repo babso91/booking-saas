@@ -1,0 +1,373 @@
+/* Higani « Éclipse lunaire » (eclipse-scene.tsx). The stage is a 1600 × 900
+   scene that covers its box; on a portrait screen it is framed again on
+   the lit rim, the light on the horizon and the petals. Moving parts are
+   transforms and opacity only. */
+
+.host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  container-type: size;
+  background: #050507;
+}
+
+.defs {
+  position: absolute;
+}
+
+.stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100cqw, calc(100cqh * 16 / 9));
+  aspect-ratio: 16 / 9;
+  transform: translate(-50%, -50%);
+}
+
+/* Portrait: 780 units of height from y 120, centred on x 780. */
+@container (orientation: portrait) {
+  .stage {
+    width: calc(100cqh * 900 / 780 * 16 / 9);
+    left: calc(50cqw - 100cqh);
+    top: calc(-100cqh * 120 / 780);
+    transform: none;
+  }
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+}
+
+.layer > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Light ─────────────────────────────────────────────────────── */
+
+.rimglow {
+  animation: glow 7s ease-in-out infinite alternate;
+}
+
+@keyframes glow {
+  from {
+    opacity: 0.7;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.twinkle {
+  animation: twinkle 3.6s ease-in-out infinite alternate;
+}
+
+@keyframes twinkle {
+  from {
+    opacity: 0.2;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* A glint going round the rim, brighter on its lit side. */
+.sweepMask {
+  position: absolute;
+  inset: 0;
+  mask-image: linear-gradient(90deg, #000 0, #000 45%, transparent 80%);
+}
+
+.sweep {
+  position: absolute;
+  left: calc((1150 - 490) / 1600 * 100%);
+  top: calc((500 - 490) / 900 * 100%);
+  width: calc(980 / 1600 * 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0 80%,
+    rgb(255 255 255 / 0.95) 88%,
+    rgb(255 255 255 / 0) 93%,
+    transparent 100%
+  );
+  mask: radial-gradient(
+    circle closest-side,
+    transparent calc(100% - 7px),
+    #000 calc(100% - 3px),
+    #000 calc(100% + 1px),
+    transparent calc(100% + 4px)
+  );
+  filter: blur(1.5px);
+  animation: sweep 14s linear infinite;
+}
+
+@keyframes sweep {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+.source {
+  position: absolute;
+  left: calc(690 / 1600 * 100%);
+  top: calc(654 / 900 * 100%);
+  width: calc(220 / 1600 * 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  translate: -50% -50%;
+  background: radial-gradient(
+    circle,
+    rgb(255 255 255 / 0.95) 0,
+    rgb(255 255 255 / 0.55) 14%,
+    rgb(233 237 245 / 0.16) 38%,
+    transparent 66%
+  );
+  animation: breathe 5.5s ease-in-out infinite alternate;
+}
+
+@keyframes breathe {
+  from {
+    opacity: 0.75;
+    scale: 0.9;
+  }
+  to {
+    opacity: 1;
+    scale: 1.08;
+  }
+}
+
+/* ── Clouds, sea, fracture, sparks ─────────────────────────────── */
+
+.clouds > svg {
+  animation: clouds 38s ease-in-out infinite alternate;
+}
+
+@keyframes clouds {
+  to {
+    transform: translateX(2.5%);
+  }
+}
+
+.shimmer > svg {
+  transform-origin: 43% 80%;
+  animation: shimmer 4.2s ease-in-out infinite alternate;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: scaleX(1) translateY(0);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scaleX(1.05) translateY(0.15%);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(0.97) translateY(-0.1%);
+    opacity: 0.8;
+  }
+}
+
+.pulsePath {
+  stroke-dashoffset: 1070;
+  animation: crack 6.5s cubic-bezier(0.7, 0, 0.2, 1) infinite;
+}
+
+@keyframes crack {
+  0% {
+    stroke-dashoffset: 1070;
+  }
+  55%,
+  100% {
+    stroke-dashoffset: -100;
+  }
+}
+
+.sparksA > svg {
+  animation: rise 16s linear infinite;
+}
+
+.sparksB > svg {
+  animation: rise 11s linear -5s infinite;
+}
+
+@keyframes rise {
+  0% {
+    transform: translateY(3%);
+    opacity: 0;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-10%);
+    opacity: 0;
+  }
+}
+
+/* ── The rain of petals ────────────────────────────────────────── */
+
+.rain {
+  position: absolute;
+  inset: 0;
+}
+
+.drop {
+  position: absolute;
+  top: 0;
+}
+
+.fall {
+  width: 100%;
+  height: 100%;
+  animation: fall var(--dur) linear var(--delay) infinite;
+}
+
+@keyframes fall {
+  from {
+    transform: translate3d(0, -180px, 0);
+  }
+  to {
+    transform: translate3d(var(--wind), calc(100cqh + 220px), 0);
+  }
+}
+
+.sway {
+  width: 100%;
+  height: 100%;
+  animation: sway var(--swayd) ease-in-out var(--delay) infinite alternate;
+}
+
+@keyframes sway {
+  from {
+    transform: translateX(calc(var(--sway) * -1)) rotate(-14deg);
+  }
+  to {
+    transform: translateX(var(--sway)) rotate(14deg);
+  }
+}
+
+.turn {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: blur(var(--blur));
+  animation: turn var(--turn) linear var(--delay) infinite;
+  animation-direction: var(--dir);
+}
+
+@keyframes turn {
+  0% {
+    transform: rotate(0) scaleY(1);
+  }
+  25% {
+    transform: rotate(90deg) scaleY(0.55);
+  }
+  50% {
+    transform: rotate(180deg) scaleY(1);
+  }
+  75% {
+    transform: rotate(270deg) scaleY(0.6);
+  }
+  100% {
+    transform: rotate(360deg) scaleY(1);
+  }
+}
+
+/* A phone: fewer petals, sized for its screen. */
+@container (max-width: 720px) {
+  .drop:nth-child(n + 35) {
+    display: none;
+  }
+  .tier0 {
+    width: 22px !important;
+    height: 10px !important;
+  }
+  .tier1 {
+    width: 42px !important;
+    height: 19px !important;
+  }
+  .tier2 {
+    width: 66px !important;
+    height: 30px !important;
+  }
+}
+
+/* Petals at rest, only when motion is reduced. */
+.resting {
+  display: none;
+}
+
+.rest {
+  position: absolute;
+  overflow: visible;
+  translate: -50% -50%;
+}
+
+/* ── The scene lights up: the rim, then the land, then the rain ── */
+
+@media (prefers-reduced-motion: no-preference) {
+  .sky {
+    animation: in-fade 1.2s ease-out both;
+  }
+  .twinkle {
+    animation:
+      in-fade 1.2s ease-out both,
+      twinkle 3.6s ease-in-out 1.2s infinite alternate;
+  }
+  .rimglow {
+    animation:
+      in-rim 2.2s cubic-bezier(0.16, 1, 0.3, 1) 0.25s both,
+      glow 7s ease-in-out 2.45s infinite alternate;
+  }
+  .world {
+    animation: in-rim 2s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+  }
+  .clouds,
+  .land,
+  .shimmer,
+  .sourceLayer {
+    animation: in-fade 1.6s ease-out 0.7s both;
+  }
+  .sweepLayer,
+  .pulse,
+  .sparksA,
+  .sparksB {
+    animation: in-fade 1.2s ease-out 1.6s both;
+  }
+  .rain {
+    animation: in-fade 1.6s ease-out 1.2s both;
+  }
+}
+
+@keyframes in-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes in-rim {
+  from {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+}
+
+/* Reduced motion: still, a few petals at rest, no rain. */
+@media (prefers-reduced-motion: reduce) {
+  .rain {
+    display: none;
+  }
+  .resting {
+    display: block;
+  }
+  .host * {
+    animation: none !important;
+  }
+}
