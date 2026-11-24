@@ -251,9 +251,10 @@
 }
 
 .turn {
+  display: block;
   width: 100%;
   height: 100%;
-  overflow: visible;
+  object-fit: contain;
   filter: blur(var(--blur));
   animation: turn var(--turn) linear var(--delay) infinite;
   animation-direction: var(--dir);
@@ -284,15 +285,15 @@
   }
   .tier0 {
     width: 22px !important;
-    height: 10px !important;
+    height: 22px !important;
   }
   .tier1 {
     width: 42px !important;
-    height: 19px !important;
+    height: 42px !important;
   }
   .tier2 {
     width: 66px !important;
-    height: 30px !important;
+    height: 66px !important;
   }
 }
 
@@ -303,8 +304,59 @@
 
 .rest {
   position: absolute;
-  overflow: visible;
   translate: -50% -50%;
+}
+
+/* ── Flowers on the water ──────────────────────────────────────── */
+
+.floating {
+  position: absolute;
+  translate: -50% -60%;
+  animation: bob var(--bob) ease-in-out infinite alternate;
+}
+
+.floating img {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+@keyframes bob {
+  from {
+    transform: translateY(0) rotate(-2deg);
+  }
+  to {
+    transform: translateY(6%) rotate(2deg);
+  }
+}
+
+.ring1,
+.ring2 {
+  position: absolute;
+  left: 50%;
+  top: 72%;
+  width: 120%;
+  aspect-ratio: 4 / 1;
+  border: 1.5px solid rgb(233 237 245 / 0.5);
+  border-radius: 50%;
+  translate: -50% -50%;
+  animation: spread 3.8s ease-out infinite;
+}
+
+.ring2 {
+  animation-delay: -1.9s;
+}
+
+@keyframes spread {
+  from {
+    transform: scale(0.45);
+    opacity: 0.8;
+  }
+  to {
+    transform: scale(1.7);
+    opacity: 0;
+  }
 }
 
 /* ── The scene lights up: the ring, then the mirror, then the rain ── */
@@ -336,7 +388,8 @@
   }
   .swirl,
   .sweepLayer,
-  .crack {
+  .crack,
+  .pond {
     animation: in-fade 1.4s ease-out 1.5s both;
   }
   .rain {

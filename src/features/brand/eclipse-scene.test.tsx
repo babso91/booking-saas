@@ -23,16 +23,20 @@ describe("EclipseScene (Higani « Éclipse lunaire »)", () => {
     );
   });
 
-  it("rains petals, and keeps a few at rest for reduced motion", () => {
+  it("rains petals and flowers cut from the brand's paintings, three resting on the water", () => {
     const { container } = render(<EclipseScene />);
-    const svgs = [...container.querySelectorAll("svg")];
-    // One hidden definitions element, the scene's layers, 44 falling
-    // petals and 7 resting ones, each drawn with the shared gradient.
-    const leaves = svgs.filter((svg) =>
-      svg.querySelector('path[fill="url(#eclipse-petal)"]'),
+    const sources = [...container.querySelectorAll("img")].map((img) =>
+      img.getAttribute("src"),
     );
-    expect(leaves).toHaveLength(44 + 7);
-    expect(container.querySelector("#eclipse-petal")).not.toBeNull();
+    // 44 falling, 7 at rest for reduced motion, 3 on the water.
+    expect(sources).toHaveLength(44 + 7 + 3);
+    expect(sources.filter((src) => src?.includes("/water-"))).toHaveLength(3);
+    expect(sources.some((src) => src?.includes("/flower-"))).toBe(true);
+    expect(
+      [...container.querySelectorAll("img")].every(
+        (img) => img.getAttribute("alt") === "",
+      ),
+    ).toBe(true);
   });
 });
 

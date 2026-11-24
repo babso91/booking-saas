@@ -144,30 +144,25 @@ const RESTING = [
 
 const SCENE = draw(7);
 
-function Leaf({ fill }: { fill: string }) {
-  return (
-    <>
-      <path
-        d="M-96 10 C-70 -22 -10 -44 62 -26 C84 -20 98 -10 108 -4 C80 14 30 34 -30 32 C-62 30 -84 22 -96 10Z"
-        fill={fill}
-      />
-      <path
-        d="M-90 10 C-40 6 30 -4 104 -4"
-        stroke="#ff8ea2"
-        strokeOpacity=".55"
-        strokeWidth="1.4"
-        fill="none"
-      />
-      <path
-        d="M-70 -8 C-30 -34 30 -40 80 -22"
-        stroke="#ffc2cd"
-        strokeOpacity=".35"
-        strokeWidth="2"
-        fill="none"
-      />
-    </>
-  );
-}
+// The petals and flowers, cut out of the brand's own paintings
+// (public/brand/rain): most fall, three rest on the mirror.
+const PETALS = Array.from(
+  { length: 16 },
+  (_, i) => `/brand/rain/petal-${String(i + 1).padStart(2, "0")}.webp`,
+);
+const FLOWERS = Array.from(
+  { length: 8 },
+  (_, i) => `/brand/rain/flower-${String(i + 1).padStart(2, "0")}.webp`,
+);
+/** One in four falling shapes is a whole flower. */
+const shapeOf = (i: number) =>
+  i % 4 === 3 ? FLOWERS[i % FLOWERS.length]! : PETALS[i % PETALS.length]!;
+/** Flowers resting on the water: [x, y, width] on the stage. */
+const FLOATING = [
+  [700, 618, 150],
+  [1400, 668, 120],
+  [1000, 800, 200],
+] as const;
 
 function Layer({
   name,
@@ -312,12 +307,6 @@ export function EclipseScene({ className = "" }: { className?: string }) {
     >
       <svg width="0" height="0" className={styles.defs}>
         <defs>
-          <radialGradient id="eclipse-petal" cx="35%" cy="40%" r="75%">
-            <stop offset="0" stopColor="#ff6b84" />
-            <stop offset=".35" stopColor="#f01d43" />
-            <stop offset=".75" stopColor="#a80a27" />
-            <stop offset="1" stopColor="#4c0313" />
-          </radialGradient>
           {/* The hole is not flat: dark grey where the light bleeds in. */}
           <radialGradient id="eclipse-disc" cx="50%" cy="50%" r="50%">
             <stop offset="0" stopColor="#020203" />
@@ -598,9 +587,11 @@ export function EclipseScene({ className = "" }: { className?: string }) {
         </Layer>
         <div className={`${styles.layer} ${styles.resting}`}>
           {RESTING.map(([x, y, scale, angle, softness], i) => (
-            <svg
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
               key={i}
-              viewBox="-110 -52 225 104"
+              src={shapeOf(i)}
+              alt=""
               className={styles.rest}
               style={
                 {
@@ -611,9 +602,29 @@ export function EclipseScene({ className = "" }: { className?: string }) {
                   filter: softness ? `blur(${softness * 1.6}px)` : undefined,
                 } as CSSProperties
               }
+            />
+          ))}
+        </div>
+        {/* Flowers resting on the mirror, rings spreading around them. */}
+        <div className={`${styles.layer} ${styles.pond}`} data-depth={0.3}>
+          {FLOATING.map(([x, y, width], i) => (
+            <div
+              key={i}
+              className={styles.floating}
+              style={
+                {
+                  left: `${(x / 1600) * 100}%`,
+                  top: `${(y / 900) * 100}%`,
+                  width: `${(width / 1600) * 100}%`,
+                  "--bob": `${4.2 + i * 0.9}s`,
+                } as CSSProperties
+              }
             >
-              <Leaf fill="url(#eclipse-petal)" />
-            </svg>
+              <span className={styles.ring1} />
+              <span className={styles.ring2} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/brand/rain/water-01.webp" alt="" />
+            </div>
           ))}
         </div>
       </div>
@@ -625,15 +636,20 @@ export function EclipseScene({ className = "" }: { className?: string }) {
             style={{
               left: `${drop.left}%`,
               width: drop.size,
-              height: Math.round(drop.size * 0.46),
+              height: drop.size,
               ...drop.style,
             }}
           >
             <div className={styles.fall}>
               <div className={styles.sway}>
-                <svg viewBox="-110 -52 225 104" className={styles.turn}>
-                  <Leaf fill="url(#eclipse-petal)" />
-                </svg>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={shapeOf(i)}
+                  alt=""
+                  className={styles.turn}
+                  loading="lazy"
+                  decoding="async"
+                />
               </div>
             </div>
           </div>
