@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 
 import { EclipseScene } from "@/features/brand/eclipse-scene";
+import { FractureLink } from "@/features/brand/fracture-link";
 import styles from "@/features/brand/home.module.css";
 
 export const metadata: Metadata = {
@@ -46,12 +47,12 @@ export default function HomePage() {
           agenda calme pour tes journées.
         </p>
         <div className="flex flex-col items-start gap-4">
-          <Link
+          <FractureLink
             href="/login"
             className="inline-flex min-h-12 items-center rounded-full bg-[#FF3159] px-7 text-[16px] font-bold text-[#0B0D14] transition-colors hover:bg-[#ff5274] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#E9EDF5]"
           >
             Se connecter
-          </Link>
+          </FractureLink>
           <Link
             href="/signup"
             className="inline-flex min-h-11 items-center text-[14px] text-[#B9C0CF] underline decoration-[#5C6378] underline-offset-4 hover:text-[#E9EDF5] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#E9EDF5]"
