@@ -116,7 +116,27 @@ export class Fracture {
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.build();
     this.apply();
-    this.loop(this.last);
+    // Ready ahead: shaders compiled and shards sent to the GPU now, so the
+    // first crack does not wait for them. It only draws while it moves.
+    this.renderer.compile(this.scene, this.camera);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  /** The page as it is now, on the shards. */
+  setPage(page: HTMLCanvasElement) {
+    this.texture.image = page;
+    this.texture.needsUpdate = true;
+  }
+
+  start() {
+    if (this.frame) return;
+    this.last = performance.now();
+    this.frame = requestAnimationFrame(this.loop);
+  }
+
+  stop() {
+    cancelAnimationFrame(this.frame);
+    this.frame = 0;
   }
 
   private toWorld(x: number, y: number) {
@@ -371,6 +391,7 @@ export class Fracture {
   /** Cracks (1) or heals (0) the page; resolves when done. */
   crack(target: number, duration = target ? 0.95 : 0.55) {
     if (this.exploding) return Promise.resolve();
+    this.start();
     return new Promise<void>((resolve) => {
       gsap.to(this.state, {
         crack: target,
@@ -399,6 +420,7 @@ export class Fracture {
   }) {
     if (this.exploding) return;
     this.exploding = true;
+    this.start();
     const { force: f } = this.settings;
     const tl = gsap.timeline({ onComplete: onDone });
     tl.timeScale(this.settings.speed);

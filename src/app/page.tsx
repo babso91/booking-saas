@@ -49,7 +49,7 @@ export default function HomePage() {
         <div className="flex flex-col items-start gap-4">
           <FractureLink
             href="/login"
-            className="inline-flex min-h-12 items-center rounded-full bg-[#FF3159] px-7 text-[16px] font-bold text-[#0B0D14] transition-colors hover:bg-[#ff5274] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#E9EDF5]"
+            className="inline-flex min-h-12 items-center rounded-full bg-[#FF3159] px-7 text-[16px] font-bold text-[#0B0D14] transition-[background-color,box-shadow] duration-150 hover:bg-[#ff5274] hover:shadow-[0_0_0_1px_rgb(255_255_255/0.5),0_0_36px_6px_rgb(255_49_89/0.55)] focus-visible:shadow-[0_0_0_1px_rgb(255_255_255/0.5),0_0_36px_6px_rgb(255_49_89/0.55)] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#E9EDF5]"
           >
             Se connecter
           </FractureLink>
