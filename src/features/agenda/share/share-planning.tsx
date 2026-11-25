@@ -4,7 +4,12 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
 import { storyImage, storyPageCount } from "./story-image";
-import { readStory } from "./story-planning";
+import {
+  defaultStoryStyle,
+  readStoryStyle,
+  type StoryStyle,
+} from "./story-style";
+import { readStory, type Story } from "./story-planning";
 
 export function SharePlanning({
   slug,
@@ -25,7 +30,11 @@ export function SharePlanning({
         title="Partager mon planning"
       >
         {open && (
-          <StoryComposer slug={slug} initialMonth={anchor.slice(0, 7)} />
+          <StoryComposer
+            key={slug}
+            slug={slug}
+            initialMonth={anchor.slice(0, 7)}
+          />
         )}
       </Sheet>
     </>
@@ -42,60 +51,86 @@ function StoryComposer({
   const [month, setMonth] = useState(initialMonth);
   const [revision, setRevision] = useState(0);
   const [page, setPage] = useState(0);
-  const [result, setResult] = useState<{
+  const storageKey = "higani:story-style:" + slug;
+  const [style, setStyle] = useState(() => readStoryStyle(storageKey));
+  const [loaded, setLoaded] = useState<{
     key: string;
-    images: { file: File; url: string }[];
-    days?: string[][];
+    story?: Story;
+    error?: string;
+  } | null>(null);
+  const [rendered, setRendered] = useState<{
+    key: string;
+    image?: { file: File; url: string };
     error?: string;
   } | null>(null);
   const [shareError, setShareError] = useState("");
   const key = slug + "/" + month + "/" + revision;
   useEffect(() => {
     const controller = new AbortController();
-    const urls: string[] = [];
-    async function generate() {
-      try {
-        const story = await readStory(slug, month, controller.signal);
-        const images = [];
-        for (let i = 0; i < storyPageCount(story); i++) {
-          if (controller.signal.aborted) return;
-          const blob = await storyImage(story, i);
-          if (controller.signal.aborted) return;
-          const file = new File(
-            [blob],
-            "planning-" +
-              slug +
-              "-" +
-              month +
-              (i ? "-" + (i + 1) : "") +
-              ".png",
-            { type: "image/png" },
-          );
-          const url = URL.createObjectURL(file);
-          urls.push(url);
-          images.push({ file, url });
-        }
-        setResult({ key, images, days: story.days });
-      } catch (error) {
-        if (!controller.signal.aborted)
-          setResult({
-            key,
-            images: [],
+    if (month)
+      readStory(slug, month, controller.signal).then(
+        (story) => {
+          if (!controller.signal.aborted) setLoaded({ key, story });
+        },
+        (error) => {
+          if (!controller.signal.aborted)
+            setLoaded({
+              key,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Impossible de charger les disponibilités.",
+            });
+        },
+      );
+    return () => controller.abort();
+  }, [key, slug, month]);
+  const current = loaded?.key === key ? loaded : null;
+  const story = current?.story;
+  const pages = story ? storyPageCount(story) : 0;
+  const imageKey = [key, page, style.color, style.gradient].join("/");
+  useEffect(() => {
+    if (!story) return;
+    let active = true;
+    let url: string | undefined;
+    storyImage(story, page, style)
+      .then((blob) => {
+        if (!active) return;
+        const suffix = page ? "-" + (page + 1) : "";
+        const file = new File(
+          [blob],
+          "planning-" + slug + "-" + month + suffix + ".png",
+          { type: "image/png" },
+        );
+        url = URL.createObjectURL(file);
+        setRendered({ key: imageKey, image: { file, url } });
+      })
+      .catch((error) => {
+        if (active)
+          setRendered({
+            key: imageKey,
             error:
               error instanceof Error
                 ? error.message
-                : "La création de l’image a échoué.",
+                : "L’image n’a pas pu être créée.",
           });
-      }
-    }
-    if (month) void generate();
+      });
     return () => {
-      controller.abort();
-      urls.forEach((url) => URL.revokeObjectURL(url));
+      active = false;
+      if (url) URL.revokeObjectURL(url);
     };
-  }, [slug, month, key]);
-  const current = result?.key === key ? result : null;
-  const image = current?.images[page];
+  }, [story, page, style, imageKey, slug, month]);
+  const preview = rendered?.key === imageKey ? rendered : null;
+  const image = preview?.image;
+  function changeStyle(next: StoryStyle) {
+    setStyle(next);
+    setShareError("");
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {
+      /* Keep the selection for this export. */
+    }
+  }
   const canShare =
     image &&
     typeof navigator.canShare === "function" &&
@@ -115,14 +150,71 @@ function StoryComposer({
           className="min-h-11 rounded-xl border border-line bg-paper-raised px-3 text-ink"
         />
       </label>
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">Couleur du planning</legend>
+        <div className="flex flex-wrap items-center gap-2">
+          {[
+            { name: "Rose", color: defaultStoryStyle.color },
+            { name: "Noir", color: "#000000" },
+          ].map(({ name, color }) => (
+            <Button
+              key={color}
+              size="md"
+              variant={style.color === color ? "primary" : "secondary"}
+              aria-pressed={style.color === color}
+              onClick={() => changeStyle({ ...style, color })}
+            >
+              <span
+                aria-hidden="true"
+                className="size-4 rounded-full border border-current"
+                style={{ backgroundColor: color }}
+              />
+              {name}
+            </Button>
+          ))}
+          <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-line px-3 text-sm">
+            <input
+              type="color"
+              value={style.color}
+              onChange={(e) =>
+                changeStyle({ ...style, color: e.target.value.toLowerCase() })
+              }
+              className="size-7 cursor-pointer"
+            />
+            Autre couleur
+          </label>
+        </div>
+      </fieldset>
+      <fieldset className="flex flex-wrap gap-4">
+        <legend className="text-sm font-medium">Fond</legend>
+        {["Uni", "Dégradé"].map((label) => (
+          <label
+            key={label}
+            className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm"
+          >
+            <input
+              type="radio"
+              name="story-background"
+              checked={style.gradient === (label === "Dégradé")}
+              onChange={() =>
+                changeStyle({ ...style, gradient: label === "Dégradé" })
+              }
+            />
+            {label}
+          </label>
+        ))}
+      </fieldset>
       <p className="text-sm text-ink-soft">
-        L’image montre le premier départ de chaque plage disponible. Tu peux la publier en
-        story et envoyer ton lien en privé.
+        L’image montre le premier départ de chaque plage disponible. Tu peux la
+        publier en story et envoyer ton lien en privé.
       </p>
       {month && !current && (
         <p role="status">Actualisation des disponibilités…</p>
       )}
-      {current?.error && <p role="alert">{current.error}</p>}
+      {(current?.error || preview?.error) && (
+        <p role="alert">{current?.error || preview?.error}</p>
+      )}
+      {story && !preview && <p role="status">Préparation de l’image…</p>}
       {image && (
         <>
           {/* A local PNG can also be saved by a long press on mobile. */}
@@ -139,7 +231,7 @@ function StoryComposer({
               Lire les horaires de l’image
             </summary>
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-              {current?.days?.map((day, i) => (
+              {story?.days.map((day, i) => (
                 <div className="contents" key={i}>
                   <dt>
                     {String(i + 1).padStart(2, "0")}/{month.slice(5)}
@@ -149,16 +241,16 @@ function StoryComposer({
               ))}
             </dl>
           </details>
-          {current!.images.length > 1 && (
+          {pages > 1 && (
             <label className="flex items-center gap-2">
               Image à enregistrer
               <select
                 value={page}
                 onChange={(e) => setPage(Number(e.target.value))}
               >
-                {current!.images.map((_, i) => (
+                {Array.from({ length: pages }, (_, i) => (
                   <option key={i} value={i}>
-                    {i + 1} sur {current!.images.length}
+                    {i + 1} sur {pages}
                   </option>
                 ))}
               </select>

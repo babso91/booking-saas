@@ -1,10 +1,9 @@
 import type { Story } from "./story-planning";
 
+import { storyPalette, type StoryStyle } from "./story-style";
+
 const W = 1080;
 const H = 1920;
-const ink = "#34222c";
-const wine = "#793e55";
-const muted = "#76636b";
 const pageSize = 4;
 
 export function storyPageCount(story: Story) {
@@ -14,13 +13,19 @@ export function storyPageCount(story: Story) {
   );
 }
 
-export async function storyImage(story: Story, page: number) {
+export async function storyImage(
+  story: Story,
+  page: number,
+  style: StoryStyle,
+) {
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Ce navigateur ne peut pas créer l’image.");
   const { dates, days } = story;
+  const palette = storyPalette(style);
+  const { ink, muted, accent } = palette;
   const pages = storyPageCount(story);
 
   const text = (
@@ -48,19 +53,21 @@ export async function storyImage(story: Story, page: number) {
     ctx.roundRect(x, y, w, h, radius);
     ctx.fill();
   };
-  const ground = ctx.createLinearGradient(0, 0, W, H);
-  ground.addColorStop(0, "#442a39");
-  ground.addColorStop(0.4, "#8a5667");
-  ground.addColorStop(0.72, "#684052");
-  ground.addColorStop(1, "#372531");
-  ctx.fillStyle = ground;
+  ctx.fillStyle = style.color;
+  if (style.gradient) {
+    const ground = ctx.createLinearGradient(0, 0, W, H);
+    [0, 0.4, 0.72, 1].forEach((offset, i) =>
+      ground.addColorStop(offset, palette.stops[i]!),
+    );
+    ctx.fillStyle = ground;
+  }
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = "center";
   const center = W / 2;
-  text(story.name, center, 135, "italic 54px Georgia, serif", "#fff7f2");
+  text(story.name, center, 135, "italic 54px Georgia, serif", palette.outside);
 
-  panel(38, 190, W - 76, 1390, 62, "#fffaf6");
-  text("Planning", center, 315, "italic 80px Georgia, serif", wine);
+  panel(38, 190, W - 76, 1390, 62, palette.paper);
+  text("Planning", center, 315, "italic 80px Georgia, serif", accent);
   const month = dates.title.charAt(0).toUpperCase() + dates.title.slice(1);
   text(month, center, 407, "600 88px system-ui");
   text(dates.year, center, 460, "32px system-ui", muted);
@@ -85,12 +92,12 @@ export async function storyImage(story: Story, page: number) {
       x,
       y + 33,
       "600 38px system-ui",
-      slice.length ? ink : "#918189",
+      slice.length ? ink : palette.quiet,
     );
     slice.forEach((start, j) => {
       const slotTop = y + 44 + j * (slotHeight + 3);
-      panel(x - 55, slotTop, 110, slotHeight, 10, "#f2e5e8");
-      text(start, x, slotTop + 23, "500 27px system-ui", wine);
+      panel(x - 55, slotTop, 110, slotHeight, 10, palette.chip);
+      text(start, x, slotTop + 23, "500 27px system-ui", accent);
     });
   });
   if (!days.some((day) => day.length)) {
@@ -102,13 +109,13 @@ export async function storyImage(story: Story, page: number) {
       muted,
     );
   }
-  panel(38, 1612, W - 76, 118, 42, "#f3dfdf");
+  panel(38, 1612, W - 76, 118, 42, palette.footer);
   text(
     "Pour réserver, écris-moi en privé.",
     center,
     1686,
     "italic 49px Georgia, serif",
-    "#492b39",
+    palette.footerInk,
   );
   const stamp = story.updated.toLocaleString("fr-FR", {
     day: "numeric",
@@ -123,7 +130,7 @@ export async function storyImage(story: Story, page: number) {
     center,
     1800,
     "30px system-ui",
-    "#fff4f3",
+    palette.outside,
   );
 
   return new Promise<Blob>((resolve, reject) =>
