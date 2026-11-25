@@ -46,7 +46,6 @@ function StoryComposer({
     key: string;
     images: { file: File; url: string }[];
     days?: string[][];
-    step?: number;
     error?: string;
   } | null>(null);
   const [shareError, setShareError] = useState("");
@@ -76,7 +75,7 @@ function StoryComposer({
           urls.push(url);
           images.push({ file, url });
         }
-        setResult({ key, images, days: story.days, step: story.step });
+        setResult({ key, images, days: story.days });
       } catch (error) {
         if (!controller.signal.aborted)
           setResult({
@@ -117,7 +116,7 @@ function StoryComposer({
         />
       </label>
       <p className="text-sm text-ink-soft">
-        L’image montre les heures encore réservables. Tu peux la publier en
+        L’image montre le premier départ de chaque plage disponible. Tu peux la publier en
         story et envoyer ton lien en privé.
       </p>
       {month && !current && (
@@ -139,10 +138,6 @@ function StoryComposer({
             <summary className="min-h-11 cursor-pointer py-3">
               Lire les horaires de l’image
             </summary>
-            <p>
-              Dans une plage, les départs sont espacés de {current?.step}{" "}
-              minutes.
-            </p>
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
               {current?.days?.map((day, i) => (
                 <div className="contents" key={i}>

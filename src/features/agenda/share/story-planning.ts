@@ -62,23 +62,12 @@ export function shortestOffer(catalog: PublicCatalog) {
 const minutes = (time: string) =>
   Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
 
-// A range always means consecutive bookable starts at the printed interval.
-// Gaps remain visible, including a single appointment in an otherwise open day.
+// The story advertises the first bookable start of each uninterrupted window.
 export function timeLabels(times: string[], step: number) {
   const sorted = [...new Set(times)].sort();
-  const labels: string[] = [];
-  for (let i = 0; i < sorted.length;) {
-    let end = i;
-    while (
-      end + 1 < sorted.length &&
-      minutes(sorted[end + 1]!) - minutes(sorted[end]!) === step
-    )
-      end++;
-    if (end - i >= 2) labels.push(sorted[i] + "–" + sorted[end]);
-    else labels.push(...sorted.slice(i, end + 1));
-    i = end + 1;
-  }
-  return labels;
+  return sorted.filter(
+    (time, i) => i === 0 || minutes(time) - minutes(sorted[i - 1]!) !== step,
+  );
 }
 
 export async function readStory(
@@ -113,7 +102,6 @@ export async function readStory(
   return {
     dates,
     name: business.name,
-    step: business.slotIntervalMinutes,
     timezone: business.timezone,
     updated: new Date(),
     days: result.data.days.map((day) =>

@@ -1,10 +1,10 @@
 import type { Story } from "./story-planning";
 
-const W = 1080,
-  H = 1920;
-const ink = "#2c2429",
-  wine = "#743c51",
-  muted = "#665c61";
+const W = 1080;
+const H = 1920;
+const ink = "#34222c";
+const wine = "#793e55";
+const muted = "#76636b";
 const pageSize = 4;
 
 export function storyPageCount(story: Story) {
@@ -22,111 +22,94 @@ export async function storyImage(story: Story, page: number) {
   if (!ctx) throw new Error("Ce navigateur ne peut pas créer l’image.");
   const { dates, days } = story;
   const pages = storyPageCount(story);
-  function text(
+
+  const text = (
     value: string,
     x: number,
     y: number,
     font: string,
     color = ink,
-    max?: number,
-  ) {
-    ctx!.fillStyle = color;
-    ctx!.font = font;
-    ctx!.fillText(value, x, y, max);
-  }
-  function rule(y: number) {
-    ctx!.fillStyle = "#d9cbd0";
-    ctx!.fillRect(54, y, W - 108, 2);
-  }
-  ctx.fillStyle = "#fbf6f2";
+    maxWidth = W - 160,
+  ) => {
+    ctx.fillStyle = color;
+    ctx.font = font;
+    ctx.fillText(value, x, y, maxWidth);
+  };
+  const panel = (
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    radius: number,
+    fill: string,
+  ) => {
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, radius);
+    ctx.fill();
+  };
+  const ground = ctx.createLinearGradient(0, 0, W, H);
+  ground.addColorStop(0, "#442a39");
+  ground.addColorStop(0.4, "#8a5667");
+  ground.addColorStop(0.72, "#684052");
+  ground.addColorStop(1, "#372531");
+  ctx.fillStyle = ground;
   ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = wine;
-  ctx.fillRect(0, 0, W, 18);
-  text(story.name, 56, 155, "600 41px system-ui", wine, W - 112);
-  text("Mes disponibilités", 52, 253, "italic 62px Georgia, serif", muted);
-  text(
-    dates.title.charAt(0).toUpperCase() + dates.title.slice(1),
-    48,
-    366,
-    "96px Georgia, serif",
-    ink,
-    750,
+  ctx.textAlign = "center";
+  const center = W / 2;
+  text(story.name, center, 135, "italic 54px Georgia, serif", "#fff7f2");
+
+  panel(38, 190, W - 76, 1390, 62, "#fffaf6");
+  text("Planning", center, 315, "italic 80px Georgia, serif", wine);
+  const month = dates.title.charAt(0).toUpperCase() + dates.title.slice(1);
+  text(month, center, 407, "600 88px system-ui");
+  text(dates.year, center, 460, "32px system-ui", muted);
+
+  const inset = 62;
+  const cell = (W - 2 * inset) / 7;
+  const columnCenter = (column: number) => inset + (column + 0.5) * cell;
+  ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"].forEach((label, column) =>
+    text(label, columnCenter(column), 540, "500 32px system-ui", muted),
   );
-  ctx.textAlign = "right";
-  text(dates.year, W - 58, 363, "42px system-ui", wine);
-  ctx.textAlign = "left";
-  rule(410);
-  const grid = 436,
-    cell = (W - 108) / 7,
-    rows = Math.ceil((dates.offset + dates.length) / 7);
-  const height = (1440 - (grid + 60)) / rows;
-  const week = ["LUN", "MAR", "MER", "JEU", "VEN", "SAM", "DIM"];
-  week.forEach((label, i) =>
-    text(label, 59 + i * cell, grid + 27, "600 23px system-ui", muted),
-  );
-  for (let row = 0; row < rows; row++) rule(grid + 55 + row * height);
+  const rows = Math.ceil((dates.offset + dates.length) / 7);
+  const top = 570;
+  const rowHeight = (1540 - top) / rows;
+  const slotHeight = 28;
   days.forEach((labels, index) => {
     const position = dates.offset + index;
-    const x = 59 + (position % 7) * cell;
-    const y = grid + 55 + Math.floor(position / 7) * height;
+    const x = columnCenter(position % 7);
+    const y = top + Math.floor(position / 7) * rowHeight;
     const slice = labels.slice(page * pageSize, (page + 1) * pageSize);
     text(
-      String(index + 1),
+      String(index + 1).padStart(2, "0"),
       x,
-      y + 40,
-      "600 33px system-ui",
-      labels.length ? ink : "#847a7e",
+      y + 33,
+      "600 38px system-ui",
+      slice.length ? ink : "#918189",
     );
-    slice.forEach((label, j) =>
-      text(
-        label,
-        x,
-        y + 74 + j * (slice.length === 4 ? 24 : 31),
-        slice.length === 4 ? "600 24px system-ui" : "600 29px system-ui",
-        wine,
-        cell - 8,
-      ),
-    );
+    slice.forEach((start, j) => {
+      const slotTop = y + 44 + j * (slotHeight + 3);
+      panel(x - 55, slotTop, 110, slotHeight, 10, "#f2e5e8");
+      text(start, x, slotTop + 23, "500 27px system-ui", wine);
+    });
   });
-  rule(1440);
   if (!days.some((day) => day.length)) {
     text(
       "Aucun créneau disponible ce mois-ci.",
-      55,
-      1504,
-      "33px system-ui",
+      center,
+      1550,
+      "32px system-ui",
       muted,
-      W - 110,
-    );
-  } else {
-    text("Heures de début disponibles", 55, 1504, "600 34px system-ui");
-    text(
-      "Selon la durée de la prestation.",
-      55,
-      1556,
-      "28px system-ui",
-      muted,
-      W - 110,
     );
   }
+  panel(38, 1612, W - 76, 118, 42, "#f3dfdf");
   text(
     "Pour réserver, écris-moi en privé.",
-    53,
-    1694,
-    "italic 54px Georgia, serif",
-    wine,
-    W - 110,
+    center,
+    1686,
+    "italic 49px Georgia, serif",
+    "#492b39",
   );
-  if (days.some((day) => day.some((label) => label.includes("–")))) {
-    text(
-      "Dans une plage, un départ toutes les " + story.step + " min.",
-      55,
-      1602,
-      "28px system-ui",
-      muted,
-      W - 110,
-    );
-  }
   const stamp = story.updated.toLocaleString("fr-FR", {
     day: "numeric",
     month: "long",
@@ -134,24 +117,15 @@ export async function storyImage(story: Story, page: number) {
     minute: "2-digit",
     timeZone: story.timezone,
   });
+  const pageNumber = pages > 1 ? "  ·  " + (page + 1) + " / " + pages : "";
   text(
-    "Mis à jour le " + stamp,
-    56,
-    1784,
-    "26px system-ui",
-    muted,
-    pages > 1 ? 760 : W - 112,
+    "Mis à jour le " + stamp + pageNumber,
+    center,
+    1800,
+    "30px system-ui",
+    "#fff4f3",
   );
-  if (pages > 1) {
-    ctx.textAlign = "right";
-    text(
-      String(page + 1) + " / " + pages,
-      W - 56,
-      1784,
-      "600 27px system-ui",
-      wine,
-    );
-  }
+
   return new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (blob) =>

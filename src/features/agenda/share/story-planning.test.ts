@@ -2,10 +2,15 @@ import { it, expect } from "vitest";
 import { shortestOffer, calendarMonth, timeLabels } from "./story-planning";
 import { storyPageCount } from "./story-image";
 
-it("represents every start, including holes and overflow in a dense month", () => {
+it("shows only the first available start in each window, and paginates dense days", () => {
   expect(
     timeLabels(["10:30", "09:00", "09:15", "09:30", "09:00", "11:00"], 15),
-  ).toEqual(["09:00–09:30", "10:30", "11:00"]);
+  ).toEqual(["09:00", "10:30", "11:00"]);
+  expect(timeLabels(["10:15", "10:30", "18:00", "18:15"], 15)).toEqual([
+    "10:15",
+    "18:00",
+  ]);
+  expect(timeLabels([], 15)).toEqual([]);
   const dates = calendarMonth("2028-02");
   expect(dates).toMatchObject({
     from: "2028-02-01",
@@ -17,7 +22,6 @@ it("represents every start, including holes and overflow in a dense month", () =
     storyPageCount({
       dates,
       name: "Salon",
-      step: 15,
       updated: new Date(),
       timezone: "Europe/Paris",
       days: [Array(9).fill("09:00")],
