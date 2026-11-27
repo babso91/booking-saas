@@ -16,6 +16,7 @@ import {
 import type { NextSlotDto } from "@/features/availability/data/slots";
 import { bookingLabel, isInfoKey } from "@/features/sites/presentation";
 import type { PublicCatalog } from "@/features/catalog/model";
+import { SERVICE_LINK_PARAM } from "@/features/catalog/service-link";
 import type { PublicBusiness } from "@/features/public-booking/client/api";
 import { readBookingDraft } from "@/features/public-booking/client/booking-draft";
 import { wallDate } from "@/features/public-booking/client/business-time";
@@ -80,6 +81,7 @@ export function MiniSite({
   hours = null,
   reviews,
   nextSlots = null,
+  openService,
 }: {
   reviews?: ReactNode;
   config: SiteConfig;
@@ -106,17 +108,34 @@ export function MiniSite({
   hours?: UsualHours[] | null;
   /** Her next slot by service (get_public_next_slots), read with the page. */
   nextSlots?: NextSlotDto[] | null;
+  /** The service a direct link names (point 29): its booking opens. */
+  openService?: string;
 }) {
+  const next = nextSlotsOf(nextSlots);
+  // A direct link opens on that service's next slot, as a tap on it would.
   const [booking, setBooking] = useState<{
     serviceId?: string;
     date?: string;
     from?: HTMLElement | null;
-  } | null>(null);
+  } | null>(() => {
+    const slot = openService ? next[openService] : undefined;
+    return openService
+      ? {
+          serviceId: openService,
+          date: slot ? wallDate(slot.localStartsAt) : undefined,
+        }
+      : null;
+  });
+  // Its sheet is a portal: drawn once the page runs, never on the server.
+  const running = useSyncExternalStore(
+    unsubscribed,
+    () => true,
+    () => false,
+  );
   // The button a booking or the index was opened from: it grows out of it
   // and is found again on return.
   const pressed = useRef<HTMLElement | null>(null);
   const [indexFrom, setIndexFrom] = useState<HTMLElement | null>(null);
-  const next = nextSlotsOf(nextSlots);
   useImperativeHandle(openBookingPreviewRef, () => () => setBooking({}), []);
   const returnTo = useRef<HTMLElement | null>(null);
   const siteRoot = useRef<HTMLDivElement>(null);
@@ -273,7 +292,7 @@ export function MiniSite({
             ) : null}
           </AnimatePresence>
           <AnimatePresence onExitComplete={() => markReturn(returnTo.current)}>
-            {booking ? (
+            {booking && running ? (
               <SiteBooking
                 key="booking"
                 from={booking.from ?? null}
@@ -281,7 +300,10 @@ export function MiniSite({
                 previewSlug={previewSlug}
                 initialServiceId={booking.serviceId}
                 initialDate={booking.date}
-                onClose={() => setBooking(null)}
+                onClose={() => {
+                  setBooking(null);
+                  forgetServiceLink();
+                }}
               />
             ) : null}
           </AnimatePresence>
@@ -575,6 +597,23 @@ function QuickBook({ waiting }: { waiting: string | null }) {
 }
 
 const unsubscribed = () => () => {};
+
+/**
+ * Closed, a booking opened by a direct link (point 29) leaves her page's
+ * address plain: a reload, or the address copied, is her site again.
+ */
+function forgetServiceLink() {
+  const plain = () => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(SERVICE_LINK_PARAM)) return;
+    url.searchParams.delete(SERVICE_LINK_PARAM);
+    window.history.replaceState(window.history.state, "", url);
+  };
+  // Still on the booking's own history entry: its way back comes first.
+  if (window.history.state?.higaniBooking)
+    window.addEventListener("popstate", plain, { once: true });
+  else plain();
+}
 
 /**
  * The service of her booking left in progress in this tab (Higani point

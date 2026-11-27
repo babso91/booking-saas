@@ -21,7 +21,10 @@ export default async function ServicesPage() {
       current="services"
     >
       {/* Drafts belong to this identity, from the server session only. */}
-      <ServicesManager scope={{ userId: user.id, businessId: business.id }} />
+      <ServicesManager
+        scope={{ userId: user.id, businessId: business.id }}
+        slug={business.slug}
+      />
     </AppShell>
   );
 }

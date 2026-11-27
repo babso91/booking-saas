@@ -159,6 +159,23 @@ describe.each(VARIANTS)(
       ).toEqual([["Mains & henné", ["Rehaussement de cils"]]]);
       await check("services in a category");
 
+      // Its own link, to post or send (point 29): its booking, at once.
+      await page
+        .context()
+        .grantPermissions(["clipboard-read", "clipboard-write"], {
+          origin: APP,
+        });
+      await page
+        .getByRole("button", { name: "Copier le lien de Rehaussement de cils" })
+        .click();
+      await page.getByText("Lien copié").waitFor();
+      await check("service link copied");
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(
+        new RegExp(
+          `^${APP}/b/${slug}\\?prestation=rehaussement-de-cils-[0-9a-f]{8}$`,
+        ),
+      );
+
       // A second one, still empty: her list as it is organised.
       await page.getByRole("button", { name: "Ajouter une catégorie" }).click();
       await page.getByRole("dialog").getByLabel("Nom").fill("Regard");
@@ -173,6 +190,10 @@ describe.each(VARIANTS)(
       await page.getByRole("dialog").getByRole("switch").click();
       await saveDialog(page);
       await page.getByText(/masquée : pas réservable en ligne/).waitFor();
+      // Not booked online any more: no link to hand out.
+      expect(
+        await page.getByRole("button", { name: /^Copier le lien de / }).count(),
+      ).toBe(0);
       const hidden = await publicCatalog(slug);
       expect(hidden.catalog.groups).toEqual([]);
       expect(hidden.services).toEqual([]);

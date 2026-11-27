@@ -33,6 +33,7 @@ import {
   type CatalogCategory,
 } from "@/features/catalog/client/catalog-view";
 import type { ServiceOption } from "@/features/catalog/model";
+import { serviceLinkPath } from "@/features/catalog/service-link";
 import {
   deleteServiceAction,
   reorderServicesAction,
@@ -112,7 +113,14 @@ const linkAction =
  * make it a no-op (the state is already the requested one), never undo a
  * change made elsewhere; the returned service replaces the row.
  */
-export function ServicesManager({ scope }: { scope: DraftScope }) {
+export function ServicesManager({
+  scope,
+  slug,
+}: {
+  scope: DraftScope;
+  /** Her public page, for each service's direct link (point 29). */
+  slug: string;
+}) {
   // One screen per identity (signed-in user and business). The page can be
   // rendered again for another identity without being unmounted (sign-in
   // as someone else, another business): the key replaces the whole screen
@@ -120,10 +128,10 @@ export function ServicesManager({ scope }: { scope: DraftScope }) {
   // previous identity is ever shown, kept or sent under the new one. Late
   // answers of the previous screen land on an unmounted tree and are
   // dropped.
-  return <ServicesScreen key={scopeId(scope)} scope={scope} />;
+  return <ServicesScreen key={scopeId(scope)} scope={scope} slug={slug} />;
 }
 
-function ServicesScreen({ scope }: { scope: DraftScope }) {
+function ServicesScreen({ scope, slug }: { scope: DraftScope; slug: string }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [run, setRun] = useState(0);
   const [sheet, setSheet] = useState<ServiceSheetTarget | null>(null);
@@ -470,6 +478,12 @@ function ServicesScreen({ scope }: { scope: DraftScope }) {
                     index={index}
                     count={section.services.length}
                     headingLevel={load.categories.length > 0 ? 3 : 2}
+                    // Booked online: active, in a category shown online.
+                    link={
+                      service.active && section.category?.visible !== false
+                        ? serviceLinkPath(slug, service)
+                        : null
+                    }
                     row={row?.id === service.id ? row : null}
                     locked={pending || ordering === "saving"}
                     onEdit={() => setSheet({ mode: "edit", service })}
@@ -659,6 +673,7 @@ function ServiceRow({
   index,
   count,
   headingLevel,
+  link,
   row,
   locked,
   onEdit,
@@ -674,6 +689,8 @@ function ServiceRow({
   count: number;
   /** Under a category heading (3), or directly under the page's (2). */
   headingLevel: 2 | 3;
+  /** Its direct link, while clients can book it online. */
+  link: string | null;
   row: RowState | null;
   locked: boolean;
   onEdit: () => void;
@@ -751,6 +768,9 @@ function ServiceRow({
         >
           Modifier
         </button>
+        {link ? (
+          <CopyLink path={link} name={service.name} className={small} />
+        ) : null}
         {/* Alone in its section: nowhere to go, no arrows to read. */}
         {count > 1 ? (
           <>
@@ -785,6 +805,60 @@ function ServiceRow({
         </button>
       </div>
     </li>
+  );
+}
+
+/**
+ * Copies the direct link of a service (point 29), to post or send: it opens
+ * her page on that service's booking. Refused, the link is shown to copy.
+ */
+function CopyLink({
+  path,
+  name,
+  className,
+}: {
+  path: string;
+  name: string;
+  className: string;
+}) {
+  // "yes", or the address to copy by hand when the copy is refused.
+  const [copied, setCopied] = useState<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+
+  async function copy() {
+    // The origin she is on is the one her clients reach.
+    const url = `${window.location.origin}${path}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied("yes");
+    } catch {
+      setCopied(url);
+    }
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(null), 4000);
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={copy}
+        aria-label={`Copier le lien de ${name}`}
+        className={className}
+      >
+        Copier le lien
+      </button>
+      <span
+        role="status"
+        className="min-w-0 text-[12.5px] wrap-anywhere text-ink-muted"
+      >
+        {copied === "yes"
+          ? "Lien copié"
+          : copied
+            ? `Copie refusée, copie-le : ${copied}`
+            : ""}
+      </span>
+    </>
   );
 }
 
