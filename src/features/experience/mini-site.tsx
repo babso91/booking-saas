@@ -40,6 +40,8 @@ import {
   motions,
 } from "./engine/tokens";
 import { earliestOf, fromLabel, nextSlotsOf } from "./next-slot";
+import { markReturn, triggerOf } from "./engine/origin";
+import pressStyles from "./engine/press.module.css";
 import { practicalItems, type UsualHours } from "./practical";
 import { InfoSection } from "./scenes/info-section";
 import { Intro } from "./scenes/intro";
@@ -108,9 +110,15 @@ export function MiniSite({
   const [booking, setBooking] = useState<{
     serviceId?: string;
     date?: string;
+    from?: HTMLElement | null;
   } | null>(null);
+  // The button a booking or the index was opened from: it grows out of it
+  // and is found again on return.
+  const pressed = useRef<HTMLElement | null>(null);
+  const [indexFrom, setIndexFrom] = useState<HTMLElement | null>(null);
   const next = nextSlotsOf(nextSlots);
   useImperativeHandle(openBookingPreviewRef, () => () => setBooking({}), []);
+  const returnTo = useRef<HTMLElement | null>(null);
   const siteRoot = useRef<HTMLDivElement>(null);
   const armed = useRevealArming(siteRoot);
   const [index, setIndex] = useState(false);
@@ -145,7 +153,12 @@ export function MiniSite({
         lang="fr"
         data-site-fonts=""
         data-reveal-kind={motions[config.tokens.motion].entrance}
-        className={`min-h-dvh bg-[var(--u-bg)] text-[var(--u-ink)] ${fontClasses} ${armed ? revealStyles.armed : ""}`}
+        onPointerDownCapture={(event) => {
+          pressed.current = (event.target as Element).closest<HTMLElement>(
+            "button, a",
+          );
+        }}
+        className={`min-h-dvh bg-[var(--u-bg)] text-[var(--u-ink)] ${fontClasses} ${pressStyles.site} ${armed ? revealStyles.armed : ""}`}
         style={{
           ...cssVariables(config.tokens),
           ...revealVariables(motions[config.tokens.motion]),
@@ -163,13 +176,16 @@ export function MiniSite({
             book: (service) => {
               // A service with a next slot opens on that day.
               const slot = service ? next[service.id] : undefined;
+              const from = triggerOf(pressed.current);
+              returnTo.current = from;
               setBooking(
                 service
                   ? {
                       serviceId: service.id,
                       date: slot ? wallDate(slot.localStartsAt) : undefined,
+                      from,
                     }
-                  : {},
+                  : { from },
               );
             },
             next,
@@ -177,7 +193,16 @@ export function MiniSite({
           }}
         >
           <Header
-            index={destinations.length > 1 ? () => setIndex(true) : undefined}
+            index={
+              destinations.length > 1
+                ? () => {
+                    const from = triggerOf(pressed.current);
+                    returnTo.current = from;
+                    setIndexFrom(from);
+                    setIndex(true);
+                  }
+                : undefined
+            }
           />
           <main>
             {pages.map(({ kind, link }, position) => {
@@ -219,7 +244,7 @@ export function MiniSite({
                 ? document.getElementById(going.current)
                 : null;
               going.current = null;
-              if (!target) return;
+              if (!target) return markReturn(returnTo.current);
               const still = window.matchMedia(
                 "(prefers-reduced-motion: reduce)",
               ).matches;
@@ -233,6 +258,7 @@ export function MiniSite({
             {index ? (
               <SiteIndex
                 key="index"
+                from={indexFrom}
                 destinations={destinations}
                 onGo={(id) => {
                   going.current = id;
@@ -240,16 +266,17 @@ export function MiniSite({
                 }}
                 onBook={() => {
                   setIndex(false);
-                  setBooking({});
+                  setBooking({ from: returnTo.current });
                 }}
                 onClose={() => setIndex(false)}
               />
             ) : null}
           </AnimatePresence>
-          <AnimatePresence>
+          <AnimatePresence onExitComplete={() => markReturn(returnTo.current)}>
             {booking ? (
               <SiteBooking
                 key="booking"
+                from={booking.from ?? null}
                 booking={bookable}
                 previewSlug={previewSlug}
                 initialServiceId={booking.serviceId}

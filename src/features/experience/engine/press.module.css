@@ -1,0 +1,7 @@
+/* A press is felt at once (Higani: « on se perd au clic »): what is
+   pressed gives a little, before anything else happens. */
+@media (prefers-reduced-motion: no-preference) {
+  .site :is(button, a):not(:disabled):active {
+    scale: 0.97;
+  }
+}

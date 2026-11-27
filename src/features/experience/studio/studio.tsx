@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   useEffect,
   useId,
+  useRef,
   useState,
   type MouseEvent,
   type ReactNode,
@@ -280,6 +281,22 @@ export function Studio({
   ];
   const current =
     creative || !["composition", "style"].includes(tab) ? tab : "creative";
+  const pill = useRef<HTMLSpanElement>(null);
+  /** Under the chosen tab, kept in view (even when opened from her page). */
+  function movePill(button: HTMLButtonElement) {
+    const span = pill.current;
+    if (span) {
+      const first = !span.style.width;
+      if (first) span.style.transition = "none";
+      span.style.translate = `${button.offsetLeft}px 0`;
+      span.style.width = `${button.offsetWidth}px`;
+      if (first) {
+        void span.offsetWidth;
+        span.style.transition = "";
+      }
+    }
+    button.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
 
   // Desktop shortcuts, outside text fields.
   useEffect(() => {
@@ -631,16 +648,26 @@ export function Studio({
 
               {view === "draft" && photoSlot === null ? (
                 <nav
-                  className="flex gap-1 overflow-x-auto px-3 pb-2 [scrollbar-width:none]"
+                  className="relative isolate flex gap-1 overflow-x-auto px-3 pb-2 [scrollbar-width:none]"
                   aria-label="Réglages"
                 >
+                  {/* One pill travels from the tab she left to the one she
+                      chose, with its label's colour: she sees where she went. */}
+                  <span
+                    ref={pill}
+                    aria-hidden="true"
+                    className="pointer-events-none absolute top-0 left-0 -z-10 h-11 rounded-full bg-[#141414] transition-[translate,width] duration-200 ease-out motion-reduce:transition-none"
+                  />
                   {tabs.map((item) => (
                     <button
                       key={item.id}
                       type="button"
                       aria-pressed={current === item.id}
                       onClick={() => setTab(item.id)}
-                      className={`flex h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-4 text-[14px] font-medium ${current === item.id ? "bg-[#141414] text-white" : "text-black/70"} ${item.id === "universe" ? "relative ml-2 before:absolute before:top-3 before:-left-1.5 before:h-5 before:w-px before:bg-black/15" : ""}`}
+                      ref={(button) => {
+                        if (button && current === item.id) movePill(button);
+                      }}
+                      className={`relative flex h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-4 text-[14px] font-medium transition-colors duration-200 ${current === item.id ? "text-white" : "text-black/70"} ${item.id === "universe" ? "ml-2 before:absolute before:top-3 before:-left-1.5 before:h-5 before:w-px before:bg-black/15" : ""}`}
                     >
                       {item.label}
                       {item.id === "colors" && problems.length ? (

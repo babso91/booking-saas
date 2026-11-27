@@ -3,10 +3,11 @@
 import { bookingLabel } from "@/features/sites/presentation";
 
 import { motion } from "motion/react";
-import { useRef, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 
 import { Detail, Display, useEngine } from "./engine/engine";
 import { SitePortal, useModal } from "./engine/modal";
+import { circleOf } from "./engine/origin";
 import { ReachLinks } from "./scenes/reach-links";
 import type { Destination } from "./sections";
 
@@ -46,11 +47,14 @@ export function SiteIndexButton({
 }
 
 export function SiteIndex({
+  from = null,
   destinations,
   onGo,
   onBook,
   onClose,
 }: {
+  /** Its button: it opens out of it and closes back into it. */
+  from?: HTMLElement | null;
   destinations: Destination[];
   /** To a scene, by its anchor (scrolled to once the index has closed). */
   onGo: (id: string) => void;
@@ -63,6 +67,11 @@ export function SiteIndex({
   const first = useRef<HTMLButtonElement>(null);
   useModal({ root, panel, initial: first, onClose });
   const bookable = catalog.some((group) => group.services.length > 0);
+  const [origin] = useState(() =>
+    from?.isConnected && !matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? from.getBoundingClientRect()
+      : null,
+  );
 
   return (
     <SitePortal rootRef={root}>
@@ -73,10 +82,20 @@ export function SiteIndex({
         aria-label="Sommaire"
         tabIndex={-1}
         className="fixed inset-0 flex flex-col overflow-y-auto bg-[var(--u-bg)] text-[var(--u-ink)] outline-none"
-        initial={{ opacity: 0, y: -16 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -16 }}
-        transition={{ duration: 0.35, ease: language.ease }}
+        initial={
+          origin
+            ? { clipPath: circleOf(origin, false) }
+            : { opacity: 0, y: -16 }
+        }
+        animate={
+          origin ? { clipPath: circleOf(origin, true) } : { opacity: 1, y: 0 }
+        }
+        exit={
+          origin
+            ? { clipPath: circleOf(origin, false) }
+            : { opacity: 0, y: -16 }
+        }
+        transition={{ duration: origin ? 0.42 : 0.35, ease: language.ease }}
       >
         <div className="mx-auto flex w-full max-w-[1100px] items-center justify-between px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3 text-[var(--u-muted)]">
           <Detail>Sommaire</Detail>
