@@ -141,6 +141,7 @@ export function SiteBooking({
         role="dialog"
         aria-modal="true"
         aria-label={`${bookingLabel(config.presentation)} chez ${config.brand.name}`}
+        data-booking-entry={sheet ? "sheet" : "page"}
         className={
           (themed ? styles.universe + " " : "") +
           (sheet

@@ -65,8 +65,10 @@ export const placeLine = (
   location: string | null,
 ) => place?.address.trim() || place?.area.trim() || location?.trim() || null;
 
+// Its words stay a link's size; the finger gets 45 px (Higani point 201):
+// an invisible band above and below takes the tap, the layout is untouched.
 export const linkAction =
-  "cursor-pointer text-left text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50";
+  "relative cursor-pointer text-left text-[14px] font-semibold text-ink underline decoration-line-strong underline-offset-4 after:absolute after:-inset-x-1 after:-inset-y-3 after:content-[''] disabled:cursor-not-allowed disabled:opacity-50";
 
 export const serviceLine = (
   durationMinutes: number,

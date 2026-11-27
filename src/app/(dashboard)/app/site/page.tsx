@@ -35,6 +35,16 @@ export default async function SiteStudioPage() {
     getPublicBusinessHours(client, business.slug),
     publicReviews(client, business.slug).catch(() => null),
   ]);
+  // Her booking rules, summed up in the Studio's advanced settings: read
+  // only by whom may change them (owner, admin), as on her Horaires page.
+  const settings =
+    business.role === "owner" || business.role === "admin"
+      ? await client
+          .from("business_settings")
+          .select("cancellation_lead_minutes, maximum_booking_advance_days")
+          .eq("business_id", business.id)
+          .maybeSingle()
+      : null;
   const online = site?.published
     ? await getSiteVersion(client, business.id, site.published.versionId)
     : null;
@@ -64,6 +74,14 @@ export default async function SiteStudioPage() {
       fontClasses={siteFontClasses}
       hours={hours}
       reviews={reviews}
+      bookingRules={
+        settings?.data
+          ? {
+              horizonDays: settings.data.maximum_booking_advance_days,
+              cancellationLeadMinutes: settings.data.cancellation_lead_minutes,
+            }
+          : null
+      }
     />
   );
 }
