@@ -52,7 +52,7 @@ C'est la `SiteConfig` du laboratoire (`engine/config.ts`), avec ces règles serv
     - `work` : `lookbook`, `arches`, `filmstrip` ;
     - `portrait` : `editorial`, `arch` ;
     - `services` : `index`, `shelf`, `tiles` ;
-  - `booking` : `page` ou `sheet` ; `quickBook` : `bar` ou `pill`.
+  - `booking` : `page` ou `sheet` ; `quickBook` : `bar` ou `pill`. Ce sont ses réglages avancés de réservation (point 234) : ouverts à Core comme à Signature, la lentille Core les rend tels qu'enregistrés. Le Studio les range, repliés, sous le choix du parcours (onglet Réservation, « Réglages avancés ») et compte ceux qui diffèrent de son univers.
 
   Le champ facultatif `bookingFormat` choisit le parcours dans la page ou le panneau. Les valeurs sont `classic`, `calendar`, `chronological`, `showcase` et `guided`. Les anciennes versions ouvrent le classique de leur univers. Les cinq formats sont accessibles en Core et Signature pendant les essais. Le Studio peut les prévisualiser avec le catalogue et les créneaux publics. La confirmation y est désactivée.
 

@@ -12,7 +12,9 @@ import { canonical } from "./canonical";
 //      here): a lens applied when rendering;
 //   3. the RENDERED site: the saved config seen through that lens.
 // Core ("Simple") edits identity, photos, the universe's palettes with her
-// accent and her booking button's colour; Signature ("Créatif") composes:
+// accent, her booking button's colour and how her booking opens (page or
+// sheet, bar or pill: advanced booking settings, Higani point 234);
+// Signature ("Créatif") composes:
 // variants, order, type, photo grade, motion, shapes, full palette. Going
 // back to Core hides those settings from the render; they stay saved and
 // return with Signature. The lens is the server's own (renderedFor).
@@ -52,8 +54,8 @@ export const can = (plan: Plan, capability: Capability) =>
 
 /**
  * The configuration as her plan renders it. The lens only reads and sets
- * tokens, sections, booking and quick booking: her content (photos
- * included, whatever their form here) passes through untouched.
+ * tokens and sections: her content (photos included, whatever their form
+ * here) and how her booking opens pass through untouched.
  */
 export function effective(config: SiteConfig, plan: Plan): SiteConfig {
   return renderedFor(
@@ -67,8 +69,6 @@ export function dormant(config: SiteConfig) {
   const lens = effective(config, "core");
   return (
     canonical(lens.tokens) !== canonical(config.tokens) ||
-    canonical(lens.sections) !== canonical(config.sections) ||
-    lens.booking !== config.booking ||
-    lens.quickBook !== config.quickBook
+    canonical(lens.sections) !== canonical(config.sections)
   );
 }

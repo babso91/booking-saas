@@ -287,10 +287,12 @@ const paletteKeys = [
 
 /**
  * The configuration as Core renders it (the lab's `effective(config,
- * "core", universe)`): her content, her booking button's colour, a designed
- * palette of her universe (the one hers matches, apart from the accent;
- * otherwise the universe's own) with HER accent, and the universe's own
- * composition and style. Signature renders the configuration as it is.
+ * "core", universe)`): her content, her booking button's colour, how her
+ * booking opens (page or sheet, bar or pill: her advanced booking settings,
+ * open to Core, Higani point 234), a designed palette of her universe (the
+ * one hers matches, apart from the accent; otherwise the universe's own)
+ * with HER accent, and the universe's own composition and style. Signature
+ * renders the configuration as it is.
  * Pure: the saved configuration is never changed.
  */
 export function coreLens(config: SiteConfig): SiteConfig {
@@ -326,8 +328,6 @@ export function coreLens(config: SiteConfig): SiteConfig {
       ? { presentation: { ...config.presentation, order: undefined } }
       : {}),
     sections: design.sections,
-    booking: design.booking,
-    quickBook: design.quickBook,
   };
 }
 

@@ -137,6 +137,70 @@ it("publishes the chosen Core booking format, preserves it across universes and 
   }
 });
 
+// Higani point 234: her fine booking settings wait folded under the
+// essential choice; open to Core; what she changed is counted on them.
+it("keeps advanced booking settings folded, open to Core, and publishes a sheet she chose", async () => {
+  const pro = await provider();
+  const { page, errors } = await signedInPage(pro.browser, {
+    width: 390,
+    phone: true,
+    appearance: null,
+  });
+  try {
+    await page.route("https://images.unsplash.com/**", (r) => r.abort());
+    await page.goto(APP + "/app/site");
+    const saved = page
+      .getByRole("status")
+      .filter({ hasText: "Brouillon enregistré" });
+    await saved.waitFor();
+    const studio = page.getByRole("dialog", { name: "Studio de création" });
+    await studio
+      .getByRole("button", { name: "Réservation", exact: true })
+      .click();
+    const fold = studio
+      .locator("details")
+      .filter({ hasText: "Réglages avancés" });
+    expect(await fold.evaluate((el) => (el as HTMLDetailsElement).open)).toBe(
+      false,
+    );
+    const entry = studio.getByRole("group", {
+      name: "Entrée de la réservation",
+    });
+    expect(await entry.isVisible()).toBe(false);
+    await fold.getByText("Réglages avancés").click();
+    await entry.getByRole("button", { name: "Feuille" }).click();
+    await fold.getByText("1 modifié", { exact: true }).waitFor();
+    expect(
+      await fold.getByText(/Jusqu’à \d+ jours à l’avance/).isVisible(),
+    ).toBe(true);
+    await expectAccessible(page, "studio advanced booking");
+    await saved.waitFor();
+    await page.getByRole("button", { name: "Publier", exact: true }).click();
+    await page.getByRole("button", { name: "Publié ✓" }).waitFor();
+    // Open once, it stays open for her.
+    await page.reload();
+    await studio
+      .getByRole("button", { name: "Réservation", exact: true })
+      .click();
+    await entry.waitFor();
+    await page.context().clearCookies();
+    await page.goto(APP + "/b/" + pro.slug);
+    await (
+      await hydrated(
+        page
+          .locator("[data-header-action]")
+          .getByRole("button", { name: "Réserver" }),
+      )
+    ).click();
+    expect(
+      await page.getByRole("dialog").getAttribute("data-booking-entry"),
+    ).toBe("sheet");
+    expect(errors).toEqual([]);
+  } finally {
+    await page.context().close();
+  }
+});
+
 it("returns from contact to the same week or day and closes a Calendar preview back to the Studio", async () => {
   const pro = await provider();
   const { page, errors } = await signedInPage(pro.browser, {

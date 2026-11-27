@@ -27,6 +27,7 @@ import {
   type SectionText,
 } from "@/features/sites/presentation";
 import { siteLimits } from "@/features/sites/config";
+import { durationLabel } from "@/features/services/client/service-form";
 
 import { startingAt, type ShowcaseGroup } from "../catalog/model";
 import type {
@@ -198,9 +199,12 @@ export function Studio({
   publicPath,
   onLeave,
   hasHours = null,
+  bookingRules = null,
   tabRequest = null,
   onClientView,
 }: {
+  /** Her booking rules, summed up in the advanced settings (null: not hers to change, or not known here). */
+  bookingRules?: BookingRules | null;
   /** Opens « Comme mes clientes » (points 122, 123). */
   onClientView?: () => void;
   /** A tab asked from her page (« Modifier » on a section): opened. */
@@ -850,6 +854,13 @@ export function Studio({
                             </span>
                           </label>
                         ))}
+                        <AdvancedBooking
+                          config={config}
+                          defaults={universe.config}
+                          onChange={(patch) => set(patch)}
+                          rules={bookingRules}
+                          onLeave={onLeave}
+                        />
                       </fieldset>
                     ) : current === "universe" ? (
                       <>
@@ -1610,24 +1621,6 @@ export function Studio({
                               )}
                               onChange={(shape) => setTokens({ shape })}
                             />
-                            <Choice<SiteConfig["booking"]>
-                              label="Entrée de la réservation"
-                              value={config.booking}
-                              options={[
-                                { id: "page", label: "Page" },
-                                { id: "sheet", label: "Feuille" },
-                              ]}
-                              onChange={(booking) => set({ booking })}
-                            />
-                            <Choice<SiteConfig["quickBook"]>
-                              label="Réservation rapide"
-                              value={config.quickBook}
-                              options={[
-                                { id: "bar", label: "Barre" },
-                                { id: "pill", label: "Pastille" },
-                              ]}
-                              onChange={(quickBook) => set({ quickBook })}
-                            />
                           </>
                         )}
                         {universe.signature ? (
@@ -2103,6 +2096,130 @@ function Chip({
     >
       {children}
     </button>
+  );
+}
+
+/** Her booking rules as her settings keep them (Horaires). */
+export type BookingRules = {
+  horizonDays: number;
+  /** null: online cancelling is off (her clients contact her). */
+  cancellationLeadMinutes: number | null;
+};
+
+const ADVANCED_OPEN = "studio:advanced-booking";
+
+/**
+ * The fine settings of her booking (Higani point 234), folded under the
+ * essential choice so a beginner is never asked about them: how it opens,
+ * its quick button, and her rules summed up with a way to change them.
+ * Open once, it stays open for her; what she changed from her universe's
+ * own is counted on it, folded or not.
+ */
+function AdvancedBooking({
+  config,
+  defaults,
+  onChange,
+  rules,
+  onLeave,
+}: {
+  config: SiteConfig;
+  defaults: Pick<SiteConfig, "booking" | "quickBook">;
+  onChange: (
+    patch: Pick<SiteConfig, "booking"> | Pick<SiteConfig, "quickBook">,
+  ) => void;
+  rules: BookingRules | null;
+  onLeave: (event: MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const fold = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    try {
+      if (fold.current && localStorage.getItem(ADVANCED_OPEN) === "1")
+        fold.current.open = true;
+    } catch {
+      // No storage here: it opens folded.
+    }
+  }, []);
+  const changed =
+    Number(config.booking !== defaults.booking) +
+    Number(config.quickBook !== defaults.quickBook);
+  const row =
+    "flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-black/10 py-3";
+  return (
+    <details
+      ref={fold}
+      className="mt-3 rounded-2xl border border-black/15"
+      onToggle={(event) => {
+        try {
+          localStorage.setItem(
+            ADVANCED_OPEN,
+            event.currentTarget.open ? "1" : "0",
+          );
+        } catch {
+          // Remembered for this visit only.
+        }
+      }}
+    >
+      <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 px-4 text-sm font-semibold">
+        <span className="flex items-center gap-2">
+          Réglages avancés
+          {changed ? (
+            <span className="rounded-full bg-black/8 px-2 py-0.5 text-xs font-medium">
+              {changed} modifié{changed > 1 ? "s" : ""}
+            </span>
+          ) : null}
+        </span>
+        <span aria-hidden="true">⌄</span>
+      </summary>
+      <div className="flex flex-col px-4 pb-2">
+        <p className="pb-3 text-[13px] text-black/60">
+          Facultatif : ton univers a déjà choisi pour toi.
+        </p>
+        <div className={row}>
+          <Choice<SiteConfig["booking"]>
+            label="Entrée de la réservation"
+            value={config.booking}
+            options={[
+              { id: "page", label: "Page" },
+              { id: "sheet", label: "Feuille" },
+            ]}
+            onChange={(booking) => onChange({ booking })}
+          />
+        </div>
+        <div className={row}>
+          <Choice<SiteConfig["quickBook"]>
+            label="Réservation rapide"
+            value={config.quickBook}
+            options={[
+              { id: "bar", label: "Barre" },
+              { id: "pill", label: "Pastille" },
+            ]}
+            onChange={(quickBook) => onChange({ quickBook })}
+          />
+        </div>
+        {rules ? (
+          <div className={row}>
+            <p className="text-sm">
+              Délais
+              <span className="block text-[13px] text-black/60">
+                Jusqu’à {rules.horizonDays} jours à l’avance ·{" "}
+                {rules.cancellationLeadMinutes === null
+                  ? "annulation en ligne désactivée"
+                  : rules.cancellationLeadMinutes === 0
+                    ? "annulation jusqu’au début du rendez-vous"
+                    : `annulation jusqu’à ${durationLabel(rules.cancellationLeadMinutes)} avant`}
+              </span>
+            </p>
+            <a
+              href="/app/settings/hours"
+              onClick={onLeave}
+              className="min-h-11 content-center text-sm font-semibold underline underline-offset-4"
+            >
+              Modifier
+            </a>
+          </div>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

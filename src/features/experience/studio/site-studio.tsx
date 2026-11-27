@@ -31,7 +31,13 @@ import type { UploadOutcome } from "./photo-editor";
 import { effective } from "./plans";
 import { StudioPhotos, studioPhoto } from "./photos";
 import { firstDraft, savedConfigOf, withDemoPhotos } from "./saved";
-import { sectionTabs, Studio, type Online, type Tab } from "./studio";
+import {
+  sectionTabs,
+  Studio,
+  type Online,
+  type Tab,
+  type BookingRules,
+} from "./studio";
 import { ClientView } from "./client-view";
 import { inUniverse } from "./universe-switch";
 import { universes, type UniverseId } from "./universes";
@@ -66,7 +72,10 @@ export function SiteStudio({
   actions: given,
   hours = null,
   reviews = null,
+  bookingRules = null,
 }: {
+  /** Her booking rules, summed up in the advanced settings (owner or admin only). */
+  bookingRules?: BookingRules | null;
   /** Her site as read now (null: nothing saved yet). */
   site: SiteDto | null;
   /** Her plan, set on the server only (never from here). */
@@ -408,6 +417,7 @@ export function SiteStudio({
           publicPath={`/b/${slug}`}
           onLeave={leave}
           hasHours={hours ? hours.length > 0 : null}
+          bookingRules={bookingRules}
           tabRequest={tabRequest}
           onClientView={preview ? () => setClientView(true) : undefined}
           status={

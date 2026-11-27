@@ -61,7 +61,8 @@ describe("coreLens (the lab's effective, Core)", () => {
       },
     });
     expect(lens.sections).toEqual(mila.sections);
-    expect(lens.booking).toBe(mila.booking);
+    // How her booking opens is hers under Core too (Higani point 234).
+    expect(lens.booking).toBe("page");
     expect(renderedFor(signature, "signature")).toBe(signature);
     // The saved configuration is untouched.
     expect(signature.tokens.type).toBe("condensed");
