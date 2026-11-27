@@ -165,21 +165,21 @@ export function SiteBooking({
           sheet
             ? { y: "100%" }
             : origin && !reduced
-              ? { clipPath: insetOf(origin), opacity: 0.6 }
+              ? { clipPath: insetOf(origin) }
               : { opacity: 0 }
         }
         animate={
           sheet
             ? { y: 0 }
             : origin && !reduced
-              ? { clipPath: FULL_INSET, opacity: 1 }
+              ? { clipPath: FULL_INSET }
               : { opacity: 1 }
         }
         exit={
           sheet
             ? { y: "100%" }
             : origin && !reduced
-              ? { clipPath: insetOf(origin), opacity: 0.6 }
+              ? { clipPath: insetOf(origin) }
               : { opacity: 0 }
         }
         transition={{
