@@ -422,6 +422,40 @@ describe("customer cancellation", () => {
     ).toBeNull();
   });
 
+  it("upcoming, into her calendar; done, the same service again in one tap (Higani 79, 81)", async () => {
+    let current = detail();
+    api.on("GET", new RegExp(`${B1}/appointments/a1$`), () => ok(current));
+    api.on("POST", /appointments\/a1\/cancel$/, () => {
+      current = { ...current, status: "cancelled", actions: null };
+      return ok(current);
+    });
+    inHub(<HubAppointmentDetail businessId={B1} appointmentId="a1" />);
+    const calendar = await screen.findByRole("group", {
+      name: "Ajouter à votre agenda",
+    });
+    const google = new URL(
+      within(calendar)
+        .getByRole("link", { name: /Google Agenda/ })
+        .getAttribute("href")!,
+    );
+    expect(google.searchParams.get("text")).toBe("Soin test · Studio Mila");
+    expect(
+      screen
+        .getByRole("link", { name: /Réserver un autre créneau/ })
+        .getAttribute("href"),
+    ).toBe("/b/studio-mila");
+    await confirm();
+    const again = await screen.findByRole("link", {
+      name: /Reprendre cette prestation/,
+    });
+    expect(again.getAttribute("href")).toBe(
+      "/b/studio-mila?prestation=soin-test",
+    );
+    expect(
+      screen.queryByRole("group", { name: "Ajouter à votre agenda" }),
+    ).toBeNull();
+  });
+
   it.each(["policy_cutoff_passed", "policy_unavailable"] as const)(
     "keeps a refused policy closed: %s",
     async (reason) => {

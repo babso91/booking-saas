@@ -216,6 +216,8 @@ describe("point 78: « Gérer ou annuler mon rendez-vous » from the email, on a
       })
       .toBe(true);
     await capture(tab, "manage-link-04-her-appointment");
+    // Upcoming: into her own calendar (point 79).
+    await tab.getByRole("group", { name: "Ajouter à votre agenda" }).waitFor();
 
     // She cancels, within the policy.
     await tab.getByRole("button", { name: "Annuler ce rendez-vous" }).click();
@@ -256,5 +258,17 @@ describe("point 78: « Gérer ou annuler mon rendez-vous » from the email, on a
     expect(
       await tab.getByRole("button", { name: "Annuler ce rendez-vous" }).count(),
     ).toBe(0);
+    expect(
+      await tab.getByRole("group", { name: "Ajouter à votre agenda" }).count(),
+    ).toBe(0);
+
+    // Booked again in one tap: the same service, already chosen (point 81).
+    await tab.getByRole("link", { name: /Reprendre cette prestation/ }).click();
+    await tab.waitForURL(
+      `${HUB_URL}/b/${business.slug}?prestation=rehaussement`,
+    );
+    await tab.getByRole("heading", { name: "Choisissez un créneau" }).waitFor();
+    await tab.getByText("Rehaussement").first().waitFor();
+    await capture(tab, "manage-link-08-booked-again");
   });
 });

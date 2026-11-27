@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import type { Practical } from "@/features/experience/engine/config";
@@ -251,6 +253,7 @@ describe.each(VARIANTS)(
         data?: {
           booking: {
             appointmentId: string;
+            startsAt: string;
             status: string;
             priceCents: number;
             durationMinutes: number;
@@ -280,6 +283,21 @@ describe.each(VARIANTS)(
         .waitFor();
       await sheet.getByText(/^85,00\s€$/).waitFor();
       await check("confirmed");
+      // Into her own calendar (point 79): the file holds the booked times.
+      const [file] = await Promise.all([
+        page.waitForEvent("download"),
+        sheet.getByRole("button", { name: "Apple, Outlook…" }).click(),
+      ]);
+      expect(file.suggestedFilename()).toBe("rendez-vous.ics");
+      await sheet
+        .getByRole("group", { name: "Ajouter à votre agenda" })
+        .scrollIntoViewIfNeeded();
+      await capture(page, `mini-site booking ${name} add to calendar`);
+      const ics = await readFile(await file.path(), "utf8");
+      expect(ics).toMatch(/^BEGIN:VCALENDAR\r\n/);
+      expect(ics).toContain(
+        `DTSTART:${body.data.booking.startsAt.replace(/[-:]/g, "").replace(/\.\d{3}/, "")}`,
+      );
 
       // Booked as the server priced it, with her answers kept.
       const booked = await db.query<{

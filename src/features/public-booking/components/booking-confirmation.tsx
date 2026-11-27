@@ -2,12 +2,17 @@
 
 import type { ReactNode, Ref } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { formatPrice } from "@/features/agenda/client/money";
 import { durationLabel } from "@/features/services/client/service-form";
 
 import type { Booking } from "../client/api";
+import {
+  calendarFile,
+  googleCalendarHref,
+  type CalendarEvent,
+} from "../client/calendar-event";
 import {
   dayLabel,
   wallDate,
@@ -15,6 +20,7 @@ import {
   zoneCity,
 } from "../client/business-time";
 import { directionsHref, telHref } from "@/features/experience/practical";
+import { cn } from "@/lib/cn";
 
 import {
   answerRows,
@@ -137,6 +143,25 @@ export function BookingConfirmation({
         ]}
       />
 
+      {/* Her own calendar (point 79), for a time that still holds. */}
+      {confirmed && local ? (
+        <AddToCalendar
+          event={{
+            id: booking.appointmentId,
+            title: `${booking.serviceName} · ${booking.businessName}`,
+            startsAt: booking.startsAt,
+            endsAt: booking.endsAt,
+            location: lieu,
+            details: [
+              instructions ? `Avant de venir : ${instructions}` : "",
+              phone ? `Contact : ${phone}` : "",
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          }}
+        />
+      ) : null}
+
       <p className="text-[14px] leading-snug text-ink-soft">
         Cet écran est votre confirmation : notez la date et l’heure. Pour
         modifier ou annuler, contactez directement {booking.businessName}.
@@ -179,5 +204,58 @@ export function BookingConfirmation({
         Prendre un autre rendez-vous
       </Button>
     </section>
+  );
+}
+
+/**
+ * Her appointment added to her own calendar (point 79): a calendar file,
+ * opened by Apple's and Outlook's (and most others), or Google's own form.
+ * Built here from the booking the server answered; nothing is sent.
+ */
+export function AddToCalendar({ event }: { event: CalendarEvent }) {
+  const pill = cn(
+    "inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl px-4 text-[15px] font-medium whitespace-nowrap transition-colors",
+    buttonVariants.secondary,
+  );
+
+  function download() {
+    const file = new Blob([calendarFile(event)], {
+      type: "text/calendar;charset=utf-8",
+    });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "rendez-vous.ics";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    // Kept a moment: some browsers read it after the click returns.
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+
+  return (
+    <div
+      role="group"
+      aria-labelledby="add-to-calendar"
+      className="flex flex-col gap-2"
+    >
+      <p id="add-to-calendar" className="text-[14px] font-medium text-ink">
+        Ajouter à votre agenda
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={download} className={pill}>
+          Apple, Outlook…
+        </button>
+        <a
+          href={googleCalendarHref(event)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={pill}
+        >
+          Google Agenda
+          <span className="sr-only"> (nouvel onglet)</span>
+        </a>
+      </div>
+    </div>
   );
 }
