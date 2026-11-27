@@ -15,6 +15,7 @@ import type { CatalogService, ShowcaseGroup } from "../catalog/model";
 import type { NextSlots } from "../next-slot";
 import type { PhotoSlot, SiteConfig } from "./config";
 import { grades, motions, typePairs } from "./tokens";
+import { atMostTwice } from "./photo-sizes";
 
 // What every scene variant receives: the site's config, its resolved
 // tokens, her catalogue as customers see it (business data, given from
@@ -162,7 +163,7 @@ export function GradedPhoto({
         srcSet={PHOTO_WIDTHS.map(
           (width) => `${photos(id, width)} ${width}w`,
         ).join(", ")}
-        sizes={sizes}
+        sizes={atMostTwice(sizes)}
         alt={alt}
         loading={eager ? "eager" : "lazy"}
         fetchPriority={eager ? "high" : "auto"}
