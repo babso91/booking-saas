@@ -26,14 +26,18 @@ export function GuidedProgress({ flow }: { flow: BookingFlow }) {
             aria-current={step === flow.step ? "step" : undefined}
             className="min-w-0 flex-1"
           >
+            {/* Each step's bar fills from its start as she reaches it, and
+                empties back when she returns: where she is, seen moving. */}
             <span
               aria-hidden="true"
-              className={
-                index <= position
-                  ? "block h-1 rounded bg-ink"
-                  : "block h-1 rounded bg-sand"
-              }
-            />
+              className="block h-1 overflow-hidden rounded bg-sand"
+            >
+              <span
+                className={`block h-full origin-left rounded bg-ink motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-[var(--ease-out-soft)] ${
+                  index <= position ? "scale-x-100" : "scale-x-0"
+                }`}
+              />
+            </span>
             {index < position ? (
               <button
                 type="button"
@@ -52,7 +56,10 @@ export function GuidedProgress({ flow }: { flow: BookingFlow }) {
         ))}
       </ol>
       {flow.service && position > 0 ? (
-        <p className="text-sm text-ink-soft">
+        <p
+          key={`${flow.service.id}:${position > steps.indexOf("slot") ? flow.slot?.startsAt : ""}`}
+          className="text-sm text-ink-soft motion-safe:animate-message"
+        >
           {flow.service.name}
           {flow.slot && position > steps.indexOf("slot")
             ? ` · ${dayLabel(flow.slot.localStartsAt.slice(0, 10))} à ${wallTime(flow.slot.localStartsAt)}`

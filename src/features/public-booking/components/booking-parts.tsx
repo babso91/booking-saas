@@ -8,6 +8,7 @@ import {
   type Ref,
 } from "react";
 
+import { useLate } from "@/components/ui/motion";
 import { formatPrice } from "@/features/agenda/client/money";
 import { longDescription } from "@/features/catalog/description";
 import { durationLabel } from "@/features/services/client/service-form";
@@ -141,12 +142,17 @@ function QuoteFigure({
   quote: Quote | null;
   status: SlotsState["status"];
 }) {
+  // The first quote is usually there at once: « Calcul… » only for a slow
+  // one, the price's line held meanwhile (nothing flashes, nothing jumps).
+  const slow = useLate(status === "loading" && !quote);
   if (quote)
     return (
       <p className="text-[17px] font-semibold text-ink tabular-nums">
         {serviceLine(quote.durationMinutes, quote.priceCents, quote.currency)}
       </p>
     );
+  if (status === "loading" && !slow)
+    return <p className="text-[17px] font-semibold">&nbsp;</p>;
   if (status === "loading")
     return (
       <p role="status" className="text-[15px] text-ink-muted">

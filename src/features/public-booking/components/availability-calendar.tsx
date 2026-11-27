@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 
 import { CalendarGrid } from "@/components/ui/calendar-grid";
-import { slideClass, useBackward, useLate } from "@/components/ui/motion";
+import {
+  cascade,
+  slideClass,
+  useBackward,
+  useLate,
+} from "@/components/ui/motion";
 import {
   dayNumber,
   periodLabel,
@@ -100,6 +105,7 @@ export function AvailabilityCalendar({
     checking?.key === key && flow.slots.status === "loading"
       ? checking.start
       : undefined;
+  const slowCheck = useLate(pendingStart !== undefined);
   function chooseTime(day: string, start: string) {
     setChecking({ key, start });
     flow.actions.chooseCalendarSlot(day, start);
@@ -151,7 +157,7 @@ export function AvailabilityCalendar({
           ? slow
             ? "Recherche des créneaux disponibles…"
             : ""
-          : pendingStart
+          : pendingStart && slowCheck
             ? "Vérification de l’horaire…"
             : result.days && !empty
               ? view === "month"
@@ -246,10 +252,12 @@ export function AvailabilityCalendar({
             </p>
           )
         ) : (
-          listedDays?.map(({ date, slots }) => (
+          listedDays?.map(({ date, slots }, position) => (
+            // Her days come in one after another, not all at once.
             <section
               key={date}
-              className="rounded-xl border border-line bg-paper-raised p-3"
+              className="rounded-xl border border-line bg-paper-raised p-3 motion-safe:animate-message"
+              style={cascade(position)}
             >
               <h3 className="mb-2 text-sm font-semibold capitalize text-ink">
                 {dayLabel(date)}

@@ -1,6 +1,8 @@
 "use client";
 
 import { dayLabel, wallTime } from "../client/business-time";
+import { useLate } from "@/components/ui/motion";
+
 import { useNextOpening } from "../client/next-opening";
 import type { BookingFlow } from "../client/use-booking-flow";
 import { linkAction } from "./booking-parts";
@@ -27,14 +29,20 @@ export function NextOpeningNote({
   fallbackDay?: string;
 }) {
   const opening = useNextOpening(flow, after);
+  // A quick search would only flash its hint: its place is kept instead.
+  const slow = useLate(opening?.status === "searching");
   return (
     <div className="flex flex-col items-start gap-3 rounded-2xl border border-line bg-paper-raised px-4 py-4">
       <p className="text-[14.5px] text-ink-soft">{lead}</p>
       <div aria-live="polite" className="flex flex-col items-start gap-2">
         {opening?.status === "searching" ? (
-          <p className="text-[14px] text-ink-muted">
-            Recherche du prochain créneau…
-          </p>
+          slow ? (
+            <p className="text-[14px] text-ink-muted">
+              Recherche du prochain créneau…
+            </p>
+          ) : (
+            <div className="min-h-11" />
+          )
         ) : opening?.status === "found" ? (
           <button
             type="button"
