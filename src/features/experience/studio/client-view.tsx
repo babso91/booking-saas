@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+
+import { FULL_INSET, insetOf, markReturn, triggerOf } from "../engine/origin";
 
 import type { ShowcaseGroup } from "../catalog/model";
 import type { SiteConfig } from "../engine/config";
@@ -73,6 +81,23 @@ export function ClientView({
     return () => window.removeEventListener("message", onMessage);
   }, [send]);
 
+  // It grows out of « Voir comme mes clientes », and gives the focus back
+  // to it (ringed) when it closes: she finds where she was.
+  const root = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const opener = triggerOf(null);
+    const box = opener?.getBoundingClientRect();
+    if (box && !matchMedia("(prefers-reduced-motion: reduce)").matches)
+      root.current?.animate(
+        [{ clipPath: insetOf(box) }, { clipPath: FULL_INSET }],
+        {
+          duration: 420,
+          easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+        },
+      );
+    return () => markReturn(opener);
+  }, []);
+
   // Escape closes it, here or from inside her page (which says so).
   useEffect(() => {
     close.current?.focus();
@@ -114,6 +139,7 @@ export function ClientView({
 
   return (
     <div
+      ref={root}
       role="dialog"
       aria-modal="true"
       aria-label="Comme mes clientes"

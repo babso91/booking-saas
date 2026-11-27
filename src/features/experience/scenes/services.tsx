@@ -165,6 +165,23 @@ function CategoryNav({ groups }: { groups: ShowcaseGroup[] }) {
           <li key={group.category!.id} className="shrink-0">
             <a
               href={`#categorie-${group.category!.id}`}
+              // It glides to her category (she sees where it leads); the
+              // link still works without script.
+              onClick={(event) => {
+                const target = document.getElementById(
+                  `categorie-${group.category!.id}`,
+                );
+                if (!target) return;
+                event.preventDefault();
+                const still = matchMedia(
+                  "(prefers-reduced-motion: reduce)",
+                ).matches;
+                target.scrollIntoView({
+                  behavior: still ? "auto" : "smooth",
+                  block: "start",
+                });
+                history.replaceState(null, "", event.currentTarget.hash);
+              }}
               className="flex h-11 items-center border border-current/30 px-4 whitespace-nowrap"
               style={{ borderRadius: "min(var(--s-control), 22px)" }}
             >

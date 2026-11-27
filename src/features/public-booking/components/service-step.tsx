@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, type ReactNode, type Ref } from "react";
+import { useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 
+import { carryFrom, useCarryTo, useHeightTween } from "@/components/ui/motion";
 import { Notice } from "@/components/ui/notice";
 import {
   countServices,
@@ -252,11 +253,21 @@ function ServiceChoice({
   onChoose: () => void;
 }) {
   const text = useFoldedText(item.description);
+  // Carried to the next step's summary, and back here when she returns
+  // (scrolled to, so she finds the card she had chosen).
+  const card = useRef<HTMLButtonElement>(null);
+  useCarryTo(`service:${item.id}`, card, { reveal: true });
+  const description = useRef<HTMLSpanElement>(null);
+  useHeightTween(description, text.folded);
   return (
     <li className="flex flex-col gap-1">
       <button
+        ref={card}
         type="button"
-        onClick={onChoose}
+        onClick={(event) => {
+          carryFrom(`service:${item.id}`, event.currentTarget);
+          onChoose();
+        }}
         aria-pressed={selected}
         aria-describedby={`service-${item.id}-details`}
         className="flex w-full min-w-0 cursor-pointer flex-col gap-1 rounded-3xl border border-line bg-paper-raised px-4 py-4 text-left transition-colors hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink aria-pressed:border-ink sm:px-5"
@@ -271,7 +282,8 @@ function ServiceChoice({
           {item.description ? (
             <span
               id={text.id}
-              className={`text-[14px] leading-snug wrap-anywhere whitespace-pre-line text-ink-muted ${text.folded ? "line-clamp-3" : ""}`}
+              ref={description}
+              className={`block text-[14px] leading-snug wrap-anywhere whitespace-pre-line text-ink-muted ${text.folded ? "line-clamp-3" : ""}`}
             >
               {item.description}
             </span>

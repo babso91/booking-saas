@@ -1,6 +1,8 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
+
+import { useHeightTween } from "@/components/ui/motion";
 
 import { Note } from "./engine";
 
@@ -60,9 +62,12 @@ export function FoldedText({
   const [open, setOpen] = useState(false);
   const id = useId();
   const folds = long ?? foldsAt(text, lines, perLine ?? 40);
+  const box = useRef<HTMLParagraphElement>(null);
+  useHeightTween(box, open);
   return (
     <>
       <p
+        ref={box}
         id={id}
         className={`${className} whitespace-pre-line ${folds && !open ? CLAMPS[lines] : ""}`}
       >

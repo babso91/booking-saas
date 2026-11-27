@@ -25,6 +25,8 @@ import { PendingNotice } from "./pending-notice";
 import { linkAction, type BookingPlace } from "./booking-parts";
 import { ReviewStep } from "./review-step";
 import { ServiceStep } from "./service-step";
+import { carryFrom, carrying } from "@/components/ui/motion";
+
 import styles from "./booking-motion.module.css";
 
 const STEPS: readonly BookingStep[] = [
@@ -79,11 +81,16 @@ export function PublicBooking({
   const flow = useBookingFlow({ business, catalog, preview, initialDate });
   // Each step slides in the way she travels: forward from the right, back
   // from the left (« où suis-je ? » answered by the motion itself).
-  const [travel, setTravel] = useState({ step: flow.step, back: false });
+  const [travel, setTravel] = useState({
+    step: flow.step,
+    back: false,
+    carry: false,
+  });
   if (travel.step !== flow.step)
     setTravel({
       step: flow.step,
       back: STEPS.indexOf(flow.step) < STEPS.indexOf(travel.step),
+      carry: carrying(),
     });
   const initialView =
     format === "calendar"
@@ -150,7 +157,11 @@ export function PublicBooking({
     else if (flow.step === "slot" && flow.service?.options.length)
       flow.actions.goTo("options");
     else if (onlyService || initialServiceId) return false;
-    else flow.actions.goTo("service");
+    else {
+      const key = `service:${flow.service?.id}`;
+      carryFrom(key, document.querySelector(`[data-carry="${key}"]`));
+      flow.actions.goTo("service");
+    }
     return true;
   });
 
@@ -232,6 +243,7 @@ export function PublicBooking({
               key={flow.step}
               className={styles.step}
               data-back={travel.back || undefined}
+              data-carry={travel.carry || undefined}
             >
               {flow.step === "service" ? (
                 <ServiceStep

@@ -41,6 +41,8 @@ import type {
   SiteConfig,
   TypePairId,
 } from "../engine/config";
+import { slideClass, useBackward, useFlip } from "@/components/ui/motion";
+
 import { euros, minutes } from "../engine/engine";
 import { advise, ensureReadable } from "../engine/harmony";
 import { emptyPractical, whatsappHref } from "../practical";
@@ -282,6 +284,13 @@ export function Studio({
   const current =
     creative || !["composition", "style"].includes(tab) ? tab : "creative";
   const pill = useRef<HTMLSpanElement>(null);
+  const place =
+    view === "live" ? "live" : photoSlot !== null ? "photo" : current;
+  const placeBack = useBackward(place, [
+    ...tabs.map((item) => item.id as string),
+    "photo",
+    "live",
+  ]);
   /** Under the chosen tab, kept in view (even when opened from her page). */
   function movePill(button: HTMLButtonElement) {
     const span = pill.current;
@@ -335,6 +344,9 @@ export function Studio({
     ],
     creative ? config.presentation?.order : undefined,
   );
+  // Sections she moves with ↑ ↓ glide to their new place.
+  const sectionList = useRef<HTMLDivElement>(null);
+  useFlip(sectionList, sectionOrder.join());
   // The section she just added: opened, its text field ready.
   const [added, setAdded] = useState<string | null>(null);
 
@@ -705,936 +717,960 @@ export function Studio({
                 />
               ) : null}
 
-              {view === "live" ? (
-                <div className="flex flex-col gap-3">
-                  <p className="rounded-xl bg-black/5 p-3 text-[13.5px] leading-relaxed">
-                    {published ? (
-                      <>
-                        Tu vois ton site{" "}
-                        <strong>tel que tes clientes le voient</strong> :
-                        version {published.number}, publiée le{" "}
-                        {new Date(published.publishedAt).toLocaleString(
-                          "fr-FR",
-                          {
-                            day: "numeric",
-                            month: "long",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          },
-                        )}
-                        , avec ton forfait actuel.
-                        {changed
-                          ? " Tes modifications en cours ne sont pas encore en ligne."
-                          : ""}
-                      </>
-                    ) : (
-                      "Ton site n’est pas encore publié : tes clientes voient ta page de réservation. Publie ton brouillon quand il te plaît."
-                    )}
-                  </p>
-                  <SmallButton onClick={() => onView("draft")}>
-                    Revenir au brouillon
-                  </SmallButton>
-                </div>
-              ) : // A photo being edited wins over any tab (0 is a valid slot).
-              photoSlot !== null ? (
-                <PhotoEditor
-                  slot={photoSlot}
-                  id={slotPhoto(photoSlot)}
-                  library={library}
-                  onUpload={(file) =>
-                    onUpload(file, photoSlot === "logo" ? "logo" : undefined)
-                  }
-                  onDelete={onDeletePhoto}
-                  onRemove={() => removePhoto(photoSlot)}
-                  focal={
-                    config.content.focals[slotPhoto(photoSlot) ?? ""] ?? {
-                      x: 50,
-                      y: 50,
+              {/* What she edits slides in from the side she went to: a tab
+                  further right comes from the right, a photo opens forward
+                  and closes back. */}
+              <div key={place} className={slideClass(placeBack)}>
+                {view === "live" ? (
+                  <div className="flex flex-col gap-3">
+                    <p className="rounded-xl bg-black/5 p-3 text-[13.5px] leading-relaxed">
+                      {published ? (
+                        <>
+                          Tu vois ton site{" "}
+                          <strong>tel que tes clientes le voient</strong> :
+                          version {published.number}, publiée le{" "}
+                          {new Date(published.publishedAt).toLocaleString(
+                            "fr-FR",
+                            {
+                              day: "numeric",
+                              month: "long",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            },
+                          )}
+                          , avec ton forfait actuel.
+                          {changed
+                            ? " Tes modifications en cours ne sont pas encore en ligne."
+                            : ""}
+                        </>
+                      ) : (
+                        "Ton site n’est pas encore publié : tes clientes voient ta page de réservation. Publie ton brouillon quand il te plaît."
+                      )}
+                    </p>
+                    <SmallButton onClick={() => onView("draft")}>
+                      Revenir au brouillon
+                    </SmallButton>
+                  </div>
+                ) : // A photo being edited wins over any tab (0 is a valid slot).
+                photoSlot !== null ? (
+                  <PhotoEditor
+                    slot={photoSlot}
+                    id={slotPhoto(photoSlot)}
+                    library={library}
+                    onUpload={(file) =>
+                      onUpload(file, photoSlot === "logo" ? "logo" : undefined)
                     }
-                  }
-                  onFocal={(focal) =>
-                    set(
-                      {
-                        content: {
-                          ...config.content,
-                          focals: {
-                            ...config.content.focals,
-                            [slotPhoto(photoSlot) ?? ""]: focal,
+                    onDelete={onDeletePhoto}
+                    onRemove={() => removePhoto(photoSlot)}
+                    focal={
+                      config.content.focals[slotPhoto(photoSlot) ?? ""] ?? {
+                        x: 50,
+                        y: 50,
+                      }
+                    }
+                    onFocal={(focal) =>
+                      set(
+                        {
+                          content: {
+                            ...config.content,
+                            focals: {
+                              ...config.content.focals,
+                              [slotPhoto(photoSlot) ?? ""]: focal,
+                            },
                           },
                         },
-                      },
-                      `focal-${photoSlot}`,
-                    )
-                  }
-                  onReplace={(id) => replacePhoto(photoSlot, id)}
-                  onBack={() => onPhotoSlot(null)}
-                >
-                  {workInPhotoEditor?.photo ? (
-                    <Text
-                      label="Titre sous la photo"
-                      value={workInPhotoEditor.title}
-                      maxLength={siteLimits.workTitle}
-                      onChange={(title) =>
-                        setWorkTitle(workInPhotoEditor.id, title)
-                      }
-                    />
-                  ) : null}
-                </PhotoEditor>
-              ) : current === "history" ? (
-                history
-              ) : current === "catalog" ? (
-                <CatalogPanel catalog={catalog} onLeave={onLeave} />
-              ) : (
-                <div className="flex flex-col gap-4">
-                  {!creative && dormant(config) ? (
-                    <p className="rounded-xl bg-[#EEF0FF] p-3 text-[13px] leading-snug text-[#1F2A7A]">
-                      Tes réglages Créatif sont conservés. En Simple, ton site
-                      utilise la composition de ton univers ; ils reviendront à
-                      l’identique en Créatif.
-                    </p>
-                  ) : null}
-                  {problems.length ? (
-                    <Advice
-                      items={problems}
-                      tone="problem"
-                      title="Lisibilité"
-                      note="Corrigé automatiquement à la publication : tes clientes doivent pouvoir lire et réserver."
-                      onFix={(fix) => draft.set(fix(config))}
-                    />
-                  ) : null}
-
-                  {current === "reservation" ? (
-                    <fieldset className="flex min-w-0 flex-col gap-2">
-                      <legend className="mb-3 text-lg font-semibold">
-                        Parcours de réservation
-                      </legend>
-                      {onPreviewBooking ? (
-                        <button
-                          type="button"
-                          onClick={onPreviewBooking}
-                          className="min-h-11 self-start rounded-full border border-black/25 px-4 text-sm font-semibold"
-                        >
-                          Essayer ce parcours
-                        </button>
-                      ) : null}
-                      {bookingFormats.map((format) => (
-                        <label
-                          key={format}
-                          className="flex cursor-pointer items-start gap-3 rounded-2xl border border-black/15 p-4 has-checked:border-black has-checked:bg-black/5"
-                        >
-                          <input
-                            type="radio"
-                            name="booking-format"
-                            className="mt-1 accent-black"
-                            checked={
-                              (config.bookingFormat ?? "classic") === format
-                            }
-                            onChange={() => set({ bookingFormat: format })}
-                          />
-                          <span>
-                            <strong className="block text-sm">
-                              {bookingFormatCopy[format].name}
-                            </strong>
-                            <span className="mt-1 block text-sm leading-snug text-black/65">
-                              {bookingFormatCopy[format].description}
-                            </span>
-                          </span>
-                        </label>
-                      ))}
-                    </fieldset>
-                  ) : current === "universe" ? (
-                    <>
-                      <p className="text-[13.5px] text-black/60">
-                        Change d’univers : ton nom, tes textes et tes photos te
-                        suivent. Tes prestations ne dépendent pas de l’univers :
-                        elles restent exactement les mêmes.
+                        `focal-${photoSlot}`,
+                      )
+                    }
+                    onReplace={(id) => replacePhoto(photoSlot, id)}
+                    onBack={() => onPhotoSlot(null)}
+                  >
+                    {workInPhotoEditor?.photo ? (
+                      <Text
+                        label="Titre sous la photo"
+                        value={workInPhotoEditor.title}
+                        maxLength={siteLimits.workTitle}
+                        onChange={(title) =>
+                          setWorkTitle(workInPhotoEditor.id, title)
+                        }
+                      />
+                    ) : null}
+                  </PhotoEditor>
+                ) : current === "history" ? (
+                  history
+                ) : current === "catalog" ? (
+                  <CatalogPanel catalog={catalog} onLeave={onLeave} />
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    {!creative && dormant(config) ? (
+                      <p className="rounded-xl bg-[#EEF0FF] p-3 text-[13px] leading-snug text-[#1F2A7A]">
+                        Tes réglages Créatif sont conservés. En Simple, ton site
+                        utilise la composition de ton univers ; ils reviendront
+                        à l’identique en Créatif.
                       </p>
-                      {(Object.keys(universes) as UniverseId[]).map((id) => (
-                        <button
-                          key={id}
-                          type="button"
-                          aria-pressed={design === id}
-                          onClick={() => onDesign(id)}
-                          className={`flex cursor-pointer items-center gap-3 rounded-2xl border bg-white p-2 pr-4 text-left ${design === id ? "border-[#141414] ring-2 ring-[#141414]" : "border-black/10"}`}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={photo(
-                              universes[id].config.content.cover!,
-                              480,
-                            )}
-                            alt=""
-                            className="size-16 rounded-xl object-cover"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-[15px] font-semibold">
-                              {universes[id].config.brand.name}
+                    ) : null}
+                    {problems.length ? (
+                      <Advice
+                        items={problems}
+                        tone="problem"
+                        title="Lisibilité"
+                        note="Corrigé automatiquement à la publication : tes clientes doivent pouvoir lire et réserver."
+                        onFix={(fix) => draft.set(fix(config))}
+                      />
+                    ) : null}
+
+                    {current === "reservation" ? (
+                      <fieldset className="flex min-w-0 flex-col gap-2">
+                        <legend className="mb-3 text-lg font-semibold">
+                          Parcours de réservation
+                        </legend>
+                        {onPreviewBooking ? (
+                          <button
+                            type="button"
+                            onClick={onPreviewBooking}
+                            className="min-h-11 self-start rounded-full border border-black/25 px-4 text-sm font-semibold"
+                          >
+                            Essayer ce parcours
+                          </button>
+                        ) : null}
+                        {bookingFormats.map((format) => (
+                          <label
+                            key={format}
+                            className="flex cursor-pointer items-start gap-3 rounded-2xl border border-black/15 p-4 has-checked:border-black has-checked:bg-black/5"
+                          >
+                            <input
+                              type="radio"
+                              name="booking-format"
+                              className="mt-1 accent-black"
+                              checked={
+                                (config.bookingFormat ?? "classic") === format
+                              }
+                              onChange={() => set({ bookingFormat: format })}
+                            />
+                            <span>
+                              <strong className="block text-sm">
+                                {bookingFormatCopy[format].name}
+                              </strong>
+                              <span className="mt-1 block text-sm leading-snug text-black/65">
+                                {bookingFormatCopy[format].description}
+                              </span>
                             </span>
-                            <span className="block text-[13px] text-black/55">
-                              {universeMoods[id]}
-                            </span>
-                          </span>
-                          {design === id ? (
-                            <span className="text-[13px] font-semibold">
-                              Choisi
-                            </span>
-                          ) : null}
-                        </button>
-                      ))}
-                    </>
-                  ) : current === "sections" ? (
-                    <div className="flex flex-col gap-2">
-                      {creative && (
+                          </label>
+                        ))}
+                      </fieldset>
+                    ) : current === "universe" ? (
+                      <>
                         <p className="text-[13.5px] text-black/60">
-                          Les flèches changent l’ordre sur la page et dans le
-                          sommaire.
+                          Change d’univers : ton nom, tes textes et tes photos
+                          te suivent. Tes prestations ne dépendent pas de
+                          l’univers : elles restent exactement les mêmes.
                         </p>
-                      )}
-                      {sectionOrder.map((kind, index) => {
-                        const arrows = (name: string) =>
-                          creative && (
-                            <div className="flex shrink-0 gap-1">
-                              <IconButton
-                                label={`Monter ${name}`}
-                                onClick={() => moveSection(kind, -1)}
-                                disabled={index === 0}
+                        {(Object.keys(universes) as UniverseId[]).map((id) => (
+                          <button
+                            key={id}
+                            type="button"
+                            aria-pressed={design === id}
+                            onClick={() => onDesign(id)}
+                            className={`flex cursor-pointer items-center gap-3 rounded-2xl border bg-white p-2 pr-4 text-left ${design === id ? "border-[#141414] ring-2 ring-[#141414]" : "border-black/10"}`}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={photo(
+                                universes[id].config.content.cover!,
+                                480,
+                              )}
+                              alt=""
+                              className="size-16 rounded-xl object-cover"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-[15px] font-semibold">
+                                {universes[id].config.brand.name}
+                              </span>
+                              <span className="block text-[13px] text-black/55">
+                                {universeMoods[id]}
+                              </span>
+                            </span>
+                            {design === id ? (
+                              <span className="text-[13px] font-semibold">
+                                Choisi
+                              </span>
+                            ) : null}
+                          </button>
+                        ))}
+                      </>
+                    ) : current === "sections" ? (
+                      <div
+                        ref={sectionList}
+                        className="relative flex flex-col gap-2"
+                      >
+                        {creative && (
+                          <p className="text-[13.5px] text-black/60">
+                            Les flèches changent l’ordre sur la page et dans le
+                            sommaire.
+                          </p>
+                        )}
+                        {sectionOrder.map((kind, index) => {
+                          const arrows = (name: string) =>
+                            creative && (
+                              <div className="flex shrink-0 gap-1">
+                                <IconButton
+                                  label={`Monter ${name}`}
+                                  onClick={() => moveSection(kind, -1)}
+                                  disabled={index === 0}
+                                >
+                                  ↑
+                                </IconButton>
+                                <IconButton
+                                  label={`Descendre ${name}`}
+                                  onClick={() => moveSection(kind, 1)}
+                                  disabled={index === sectionOrder.length - 1}
+                                >
+                                  ↓
+                                </IconButton>
+                              </div>
+                            );
+                          if (isInfoKey(kind)) {
+                            const info = config.infoSections?.find(
+                              (item) => infoKey(item.id) === kind,
+                            );
+                            if (!info) return null;
+                            const name =
+                              info.title.trim() || "Section sans titre";
+                            return (
+                              <div
+                                key={kind}
+                                data-flip={kind}
+                                className="rounded-2xl border border-black/10 bg-white p-3"
                               >
-                                ↑
-                              </IconButton>
-                              <IconButton
-                                label={`Descendre ${name}`}
-                                onClick={() => moveSection(kind, 1)}
-                                disabled={index === sectionOrder.length - 1}
-                              >
-                                ↓
-                              </IconButton>
-                            </div>
-                          );
-                        if (isInfoKey(kind)) {
-                          const info = config.infoSections?.find(
-                            (item) => infoKey(item.id) === kind,
-                          );
-                          if (!info) return null;
-                          const name =
-                            info.title.trim() || "Section sans titre";
+                                <div className="flex items-start justify-between gap-1">
+                                  <details
+                                    className="min-w-0 flex-1"
+                                    open={info.id === added || undefined}
+                                  >
+                                    <summary className="min-h-11 cursor-pointer content-center py-2 text-[15px] font-semibold wrap-anywhere">
+                                      {name}{" "}
+                                      <span className="block text-[12.5px] font-normal text-black/55">
+                                        Section d’information
+                                      </span>
+                                    </summary>
+                                    <div className="mt-2 flex flex-col gap-3">
+                                      <Text
+                                        label="Titre"
+                                        value={info.title}
+                                        placeholder="Avant votre rendez-vous"
+                                        maxLength={siteLimits.infoSectionTitle}
+                                        onChange={(title) =>
+                                          setInfoSection(
+                                            info.id,
+                                            { title },
+                                            `info.${info.id}.title`,
+                                          )
+                                        }
+                                      />
+                                      <Text
+                                        label="Texte"
+                                        multiline
+                                        rows={6}
+                                        autoFocus={info.id === added}
+                                        value={info.text}
+                                        placeholder="Ce que tes clientes doivent savoir, avec tes mots. Tes retours à la ligne sont gardés."
+                                        maxLength={siteLimits.infoSectionText}
+                                        onChange={(text) =>
+                                          setInfoSection(
+                                            info.id,
+                                            { text },
+                                            `info.${info.id}.text`,
+                                          )
+                                        }
+                                      />
+                                      {!info.title.trim() ||
+                                      !info.text.trim() ? (
+                                        <p className="text-[12.5px] text-black/55">
+                                          Publiée sur ta page dès qu’elle a un
+                                          titre et un texte.
+                                        </p>
+                                      ) : null}
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          removeInfoSection(info.id)
+                                        }
+                                        // Its visible words first (WCAG 2.5.3), then which one.
+                                        aria-label={`Retirer cette section : ${name}`}
+                                        className="min-h-11 cursor-pointer self-start text-[13px] font-medium text-[#B3261E] underline underline-offset-4"
+                                      >
+                                        Retirer cette section
+                                      </button>
+                                    </div>
+                                  </details>
+                                  {arrows(name)}
+                                </div>
+                              </div>
+                            );
+                          }
+                          const text = config.presentation?.labels?.[kind];
+                          const switchable =
+                            kind === "intro" ||
+                            kind === "work" ||
+                            kind === "portrait";
+                          const name = sectionNames[kind];
                           return (
                             <div
                               key={kind}
+                              data-flip={kind}
                               className="rounded-2xl border border-black/10 bg-white p-3"
                             >
                               <div className="flex items-start justify-between gap-1">
-                                <details
-                                  className="min-w-0 flex-1"
-                                  open={info.id === added || undefined}
-                                >
-                                  <summary className="min-h-11 cursor-pointer content-center py-2 text-[15px] font-semibold wrap-anywhere">
-                                    {name}{" "}
-                                    <span className="block text-[12.5px] font-normal text-black/55">
-                                      Section d’information
-                                    </span>
+                                <details className="min-w-0 flex-1">
+                                  <summary className="min-h-11 cursor-pointer content-center py-2 text-[15px] font-semibold">
+                                    {name}
                                   </summary>
                                   <div className="mt-2 flex flex-col gap-3">
                                     <Text
-                                      label="Titre"
-                                      value={info.title}
-                                      placeholder="Avant votre rendez-vous"
-                                      maxLength={siteLimits.infoSectionTitle}
+                                      label="Titre sur la page"
+                                      value={text?.title ?? ""}
+                                      placeholder={
+                                        kind === "opening"
+                                          ? config.brand.name
+                                          : "Titre de l’univers"
+                                      }
+                                      maxLength={siteLimits.sectionLabel}
                                       onChange={(title) =>
-                                        setInfoSection(
-                                          info.id,
+                                        setSectionText(
+                                          kind,
                                           { title },
-                                          `info.${info.id}.title`,
+                                          kind + ".title",
                                         )
                                       }
                                     />
+                                    <label className="flex min-h-11 items-center gap-2 text-sm">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(text?.hideTitle)}
+                                        onChange={(e) =>
+                                          setSectionText(kind, {
+                                            hideTitle: e.target.checked,
+                                          })
+                                        }
+                                      />
+                                      Masquer le titre sur la page
+                                    </label>
                                     <Text
-                                      label="Texte"
-                                      multiline
-                                      rows={6}
-                                      autoFocus={info.id === added}
-                                      value={info.text}
-                                      placeholder="Ce que tes clientes doivent savoir, avec tes mots. Tes retours à la ligne sont gardés."
-                                      maxLength={siteLimits.infoSectionText}
-                                      onChange={(text) =>
-                                        setInfoSection(
-                                          info.id,
-                                          { text },
-                                          `info.${info.id}.text`,
+                                      label="Nom dans le sommaire"
+                                      value={text?.menu ?? ""}
+                                      placeholder={
+                                        kind === "intro"
+                                          ? "À propos"
+                                          : kind === "opening"
+                                            ? "Ajouter un lien vers l’ouverture"
+                                            : kind === "reviews"
+                                              ? "Avis"
+                                              : name
+                                      }
+                                      maxLength={siteLimits.sectionLabel}
+                                      onChange={(menu) =>
+                                        setSectionText(
+                                          kind,
+                                          { menu },
+                                          kind + ".menu",
                                         )
                                       }
                                     />
-                                    {!info.title.trim() || !info.text.trim() ? (
-                                      <p className="text-[12.5px] text-black/55">
-                                        Publiée sur ta page dès qu’elle a un
-                                        titre et un texte.
-                                      </p>
-                                    ) : null}
-                                    <button
-                                      type="button"
-                                      onClick={() => removeInfoSection(info.id)}
-                                      // Its visible words first (WCAG 2.5.3), then which one.
-                                      aria-label={`Retirer cette section : ${name}`}
-                                      className="min-h-11 cursor-pointer self-start text-[13px] font-medium text-[#B3261E] underline underline-offset-4"
-                                    >
-                                      Retirer cette section
-                                    </button>
+                                    {switchable && (
+                                      <label className="flex min-h-11 items-center gap-2 text-sm">
+                                        <input
+                                          type="checkbox"
+                                          role="switch"
+                                          checked={
+                                            !config.hidden?.includes(kind)
+                                          }
+                                          onChange={(e) =>
+                                            set({
+                                              hidden: e.target.checked
+                                                ? (config.hidden ?? []).filter(
+                                                    (item) => item !== kind,
+                                                  )
+                                                : [
+                                                    ...(config.hidden ?? []),
+                                                    kind,
+                                                  ],
+                                            })
+                                          }
+                                        />
+                                        Afficher cette section
+                                      </label>
+                                    )}
                                   </div>
                                 </details>
                                 {arrows(name)}
                               </div>
                             </div>
                           );
-                        }
-                        const text = config.presentation?.labels?.[kind];
-                        const switchable =
-                          kind === "intro" ||
-                          kind === "work" ||
-                          kind === "portrait";
-                        const name = sectionNames[kind];
-                        return (
+                        })}
+                        {(config.infoSections?.length ?? 0) <
+                        siteLimits.infoSections ? (
                           <div
-                            key={kind}
-                            className="rounded-2xl border border-black/10 bg-white p-3"
+                            role="group"
+                            aria-labelledby="add-info-section"
+                            className="mt-1 flex flex-col gap-2 rounded-2xl border border-dashed border-black/20 p-3"
                           >
-                            <div className="flex items-start justify-between gap-1">
-                              <details className="min-w-0 flex-1">
-                                <summary className="min-h-11 cursor-pointer content-center py-2 text-[15px] font-semibold">
-                                  {name}
-                                </summary>
-                                <div className="mt-2 flex flex-col gap-3">
-                                  <Text
-                                    label="Titre sur la page"
-                                    value={text?.title ?? ""}
-                                    placeholder={
-                                      kind === "opening"
-                                        ? config.brand.name
-                                        : "Titre de l’univers"
-                                    }
-                                    maxLength={siteLimits.sectionLabel}
-                                    onChange={(title) =>
-                                      setSectionText(
-                                        kind,
-                                        { title },
-                                        kind + ".title",
-                                      )
-                                    }
-                                  />
-                                  <label className="flex min-h-11 items-center gap-2 text-sm">
-                                    <input
-                                      type="checkbox"
-                                      checked={Boolean(text?.hideTitle)}
-                                      onChange={(e) =>
-                                        setSectionText(kind, {
-                                          hideTitle: e.target.checked,
-                                        })
-                                      }
-                                    />
-                                    Masquer le titre sur la page
-                                  </label>
-                                  <Text
-                                    label="Nom dans le sommaire"
-                                    value={text?.menu ?? ""}
-                                    placeholder={
-                                      kind === "intro"
-                                        ? "À propos"
-                                        : kind === "opening"
-                                          ? "Ajouter un lien vers l’ouverture"
-                                          : kind === "reviews"
-                                            ? "Avis"
-                                            : name
-                                    }
-                                    maxLength={siteLimits.sectionLabel}
-                                    onChange={(menu) =>
-                                      setSectionText(
-                                        kind,
-                                        { menu },
-                                        kind + ".menu",
-                                      )
-                                    }
-                                  />
-                                  {switchable && (
-                                    <label className="flex min-h-11 items-center gap-2 text-sm">
-                                      <input
-                                        type="checkbox"
-                                        role="switch"
-                                        checked={!config.hidden?.includes(kind)}
-                                        onChange={(e) =>
-                                          set({
-                                            hidden: e.target.checked
-                                              ? (config.hidden ?? []).filter(
-                                                  (item) => item !== kind,
-                                                )
-                                              : [
-                                                  ...(config.hidden ?? []),
-                                                  kind,
-                                                ],
-                                          })
-                                        }
-                                      />
-                                      Afficher cette section
-                                    </label>
-                                  )}
-                                </div>
-                              </details>
-                              {arrows(name)}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {(config.infoSections?.length ?? 0) <
-                      siteLimits.infoSections ? (
-                        <div
-                          role="group"
-                          aria-labelledby="add-info-section"
-                          className="mt-1 flex flex-col gap-2 rounded-2xl border border-dashed border-black/20 p-3"
-                        >
-                          <p
-                            id="add-info-section"
-                            className="text-[15px] font-semibold"
-                          >
-                            Ajouter une section d’information
-                          </p>
-                          <p className="text-[13px] text-black/60">
-                            Un titre et ton texte, ajoutés après tes scènes
-                            {creative
-                              ? " ; les flèches la placent où tu veux."
-                              : "."}{" "}
-                            Choisis un titre ou écris le tien.
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            {INFO_IDEAS.map((idea) => (
+                            <p
+                              id="add-info-section"
+                              className="text-[15px] font-semibold"
+                            >
+                              Ajouter une section d’information
+                            </p>
+                            <p className="text-[13px] text-black/60">
+                              Un titre et ton texte, ajoutés après tes scènes
+                              {creative
+                                ? " ; les flèches la placent où tu veux."
+                                : "."}{" "}
+                              Choisis un titre ou écris le tien.
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {INFO_IDEAS.map((idea) => (
+                                <button
+                                  key={idea}
+                                  type="button"
+                                  onClick={() => addInfoSection(idea)}
+                                  className="min-h-11 cursor-pointer rounded-full bg-black/5 px-4 text-[13px] font-medium hover:bg-black/10"
+                                >
+                                  <span aria-hidden="true">+&nbsp;</span>
+                                  {idea}
+                                </button>
+                              ))}
                               <button
-                                key={idea}
                                 type="button"
-                                onClick={() => addInfoSection(idea)}
+                                onClick={() => addInfoSection("")}
                                 className="min-h-11 cursor-pointer rounded-full bg-black/5 px-4 text-[13px] font-medium hover:bg-black/10"
                               >
                                 <span aria-hidden="true">+&nbsp;</span>
-                                {idea}
+                                Autre titre
                               </button>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={() => addInfoSection("")}
-                              className="min-h-11 cursor-pointer rounded-full bg-black/5 px-4 text-[13px] font-medium hover:bg-black/10"
-                            >
-                              <span aria-hidden="true">+&nbsp;</span>
-                              Autre titre
-                            </button>
+                            </div>
                           </div>
-                        </div>
-                      ) : (
-                        <p className="text-[13px] text-black/55">
-                          {siteLimits.infoSections} sections d’information au
-                          plus : retire-en une pour en ajouter une autre.
-                        </p>
-                      )}
-                    </div>
-                  ) : current === "photos" ? (
-                    <>
-                      <p className="text-[13.5px] text-black/60">
-                        Touche une photo, ici ou{" "}
-                        <strong>directement dans l’aperçu</strong>, pour ajouter
-                        la tienne, la recadrer ou modifier son titre dans les
-                        réalisations. Les photos d’exemple de ton univers ne
-                        sont jamais publiées.
-                      </p>
-                      <label className="flex flex-col gap-1.5 text-sm">
-                        Présentation des réalisations
-                        <select
-                          className="min-h-12 rounded-xl border border-black/15 bg-white px-3"
-                          value={config.presentation?.gallery ?? ""}
-                          onChange={(e) =>
-                            setPresentation({
-                              gallery:
-                                (e.target
-                                  .value as SitePresentation["gallery"]) ||
-                                undefined,
-                            })
-                          }
-                        >
-                          <option value="">
-                            Suivre la composition du site
-                          </option>
-                          <option value="lookbook">
-                            Lookbook · photos décalées en hauteur
-                          </option>
-                          <option value="arches">
-                            Arches · défilement en profondeur
-                          </option>
-                          <option value="filmstrip">
-                            Pellicule · défilement horizontal
-                          </option>
-                        </select>
-                      </label>
-                      <label className="flex flex-col gap-1.5 text-sm">
-                        Animation de la galerie
-                        <select
-                          className="min-h-12 rounded-xl border border-black/15 bg-white px-3"
-                          value={config.presentation?.galleryMotion ?? ""}
-                          onChange={(e) =>
-                            setPresentation({
-                              galleryMotion:
-                                (e.target
-                                  .value as SitePresentation["galleryMotion"]) ||
-                                undefined,
-                            })
-                          }
-                        >
-                          <option value="">Suivre le mouvement du site</option>
-                          <option value="cut">Découpe · Mila</option>
-                          <option value="settle">
-                            Apparition douce · Alma
-                          </option>
-                          <option value="snap">Rebond · Nail Lab</option>
-                        </select>
-                      </label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {(
-                          [
-                            "logo",
-                            "cover",
-                            "portrait",
-                            ...config.content.works.map((_, index) => index),
-                          ] as PhotoSlot[]
-                        ).map((slot) => {
-                          const id = slotPhoto(slot);
-                          const focal = (id && config.content.focals[id]) || {
-                            x: 50,
-                            y: 50,
-                          };
-                          return (
-                            <button
-                              key={String(slot)}
-                              type="button"
-                              onClick={() => onPhotoSlot(slot)}
-                              className="flex cursor-pointer flex-col gap-1 text-left"
-                            >
-                              <span className="relative block aspect-[4/5] overflow-hidden rounded-xl bg-black/10">
-                                {id ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img
-                                    src={photo(id, 480)}
-                                    alt=""
-                                    className={`absolute inset-0 h-full w-full ${slot === "logo" ? "object-contain p-1" : "object-cover"}`}
-                                    style={{
-                                      objectPosition: `${focal.x}% ${focal.y}%`,
-                                    }}
-                                  />
-                                ) : (
-                                  <span
-                                    aria-hidden="true"
-                                    className="absolute inset-0 flex items-center justify-center text-[26px] text-black/35"
-                                  >
-                                    +
-                                  </span>
-                                )}
-                              </span>
-                              <span className="text-[12.5px] text-black/60">
-                                {slot === "logo"
-                                  ? "Logo"
-                                  : slot === "cover"
-                                    ? "Couverture"
-                                    : slot === "portrait"
-                                      ? "Ton portrait"
-                                      : `Réalisation ${slot + 1}`}
-                              </span>
-                            </button>
-                          );
-                        })}
+                        ) : (
+                          <p className="text-[13px] text-black/55">
+                            {siteLimits.infoSections} sections d’information au
+                            plus : retire-en une pour en ajouter une autre.
+                          </p>
+                        )}
                       </div>
-                      {config.content.works.length < 24 ? (
-                        <SmallButton onClick={addWork}>
-                          Ajouter une réalisation
-                        </SmallButton>
-                      ) : null}
-                    </>
-                  ) : current === "texts" ? (
-                    <>
-                      <Text
-                        label="Nom"
-                        value={config.brand.name}
-                        onChange={(name) =>
-                          set(
-                            { brand: { ...config.brand, name } },
-                            "brand.name",
-                          )
-                        }
-                      />
-                      <Text
-                        label="Texte du bouton de réservation"
-                        placeholder="Réserver"
-                        value={config.presentation?.bookingLabel ?? ""}
-                        maxLength={siteLimits.bookingLabel}
-                        onChange={(bookingLabel) =>
-                          setPresentation({ bookingLabel }, "bookingLabel")
-                        }
-                      />
-                      <Text
-                        label="Activité"
-                        value={config.brand.kind}
-                        onChange={(kind) =>
-                          set(
-                            { brand: { ...config.brand, kind } },
-                            "brand.kind",
-                          )
-                        }
-                      />
-                      <Text
-                        label="Ville"
-                        value={config.brand.location}
-                        onChange={(location) =>
-                          set(
-                            { brand: { ...config.brand, location } },
-                            "brand.location",
-                          )
-                        }
-                      />
-                      <Text
-                        label="Présentation"
-                        multiline
-                        value={config.brand.intro}
-                        onChange={(intro) =>
-                          set(
-                            { brand: { ...config.brand, intro } },
-                            "brand.intro",
-                          )
-                        }
-                      />
-                      <p className="mt-2 border-t border-black/10 pt-4 text-[13px] font-semibold">
-                        Ton portrait
-                      </p>
-                      {(
-                        [
-                          ["name", "Ton prénom", false],
-                          ["role", "Ton métier", false],
-                          ["text", "Quelques mots sur toi", true],
-                        ] as const
-                      ).map(([key, label, multiline]) => (
+                    ) : current === "photos" ? (
+                      <>
+                        <p className="text-[13.5px] text-black/60">
+                          Touche une photo, ici ou{" "}
+                          <strong>directement dans l’aperçu</strong>, pour
+                          ajouter la tienne, la recadrer ou modifier son titre
+                          dans les réalisations. Les photos d’exemple de ton
+                          univers ne sont jamais publiées.
+                        </p>
+                        <label className="flex flex-col gap-1.5 text-sm">
+                          Présentation des réalisations
+                          <select
+                            className="min-h-12 rounded-xl border border-black/15 bg-white px-3"
+                            value={config.presentation?.gallery ?? ""}
+                            onChange={(e) =>
+                              setPresentation({
+                                gallery:
+                                  (e.target
+                                    .value as SitePresentation["gallery"]) ||
+                                  undefined,
+                              })
+                            }
+                          >
+                            <option value="">
+                              Suivre la composition du site
+                            </option>
+                            <option value="lookbook">
+                              Lookbook · photos décalées en hauteur
+                            </option>
+                            <option value="arches">
+                              Arches · défilement en profondeur
+                            </option>
+                            <option value="filmstrip">
+                              Pellicule · défilement horizontal
+                            </option>
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1.5 text-sm">
+                          Animation de la galerie
+                          <select
+                            className="min-h-12 rounded-xl border border-black/15 bg-white px-3"
+                            value={config.presentation?.galleryMotion ?? ""}
+                            onChange={(e) =>
+                              setPresentation({
+                                galleryMotion:
+                                  (e.target
+                                    .value as SitePresentation["galleryMotion"]) ||
+                                  undefined,
+                              })
+                            }
+                          >
+                            <option value="">
+                              Suivre le mouvement du site
+                            </option>
+                            <option value="cut">Découpe · Mila</option>
+                            <option value="settle">
+                              Apparition douce · Alma
+                            </option>
+                            <option value="snap">Rebond · Nail Lab</option>
+                          </select>
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(
+                            [
+                              "logo",
+                              "cover",
+                              "portrait",
+                              ...config.content.works.map((_, index) => index),
+                            ] as PhotoSlot[]
+                          ).map((slot) => {
+                            const id = slotPhoto(slot);
+                            const focal = (id && config.content.focals[id]) || {
+                              x: 50,
+                              y: 50,
+                            };
+                            return (
+                              <button
+                                key={String(slot)}
+                                type="button"
+                                onClick={() => onPhotoSlot(slot)}
+                                className="flex cursor-pointer flex-col gap-1 text-left"
+                              >
+                                <span className="relative block aspect-[4/5] overflow-hidden rounded-xl bg-black/10">
+                                  {id ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={photo(id, 480)}
+                                      alt=""
+                                      className={`absolute inset-0 h-full w-full ${slot === "logo" ? "object-contain p-1" : "object-cover"}`}
+                                      style={{
+                                        objectPosition: `${focal.x}% ${focal.y}%`,
+                                      }}
+                                    />
+                                  ) : (
+                                    <span
+                                      aria-hidden="true"
+                                      className="absolute inset-0 flex items-center justify-center text-[26px] text-black/35"
+                                    >
+                                      +
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="text-[12.5px] text-black/60">
+                                  {slot === "logo"
+                                    ? "Logo"
+                                    : slot === "cover"
+                                      ? "Couverture"
+                                      : slot === "portrait"
+                                        ? "Ton portrait"
+                                        : `Réalisation ${slot + 1}`}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {config.content.works.length < 24 ? (
+                          <SmallButton onClick={addWork}>
+                            Ajouter une réalisation
+                          </SmallButton>
+                        ) : null}
+                      </>
+                    ) : current === "texts" ? (
+                      <>
                         <Text
-                          key={key}
-                          label={label}
-                          multiline={multiline}
-                          value={config.content.portrait[key]}
-                          onChange={(value) =>
+                          label="Nom"
+                          value={config.brand.name}
+                          onChange={(name) =>
                             set(
-                              {
-                                content: {
-                                  ...config.content,
-                                  portrait: {
-                                    ...config.content.portrait,
-                                    [key]: value,
-                                  },
-                                },
-                              },
-                              `portrait.${key}`,
+                              { brand: { ...config.brand, name } },
+                              "brand.name",
                             )
                           }
                         />
-                      ))}
-                      {config.content.works.some((work) => work.photo) ? (
-                        <fieldset className="mt-2 flex min-w-0 flex-col gap-3 border-t border-black/10 pt-3">
-                          <legend className="pr-2 text-[13px] font-semibold">
-                            Titres des réalisations
-                          </legend>
-                          {config.content.works.map((work, index) =>
-                            work.photo ? (
-                              <Text
-                                key={work.id}
-                                label={`Titre de la réalisation ${index + 1}`}
-                                value={work.title}
-                                maxLength={siteLimits.workTitle}
-                                onChange={(title) =>
-                                  setWorkTitle(work.id, title)
-                                }
-                              />
-                            ) : null,
-                          )}
-                        </fieldset>
-                      ) : null}
-                    </>
-                  ) : current === "infos" ? (
-                    <>
-                      <PracticalFields
-                        value={config.practical ?? emptyPractical}
-                        onChange={(practical, key) =>
-                          set({ practical }, `practical.${key}`)
-                        }
-                      />
-                      <LinksFields
-                        value={config.links ?? []}
-                        onChange={(links) => set({ links }, "links")}
-                      />
-                    </>
-                  ) : current === "colors" ? (
-                    <>
-                      <p className="text-[13px] text-black/55">
-                        Palettes conçues pour cet univers
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {universe.palettes.map((item) => (
-                          <button
-                            key={item.name}
-                            type="button"
-                            onClick={() =>
-                              setTokens({
-                                palette: {
-                                  ...item.palette,
-                                  accent:
-                                    config.tokens.palette.accent ===
-                                    universe.config.tokens.palette.accent
-                                      ? item.palette.accent
-                                      : config.tokens.palette.accent,
+                        <Text
+                          label="Texte du bouton de réservation"
+                          placeholder="Réserver"
+                          value={config.presentation?.bookingLabel ?? ""}
+                          maxLength={siteLimits.bookingLabel}
+                          onChange={(bookingLabel) =>
+                            setPresentation({ bookingLabel }, "bookingLabel")
+                          }
+                        />
+                        <Text
+                          label="Activité"
+                          value={config.brand.kind}
+                          onChange={(kind) =>
+                            set(
+                              { brand: { ...config.brand, kind } },
+                              "brand.kind",
+                            )
+                          }
+                        />
+                        <Text
+                          label="Ville"
+                          value={config.brand.location}
+                          onChange={(location) =>
+                            set(
+                              { brand: { ...config.brand, location } },
+                              "brand.location",
+                            )
+                          }
+                        />
+                        <Text
+                          label="Présentation"
+                          multiline
+                          value={config.brand.intro}
+                          onChange={(intro) =>
+                            set(
+                              { brand: { ...config.brand, intro } },
+                              "brand.intro",
+                            )
+                          }
+                        />
+                        <p className="mt-2 border-t border-black/10 pt-4 text-[13px] font-semibold">
+                          Ton portrait
+                        </p>
+                        {(
+                          [
+                            ["name", "Ton prénom", false],
+                            ["role", "Ton métier", false],
+                            ["text", "Quelques mots sur toi", true],
+                          ] as const
+                        ).map(([key, label, multiline]) => (
+                          <Text
+                            key={key}
+                            label={label}
+                            multiline={multiline}
+                            value={config.content.portrait[key]}
+                            onChange={(value) =>
+                              set(
+                                {
+                                  content: {
+                                    ...config.content,
+                                    portrait: {
+                                      ...config.content.portrait,
+                                      [key]: value,
+                                    },
+                                  },
                                 },
-                              })
+                                `portrait.${key}`,
+                              )
                             }
-                            className="flex h-11 cursor-pointer items-center gap-2 rounded-full border border-black/10 bg-white pr-4 pl-1.5 text-[13.5px] font-medium"
-                          >
-                            <span
-                              className="flex -space-x-1"
-                              aria-hidden="true"
-                            >
-                              {[
-                                item.palette.bg,
-                                item.palette.paper,
-                                item.palette.accent,
-                              ].map((color, index) => (
-                                <span
-                                  key={index}
-                                  className="size-7 rounded-full border-2 border-white"
-                                  style={{ background: color }}
-                                />
-                              ))}
-                            </span>
-                            {item.name}
-                          </button>
+                          />
                         ))}
-                      </div>
-                      <ColorRow
-                        label="Ta couleur d’accent"
-                        value={config.tokens.palette.accent}
-                        onChange={(accent) => setPalette({ accent }, "accent")}
-                      />
-                      {can(plan, "cta") ? (
-                        <CtaColor
-                          value={config.tokens.cta}
-                          palette={config.tokens.palette}
-                          onChange={(cta) => setTokens({ cta }, "cta")}
+                        {config.content.works.some((work) => work.photo) ? (
+                          <fieldset className="mt-2 flex min-w-0 flex-col gap-3 border-t border-black/10 pt-3">
+                            <legend className="pr-2 text-[13px] font-semibold">
+                              Titres des réalisations
+                            </legend>
+                            {config.content.works.map((work, index) =>
+                              work.photo ? (
+                                <Text
+                                  key={work.id}
+                                  label={`Titre de la réalisation ${index + 1}`}
+                                  value={work.title}
+                                  maxLength={siteLimits.workTitle}
+                                  onChange={(title) =>
+                                    setWorkTitle(work.id, title)
+                                  }
+                                />
+                              ) : null,
+                            )}
+                          </fieldset>
+                        ) : null}
+                      </>
+                    ) : current === "infos" ? (
+                      <>
+                        <PracticalFields
+                          value={config.practical ?? emptyPractical}
+                          onChange={(practical, key) =>
+                            set({ practical }, `practical.${key}`)
+                          }
                         />
-                      ) : null}
-                      {can(plan, "palette-free")
-                        ? paletteKeys
-                            .filter(({ key }) => key !== "accent")
-                            .map(({ key, label }) => (
-                              <ColorRow
-                                key={key}
-                                label={label}
-                                value={config.tokens.palette[key]}
-                                onChange={(value) =>
-                                  setPalette({ [key]: value }, `palette.${key}`)
-                                }
-                              />
-                            ))
-                        : null}
-                    </>
-                  ) : current === "creative" ? (
-                    <div className="flex flex-col gap-3 rounded-2xl bg-[#141414] p-5 text-white">
-                      <p className="text-[18px] font-semibold">
-                        Ton propre studio de direction artistique
-                      </p>
-                      <p className="text-[14px] leading-relaxed text-white/75">
-                        {plans.signature.promise}
-                      </p>
-                      <ul className="flex flex-col gap-1.5 text-[14px] text-white/85">
-                        <li>
-                          ✦ Une autre ouverture, une autre galerie, un autre
-                          menu
-                        </li>
-                        <li>✦ L’ordre de tes scènes</li>
-                        <li>
-                          ✦ Typographies, traitement photo, mouvement, formes
-                        </li>
-                        <li>✦ Toute ta palette</li>
-                      </ul>
-                      {/* No billing yet: her plan is set with her, never here. */}
-                      <p className="mt-2 rounded-xl bg-white/10 p-3 text-[13.5px] text-white/85">
-                        Le mode Créatif s’ouvre avec le forfait Signature. Tes
-                        réglages actuels seront conservés.
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      {tips.length ? (
-                        <Advice
-                          items={tips}
-                          tone="tip"
-                          title="Conseils d’harmonie"
-                          note="Ce sont des suggestions : tu restes libre d’expérimenter."
-                          onFix={(fix) => draft.set(fix(config))}
+                        <LinksFields
+                          value={config.links ?? []}
+                          onChange={(links) => set({ links }, "links")}
                         />
-                      ) : null}
-                      {current === "composition" ? (
-                        <ol className="flex flex-col gap-2">
-                          {config.sections.map((section, index) => (
-                            <li
-                              key={`${section.kind}-${index}`}
-                              className="rounded-2xl border border-black/10 bg-white p-3"
+                      </>
+                    ) : current === "colors" ? (
+                      <>
+                        <p className="text-[13px] text-black/55">
+                          Palettes conçues pour cet univers
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {universe.palettes.map((item) => (
+                            <button
+                              key={item.name}
+                              type="button"
+                              onClick={() =>
+                                setTokens({
+                                  palette: {
+                                    ...item.palette,
+                                    accent:
+                                      config.tokens.palette.accent ===
+                                      universe.config.tokens.palette.accent
+                                        ? item.palette.accent
+                                        : config.tokens.palette.accent,
+                                  },
+                                })
+                              }
+                              className="flex h-11 cursor-pointer items-center gap-2 rounded-full border border-black/10 bg-white pr-4 pl-1.5 text-[13.5px] font-medium"
                             >
-                              <div className="flex items-center justify-between">
-                                <span className="text-[14px] font-semibold">
-                                  {sectionNames[section.kind]}
-                                  {config.hidden?.includes(section.kind) ? (
-                                    <span className="ml-1.5 font-normal text-black/60">
-                                      · masquée
-                                    </span>
-                                  ) : null}
-                                </span>
-                                <SmallButton onClick={() => setTab("sections")}>
-                                  Ordre et titres
-                                </SmallButton>
-                              </div>
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {variants[section.kind].map((variant) => (
-                                  <Chip
-                                    key={variant.id}
-                                    selected={
-                                      (section.kind === "work"
-                                        ? (config.presentation?.gallery ??
-                                          section.variant)
-                                        : section.variant) === variant.id
-                                    }
-                                    onClick={() => {
-                                      if (section.kind === "work") {
-                                        setPresentation({
-                                          gallery:
-                                            variant.id as SitePresentation["gallery"],
-                                        });
-                                        return;
-                                      }
-                                      set({
-                                        sections: config.sections.map(
-                                          (item, position) =>
-                                            position === index
-                                              ? ({
-                                                  ...item,
-                                                  variant: variant.id,
-                                                } as Section)
-                                              : item,
-                                        ),
-                                      });
-                                      if (section.kind === "opening")
-                                        onReplay();
-                                    }}
-                                  >
-                                    {variant.label}
-                                  </Chip>
+                              <span
+                                className="flex -space-x-1"
+                                aria-hidden="true"
+                              >
+                                {[
+                                  item.palette.bg,
+                                  item.palette.paper,
+                                  item.palette.accent,
+                                ].map((color, index) => (
+                                  <span
+                                    key={index}
+                                    className="size-7 rounded-full border-2 border-white"
+                                    style={{ background: color }}
+                                  />
                                 ))}
-                              </div>
-                            </li>
+                              </span>
+                              {item.name}
+                            </button>
                           ))}
-                        </ol>
-                      ) : (
-                        <>
-                          <Choice<TypePairId>
-                            label="Typographie"
-                            value={config.tokens.type}
-                            options={Object.entries(typePairs).map(
-                              ([id, item]) => ({
-                                id: id as TypePairId,
-                                label: item.label,
-                              }),
-                            )}
-                            onChange={(type) => setTokens({ type })}
+                        </div>
+                        <ColorRow
+                          label="Ta couleur d’accent"
+                          value={config.tokens.palette.accent}
+                          onChange={(accent) =>
+                            setPalette({ accent }, "accent")
+                          }
+                        />
+                        {can(plan, "cta") ? (
+                          <CtaColor
+                            value={config.tokens.cta}
+                            palette={config.tokens.palette}
+                            onChange={(cta) => setTokens({ cta }, "cta")}
                           />
-                          <Choice<GradeId>
-                            label="Traitement photo"
-                            value={config.tokens.grade}
-                            options={Object.entries(grades).map(
-                              ([id, item]) => ({
-                                id: id as GradeId,
-                                label: item.label,
-                              }),
-                            )}
-                            onChange={(grade) => setTokens({ grade })}
+                        ) : null}
+                        {can(plan, "palette-free")
+                          ? paletteKeys
+                              .filter(({ key }) => key !== "accent")
+                              .map(({ key, label }) => (
+                                <ColorRow
+                                  key={key}
+                                  label={label}
+                                  value={config.tokens.palette[key]}
+                                  onChange={(value) =>
+                                    setPalette(
+                                      { [key]: value },
+                                      `palette.${key}`,
+                                    )
+                                  }
+                                />
+                              ))
+                          : null}
+                      </>
+                    ) : current === "creative" ? (
+                      <div className="flex flex-col gap-3 rounded-2xl bg-[#141414] p-5 text-white">
+                        <p className="text-[18px] font-semibold">
+                          Ton propre studio de direction artistique
+                        </p>
+                        <p className="text-[14px] leading-relaxed text-white/75">
+                          {plans.signature.promise}
+                        </p>
+                        <ul className="flex flex-col gap-1.5 text-[14px] text-white/85">
+                          <li>
+                            ✦ Une autre ouverture, une autre galerie, un autre
+                            menu
+                          </li>
+                          <li>✦ L’ordre de tes scènes</li>
+                          <li>
+                            ✦ Typographies, traitement photo, mouvement, formes
+                          </li>
+                          <li>✦ Toute ta palette</li>
+                        </ul>
+                        {/* No billing yet: her plan is set with her, never here. */}
+                        <p className="mt-2 rounded-xl bg-white/10 p-3 text-[13.5px] text-white/85">
+                          Le mode Créatif s’ouvre avec le forfait Signature. Tes
+                          réglages actuels seront conservés.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {tips.length ? (
+                          <Advice
+                            items={tips}
+                            tone="tip"
+                            title="Conseils d’harmonie"
+                            note="Ce sont des suggestions : tu restes libre d’expérimenter."
+                            onFix={(fix) => draft.set(fix(config))}
                           />
-                          <Choice<MotionId>
-                            label="Mouvement"
-                            value={config.tokens.motion}
-                            options={Object.entries(motions).map(
-                              ([id, item]) => ({
-                                id: id as MotionId,
-                                label: item.label,
-                              }),
-                            )}
-                            onChange={(motion) => {
-                              setTokens({ motion });
+                        ) : null}
+                        {current === "composition" ? (
+                          <ol className="flex flex-col gap-2">
+                            {config.sections.map((section, index) => (
+                              <li
+                                key={`${section.kind}-${index}`}
+                                className="rounded-2xl border border-black/10 bg-white p-3"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[14px] font-semibold">
+                                    {sectionNames[section.kind]}
+                                    {config.hidden?.includes(section.kind) ? (
+                                      <span className="ml-1.5 font-normal text-black/60">
+                                        · masquée
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                  <SmallButton
+                                    onClick={() => setTab("sections")}
+                                  >
+                                    Ordre et titres
+                                  </SmallButton>
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {variants[section.kind].map((variant) => (
+                                    <Chip
+                                      key={variant.id}
+                                      selected={
+                                        (section.kind === "work"
+                                          ? (config.presentation?.gallery ??
+                                            section.variant)
+                                          : section.variant) === variant.id
+                                      }
+                                      onClick={() => {
+                                        if (section.kind === "work") {
+                                          setPresentation({
+                                            gallery:
+                                              variant.id as SitePresentation["gallery"],
+                                          });
+                                          return;
+                                        }
+                                        set({
+                                          sections: config.sections.map(
+                                            (item, position) =>
+                                              position === index
+                                                ? ({
+                                                    ...item,
+                                                    variant: variant.id,
+                                                  } as Section)
+                                                : item,
+                                          ),
+                                        });
+                                        if (section.kind === "opening")
+                                          onReplay();
+                                      }}
+                                    >
+                                      {variant.label}
+                                    </Chip>
+                                  ))}
+                                </div>
+                              </li>
+                            ))}
+                          </ol>
+                        ) : (
+                          <>
+                            <Choice<TypePairId>
+                              label="Typographie"
+                              value={config.tokens.type}
+                              options={Object.entries(typePairs).map(
+                                ([id, item]) => ({
+                                  id: id as TypePairId,
+                                  label: item.label,
+                                }),
+                              )}
+                              onChange={(type) => setTokens({ type })}
+                            />
+                            <Choice<GradeId>
+                              label="Traitement photo"
+                              value={config.tokens.grade}
+                              options={Object.entries(grades).map(
+                                ([id, item]) => ({
+                                  id: id as GradeId,
+                                  label: item.label,
+                                }),
+                              )}
+                              onChange={(grade) => setTokens({ grade })}
+                            />
+                            <Choice<MotionId>
+                              label="Mouvement"
+                              value={config.tokens.motion}
+                              options={Object.entries(motions).map(
+                                ([id, item]) => ({
+                                  id: id as MotionId,
+                                  label: item.label,
+                                }),
+                              )}
+                              onChange={(motion) => {
+                                setTokens({ motion });
+                                onReplay();
+                              }}
+                            />
+                            <Choice<ShapeId>
+                              label="Formes"
+                              value={config.tokens.shape}
+                              options={Object.entries(shapes).map(
+                                ([id, item]) => ({
+                                  id: id as ShapeId,
+                                  label: item.label,
+                                }),
+                              )}
+                              onChange={(shape) => setTokens({ shape })}
+                            />
+                            <Choice<SiteConfig["booking"]>
+                              label="Entrée de la réservation"
+                              value={config.booking}
+                              options={[
+                                { id: "page", label: "Page" },
+                                { id: "sheet", label: "Feuille" },
+                              ]}
+                              onChange={(booking) => set({ booking })}
+                            />
+                            <Choice<SiteConfig["quickBook"]>
+                              label="Réservation rapide"
+                              value={config.quickBook}
+                              options={[
+                                { id: "bar", label: "Barre" },
+                                { id: "pill", label: "Pastille" },
+                              ]}
+                              onChange={(quickBook) => set({ quickBook })}
+                            />
+                          </>
+                        )}
+                        {universe.signature ? (
+                          <SmallButton
+                            onClick={() => {
+                              draft.set(universe.signature!.apply(config));
                               onReplay();
                             }}
-                          />
-                          <Choice<ShapeId>
-                            label="Formes"
-                            value={config.tokens.shape}
-                            options={Object.entries(shapes).map(
-                              ([id, item]) => ({
-                                id: id as ShapeId,
-                                label: item.label,
-                              }),
-                            )}
-                            onChange={(shape) => setTokens({ shape })}
-                          />
-                          <Choice<SiteConfig["booking"]>
-                            label="Entrée de la réservation"
-                            value={config.booking}
-                            options={[
-                              { id: "page", label: "Page" },
-                              { id: "sheet", label: "Feuille" },
-                            ]}
-                            onChange={(booking) => set({ booking })}
-                          />
-                          <Choice<SiteConfig["quickBook"]>
-                            label="Réservation rapide"
-                            value={config.quickBook}
-                            options={[
-                              { id: "bar", label: "Barre" },
-                              { id: "pill", label: "Pastille" },
-                            ]}
-                            onChange={(quickBook) => set({ quickBook })}
-                          />
-                        </>
-                      )}
-                      {universe.signature ? (
-                        <SmallButton
-                          onClick={() => {
-                            draft.set(universe.signature!.apply(config));
-                            onReplay();
-                          }}
-                        >
-                          Inspiration : {universe.signature.name}
-                        </SmallButton>
-                      ) : null}
-                    </>
-                  )}
+                          >
+                            Inspiration : {universe.signature.name}
+                          </SmallButton>
+                        ) : null}
+                      </>
+                    )}
 
-                  <div className="mt-2 flex flex-wrap gap-2 border-t border-black/10 pt-4">
-                    <SmallButton onClick={onReplay}>
-                      Rejouer l’ouverture
-                    </SmallButton>
-                    <SmallButton
-                      onClick={() =>
-                        draft.set({
-                          ...universe.config,
-                          brand: config.brand,
-                          content: config.content,
-                          hidden: config.hidden,
-                          bookingFormat: config.bookingFormat,
-                        })
-                      }
-                    >
-                      Revenir à l’univers d’origine
-                    </SmallButton>
+                    <div className="mt-2 flex flex-wrap gap-2 border-t border-black/10 pt-4">
+                      <SmallButton onClick={onReplay}>
+                        Rejouer l’ouverture
+                      </SmallButton>
+                      <SmallButton
+                        onClick={() =>
+                          draft.set({
+                            ...universe.config,
+                            brand: config.brand,
+                            content: config.content,
+                            hidden: config.hidden,
+                            bookingFormat: config.bookingFormat,
+                          })
+                        }
+                      >
+                        Revenir à l’univers d’origine
+                      </SmallButton>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </motion.aside>
         ) : null}
