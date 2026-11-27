@@ -90,11 +90,13 @@ export function SiteIndex({
         animate={
           origin ? { clipPath: circleOf(origin, true) } : { opacity: 1, y: 0 }
         }
-        exit={
-          origin
+        exit={{
+          ...(origin
             ? { clipPath: circleOf(origin, false) }
-            : { opacity: 0, y: -16 }
-        }
+            : { opacity: 0, y: -16 }),
+          // Closing is quicker than opening: it answers the tap.
+          transition: { duration: origin ? 0.28 : 0.24, ease: language.ease },
+        }}
         transition={{ duration: origin ? 0.42 : 0.35, ease: language.ease }}
       >
         <div className="mx-auto flex w-full max-w-[1100px] items-center justify-between px-5 pt-[max(env(safe-area-inset-top),14px)] pb-3 text-[var(--u-muted)]">

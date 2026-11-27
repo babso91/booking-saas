@@ -95,6 +95,7 @@ export function SiteBooking({
 
   useModal({ root, panel: dialog, onClose: dismiss });
   const sheet = config.booking === "sheet";
+  const enter = reduced ? 0 : origin && !sheet ? 0.42 : 0.28;
   const format = config.bookingFormat ?? "classic";
   const themed = format !== "classic";
   const cta = ctaColors(config.tokens, config.tokens.palette.accent);
@@ -175,17 +176,16 @@ export function SiteBooking({
               ? { clipPath: FULL_INSET }
               : { opacity: 1 }
         }
-        exit={
-          sheet
+        exit={{
+          ...(sheet
             ? { y: "100%" }
             : origin && !reduced
               ? { clipPath: insetOf(origin) }
-              : { opacity: 0 }
-        }
-        transition={{
-          duration: reduced ? 0 : origin && !sheet ? 0.42 : 0.28,
-          ease: language.ease,
+              : { opacity: 0 }),
+          // Closing is quicker than opening: it answers the tap.
+          transition: { duration: enter * 0.65, ease: language.ease },
         }}
+        transition={{ duration: enter, ease: language.ease }}
       >
         {/* Her site's colours on the sheet's head: still her place. */}
         <div className="flex shrink-0 items-center justify-between gap-3 bg-[var(--u-paper)] px-5 pt-[max(env(safe-area-inset-top),16px)] pb-3 text-[var(--u-ink-on-paper)]">

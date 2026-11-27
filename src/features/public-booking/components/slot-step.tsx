@@ -6,6 +6,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
 import {
   carryFrom,
+  cascade,
   PILL_CLASS,
   slideClass,
   useBackward,
@@ -402,13 +403,17 @@ export function SlotStep({
               />
             ) : slots.status === "ready" ? (
               <ul
-                className="grid grid-cols-3 gap-2 motion-safe:animate-fade sm:grid-cols-4"
+                className="grid grid-cols-3 gap-2 sm:grid-cols-4"
                 aria-label={`Créneaux du ${dayLabel(date)}`}
               >
-                {slots.slots.map((item) => {
+                {slots.slots.map((item, position) => {
                   const selected = item.startsAt === slot?.startsAt;
                   return (
-                    <li key={item.startsAt}>
+                    <li
+                      key={item.startsAt}
+                      className="motion-safe:animate-message"
+                      style={cascade(position)}
+                    >
                       <button
                         type="button"
                         onClick={() => flow.actions.chooseSlot(item)}

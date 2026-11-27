@@ -2,7 +2,12 @@
 
 import { useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 
-import { carryFrom, useCarryTo, useHeightTween } from "@/components/ui/motion";
+import {
+  carryFrom,
+  cascade,
+  useCarryTo,
+  useHeightTween,
+} from "@/components/ui/motion";
 import { Notice } from "@/components/ui/notice";
 import {
   countServices,
@@ -220,11 +225,12 @@ export function ServiceStep({
               }
               aria-label={named ? groupName(group) : "Prestations"}
             >
-              {group.services.map(({ id }) => {
+              {group.services.map(({ id }, position) => {
                 const item = services.find((entry) => entry.id === id)!;
                 return (
                   <ServiceChoice
                     key={item.id}
+                    position={position}
                     item={item}
                     selected={item.id === service?.id}
                     onChoose={() => flow.actions.chooseService(item.id)}
@@ -247,7 +253,10 @@ function ServiceChoice({
   item,
   selected,
   onChoose,
+  position,
 }: {
+  /** Its place in its group: the cards come in one after another. */
+  position: number;
   item: BookableService;
   selected: boolean;
   onChoose: () => void;
@@ -260,7 +269,10 @@ function ServiceChoice({
   const description = useRef<HTMLSpanElement>(null);
   useHeightTween(description, text.folded);
   return (
-    <li className="flex flex-col gap-1">
+    <li
+      className="flex flex-col gap-1 motion-safe:animate-message"
+      style={cascade(position)}
+    >
       <button
         ref={card}
         type="button"

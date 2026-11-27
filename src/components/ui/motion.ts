@@ -12,6 +12,12 @@ const reduced = () =>
 
 const EASE = "cubic-bezier(0.2, 0.8, 0.2, 1)";
 
+/** This helper's own animations still running on `el` (jsdom has none). */
+const flying = (el: HTMLElement, id: string) =>
+  typeof el.getAnimations === "function"
+    ? el.getAnimations().filter((a) => a.id === id)
+    : [];
+
 /**
  * Whether a value moved back (before its previous value in `order`, or
  * smaller when no order is given): a slide then comes from the left.
@@ -34,13 +40,21 @@ export const slideClass = (back: boolean) =>
     : "motion-safe:animate-step-in-forward";
 
 /**
- * A pill that travels from the previous choice to the new one: put
- * `container` on a positioned parent and render `<span ref={pill}>` in
- * it; it covers the `[aria-pressed="true"]` child, moving by CSS.
+ * A pill that goes from the previous choice to the new one by stretching
+ * towards it, its leading edge first, then landing (squash and stretch:
+ * soft, not stiff). Put `container` on a positioned parent and render
+ * `<span ref={pill}>` in it; it covers the `[aria-pressed="true"]` child.
+ * `reveal` keeps that child in view inside a scrolling row.
  */
-export function useTravelPill<T extends HTMLElement>(key: unknown) {
+export function useTravelPill<T extends HTMLElement>(
+  key: unknown,
+  { reveal = false }: { reveal?: boolean } = {},
+) {
   const container = useRef<T>(null);
   const pill = useRef<HTMLSpanElement>(null);
+  const last = useRef<{ x: number; y: number; w: number; h: number } | null>(
+    null,
+  );
   useLayoutEffect(() => {
     const box = container.current;
     const span = pill.current;
@@ -49,31 +63,97 @@ export function useTravelPill<T extends HTMLElement>(key: unknown) {
       const on = box.querySelector<HTMLElement>('[aria-pressed="true"]');
       if (!on) {
         span.style.opacity = "0";
+        last.current = null;
         return;
       }
-      const jump = !animate || span.style.opacity !== "1";
-      if (jump) span.style.transition = "none";
-      span.style.opacity = "1";
-      span.style.translate = `${on.offsetLeft}px ${on.offsetTop}px`;
-      span.style.width = `${on.offsetWidth}px`;
-      span.style.height = `${on.offsetHeight}px`;
-      if (jump) {
-        void span.offsetWidth;
-        span.style.transition = "";
+      const to = {
+        x: on.offsetLeft,
+        y: on.offsetTop,
+        w: on.offsetWidth,
+        h: on.offsetHeight,
+      };
+      let from = last.current;
+      const midway = animate ? flying(span, "travel-pill") : [];
+      if (midway.length) {
+        // Tapped again before it landed: it leaves from where it is now.
+        const now = getComputedStyle(span);
+        const [x, y = 0] = now.translate.split(" ").map(parseFloat);
+        if (x !== undefined && !Number.isNaN(x))
+          from = { x, y, w: parseFloat(now.width), h: parseFloat(now.height) };
+        for (const a of midway) a.cancel();
       }
+      last.current = to;
+      Object.assign(span.style, {
+        opacity: "1",
+        translate: `${to.x}px ${to.y}px`,
+        width: `${to.w}px`,
+        height: `${to.h}px`,
+      });
+      if (reveal) on.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (
+        !animate ||
+        !from ||
+        reduced() ||
+        (from.x === to.x && from.y === to.y)
+      )
+        return;
+      const at = (x: number, y: number, w: number, h: number) => ({
+        translate: `${x}px ${y}px`,
+        width: `${w}px`,
+        height: `${h}px`,
+      });
+      // Along one row: stretch to cover both, then let the trailing edge
+      // catch up. Across rows: a plain glide.
+      const frames =
+        Math.abs(from.y + from.h / 2 - (to.y + to.h / 2)) < 1
+          ? to.x > from.x
+            ? [
+                at(from.x, from.y, from.w, from.h),
+                {
+                  ...at(
+                    from.x,
+                    to.y + to.h * 0.06,
+                    to.x + to.w - from.x,
+                    to.h * 0.88,
+                  ),
+                  offset: 0.45,
+                },
+                at(to.x, to.y, to.w, to.h),
+              ]
+            : [
+                at(from.x, from.y, from.w, from.h),
+                {
+                  ...at(
+                    to.x,
+                    to.y + to.h * 0.06,
+                    from.x + from.w - to.x,
+                    to.h * 0.88,
+                  ),
+                  offset: 0.45,
+                },
+                at(to.x, to.y, to.w, to.h),
+              ]
+          : [at(from.x, from.y, from.w, from.h), at(to.x, to.y, to.w, to.h)];
+      span.animate(frames, { duration: 420, easing: EASE, id: "travel-pill" });
     };
     place(true);
     if (typeof ResizeObserver === "undefined") return;
     const watch = new ResizeObserver(() => place(false));
     watch.observe(box);
     return () => watch.disconnect();
-  }, [key]);
+  }, [key, reveal]);
   return { container, pill };
 }
 
 /** The pill's own classes (its colour and shape are the caller's). */
-export const PILL_CLASS =
-  "pointer-events-none absolute top-0 left-0 opacity-0 transition-[translate,width,height] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] motion-reduce:transition-none";
+export const PILL_CLASS = "pointer-events-none absolute top-0 left-0 opacity-0";
+
+/**
+ * Items brought in one after another, not all at once: the style for the
+ * `index`-th one (a short cascade, capped so a long list is not slow).
+ */
+export const cascade = (index: number) =>
+  ({ animationDelay: `${Math.min(index, 12) * 28}ms` }) as const;
 
 /**
  * Height eased when `key` changes (« Lire la suite », a form that grows):
@@ -87,17 +167,22 @@ export function useHeightTween(
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const height = el.offsetHeight;
     const before = last.current;
+    const changed = before !== null && before.key !== key;
+    const midway = flying(el, "height-tween");
+    if (!changed && midway.length) return; // a render mid-way: let it finish
+    // Toggled again before it ended: it goes on from its height right now.
+    const start = midway.length ? el.offsetHeight : before?.height;
+    for (const a of midway) a.cancel();
+    const height = el.offsetHeight;
     last.current = { key, height };
-    if (!before || before.key === key || before.height === height || reduced())
-      return;
+    if (!changed || start === height || reduced()) return;
     el.animate(
       [
-        { height: `${before.height}px`, overflow: "hidden" },
+        { height: `${start}px`, overflow: "hidden" },
         { height: `${height}px`, overflow: "hidden" },
       ],
-      { duration: 260, easing: EASE },
+      { duration: 260, easing: EASE, id: "height-tween" },
     );
   });
 }
