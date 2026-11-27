@@ -1,7 +1,10 @@
 /* A press is felt at once (Higani: « on se perd au clic »): what is
-   pressed gives a little, before anything else happens. */
+   pressed gives a little, before anything else happens. Pressing eases in,
+   letting go snaps back (the transition sits on :active only, so it never
+   replaces a button's own colour transitions). */
 @media (prefers-reduced-motion: no-preference) {
   .site :is(button, a):not(:disabled):active {
     scale: 0.97;
+    transition: scale 160ms var(--ease-out-soft);
   }
 }
