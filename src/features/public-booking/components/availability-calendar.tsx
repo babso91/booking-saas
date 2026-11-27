@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { CalendarGrid } from "@/components/ui/calendar-grid";
-import { slideClass, useBackward } from "@/components/ui/motion";
+import { slideClass, useBackward, useLate } from "@/components/ui/motion";
 import {
   dayNumber,
   periodLabel,
@@ -89,6 +89,7 @@ export function AvailabilityCalendar({
     return () => controller.abort();
   }, [key, slug, serviceId, from, through, choices]);
   const result = loaded?.key === key ? loaded : null;
+  const slow = useLate(!result);
   const byDate = new Map(result?.days?.map((day) => [day.date, day.slots]));
   const empty =
     !!result?.days && result.days.every((day) => day.slots.length === 0);
@@ -147,7 +148,9 @@ export function AvailabilityCalendar({
       </header>
       <p role="status" className="min-h-5 text-xs text-ink-muted">
         {!result
-          ? "Recherche des créneaux disponibles…"
+          ? slow
+            ? "Recherche des créneaux disponibles…"
+            : ""
           : pendingStart
             ? "Vérification de l’horaire…"
             : result.days && !empty

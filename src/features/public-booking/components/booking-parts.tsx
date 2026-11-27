@@ -113,19 +113,41 @@ export function serviceFromLine(service: BookableService) {
   return varies ? `dès ${line}` : line;
 }
 
+type Quote = Extract<SlotsState, { status: "ready" }>["quote"];
+
+/**
+ * The quote to show: the server's, kept while another day loads (Higani:
+ * « une micro seconde ça écrit durée, ça fait un saut »). A day does not
+ * change her price; the new quote replaces it as soon as it is there.
+ */
+function useShownQuote(slots: SlotsState) {
+  const [kept, setKept] = useState<Quote | null>(
+    slots.status === "ready" ? slots.quote : null,
+  );
+  if (slots.status === "ready" && slots.quote !== kept) setKept(slots.quote);
+  if (slots.status === "ready") return slots.quote;
+  return slots.status === "loading" ? kept : null;
+}
+
 /** The server's quote for her answers, or where it stands. */
 export function QuoteLine({ slots }: { slots: SlotsState }) {
-  if (slots.status === "ready")
+  return <QuoteFigure quote={useShownQuote(slots)} status={slots.status} />;
+}
+
+function QuoteFigure({
+  quote,
+  status,
+}: {
+  quote: Quote | null;
+  status: SlotsState["status"];
+}) {
+  if (quote)
     return (
       <p className="text-[17px] font-semibold text-ink tabular-nums">
-        {serviceLine(
-          slots.quote.durationMinutes,
-          slots.quote.priceCents,
-          slots.quote.currency,
-        )}
+        {serviceLine(quote.durationMinutes, quote.priceCents, quote.currency)}
       </p>
     );
-  if (slots.status === "loading")
+  if (status === "loading")
     return (
       <p role="status" className="text-[15px] text-ink-muted">
         Calcul du prix et de la durée…
@@ -173,12 +195,13 @@ export function QuoteBreakdown({
   slots: SlotsState;
   serviceName: string;
 }) {
-  if (slots.status !== "ready") return <QuoteLine slots={slots} />;
-  const { quote } = slots;
+  const quote = useShownQuote(slots);
+  if (!quote) return <QuoteFigure quote={null} status={slots.status} />;
   const adding = quote.options.filter(
     (option) => option.priceDeltaCents || option.durationDeltaMinutes,
   );
-  if (!adding.length) return <QuoteLine slots={slots} />;
+  if (!adding.length)
+    return <QuoteFigure quote={quote} status={slots.status} />;
   const basePrice =
     quote.priceCents -
     adding.reduce((sum, option) => sum + option.priceDeltaCents, 0);

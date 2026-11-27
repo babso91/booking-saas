@@ -11,6 +11,7 @@ import {
   slideClass,
   useBackward,
   useCarryTo,
+  useLate,
   useTravelPill,
 } from "@/components/ui/motion";
 
@@ -80,6 +81,7 @@ export function SlotStep({
   const { container: viewBoxRef, pill: viewPillRef } =
     useTravelPill<HTMLElement>(view);
   const dayBack = useBackward(date);
+  const slowSlots = useLate(slots.status === "loading");
   const pageBack = useBackward(page);
   const { container: dayBoxRef, pill: dayPillRef } =
     useTravelPill<HTMLDivElement>(`${date}:${page}`);
@@ -362,7 +364,10 @@ export function SlotStep({
           {/* Her day's slots slide in from the side of the day she chose. */}
           <div key={date} className={slideClass(dayBack)}>
             {slots.status === "loading" ? (
-              <div className="flex flex-col gap-2" aria-busy="true">
+              <div
+                className={cn("flex flex-col gap-2", !slowSlots && "invisible")}
+                aria-busy="true"
+              >
                 <p role="status" className="text-[14px] text-ink-muted">
                   Recherche des créneaux disponibles…
                 </p>

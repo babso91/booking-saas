@@ -1,6 +1,12 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 
 // Shared motion (Higani: « qu'on ne se perde nulle part »): every change of
 // place, choice or size shows where it comes from and where it goes. Each
@@ -147,6 +153,24 @@ export function useTravelPill<T extends HTMLElement>(
 
 /** The pill's own classes (its colour and shape are the caller's). */
 export const PILL_CLASS = "pointer-events-none absolute top-0 left-0 opacity-0";
+
+/**
+ * Whether `on` has lasted `ms`: a loading hint shows only for a slow answer.
+ * A quick one would only flash it between two screens (Higani: « ça fait
+ * comme un saut »), so the caller keeps its space and shows nothing.
+ */
+export function useLate(on: boolean, ms = 300) {
+  const [late, setLate] = useState(false);
+  useEffect(() => {
+    if (!on) return;
+    const timer = setTimeout(() => setLate(true), ms);
+    return () => {
+      clearTimeout(timer);
+      setLate(false);
+    };
+  }, [on, ms]);
+  return on && late;
+}
 
 /**
  * Items brought in one after another, not all at once: the style for the
