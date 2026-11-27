@@ -188,7 +188,7 @@ export function ServiceStep({
                     heading?.scrollIntoView?.({ block: "start" });
                     heading?.focus({ preventScroll: true });
                   }}
-                  className="flex h-10 cursor-pointer items-center rounded-full border border-line bg-paper-raised px-4 text-[14px] font-medium whitespace-nowrap text-ink hover:border-line-strong"
+                  className="flex h-11 cursor-pointer items-center rounded-full border border-line bg-paper-raised px-4 text-[14px] font-medium whitespace-nowrap text-ink hover:border-line-strong"
                 >
                   {groupName(group)}
                 </button>
