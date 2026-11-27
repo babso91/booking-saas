@@ -993,6 +993,23 @@ describe("where, and how to reach her", () => {
         .getByRole("link", { name: "contact@exemple.fr" })
         .getAttribute("href"),
     ).toBe("mailto:contact@exemple.fr");
+    // Into her own calendar (point 79): Google's form, or a calendar file.
+    const calendar = within(
+      screen.getByRole("group", { name: "Ajouter à votre agenda" }),
+    );
+    const google = new URL(
+      calendar
+        .getByRole("link", { name: /Google Agenda/ })
+        .getAttribute("href")!,
+    );
+    expect(google.origin).toBe("https://calendar.google.com");
+    expect(google.searchParams.get("location")).toBe(place.address);
+    expect(google.searchParams.get("details")).toContain(
+      "Avant de venir : Venir démaquillée.",
+    );
+    expect(
+      calendar.getByRole("button", { name: "Apple, Outlook…" }),
+    ).toBeTruthy();
   });
 
   it("her conditions are read before she commits (point 6)", async () => {

@@ -9,6 +9,10 @@ import {
 import { businessSlugSchema } from "@/features/businesses/schemas/slug";
 import { getNextSlots } from "@/features/availability/data/slots";
 import { getPublicCatalog } from "@/features/catalog/data/catalog";
+import {
+  linkedService,
+  SERVICE_LINK_PARAM,
+} from "@/features/catalog/service-link";
 import { showcaseOf } from "@/features/experience/catalog/model";
 import { siteFontClasses } from "@/features/experience/fonts";
 import { MiniSite } from "@/features/experience/mini-site";
@@ -75,9 +79,16 @@ export async function generateMetadata({
 
 export default async function PublicBookingPage({
   params,
+  searchParams,
 }: PageProps<"/b/[slug]">) {
   const page = await readPublicPage((await params).slug);
   if (!page) notFound();
+  // A direct link to one of her services (point 29): its booking opens.
+  const asked = (await searchParams)[SERVICE_LINK_PARAM];
+  const linked = linkedService(
+    page.catalog.groups.flatMap((group) => group.services),
+    typeof asked === "string" ? asked : undefined,
+  );
   const reviewPage = await publicReviews(
     createPublicSupabaseClient(),
     page.business.slug,
@@ -105,12 +116,17 @@ export default async function PublicBookingPage({
         hours={page.hours}
         nextSlots={page.nextSlots}
         fontClasses={siteFontClasses}
+        openService={linked?.id}
       />
     );
 
   return (
     <>
-      <PublicBooking business={page.business} catalog={page.catalog} />
+      <PublicBooking
+        business={page.business}
+        catalog={page.catalog}
+        initialServiceId={linked?.id}
+      />
       {reviews}
     </>
   );

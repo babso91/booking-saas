@@ -137,7 +137,7 @@ const B = { userId: "user-b", businessId: "business-b" };
 async function renderManager(services: ServiceView[], scope = A) {
   actions.listServicesAction.mockResolvedValue(ok(services));
   actions.getBookingSettingsAction.mockResolvedValue(settings);
-  const view = render(<ServicesManager scope={scope} />);
+  const view = render(<ServicesManager scope={scope} slug="studio-test" />);
   await flush();
   return view;
 }
@@ -225,7 +225,7 @@ describe("services list", () => {
   it("a failed read says so and retries", async () => {
     actions.listServicesAction.mockResolvedValueOnce(fail("network"));
     actions.getBookingSettingsAction.mockResolvedValue(settings);
-    render(<ServicesManager scope={A} />);
+    render(<ServicesManager scope={A} slug="studio-test" />);
     await flush();
     expect(
       screen.getByText("Tes prestations n’ont pas pu être chargées."),
@@ -1099,7 +1099,7 @@ describe("another identity on the same mounted page", () => {
     actions.listServicesAction.mockResolvedValue(
       ok([service({ name: "Chez B" })]),
     );
-    view.rerender(<ServicesManager scope={B} />);
+    view.rerender(<ServicesManager scope={B} slug="studio-test" />);
     await flush();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(list().getByRole("heading", { name: "Chez B" })).toBeTruthy();
@@ -1130,7 +1130,7 @@ describe("another identity on the same mounted page", () => {
     type(/^Prix/, "99");
 
     actions.listServicesAction.mockResolvedValue(ok([shared]));
-    view.rerender(<ServicesManager scope={B} />);
+    view.rerender(<ServicesManager scope={B} slug="studio-test" />);
     await flush();
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(list().getByRole("button", { name: "Modifier Pose" }));
@@ -1161,7 +1161,7 @@ describe("another identity on the same mounted page", () => {
     await flush();
     expect(screen.getByText("Une création n’a pas été confirmée")).toBeTruthy();
 
-    view.rerender(<ServicesManager scope={B} />);
+    view.rerender(<ServicesManager scope={B} slug="studio-test" />);
     await flush();
     expect(screen.queryByText("Une création n’a pas été confirmée")).toBeNull();
     openCreate();
@@ -1186,13 +1186,13 @@ describe("another identity on the same mounted page", () => {
     const pendingA = deferred();
     actions.listServicesAction.mockReturnValueOnce(pendingA.promise);
     actions.getBookingSettingsAction.mockResolvedValue(settings);
-    const view = render(<ServicesManager scope={A} />);
+    const view = render(<ServicesManager scope={A} slug="studio-test" />);
     await flush();
 
     actions.listServicesAction.mockResolvedValue(
       ok([service({ name: "Chez B" })]),
     );
-    view.rerender(<ServicesManager scope={B} />);
+    view.rerender(<ServicesManager scope={B} slug="studio-test" />);
     await flush();
     pendingA.resolve(ok([service({ name: "Chez A" })]));
     await flush();
@@ -1213,7 +1213,7 @@ describe("another identity on the same mounted page", () => {
     actions.listServicesAction.mockResolvedValue(
       ok([service({ name: "Chez B" })]),
     );
-    view.rerender(<ServicesManager scope={B} />);
+    view.rerender(<ServicesManager scope={B} slug="studio-test" />);
     await flush();
     pendingCreate.resolve(ok(service({ name: "Soin" })));
     await flush();
@@ -1273,6 +1273,48 @@ describe("her categories", () => {
     expect(section("Vide").getByText("Aucune prestation")).toBeTruthy();
     expect(
       section("Sans catégorie").getByRole("heading", { name: "Libre" }),
+    ).toBeTruthy();
+  });
+
+  it("copies the direct link of each service booked online (Higani 29)", async () => {
+    const regard = category({ name: "Regard" });
+    const mains = category({ name: "Mains", visible: false });
+    catalogCategories = [regard, mains];
+    const cils = service({
+      name: "Rehaussement de cils",
+      categoryId: regard.id,
+    });
+    await renderManager([
+      cils,
+      service({ name: "Teinture", categoryId: regard.id, active: false }),
+      service({ name: "Ongles", categoryId: mains.id }),
+    ]);
+    // Deactivated, or in a hidden category: no link, nothing to book.
+    expect(
+      screen.getAllByRole("button", { name: /^Copier le lien de / }),
+    ).toHaveLength(1);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Copier le lien de Rehaussement de cils",
+      }),
+    );
+    await flush();
+    expect(writeText).toHaveBeenCalledWith(
+      `${window.location.origin}/b/studio-test?prestation=rehaussement-de-cils-${cils.id.slice(0, 8)}`,
+    );
+    expect(section("Regard").getByText("Lien copié")).toBeTruthy();
+    // Refused: the address is shown, to copy by hand.
+    writeText.mockRejectedValueOnce(new Error("denied"));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Copier le lien de Rehaussement de cils",
+      }),
+    );
+    await flush();
+    expect(
+      section("Regard").getByText(/Copie refusée, copie-le : http/),
     ).toBeTruthy();
   });
 
@@ -1611,7 +1653,7 @@ describe("her categories", () => {
         })),
       });
     });
-    render(<ServicesManager scope={A} />);
+    render(<ServicesManager scope={A} slug="studio-test" />);
     await flush();
     expect(list().getByText(/· 1 option$/)).toBeTruthy();
     fireEvent.click(list().getByRole("button", { name: "Modifier Henné" }));

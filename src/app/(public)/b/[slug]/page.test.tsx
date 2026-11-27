@@ -30,7 +30,10 @@ vi.mock("next/navigation", () => ({
 
 import PublicBookingPage, { generateMetadata } from "./page";
 
-const params = (slug: string) => ({ params: Promise.resolve({ slug }) });
+const params = (slug: string, search: Record<string, string> = {}) => ({
+  params: Promise.resolve({ slug }),
+  searchParams: Promise.resolve(search),
+});
 const notPublished = () =>
   Promise.reject(new AppException("site_not_published"));
 const emptyCatalog = { currency: "EUR", groups: [] };
@@ -135,6 +138,45 @@ describe("/b/[slug]", () => {
         },
       },
     });
+  });
+
+  it("a direct link to a service opens its booking, on her site or her booking page (Higani 29)", async () => {
+    const lash = {
+      id: "3c9f2a1e-8b7d-4c3a-9f1e-2d4b6a8c0e1f",
+      name: "Rehaussement de cils",
+      description: null,
+      durationMinutes: 60,
+      priceCents: 6500,
+      options: [],
+    };
+    catalog.getPublicCatalog.mockResolvedValue({
+      currency: "EUR",
+      groups: [{ category: null, services: [lash] }],
+    });
+    const linked = { prestation: "rehaussement-de-cils-3c9f2a1e" };
+    const page = await PublicBookingPage(
+      params("studio-mila", linked) as never,
+    );
+    expect(page.props.children[0].props.initialServiceId).toBe(lash.id);
+
+    sites.getPublishedSite.mockResolvedValue({
+      versionId: "v",
+      number: 1,
+      publishedAt: "2026-11-05T10:00:00.000Z",
+      plan: "core",
+      schemaVersion: 1,
+      config: sampleSiteConfig(),
+      unavailableAssets: [],
+    });
+    const site = await PublicBookingPage(
+      params("studio-mila", linked) as never,
+    );
+    expect(site.props.openService).toBe(lash.id);
+    // Gone, hidden or unknown: her page as it always opens.
+    const plain = await PublicBookingPage(
+      params("studio-mila", { prestation: "manucure-0badc0de" }) as never,
+    );
+    expect(plain.props.openService).toBeUndefined();
   });
 
   it("any other failure reading the site is not swallowed", async () => {

@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -11,6 +12,8 @@ import {
   PinIcon,
 } from "@/components/ui/icons";
 import { formatPrice } from "@/features/agenda/client/money";
+import { serviceLinkPath } from "@/features/catalog/service-link";
+import { AddToCalendar } from "@/features/public-booking/components/booking-confirmation";
 
 import { fetchAppointment } from "../client/api";
 import {
@@ -162,6 +165,18 @@ function Detail({
               {formatPrice(appointment.priceCents, appointment.currency)}
             </Fact>
           </dl>
+          {/* In her own calendar (Higani point 79). */}
+          {upcoming ? (
+            <AddToCalendar
+              event={{
+                id: appointment.id,
+                title: `${appointment.serviceName} · ${place.name}`,
+                startsAt: appointment.startsAt,
+                endsAt: appointment.endsAt,
+                location: place.location,
+              }}
+            />
+          ) : null}
         </div>
 
         <section
@@ -202,11 +217,21 @@ function Detail({
               </p>
             </div>
           ) : null}
+          {/* Done: the same service again (Higani point 81), found by its
+              name on her page; gone or renamed, her page itself. */}
           <Link
-            href={bookingHref(place.slug)}
+            href={
+              upcoming
+                ? bookingHref(place.slug)
+                : (serviceLinkPath(place.slug, {
+                    name: appointment.serviceName,
+                  }) as Route)
+            }
             className="inline-flex h-11 w-fit items-center gap-2 rounded-full border border-line px-5 text-[14.5px] font-medium text-ink transition-colors hover:border-line-strong"
           >
-            {upcoming ? "Réserver un autre créneau" : "Reprendre rendez-vous"}{" "}
+            {upcoming
+              ? "Réserver un autre créneau"
+              : "Reprendre cette prestation"}{" "}
             <ArrowRightIcon size={16} />
           </Link>
         </section>

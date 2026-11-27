@@ -1,8 +1,11 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import type { Practical } from "@/features/experience/engine/config";
 import { sampleSite } from "@/features/experience/fixtures/sample-sites";
 import { emptyPractical } from "@/features/experience/practical";
+import { serviceLinkPath } from "@/features/catalog/service-link";
 import {
   addDays,
   businessToday,
@@ -250,6 +253,7 @@ describe.each(VARIANTS)(
         data?: {
           booking: {
             appointmentId: string;
+            startsAt: string;
             status: string;
             priceCents: number;
             durationMinutes: number;
@@ -279,6 +283,21 @@ describe.each(VARIANTS)(
         .waitFor();
       await sheet.getByText(/^85,00\s€$/).waitFor();
       await check("confirmed");
+      // Into her own calendar (point 79): the file holds the booked times.
+      const [file] = await Promise.all([
+        page.waitForEvent("download"),
+        sheet.getByRole("button", { name: "Apple, Outlook…" }).click(),
+      ]);
+      expect(file.suggestedFilename()).toBe("rendez-vous.ics");
+      await sheet
+        .getByRole("group", { name: "Ajouter à votre agenda" })
+        .scrollIntoViewIfNeeded();
+      await capture(page, `mini-site booking ${name} add to calendar`);
+      const ics = await readFile(await file.path(), "utf8");
+      expect(ics).toMatch(/^BEGIN:VCALENDAR\r\n/);
+      expect(ics).toContain(
+        `DTSTART:${body.data.booking.startsAt.replace(/[-:]/g, "").replace(/\.\d{3}/, "")}`,
+      );
 
       // Booked as the server priced it, with her answers kept.
       const booked = await db.query<{
@@ -338,6 +357,56 @@ describe.each(VARIANTS)(
     });
   },
 );
+
+describe("a direct link to one of her services (point 29)", () => {
+  it("opens its booking at once; closed, her page's address is plain again", async () => {
+    const pro = await publishedSiteWithOptions("mila");
+    const { page, errors } = await signedInPage(new Browser(), {
+      appearance: null,
+      width: 390,
+      height: 860,
+      phone: true,
+    });
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await behindIngress(page.context(), "203.0.113.35");
+    const { rows } = await db.query<{ name: string }>(
+      "select name from public.services where id = $1",
+      [pro.service],
+    );
+    const service = { id: pro.service, name: rows[0]!.name };
+
+    await page.goto(`${APP}${serviceLinkPath(pro.slug, service)}`);
+    const sheet = page.getByRole("dialog", {
+      name: "Réserver chez Studio Lumière",
+    });
+    // Her service chosen already: straight to its options.
+    await sheet
+      .getByRole("heading", { name: "Personnalisez votre prestation" })
+      .waitFor();
+    await sheet.getByText(service.name).first().waitFor();
+    expect(await noSideScroll(page)).toBe(true);
+    await expectAccessible(page, "direct link");
+    await capture(page, "p29-direct-link-390");
+
+    await sheet.getByRole("button", { name: /^Fermer/ }).click();
+    await sheet.waitFor({ state: "detached" });
+    expect(new URL(page.url()).search).toBe("");
+    // A reload is her site, nothing opened.
+    await page.reload();
+    await page.getByText("Studio Lumière").first().waitFor();
+    expect(await sheet.count()).toBe(0);
+
+    // Gone or unknown: her site, as it always opens.
+    await page.goto(`${APP}/b/${pro.slug}?prestation=manucure-0badc0de`);
+    await page.getByText("Studio Lumière").first().waitFor();
+    expect(await sheet.count()).toBe(0);
+    expect(errors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+});
 
 describe("her booking taken back (points 67, 70)", () => {
   it("says the slot is not booked yet, then resumes at the review after a reload", async () => {
