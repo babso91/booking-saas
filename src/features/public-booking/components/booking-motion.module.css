@@ -1,20 +1,51 @@
+/* Each step slides in the way she travels (public-booking.tsx): forward
+   from the right, back from the left, enough to be seen. When a card is
+   carried from one step to the next (motion.ts), the step does not slide:
+   the card flies and the rest fades in around it. The track clips the
+   slide a little outside the step, so focus rings stay whole and nothing
+   scrolls aside. */
+.track {
+  overflow-x: clip;
+  padding-inline: 8px;
+  margin-inline: -8px;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .step {
-    animation: step-in 180ms ease-out;
+    animation: step-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .step[data-back] {
+    animation-name: step-back;
+  }
+  .step[data-carry] {
+    animation: none;
+  }
+  /* Forward, the new screen fades in around the card; back, the list is
+     there at once and the card flies back to its place. */
+  .step[data-carry]:not([data-back]) > section > :not([data-carry]) {
+    animation: step-fade 320ms ease-out both;
   }
   .step button {
     transition:
       background-color 120ms,
-      border-color 120ms;
+      border-color 120ms,
+      color 120ms;
   }
   @keyframes step-in {
     from {
-      opacity: 0.4;
-      transform: translateY(4px);
+      opacity: 0;
+      transform: translateX(36px);
     }
-    to {
-      opacity: 1;
-      transform: none;
+  }
+  @keyframes step-back {
+    from {
+      opacity: 0;
+      transform: translateX(-36px);
+    }
+  }
+  @keyframes step-fade {
+    from {
+      opacity: 0;
     }
   }
 }

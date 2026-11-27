@@ -4,6 +4,17 @@ import { useRef, type Ref } from "react";
 
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
+import {
+  carryFrom,
+  cascade,
+  PILL_CLASS,
+  slideClass,
+  useBackward,
+  useCarryTo,
+  useLate,
+  useTravelPill,
+} from "@/components/ui/motion";
+
 import { cn } from "@/lib/cn";
 
 import { dayLabel, dayParts, wallTime } from "../client/business-time";
@@ -34,6 +45,8 @@ export type CalendarPosition = {
 /**
  * Choose a slot in the business time zone, within the booking horizon.
  */
+const VIEWS = ["day", "week", "month"] as const;
+
 export function SlotStep({
   flow,
   headingRef,
@@ -56,10 +69,22 @@ export function SlotStep({
   const index = Math.max(0, days.indexOf(date));
   const { view, anchor } = position;
   const daySlots = useRef<HTMLDivElement>(null);
+  // Her service, carried from the card she tapped (and back to it).
+  const summary = useRef<HTMLDivElement>(null);
+  const carryKey = `service:${flow.service?.id}`;
+  useCarryTo(carryKey, summary);
   const inlineMonth = view === "month" && format !== "calendar";
   const clampDate = (day: string) =>
     day < days[0]! ? days[0]! : day > days.at(-1)! ? days.at(-1)! : day;
   const page = Math.floor(Math.max(0, days.indexOf(clampDate(anchor))) / WEEK);
+  const viewBack = useBackward(view, VIEWS);
+  const { container: viewBoxRef, pill: viewPillRef } =
+    useTravelPill<HTMLElement>(view);
+  const dayBack = useBackward(date);
+  const slowSlots = useLate(slots.status === "loading");
+  const pageBack = useBackward(page);
+  const { container: dayBoxRef, pill: dayPillRef } =
+    useTravelPill<HTMLDivElement>(`${date}:${page}`);
   function goToView(
     next: CalendarPosition["view"],
     day: string,
@@ -104,7 +129,11 @@ export function SlotStep({
         </StepHeading>
       </div>
 
-      <div className="flex flex-col gap-1 rounded-2xl border border-line bg-paper-raised px-4 py-3">
+      <div
+        ref={summary}
+        data-carry={carryKey}
+        className="flex flex-col gap-1 rounded-2xl border border-line bg-paper-raised px-4 py-3"
+      >
         <p className="text-[15px] font-semibold wrap-anywhere text-ink">
           {service.name}
         </p>
@@ -144,7 +173,10 @@ export function SlotStep({
           <button
             type="button"
             className={linkAction}
-            onClick={() => flow.actions.goTo("service")}
+            onClick={() => {
+              carryFrom(carryKey, summary.current);
+              flow.actions.goTo("service");
+            }}
           >
             Changer de prestation
           </button>
@@ -166,7 +198,17 @@ export function SlotStep({
         </Notice>
       ) : null}
 
-      <nav aria-label="Vue des disponibilités" className="flex gap-1">
+      <nav
+        ref={viewBoxRef}
+        aria-label="Vue des disponibilités"
+        className="relative isolate flex gap-1"
+      >
+        {/* The chosen view: one pill that travels from the last one. */}
+        <span
+          ref={viewPillRef}
+          aria-hidden="true"
+          className={cn(PILL_CLASS, "-z-10 rounded-xl bg-ink")}
+        />
         {(
           [
             ["day", "Jour"],
@@ -182,10 +224,10 @@ export function SlotStep({
               if (view !== value) goToView(value, anchor);
             }}
             className={cn(
-              "min-h-11 rounded-xl border px-3 text-sm font-semibold",
+              "min-h-11 rounded-xl border px-3 text-sm font-semibold transition-colors duration-300",
               view === value
-                ? "border-ink bg-ink text-paper-raised"
-                : "border-line bg-paper-raised text-ink",
+                ? "border-ink text-paper-raised"
+                : "border-line text-ink",
             )}
           >
             {label}
@@ -201,84 +243,99 @@ export function SlotStep({
           ← Revenir au mois
         </button>
       )}
-      {view !== "day" ? (
-        <AvailabilityCalendar
-          view={view}
-          anchor={anchor}
-          onAnchor={(next) => goToView(view, next)}
-          flow={flow}
-          chronological={format === "chronological"}
-          onSelectDate={selectMonthDay}
-          // Her month above the day's slots: the day says what is next.
-          nextOpening={
-            !(inlineMonth && anchor.slice(0, 7) === date.slice(0, 7))
-          }
-        />
-      ) : (
-        <fieldset className="flex min-w-0 flex-col gap-3">
-          <legend className="mb-3 text-[15px] font-medium text-ink">
-            Jour
-          </legend>
-          <div className="flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => chooseDate(days[(page - 1) * WEEK]!)}
-              disabled={page === 0}
-              aria-label="Semaine précédente"
-              className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-ink-soft hover:bg-sand disabled:cursor-not-allowed disabled:opacity-30"
+      <div key={view} className={slideClass(viewBack)}>
+        {view !== "day" ? (
+          <AvailabilityCalendar
+            view={view}
+            anchor={anchor}
+            onAnchor={(next) => goToView(view, next)}
+            flow={flow}
+            chronological={format === "chronological"}
+            onSelectDate={selectMonthDay}
+            // Her month above the day's slots: the day says what is next.
+            nextOpening={
+              !(inlineMonth && anchor.slice(0, 7) === date.slice(0, 7))
+            }
+          />
+        ) : (
+          <fieldset className="flex min-w-0 flex-col gap-3">
+            <legend className="mb-3 text-[15px] font-medium text-ink">
+              Jour
+            </legend>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => chooseDate(days[(page - 1) * WEEK]!)}
+                disabled={page === 0}
+                aria-label="Semaine précédente"
+                className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-ink-soft hover:bg-sand disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                <ChevronLeftIcon size={18} />
+              </button>
+              <p className="text-[14px] text-ink-soft" aria-live="polite">
+                {week.length > 0
+                  ? `Du ${dayLabel(week[0]!)} au ${dayLabel(week.at(-1)!)}`
+                  : null}
+              </p>
+              <button
+                type="button"
+                onClick={() => chooseDate(days[(page + 1) * WEEK]!)}
+                disabled={page >= pages - 1}
+                aria-label="Semaine suivante"
+                className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-ink-soft hover:bg-sand disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                <ChevronRightIcon size={18} />
+              </button>
+            </div>
+            <div
+              key={page}
+              ref={dayBoxRef}
+              className={cn(
+                "relative isolate grid grid-cols-7 gap-1 sm:gap-2",
+                slideClass(pageBack),
+              )}
             >
-              <ChevronLeftIcon size={18} />
-            </button>
-            <p className="text-[14px] text-ink-soft" aria-live="polite">
-              {week.length > 0
-                ? `Du ${dayLabel(week[0]!)} au ${dayLabel(week.at(-1)!)}`
-                : null}
-            </p>
-            <button
-              type="button"
-              onClick={() => chooseDate(days[(page + 1) * WEEK]!)}
-              disabled={page >= pages - 1}
-              aria-label="Semaine suivante"
-              className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-ink-soft hover:bg-sand disabled:cursor-not-allowed disabled:opacity-30"
-            >
-              <ChevronRightIcon size={18} />
-            </button>
-          </div>
-          <div className="grid grid-cols-7 gap-1 sm:gap-2">
-            {week.map((day) => {
-              const parts = dayParts(day);
-              const selected = day === date;
-              return (
-                <button
-                  key={day}
-                  type="button"
-                  onClick={() => chooseDate(day)}
-                  aria-pressed={selected}
-                  className={cn(
-                    "flex min-w-0 cursor-pointer flex-col items-center gap-0.5 rounded-2xl border px-0.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
-                    selected
-                      ? "border-ink bg-ink text-paper-raised"
-                      : "border-line bg-paper-raised text-ink hover:border-line-strong",
-                  )}
-                >
-                  <span className="text-[11.5px] capitalize opacity-80">
-                    {parts.weekday}
-                  </span>
-                  <span className="text-[17px] leading-none font-semibold">
-                    {parts.day}
-                  </span>
-                  <span className="text-[11.5px] opacity-80">
-                    {parts.month}
-                  </span>
-                  {/* Its name starts with what is written (voice control),
+              {/* The chosen day: a pill that travels from the last one. */}
+              <span
+                ref={dayPillRef}
+                aria-hidden="true"
+                className={cn(PILL_CLASS, "-z-10 rounded-2xl bg-ink")}
+              />
+              {week.map((day) => {
+                const parts = dayParts(day);
+                const selected = day === date;
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => chooseDate(day)}
+                    aria-pressed={selected}
+                    className={cn(
+                      "flex min-w-0 cursor-pointer flex-col items-center gap-0.5 rounded-2xl border px-0.5 py-2 transition-colors duration-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
+                      selected
+                        ? "border-ink text-paper-raised"
+                        : "border-line text-ink hover:border-line-strong",
+                    )}
+                  >
+                    <span className="text-[11.5px] capitalize opacity-80">
+                      {parts.weekday}
+                    </span>
+                    <span className="text-[17px] leading-none font-semibold">
+                      {parts.day}
+                    </span>
+                    <span className="text-[11.5px] opacity-80">
+                      {parts.month}
+                    </span>
+                    {/* Its name starts with what is written (voice control),
                     then says the day in full. */}
-                  <span className="sr-only">, {dayLabel(day)}</span>
-                </button>
-              );
-            })}
-          </div>
-        </fieldset>
-      )}
+                    <span className="sr-only">, {dayLabel(day)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+        )}
+      </div>
 
       {view === "week" ? <TimeZoneNote timezone={business.timezone} /> : null}
       {view === "week" && slots.status === "error" ? (
@@ -304,74 +361,84 @@ export function SlotStep({
           </div>
           <TimeZoneNote timezone={business.timezone} />
 
-          {slots.status === "loading" ? (
-            <div className="flex flex-col gap-2" aria-busy="true">
-              <p role="status" className="text-[14px] text-ink-muted">
-                Recherche des créneaux disponibles…
-              </p>
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                {[0, 1, 2, 3, 4, 5].map((key) => (
-                  <span
-                    key={key}
-                    className="h-12 animate-pulse rounded-xl bg-sand/60"
-                  />
-                ))}
+          {/* Her day's slots slide in from the side of the day she chose. */}
+          <div key={date} className={slideClass(dayBack)}>
+            {slots.status === "loading" ? (
+              <div
+                className={cn("flex flex-col gap-2", !slowSlots && "invisible")}
+                aria-busy="true"
+              >
+                <p role="status" className="text-[14px] text-ink-muted">
+                  Recherche des créneaux disponibles…
+                </p>
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                  {[0, 1, 2, 3, 4, 5].map((key) => (
+                    <span
+                      key={key}
+                      className="h-12 animate-pulse rounded-xl bg-sand/60"
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ) : slots.status === "error" ? (
-            <Notice
-              tone={slots.error.code === "network" ? "offline" : "error"}
-              title="Créneaux indisponibles pour le moment"
-              action={
-                <button
-                  type="button"
-                  className={linkAction}
-                  onClick={flow.actions.refreshSlots}
-                >
-                  Réessayer
-                </button>
-              }
-            >
-              {slots.error.code === "network"
-                ? "La connexion a été interrompue."
-                : "Les créneaux n’ont pas pu être chargés."}
-            </Notice>
-          ) : slots.status === "ready" && slots.slots.length === 0 ? (
-            <NextOpeningNote
-              flow={flow}
-              after={date}
-              lead="Aucun créneau disponible ce jour-là."
-              onGo={chooseDate}
-              fallbackDay={nextDay}
-            />
-          ) : slots.status === "ready" ? (
-            <ul
-              className="grid grid-cols-3 gap-2 sm:grid-cols-4"
-              aria-label={`Créneaux du ${dayLabel(date)}`}
-            >
-              {slots.slots.map((item) => {
-                const selected = item.startsAt === slot?.startsAt;
-                return (
-                  <li key={item.startsAt}>
-                    <button
-                      type="button"
-                      onClick={() => flow.actions.chooseSlot(item)}
-                      aria-pressed={selected}
-                      aria-label={`${dayLabel(date)} à ${wallTime(item.localStartsAt)}`}
-                      className={cn(
-                        "h-12 w-full cursor-pointer rounded-xl border text-[15.5px] font-semibold tabular-nums transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
-                        selected
-                          ? "border-ink bg-ink text-paper-raised"
-                          : "border-line bg-paper-raised text-ink hover:border-line-strong",
-                      )}
+            ) : slots.status === "error" ? (
+              <Notice
+                tone={slots.error.code === "network" ? "offline" : "error"}
+                title="Créneaux indisponibles pour le moment"
+                action={
+                  <button
+                    type="button"
+                    className={linkAction}
+                    onClick={flow.actions.refreshSlots}
+                  >
+                    Réessayer
+                  </button>
+                }
+              >
+                {slots.error.code === "network"
+                  ? "La connexion a été interrompue."
+                  : "Les créneaux n’ont pas pu être chargés."}
+              </Notice>
+            ) : slots.status === "ready" && slots.slots.length === 0 ? (
+              <NextOpeningNote
+                flow={flow}
+                after={date}
+                lead="Aucun créneau disponible ce jour-là."
+                onGo={chooseDate}
+                fallbackDay={nextDay}
+              />
+            ) : slots.status === "ready" ? (
+              <ul
+                className="grid grid-cols-3 gap-2 sm:grid-cols-4"
+                aria-label={`Créneaux du ${dayLabel(date)}`}
+              >
+                {slots.slots.map((item, position) => {
+                  const selected = item.startsAt === slot?.startsAt;
+                  return (
+                    <li
+                      key={item.startsAt}
+                      className="motion-safe:animate-message"
+                      style={cascade(position)}
                     >
-                      {wallTime(item.localStartsAt)}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : null}
+                      <button
+                        type="button"
+                        onClick={() => flow.actions.chooseSlot(item)}
+                        aria-pressed={selected}
+                        aria-label={`${dayLabel(date)} à ${wallTime(item.localStartsAt)}`}
+                        className={cn(
+                          "h-12 w-full cursor-pointer rounded-xl border text-[15.5px] font-semibold tabular-nums transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
+                          selected
+                            ? "border-ink bg-ink text-paper-raised"
+                            : "border-line bg-paper-raised text-ink hover:border-line-strong",
+                        )}
+                      >
+                        {wallTime(item.localStartsAt)}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+          </div>
         </div>
       ) : view === "month" ? (
         <TimeZoneNote timezone={business.timezone} />

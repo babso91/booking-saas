@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 
 import { useEngine } from "./engine";
 import { cssVariables } from "./tokens";
+import pressStyles from "./press.module.css";
 
 // The site's modal surfaces (booking, full-screen photo) share one
 // behaviour: rendered on <body>, above every layer of the page and of the
@@ -59,7 +60,7 @@ export function SitePortal({
     <div
       ref={rootRef}
       lang="fr"
-      className={`relative ${MODAL_LAYER}`}
+      className={`relative ${MODAL_LAYER} ${pressStyles.site}`}
       style={{
         ...fonts,
         ...cssVariables(config.tokens),

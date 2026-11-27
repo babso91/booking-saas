@@ -4,6 +4,12 @@ import { useEffect, useState } from "react";
 
 import { CalendarGrid } from "@/components/ui/calendar-grid";
 import {
+  cascade,
+  slideClass,
+  useBackward,
+  useLate,
+} from "@/components/ui/motion";
+import {
   dayNumber,
   periodLabel,
   shiftAnchor,
@@ -45,6 +51,7 @@ export function AvailabilityCalendar({
   const range = rolling
     ? rollingRange(flow.days, anchor)
     : visibleRange(view, anchor);
+  const periodBack = useBackward(range.startDate);
   const days = range.days.filter(
     (day) => day >= flow.days[0]! && day <= flow.days.at(-1)!,
   );
@@ -87,6 +94,7 @@ export function AvailabilityCalendar({
     return () => controller.abort();
   }, [key, slug, serviceId, from, through, choices]);
   const result = loaded?.key === key ? loaded : null;
+  const slow = useLate(!result);
   const byDate = new Map(result?.days?.map((day) => [day.date, day.slots]));
   const empty =
     !!result?.days && result.days.every((day) => day.slots.length === 0);
@@ -97,6 +105,7 @@ export function AvailabilityCalendar({
     checking?.key === key && flow.slots.status === "loading"
       ? checking.start
       : undefined;
+  const slowCheck = useLate(pendingStart !== undefined);
   function chooseTime(day: string, start: string) {
     setChecking({ key, start });
     flow.actions.chooseCalendarSlot(day, start);
@@ -145,8 +154,10 @@ export function AvailabilityCalendar({
       </header>
       <p role="status" className="min-h-5 text-xs text-ink-muted">
         {!result
-          ? "Recherche des créneaux disponibles…"
-          : pendingStart
+          ? slow
+            ? "Recherche des créneaux disponibles…"
+            : ""
+          : pendingStart && slowCheck
             ? "Vérification de l’horaire…"
             : result.days && !empty
               ? view === "month"
@@ -178,107 +189,112 @@ export function AvailabilityCalendar({
           onGo={onAnchor}
         />
       ) : null}
-      {view === "month" ? (
-        <>
-          <CalendarGrid days={range.days}>
-            {(date) => {
-              const slots = byDate.get(date) ?? [];
-              return (
-                <button
-                  type="button"
-                  aria-pressed={date === flow.date}
-                  disabled={!slots.length}
-                  onClick={() => onSelectDate(date)}
-                  className={cn(
-                    "flex min-h-16 w-full flex-col items-center rounded-lg border p-0.5 text-[10px] text-ink disabled:text-ink-muted",
-                    date === flow.date
-                      ? "border-ink bg-sand"
-                      : "border-line bg-paper-raised",
-                  )}
-                >
-                  <span className="text-sm font-semibold">
-                    {dayNumber(date)}
-                  </span>
-                  {slots.slice(0, 2).map((slot) => (
-                    <span key={slot.startsAt}>
-                      {wallTime(slot.localStartsAt)}
+      {/* The period slides in from the side she went to (‹ or ›). */}
+      <div key={range.startDate} className={slideClass(periodBack)}>
+        {view === "month" ? (
+          <>
+            <CalendarGrid days={range.days}>
+              {(date) => {
+                const slots = byDate.get(date) ?? [];
+                return (
+                  <button
+                    type="button"
+                    aria-pressed={date === flow.date}
+                    disabled={!slots.length}
+                    onClick={() => onSelectDate(date)}
+                    className={cn(
+                      "flex min-h-16 w-full flex-col items-center rounded-lg border p-0.5 text-[10px] text-ink disabled:text-ink-muted",
+                      date === flow.date
+                        ? "border-ink bg-sand"
+                        : "border-line bg-paper-raised",
+                    )}
+                  >
+                    <span className="text-sm font-semibold">
+                      {dayNumber(date)}
                     </span>
-                  ))}
-                  {slots.length > 2 ? <span>+{slots.length - 2}</span> : null}
-                  <span className="sr-only">{` · ${dayLabel(date)}, ${slots.length} créneaux`}</span>
-                </button>
-              );
-            }}
-          </CalendarGrid>
-        </>
-      ) : !result ? (
-        <div aria-hidden="true" className="grid gap-3">
-          {days.map((day) => (
-            <div
-              key={day}
-              className="min-h-24 rounded-xl border border-line bg-paper-raised p-3"
-            >
-              <p className="mb-3 text-sm font-semibold capitalize">
-                {dayLabel(day)}
-              </p>
-              <div className="grid grid-cols-3 gap-2">
-                {[0, 1, 2].map((i) => (
-                  <span
-                    key={i}
-                    className="h-9 rounded-lg bg-sand motion-safe:animate-pulse"
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : chronological && listedDays?.length === 0 ? (
-        nextOpening ? null : (
-          <p role="status" className="text-sm text-ink-muted">
-            Aucun créneau disponible sur cette période.
-          </p>
-        )
-      ) : (
-        listedDays?.map(({ date, slots }) => (
-          <section
-            key={date}
-            className="rounded-xl border border-line bg-paper-raised p-3"
-          >
-            <h3 className="mb-2 text-sm font-semibold capitalize text-ink">
-              {dayLabel(date)}
-            </h3>
-            {slots.length ? (
-              <div>
-                <SlotTimes
-                  selected={flow.slot?.startsAt}
-                  date={date}
-                  slots={chronological ? slots.slice(0, 6) : slots}
-                  onChoose={chooseTime}
-                  pending={pendingStart}
-                />
-                {chronological && slots.length > 6 ? (
-                  <details>
-                    <summary className="my-1 min-h-11 cursor-pointer py-3 text-sm font-medium text-ink-soft">
-                      Voir les {slots.length - 6} autres horaires
-                    </summary>
-                    <SlotTimes
-                      selected={flow.slot?.startsAt}
-                      date={date}
-                      slots={slots.slice(6)}
-                      onChoose={chooseTime}
-                      pending={pendingStart}
+                    {slots.slice(0, 2).map((slot) => (
+                      <span key={slot.startsAt}>
+                        {wallTime(slot.localStartsAt)}
+                      </span>
+                    ))}
+                    {slots.length > 2 ? <span>+{slots.length - 2}</span> : null}
+                    <span className="sr-only">{` · ${dayLabel(date)}, ${slots.length} créneaux`}</span>
+                  </button>
+                );
+              }}
+            </CalendarGrid>
+          </>
+        ) : !result ? (
+          <div aria-hidden="true" className="grid gap-3">
+            {days.map((day) => (
+              <div
+                key={day}
+                className="min-h-24 rounded-xl border border-line bg-paper-raised p-3"
+              >
+                <p className="mb-3 text-sm font-semibold capitalize">
+                  {dayLabel(day)}
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[0, 1, 2].map((i) => (
+                    <span
+                      key={i}
+                      className="h-9 rounded-lg bg-sand motion-safe:animate-pulse"
                     />
-                  </details>
-                ) : null}
+                  ))}
+                </div>
               </div>
-            ) : (
-              <p className="text-sm text-ink-muted">
-                Aucun créneau disponible.
-              </p>
-            )}
-          </section>
-        ))
-      )}
+            ))}
+          </div>
+        ) : chronological && listedDays?.length === 0 ? (
+          nextOpening ? null : (
+            <p role="status" className="text-sm text-ink-muted">
+              Aucun créneau disponible sur cette période.
+            </p>
+          )
+        ) : (
+          listedDays?.map(({ date, slots }, position) => (
+            // Her days come in one after another, not all at once.
+            <section
+              key={date}
+              className="rounded-xl border border-line bg-paper-raised p-3 motion-safe:animate-message"
+              style={cascade(position)}
+            >
+              <h3 className="mb-2 text-sm font-semibold capitalize text-ink">
+                {dayLabel(date)}
+              </h3>
+              {slots.length ? (
+                <div>
+                  <SlotTimes
+                    selected={flow.slot?.startsAt}
+                    date={date}
+                    slots={chronological ? slots.slice(0, 6) : slots}
+                    onChoose={chooseTime}
+                    pending={pendingStart}
+                  />
+                  {chronological && slots.length > 6 ? (
+                    <details>
+                      <summary className="my-1 min-h-11 cursor-pointer py-3 text-sm font-medium text-ink-soft">
+                        Voir les {slots.length - 6} autres horaires
+                      </summary>
+                      <SlotTimes
+                        selected={flow.slot?.startsAt}
+                        date={date}
+                        slots={slots.slice(6)}
+                        onChoose={chooseTime}
+                        pending={pendingStart}
+                      />
+                    </details>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-sm text-ink-muted">
+                  Aucun créneau disponible.
+                </p>
+              )}
+            </section>
+          ))
+        )}
+      </div>
     </div>
   );
 }

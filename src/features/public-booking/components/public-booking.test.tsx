@@ -822,6 +822,39 @@ describe("days and slots", () => {
     });
   });
 
+  // Higani, 27/11: « une micro seconde ça écrit durée », a jump between two
+  // days. A day does not change her price: it stays while the day loads.
+  it("another day keeps her price on screen while its slots load", async () => {
+    renderPage();
+    await chooseService();
+    expect(await screen.findByText(/2 h · 110,00\s€/)).toBeTruthy();
+    const later = deferred();
+    api.availability.mockImplementationOnce(() => later.promise);
+    const tomorrow = addDays(today, 1);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(`, ${dayLabel(tomorrow)}$`),
+      }),
+    );
+    await flush();
+    expect(screen.queryByText(/Calcul du prix/)).toBeNull();
+    expect(screen.getByText(/2 h · 110,00\s€/)).toBeTruthy();
+    later.resolve(
+      await ok({
+        date: tomorrow,
+        timezone: TZ,
+        slots: slotsFor(tomorrow),
+        quote: quoteOf(SERVICE_A),
+      }),
+    );
+    expect(
+      await screen.findByRole("list", {
+        name: `Créneaux du ${dayLabel(tomorrow)}`,
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText(/2 h · 110,00\s€/)).toBeTruthy();
+  });
+
   it("a later answer for an earlier day or service never replaces the latest choice", async () => {
     const first = deferred();
     const second = deferred();

@@ -4,6 +4,7 @@ import { useId, useRef, useState, type Ref } from "react";
 
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/field";
+import { useHeightTween } from "@/components/ui/motion";
 import { cn } from "@/lib/cn";
 
 import { dayLabel, wallDate, wallTime } from "../client/business-time";
@@ -33,6 +34,9 @@ export function ContactStep({
     Boolean(
       contact.lastName || contact.phone || errors.lastName || errors.phone,
     );
+  // The optional fields unfold, pushing « Continuer » down smoothly.
+  const optionalBox = useRef<HTMLDivElement>(null);
+  useHeightTween(optionalBox, optionalShown);
   if (!slot || !service) return null;
 
   function next() {
@@ -116,46 +120,51 @@ export function ContactStep({
           maxLength={CONTACT_LIMITS.email}
           {...field("email")}
         />
-        {optionalShown ? (
-          <div id={moreId} className="flex flex-col gap-4">
-            <TextField
-              label="Nom"
-              optional
-              autoComplete="family-name"
-              maxLength={CONTACT_LIMITS.lastName}
-              {...field("lastName")}
-            />
-            <TextField
-              label="Téléphone"
-              optional
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              maxLength={CONTACT_LIMITS.phone}
-              hint="Pour que l’établissement puisse vous joindre si besoin."
-              {...field("phone")}
-            />
-          </div>
-        ) : (
-          <button
-            type="button"
-            aria-expanded={false}
-            aria-controls={moreId}
-            className={cn(linkAction, "self-start")}
-            onClick={() => {
-              setMore(true);
-              // On to the first field it shows.
-              requestAnimationFrame(() =>
-                document
-                  .getElementById(moreId)
-                  ?.querySelector<HTMLInputElement>("input")
-                  ?.focus(),
-              );
-            }}
-          >
-            Ajouter mon nom ou un téléphone (facultatif)
-          </button>
-        )}
+        <div ref={optionalBox} className="flex flex-col">
+          {optionalShown ? (
+            <div
+              id={moreId}
+              className="flex flex-col gap-4 motion-safe:animate-rise"
+            >
+              <TextField
+                label="Nom"
+                optional
+                autoComplete="family-name"
+                maxLength={CONTACT_LIMITS.lastName}
+                {...field("lastName")}
+              />
+              <TextField
+                label="Téléphone"
+                optional
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                maxLength={CONTACT_LIMITS.phone}
+                hint="Pour que l’établissement puisse vous joindre si besoin."
+                {...field("phone")}
+              />
+            </div>
+          ) : (
+            <button
+              type="button"
+              aria-expanded={false}
+              aria-controls={moreId}
+              className={cn(linkAction, "self-start")}
+              onClick={() => {
+                setMore(true);
+                // On to the first field it shows.
+                requestAnimationFrame(() =>
+                  document
+                    .getElementById(moreId)
+                    ?.querySelector<HTMLInputElement>("input")
+                    ?.focus(),
+                );
+              }}
+            >
+              Ajouter mon nom ou un téléphone (facultatif)
+            </button>
+          )}
+        </div>
         <Button type="submit" size="lg" fullWidth>
           Continuer
         </Button>

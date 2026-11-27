@@ -15,7 +15,7 @@ import type { PublicCatalog } from "@/features/catalog/model";
 
 import type { PublicBusiness } from "../client/api";
 import { readPendingBooking } from "../client/pending-booking";
-import { useBookingFlow } from "../client/use-booking-flow";
+import { useBookingFlow, type BookingStep } from "../client/use-booking-flow";
 import type { BookingFormat } from "../formats";
 import { GuidedProgress } from "./guided-progress";
 import { BookingConfirmation } from "./booking-confirmation";
@@ -25,7 +25,18 @@ import { PendingNotice } from "./pending-notice";
 import { linkAction, type BookingPlace } from "./booking-parts";
 import { ReviewStep } from "./review-step";
 import { ServiceStep } from "./service-step";
+import { carryFrom, carrying } from "@/components/ui/motion";
+
 import styles from "./booking-motion.module.css";
+
+const STEPS: readonly BookingStep[] = [
+  "service",
+  "options",
+  "slot",
+  "contact",
+  "review",
+  "done",
+];
 import { SlotStep, type CalendarPosition } from "./slot-step";
 
 /**
@@ -68,6 +79,19 @@ export function PublicBooking({
   place?: BookingPlace;
 }) {
   const flow = useBookingFlow({ business, catalog, preview, initialDate });
+  // Each step slides in the way she travels: forward from the right, back
+  // from the left (« où suis-je ? » answered by the motion itself).
+  const [travel, setTravel] = useState({
+    step: flow.step,
+    back: false,
+    carry: false,
+  });
+  if (travel.step !== flow.step)
+    setTravel({
+      step: flow.step,
+      back: STEPS.indexOf(flow.step) < STEPS.indexOf(travel.step),
+      carry: carrying(),
+    });
   const initialView =
     format === "calendar"
       ? "month"
@@ -133,7 +157,11 @@ export function PublicBooking({
     else if (flow.step === "slot" && flow.service?.options.length)
       flow.actions.goTo("options");
     else if (onlyService || initialServiceId) return false;
-    else flow.actions.goTo("service");
+    else {
+      const key = `service:${flow.service?.id}`;
+      carryFrom(key, document.querySelector(`[data-carry="${key}"]`));
+      flow.actions.goTo("service");
+    }
     return true;
   });
 
@@ -210,52 +238,52 @@ export function PublicBooking({
               Rien n’est réservé tant que vous n’avez pas confirmé.
             </Notice>
           ) : null}
-          <div
-            key={flow.step}
-            className={
-              format === "calendar" || format === "chronological"
-                ? styles.step
-                : undefined
-            }
-          >
-            {flow.step === "service" ? (
-              <ServiceStep
-                flow={flow}
-                headingRef={heading}
-                format={format}
-                gallery={gallery}
-              />
-            ) : flow.step === "options" ? (
-              <OptionsStep flow={flow} headingRef={heading} />
-            ) : flow.step === "slot" ? (
-              <SlotStep
-                flow={flow}
-                headingRef={heading}
-                position={position}
-                onPosition={setPosition}
-                format={format}
-                place={place}
-              />
-            ) : flow.step === "contact" ? (
-              <ContactStep flow={flow} headingRef={heading} />
-            ) : flow.step === "review" ? (
-              <ReviewStep
-                flow={flow}
-                headingRef={heading}
-                preview={preview}
-                place={place}
-              />
-            ) : flow.booking ? (
-              <BookingConfirmation
-                booking={flow.booking}
-                local={flow.bookedLocal}
-                cancellationPolicy={business.cancellationPolicy}
-                place={place}
-                location={business.location}
-                onAnother={flow.actions.restart}
-                headingRef={heading}
-              />
-            ) : null}
+          <div className={styles.track}>
+            <div
+              key={flow.step}
+              className={styles.step}
+              data-back={travel.back || undefined}
+              data-carry={travel.carry || undefined}
+            >
+              {flow.step === "service" ? (
+                <ServiceStep
+                  flow={flow}
+                  headingRef={heading}
+                  format={format}
+                  gallery={gallery}
+                />
+              ) : flow.step === "options" ? (
+                <OptionsStep flow={flow} headingRef={heading} />
+              ) : flow.step === "slot" ? (
+                <SlotStep
+                  flow={flow}
+                  headingRef={heading}
+                  position={position}
+                  onPosition={setPosition}
+                  format={format}
+                  place={place}
+                />
+              ) : flow.step === "contact" ? (
+                <ContactStep flow={flow} headingRef={heading} />
+              ) : flow.step === "review" ? (
+                <ReviewStep
+                  flow={flow}
+                  headingRef={heading}
+                  preview={preview}
+                  place={place}
+                />
+              ) : flow.booking ? (
+                <BookingConfirmation
+                  booking={flow.booking}
+                  local={flow.bookedLocal}
+                  cancellationPolicy={business.cancellationPolicy}
+                  place={place}
+                  location={business.location}
+                  onAnother={flow.actions.restart}
+                  headingRef={heading}
+                />
+              ) : null}
+            </div>
           </div>
         </>
       )}

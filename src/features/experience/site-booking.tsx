@@ -15,6 +15,7 @@ import { ctaColors } from "./engine/tokens";
 import styles from "./site-booking.module.css";
 import { Detail, Display, GradedPhoto, useEngine } from "./engine/engine";
 import { SitePortal, useModal } from "./engine/modal";
+import { FULL_INSET, insetOf } from "./engine/origin";
 
 /**
  * Booking from her mini-site: the real public booking (useBookingFlow, the
@@ -28,7 +29,10 @@ export function SiteBooking({
   initialDate,
   previewSlug,
   onClose,
+  from = null,
 }: {
+  /** What it was opened from: as a page, it grows out of it and back. */
+  from?: HTMLElement | null;
   /** null: a design preview, where no booking is ever taken. */
   booking: { business: PublicBusiness; catalog: PublicCatalog } | null;
   initialServiceId?: string;
@@ -45,6 +49,9 @@ export function SiteBooking({
   const leaving = useRef(false);
   const [session] = useState(() => crypto.randomUUID());
   const reduced = useReducedMotion();
+  const [origin] = useState(() =>
+    from?.isConnected ? from.getBoundingClientRect() : null,
+  );
   useEffect(() => {
     close.current = onClose;
   }, [onClose]);
@@ -88,6 +95,7 @@ export function SiteBooking({
 
   useModal({ root, panel: dialog, onClose: dismiss });
   const sheet = config.booking === "sheet";
+  const enter = reduced ? 0 : origin && !sheet ? 0.42 : 0.28;
   const format = config.bookingFormat ?? "classic";
   const themed = format !== "classic";
   const cta = ctaColors(config.tokens, config.tokens.palette.accent);
@@ -154,10 +162,30 @@ export function SiteBooking({
               : {}),
           } as CSSProperties
         }
-        initial={sheet ? { y: "100%" } : { opacity: 0 }}
-        animate={sheet ? { y: 0 } : { opacity: 1 }}
-        exit={sheet ? { y: "100%" } : { opacity: 0 }}
-        transition={{ duration: reduced ? 0 : 0.28, ease: language.ease }}
+        initial={
+          sheet
+            ? { y: "100%" }
+            : origin && !reduced
+              ? { clipPath: insetOf(origin) }
+              : { opacity: 0 }
+        }
+        animate={
+          sheet
+            ? { y: 0 }
+            : origin && !reduced
+              ? { clipPath: FULL_INSET }
+              : { opacity: 1 }
+        }
+        exit={{
+          ...(sheet
+            ? { y: "100%" }
+            : origin && !reduced
+              ? { clipPath: insetOf(origin) }
+              : { opacity: 0 }),
+          // Closing is quicker than opening: it answers the tap.
+          transition: { duration: enter * 0.65, ease: language.ease },
+        }}
+        transition={{ duration: enter, ease: language.ease }}
       >
         {/* Her site's colours on the sheet's head: still her place. */}
         <div className="flex shrink-0 items-center justify-between gap-3 bg-[var(--u-paper)] px-5 pt-[max(env(safe-area-inset-top),16px)] pb-3 text-[var(--u-ink-on-paper)]">

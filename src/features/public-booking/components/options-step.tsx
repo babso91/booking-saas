@@ -1,8 +1,9 @@
 "use client";
 
-import { useId, type Ref } from "react";
+import { useId, useRef, type Ref } from "react";
 
 import { Button } from "@/components/ui/button";
+import { carryFrom, useCarryTo } from "@/components/ui/motion";
 import { Notice } from "@/components/ui/notice";
 import { cn } from "@/lib/cn";
 
@@ -28,6 +29,10 @@ export function OptionsStep({
   flow: BookingFlow;
   headingRef: Ref<HTMLHeadingElement>;
 }) {
+  // Her service, carried from the card she tapped (and back to it).
+  const summary = useRef<HTMLDivElement>(null);
+  const carryKey = `service:${flow.service?.id}`;
+  useCarryTo(carryKey, summary);
   const { service, answers, slots, notice, isSending } = flow;
   if (!service) return null;
   return (
@@ -43,14 +48,21 @@ export function OptionsStep({
         </StepHeading>
       </div>
 
-      <div className="flex flex-col gap-1 rounded-2xl border border-line bg-paper-raised px-4 py-3">
+      <div
+        ref={summary}
+        data-carry={carryKey}
+        className="flex flex-col gap-1 rounded-2xl border border-line bg-paper-raised px-4 py-3"
+      >
         <p className="text-[15px] font-semibold wrap-anywhere text-ink">
           {service.name}
         </p>
         <button
           type="button"
           className={cn(linkAction, "mt-1 self-start")}
-          onClick={() => flow.actions.goTo("service")}
+          onClick={() => {
+            carryFrom(carryKey, summary.current);
+            flow.actions.goTo("service");
+          }}
         >
           Changer de prestation
         </button>

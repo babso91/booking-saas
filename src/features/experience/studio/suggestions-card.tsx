@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useId, useState, type MouseEvent } from "react";
+import { useId, useRef, useState, type MouseEvent } from "react";
+
+import { useHeightTween } from "@/components/ui/motion";
 
 import type { Suggestion, SuggestionTab } from "./suggestions";
 
@@ -22,10 +24,14 @@ export function SuggestionsCard({
 }) {
   const [open, setOpen] = useState(false);
   const listId = useId();
+  // It unfolds and folds back, pushing what follows smoothly.
+  const card = useRef<HTMLElement>(null);
+  useHeightTween(card, open);
   if (!suggestions.length) return null;
   const count = suggestions.length;
   return (
     <section
+      ref={card}
       aria-label="Pour une page plus utile"
       className="mb-4 rounded-2xl border border-black/10 bg-white"
     >
